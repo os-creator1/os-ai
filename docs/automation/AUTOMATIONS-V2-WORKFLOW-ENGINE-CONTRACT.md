@@ -1420,7 +1420,7 @@ the repository's deterministic second-session lock pattern
 | Operation | Budget | How |
 |---|---|---|
 | Workflow list | **≤ 2 V2-E feature-owned queries** for any page size (§18.1) | One query with an `exists` draft subselect, paginated (count + page) |
-| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count (§18.1; see the known limitation) | Workflow by uid inside the Business; the draft's row lock and read; one joined groups/fields catalog |
+| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one joined groups/fields catalog, read once and used for both the pickers and `WorkflowCompiler::validate()` |
 | Autosave | 2 queries | One conditional `UPDATE` plus the revision read |
 | Publish, 50 nodes | ≤ 20 queries | In-memory compile; two bulk inserts; one transaction |
 | Trigger ingestion | 1 lookup per event | `(business_id, trigger_type, state)` index |
@@ -1446,8 +1446,8 @@ rule as follows.
 
 | Request | V2-E feature-owned budget |
 |---|---|
-| Workflow list — page and JSON | **≤ 2** |
-| Builder load | **≤ 4** |
+| Workflow list — page and JSON | **≤ 2**, for any page size |
+| Builder load | **≤ 4**, independent of node count and of how many contact groups and fields the draft references |
 
 **Shared platform request overhead is measured independently and is NOT charged
 against these budgets.** It includes: authentication and the resolved customer
@@ -1472,23 +1472,35 @@ eventually misfile new feature SQL.
 **Whole-request totals remain measured, as diagnostics, not thresholds.** The
 §18 tests record every request's total alongside its shared/feature split on each
 run, so regressions stay visible, but the old 8 and 10 totals are not a V2-E
-merge blocker. Recorded at integration of `b6b2014` into PR #280:
+merge blocker. Recorded at integration of `0846757` into PR #280:
 
 | Request | Whole request | Shared | V2-E feature-owned |
 |---|---|---|---|
 | Workflow list (page) | 16 | 14 | 2 |
 | Workflow list (JSON) | 11 | 9 | 2 |
-| Builder load | 18 | 14 | 4 |
+| Builder load — draft with 0 contact references | 18 | 14 | 4 |
+| Builder load — 1 field reference | 18 | 14 | 4 |
+| Builder load — 10 field references | 18 | 14 | 4 |
+| Builder load — 50 mixed references (the #290 §14.2 stress shape) | 18 | 14 | 4 |
+| Builder load — duplicated references | 18 | 14 | 4 |
 
-**Known limitation — field-referencing steps on Builder load.** Opening the
-Builder reports the draft's errors through `WorkflowCompiler::validate()`, which
-currently checks each contact-group and contact-field reference with its own
-query. The ≤ 4 budget and its node-count independence therefore hold for steps
-that reference no contact data; a workflow with *N* field-referencing steps costs
-4 + 1 (its trigger group) + *N* feature-owned statements — measured 6 for one such
-step and 15 for ten. The N+1 is in the compiler, not in V2-E's HTTP layer, and is
-tracked as a separate change to batch those checks into a constant number of
-queries. Until it lands, this row is not met for field-referencing workflows.
+**Builder load reads one catalog, once.** The Builder needs the Business's
+contact groups and fields twice: for its pickers, and for
+`WorkflowCompiler::validate()`'s reference checks (§5.4 item 6). It loads them
+once, through `WorkflowReferenceCatalogLoader::forBusiness()`, and passes that
+same `WorkflowReferenceCatalog` object to `validate()` and to the picker props
+(`groups()`, `dateFields()`, `writableFields()`). The controller issues no catalog
+SQL of its own, and the compiler, handed a catalog, reads nothing, so however many
+`update_contact_field` steps, `contact.in_group` conditions or
+`contact.custom_field:{id}` conditions a draft holds — distinct or repeated — its
+reference checks cost no additional statement. Business scoping and every
+reference refusal are the catalog's and the compiler's, unchanged. The §18 tests
+prove this on the real Builder request: the same feature-owned count for drafts
+with 0, 1, 10 and 50 mixed references and with duplicates, exactly one catalog
+read among the feature-owned statements, one `forBusiness()` call per request
+whose result is the very object `validate()` receives, and the fifty-reference
+shape built from another Business's groups and fields refused in full at the same
+cost.
 
 ---
 

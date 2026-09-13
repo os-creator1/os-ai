@@ -2,14 +2,25 @@
 
 namespace Tests\Feature\Automations\Workflow\Http;
 
+use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Http\Controllers\Customer\Business\Concerns\WorkflowFeatureQueryScope;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
+use App\Library\Automation\Workflow\NodeTypeRegistry;
+use App\Library\Automation\Workflow\WorkflowCompiler;
+use App\Library\Automation\Workflow\WorkflowDefinitionValidator;
+use App\Library\Automation\Workflow\WorkflowDraftService;
+use App\Library\Automation\Workflow\WorkflowReferenceCatalog;
+use App\Library\Automation\Workflow\WorkflowReferenceCatalogLoader;
+use App\Models\AutomationWorkflow;
+use App\Models\AutomationWorkflowVersion;
+use App\Models\Business;
 use App\Models\ContactGroupFields;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Feature\Automations\Concerns\CreatesAutomationFixtures;
 use Tests\Feature\Automations\Workflow\Http\Support\CallsWorkflowRoutes;
+use Tests\Feature\Automations\Workflow\Logic\Support\BuildsLogicWorkflows;
 use Tests\Feature\Automations\Workflow\Runtime\Support\BuildsWorkflows;
 use Tests\TestCase;
 
@@ -32,6 +43,7 @@ class WorkflowBuilderContractTest extends TestCase
     use RefreshDatabase;
     use CreatesAutomationFixtures;
     use BuildsWorkflows;
+    use BuildsLogicWorkflows;
     use CallsWorkflowRoutes;
 
     /** @return array<string, mixed> */
@@ -354,17 +366,9 @@ class WorkflowBuilderContractTest extends TestCase
     }
 
     /**
-     * A — feature-owned: the Builder, for a workflow whose steps reference no
-     * contact group or field.
-     *
-     * SCOPE, STATED RATHER THAN IMPLIED. Opening the Builder also reports the
-     * draft's errors through WorkflowCompiler::validate(), which currently checks
-     * each contact-group and contact-field reference with its own query. So a
-     * workflow with N field-referencing steps costs 4 + 1 (its trigger group) + N
-     * feature-owned statements — measured: 6 for one such step, 15 for ten. That
-     * N+1 lives in the compiler, outside V2-E's allowlist, and is recorded in §18
-     * as a known limitation rather than tested around. This assertion is the
-     * budget for the shape it names, not a claim about every workflow.
+     * A — feature-owned: the Builder. This draft references no contact data; the
+     * reference-count proofs further down hold the same budget for drafts that
+     * reference one field, ten fields, and fifty mixed references.
      */
     public function test_the_builder_feature_owned_sql_is_within_budget(): void
     {
@@ -445,14 +449,7 @@ class WorkflowBuilderContractTest extends TestCase
         $this->assertSame($small, $large, "Feature-owned list SQL must not grow with page size ({$small} for 1 row, {$large} for 13).");
     }
 
-    /**
-     * §18 "independent of node count" — for steps that reference no contact data
-     * (here, forty SMS steps), the feature-owned count does not move.
-     *
-     * Field- and group-referencing steps are NOT covered by this claim: each adds
-     * one compiler reference query on load (see the Builder budget test above and
-     * §18's known limitation).
-     */
+    /** §18 "independent of node count" — on the feature-owned budget, the count does not move. */
     public function test_the_builder_feature_owned_sql_does_not_grow_with_node_count(): void
     {
         $t = $this->signedInTenant();
@@ -469,6 +466,267 @@ class WorkflowBuilderContractTest extends TestCase
         $large = count($this->classifiedStatements('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $big), false)['feature']);
 
         $this->assertSame($small, $large, "Feature-owned Builder SQL must not grow with node count ({$small} vs {$large}).");
+    }
+
+    // ---------------------------------------------------------------
+    // §18 "independent of reference count" — the Builder's one catalog
+    // ---------------------------------------------------------------
+
+    private const GROUP_FOREIGN = 'That contact group does not belong to this business.';
+
+    /**
+     * §18 "independent of node and reference count", through the real Builder
+     * request, over real autosaved drafts:
+     *
+     *   A  no contact reference at all;
+     *   B  one UpdateContactField reference;
+     *   C  ten UpdateContactField references;
+     *   D  the #290 fifty-reference stress shape — nineteen field updates on the
+     *      watched group, then fifteen `contact.in_group` and fifteen
+     *      `contact.custom_field:{id}` conditions over fifteen other groups,
+     *      nested in If/Else branches three levels deep;
+     *   E  duplicates — one field updated twenty times, and one If/Else checking
+     *      the same group three times and the same field twice.
+     *
+     * Every draft costs the SAME feature-owned SQL, within budget, and exactly one
+     * of those statements reads the contact catalog. Each draft's validation is
+     * also checked on the rendered page, so a constant count cannot come from
+     * validation quietly not running.
+     */
+    public function test_the_builder_feature_owned_sql_does_not_grow_with_reference_count(): void
+    {
+        $t = $this->signedInTenant();
+        $business = $t['business'];
+
+        $one = $this->contactGroup($business, 'One field');
+        $ten = $this->contactGroup($business, 'Ten fields');
+        $dup = $this->contactGroup($business, 'Duplicates');
+        $dupField = $this->textField($dup, 'REPEATED');
+        [$stress, $stressReferences] = $this->fiftyReferenceDocument($business);
+        $this->assertSame(50, $stressReferences, 'Precondition: fifty distinct references.');
+
+        $cases = [
+            'A: 0 references' => $this->referenceDocument(null, [$this->smsStep()]),
+            'B: 1 field reference' => $this->referenceDocument((int) $one->id, [
+                $this->updateFieldStep((int) $this->textField($one, 'ONLY')->id),
+            ]),
+            'C: 10 field references' => $this->referenceDocument((int) $ten->id, array_map(
+                fn (int $i): array => $this->updateFieldStep((int) $this->textField($ten, 'FIELD_' . $i)->id),
+                range(1, 10),
+            )),
+            'D: 50 mixed references' => $stress,
+            'E: duplicated references' => $this->referenceDocument((int) $dup->id, [
+                ...array_map(fn (): array => $this->updateFieldStep((int) $dupField->id), range(1, 20)),
+                $this->ifElseStep([
+                    ...array_map(fn (): array => $this->condition('contact.in_group', 'equals', (string) $dup->id), range(1, 3)),
+                    ...array_map(fn (): array => $this->condition('contact.custom_field:' . $dupField->id, 'equals', 'x'), range(1, 2)),
+                ]),
+            ]),
+        ];
+
+        $counts = [];
+
+        foreach ($cases as $label => $definition) {
+            $url = $this->routeUrl('show', $t['workspace'], $business, $this->workflowWithDraft($business, $definition));
+            $request = "Builder ({$label})";
+
+            $this->assertSame([], $this->builderData($url)['draft']['errors'], "{$request}: every reference belongs to this Business, so the draft is valid.");
+
+            $measured = $this->classifiedStatements('GET', $url, false);
+
+            $this->assertFeatureOwnedWithin($request, self::FEATURE_BUILDER_BUDGET, $measured);
+            $this->assertOneCatalogRead($request, $measured['feature']);
+            $this->recordDiagnostic($request, $measured);
+
+            $counts[$label] = count($measured['feature']);
+        }
+
+        $this->assertCount(1, array_unique($counts), 'Feature-owned Builder SQL must not grow with reference count: ' . json_encode($counts));
+    }
+
+    /**
+     * The constant cost is not bought by weakening the checks. The same fifty-
+     * reference shape built from ANOTHER Business's groups and fields opens at the
+     * same feature-owned cost, and the Builder reports every foreign reference.
+     */
+    public function test_the_builder_still_refuses_foreign_references_at_the_same_cost(): void
+    {
+        $t = $this->signedInTenant();
+        $other = $this->tenantWithWorkflow();
+
+        [$ownDefinition] = $this->fiftyReferenceDocument($t['business']);
+        [$foreignDefinition] = $this->fiftyReferenceDocument($other['business']);
+
+        $ownUrl = $this->routeUrl('show', $t['workspace'], $t['business'], $this->workflowWithDraft($t['business'], $ownDefinition));
+        $foreignUrl = $this->routeUrl('show', $t['workspace'], $t['business'], $this->workflowWithDraft($t['business'], $foreignDefinition));
+
+        $messages = collect($this->builderData($foreignUrl)['draft']['errors'])->flatten();
+
+        $this->assertContains(self::GROUP_FOREIGN, $messages->all(), 'The foreign watched group is refused.');
+        $this->assertSame(19, $messages->filter(fn (string $m): bool => $m === 'That field does not belong to the contact group this workflow watches.')->count());
+        $this->assertSame(15, $messages->filter(fn (string $m): bool => str_ends_with($m, 'checks a contact group that does not belong to this business.'))->count());
+        $this->assertSame(15, $messages->filter(fn (string $m): bool => str_ends_with($m, 'checks a contact field that does not belong to this business.'))->count());
+
+        $own = $this->classifiedStatements('GET', $ownUrl, false);
+        $foreign = $this->classifiedStatements('GET', $foreignUrl, false);
+
+        $this->assertFeatureOwnedWithin('Builder (50 foreign references)', self::FEATURE_BUILDER_BUDGET, $foreign);
+        $this->assertOneCatalogRead('Builder (50 foreign references)', $foreign['feature']);
+        $this->assertSame(count($own['feature']), count($foreign['feature']), 'Refusing references costs no more than accepting them.');
+    }
+
+    /**
+     * The REAL Builder request reads one catalog and hands that very object to the
+     * compiler. The loader and compiler the controller receives are spies wrapping
+     * the real classes — the spy compiler is built on the spy loader, so a lazy
+     * load inside validate() would be counted too. Two page loads prove "once per
+     * request", not once per test.
+     */
+    public function test_the_builder_loads_one_catalog_and_validates_against_that_same_object(): void
+    {
+        $t = $this->signedInTenant();
+        [$definition] = $this->fiftyReferenceDocument($t['business']);
+        $url = $this->routeUrl('show', $t['workspace'], $t['business'], $this->workflowWithDraft($t['business'], $definition));
+
+        $loader = new class () extends WorkflowReferenceCatalogLoader {
+            /** @var list<WorkflowReferenceCatalog> */
+            public array $loaded = [];
+
+            public function forBusiness(Business|int $business): WorkflowReferenceCatalog
+            {
+                return $this->loaded[] = parent::forBusiness($business);
+            }
+        };
+
+        $compiler = new class (app(WorkflowDefinitionValidator::class), app(NodeTypeRegistry::class), $loader) extends WorkflowCompiler {
+            /** @var list<WorkflowReferenceCatalog|null> */
+            public array $validatedWith = [];
+
+            public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null): array
+            {
+                $this->validatedWith[] = $catalog;
+
+                return parent::validate($version, $catalog);
+            }
+        };
+
+        // Bound before this test's first request, so the controller is built on them.
+        $this->app->instance(WorkflowReferenceCatalogLoader::class, $loader);
+        $this->app->instance(WorkflowCompiler::class, $compiler);
+
+        foreach ([1, 2] as $load) {
+            $data = $this->builderData($url);
+
+            $this->assertCount($load, $loader->loaded, "Page load {$load}: the catalog is loaded once per Builder request.");
+            $this->assertCount($load, $compiler->validatedWith, "Page load {$load}: the draft is validated once.");
+
+            $catalog = $loader->loaded[$load - 1];
+
+            $this->assertSame($catalog, $compiler->validatedWith[$load - 1], "Page load {$load}: validate() receives the very catalog the pickers came from.");
+            $this->assertSame($t['business']->id, $catalog->businessId);
+
+            // …and the pickers on the page are that catalog's answers.
+            $this->assertSame(array_column($catalog->groups(), 'id'), array_column($data['catalogs']['contactGroups'], 'id'));
+            $this->assertSame(array_column($catalog->dateFields(), 'id'), array_column($data['catalogs']['dateFields'], 'id'));
+            $this->assertSame(array_column($catalog->writableFields(), 'id'), array_column($data['catalogs']['writableFields'], 'id'));
+            $this->assertNotEmpty($data['catalogs']['writableFields']);
+            $this->assertSame([], $data['draft']['errors']);
+        }
+    }
+
+    /**
+     * Exactly one feature-owned statement reads contact groups or fields, and it
+     * is the catalog's single Business-scoped join. Checked on statements the seam
+     * has ALREADY classified — it counts catalog reads, it never classifies.
+     *
+     * @param list<string> $feature
+     */
+    private function assertOneCatalogRead(string $request, array $feature): void
+    {
+        $contactReads = array_values(array_filter(
+            $feature,
+            static fn (string $sql): bool => str_contains($sql, '`contact_groups`') || str_contains($sql, '`contact_group_fields`'),
+        ));
+
+        $this->assertCount(1, $contactReads, "{$request}: exactly one contact catalog read, observed:\n  " . implode("\n  ", $contactReads));
+        $this->assertStringContainsString('left join `contact_group_fields`', $contactReads[0]);
+        $this->assertStringContainsString('`contact_groups`.`business_id` = ?', $contactReads[0]);
+    }
+
+    /** The builder bootstrap blob a page load renders. @return array<string, mixed> */
+    private function builderData(string $url): array
+    {
+        $html = $this->get($url)->assertOk()->getContent();
+
+        preg_match('#<script type="application/json" id="wf-builder-data">(.*?)</script>#s', $html, $match);
+        $this->assertNotEmpty($match, 'The builder bootstrap blob must be rendered.');
+
+        return json_decode(html_entity_decode($match[1]), true);
+    }
+
+    /** A new workflow whose draft holds $definition, saved the way the builder saves it. */
+    private function workflowWithDraft(Business $business, array $definition): AutomationWorkflow
+    {
+        $drafts = app(WorkflowDraftService::class);
+        $workflow = $drafts->createWorkflowWithDraft($business, 'References ' . Str::random(6), WorkflowTriggerType::ContactCreated);
+        $draft = $workflow->draftVersion();
+
+        $drafts->autosave($draft, $definition, (int) $draft->definition_revision);
+
+        return $workflow->fresh();
+    }
+
+    /**
+     * The #290 stress document (CompilerReferenceCatalogTest), for any owner.
+     *
+     * @return array{0: array<string, mixed>, 1: int} the document and its distinct reference count
+     */
+    private function fiftyReferenceDocument(Business $owner): array
+    {
+        $watched = $this->contactGroup($owner, 'Watched');
+        $updates = array_map(fn (int $i): array => $this->updateFieldStep((int) $this->textField($watched, 'UPDATE_' . $i)->id), range(1, 19));
+
+        $conditions = [];
+
+        foreach (range(1, 15) as $i) {
+            $group = $this->contactGroup($owner, 'Segment ' . $i);
+            $conditions[] = $this->condition('contact.in_group', 'equals', (string) $group->id);
+            $conditions[] = $this->condition('contact.custom_field:' . $this->textField($group, 'CONDITION_' . $i)->id, 'equals', 'x');
+        }
+
+        [$a, $b, $c, $d, $e, $f] = array_chunk($conditions, 5);
+
+        $tree = $this->ifElseStep(
+            $a,
+            [$this->ifElseStep($b, [$this->ifElseStep($c)], [$this->ifElseStep($d)])],
+            [$this->ifElseStep($e, [$this->ifElseStep($f)])],
+        );
+
+        return [$this->referenceDocument((int) $watched->id, [...$updates, $tree]), 1 + count($updates) + count($conditions)];
+    }
+
+    /** @return array<string, mixed> a Contact created document, watching $groupId when given */
+    private function referenceDocument(?int $groupId, array $steps): array
+    {
+        $definition = app(WorkflowDraftService::class)->starterDefinition(WorkflowTriggerType::ContactCreated);
+
+        if ($groupId !== null) {
+            $definition['root']['config']['contact_group_id'] = $groupId;
+        }
+
+        $definition['root']['next'] = $steps;
+
+        return $definition;
+    }
+
+    private function smsStep(): array
+    {
+        return ['key' => (string) Str::uuid(), 'type' => 'send_sms', 'config' => ['body' => 'Hello']];
+    }
+
+    private function updateFieldStep(int $fieldId): array
+    {
+        return ['key' => (string) Str::uuid(), 'type' => 'update_contact_field', 'config' => ['field_id' => $fieldId, 'value' => 'touched']];
     }
 
     /**

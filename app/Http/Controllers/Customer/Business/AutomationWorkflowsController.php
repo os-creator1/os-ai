@@ -10,13 +10,10 @@ use App\Http\Requests\Automations\Workflow\StoreWorkflowRequest;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
 use App\Library\Automation\Workflow\WorkflowCompiler;
 use App\Library\Automation\Workflow\WorkflowDraftService;
+use App\Library\Automation\Workflow\WorkflowReferenceCatalogLoader;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
-use App\Models\Business;
-use App\Models\ContactGroupFields;
-use App\Models\ContactGroups;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 
 /**
@@ -47,6 +44,7 @@ class AutomationWorkflowsController extends CustomerBaseController
     public function __construct(
         private readonly WorkflowDraftService $drafts,
         private readonly WorkflowCompiler $compiler,
+        private readonly WorkflowReferenceCatalogLoader $catalogs,
         private readonly WorkflowLifecycle $lifecycle,
     ) {
     }
@@ -162,6 +160,15 @@ class AutomationWorkflowsController extends CustomerBaseController
 
             abort_if($version === null, 404);
 
+            // ONE Business catalog, read once and used twice. The same object that
+            // answers the compiler's group/field reference checks supplies the
+            // Builder's pickers, so the page cannot offer a field the validator
+            // would judge against different rows, and reference validation costs
+            // no query of its own however many steps or conditions reference
+            // contact data. The Business scoping and the phone-field exclusion
+            // both live in the catalog itself (#290), not here.
+            $catalog = $this->catalogs->forBusiness($business);
+
             return view('customer.Automations.Workflows.builder', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
@@ -170,9 +177,11 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'draft' => [
                     'definition' => $version->definition ?? [],
                     'revision' => (int) $version->definition_revision,
-                    'errors' => $this->compiler->validate($version),
+                    'errors' => $this->compiler->validate($version, $catalog),
                 ],
-                ...$this->catalogs($business),
+                'contactGroups' => $catalog->groups(),
+                'dateFields' => $catalog->dateFields(),
+                'writableFields' => $catalog->writableFields(),
             ]);
         });
     }
@@ -237,63 +246,6 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'changed' => $before !== $after->status,
             ]);
         });
-    }
-
-    /**
-     * The builder's pickers, scoped to this Business — ONE query whatever the
-     * size of the Business: every group LEFT JOINed to its fields, partitioned in
-     * memory into the group, date-field and writable-field lists. A group with no
-     * fields still appears, which is what the LEFT JOIN is for.
-     *
-     * The phone field is excluded from the writable list, as the view's own props
-     * contract requires: it is a contact's identity, and a picker that offered it
-     * would offer a write the executor refuses.
-     *
-     * @return array{contactGroups: Collection<int, object>, dateFields: Collection<int, object>, writableFields: Collection<int, object>}
-     */
-    private function catalogs(Business $business): array
-    {
-        $rows = ContactGroups::query()
-            ->leftJoin('contact_group_fields', 'contact_group_fields.contact_group_id', '=', 'contact_groups.id')
-            ->where('contact_groups.business_id', (int) $business->id)
-            ->orderBy('contact_groups.name')
-            ->orderBy('contact_group_fields.id')
-            ->toBase()
-            ->get([
-                'contact_groups.id as group_id',
-                'contact_groups.name as group_name',
-                'contact_group_fields.id as field_id',
-                'contact_group_fields.label as field_label',
-                'contact_group_fields.type as field_type',
-                'contact_group_fields.is_phone as field_is_phone',
-            ]);
-
-        $groups = $rows
-            ->unique('group_id')
-            ->map(fn (object $row): object => (object) ['id' => (int) $row->group_id, 'name' => (string) $row->group_name])
-            ->values();
-
-        $fields = $rows
-            ->whereNotNull('field_id')
-            ->map(fn (object $row): object => (object) [
-                'id' => (int) $row->field_id,
-                'label' => (string) $row->field_label,
-                'contact_group_id' => (int) $row->group_id,
-                'type' => (string) $row->field_type,
-                'is_phone' => (bool) $row->field_is_phone,
-            ])
-            ->sortBy('id')
-            ->values();
-
-        return [
-            'contactGroups' => $groups,
-            'dateFields' => $fields
-                ->filter(fn (object $field): bool => in_array($field->type, [ContactGroupFields::TYPE_DATE, ContactGroupFields::TYPE_DATETIME], true))
-                ->values(),
-            'writableFields' => $fields
-                ->reject(fn (object $field): bool => $field->is_phone)
-                ->values(),
-        ];
     }
 
     private function basePath(string $workspaceUid, string $businessUid): string
