@@ -1,0 +1,235 @@
+// Automations V2 (contract §13.1) — the builder canvas.
+//
+// The graph is a tree (§5.1), so it lays itself out: a vertical list of step
+// cards, with If/Else rendering as two side-by-side lanes. No layout engine,
+// no edge-routing, no canvas library — nested DOM only.
+
+.wf-builder {
+    display: flex;
+    flex-direction: column;
+    min-height: 60vh;
+}
+
+.wf-builder-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.wf-builder-topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.wf-save-state {
+    font-size: 0.8125rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.wf-save-state[data-state="saving"] {
+    color: var(--bs-warning, #ff9f43);
+}
+
+.wf-save-state[data-state="saved"] {
+    color: var(--bs-success, #28c76f);
+}
+
+.wf-save-state[data-state="error"] {
+    color: var(--bs-danger, #ea5455);
+}
+
+// Viewport that scrolls/zooms/pans. The transform target is a single child
+// (.wf-canvas-surface) so scale/translate never fights the scrollbars.
+.wf-canvas-viewport {
+    position: relative;
+    overflow: auto;
+    border: 1px solid var(--bs-border-color, #e5e5e5);
+    border-radius: 0.5rem;
+    background: var(--wf-canvas-bg, #f8f8f8);
+    min-height: 50vh;
+    touch-action: pan-x pan-y;
+}
+
+.wf-canvas-surface {
+    transform-origin: top left;
+    padding: 2.5rem 1.5rem 4rem;
+    display: inline-block;
+    min-width: 100%;
+}
+
+.wf-zoom-controls {
+    position: sticky;
+    top: 0.5rem;
+    float: right;
+    display: flex;
+    gap: 0.25rem;
+    z-index: 5;
+    margin-right: 0.5rem;
+}
+
+// The tree itself: a plain ordered list, one entry per step, connected by a
+// vertical rule so the reading order is also the visual order.
+.wf-steps {
+    list-style: none;
+    margin: 0 auto;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: fit-content;
+}
+
+.wf-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.wf-step-connector {
+    width: 2px;
+    height: 1.5rem;
+    background: var(--bs-border-color, #d8d6de);
+}
+
+.wf-step-card {
+    width: 20rem;
+    max-width: 90vw;
+    border: 1px solid var(--bs-border-color, #d8d6de);
+    border-radius: 0.5rem;
+    background: var(--bs-card-bg, #fff);
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.wf-step-card:focus-visible,
+.wf-step-card.is-focused {
+    outline: 2px solid var(--bs-primary, #7367f0);
+    outline-offset: 2px;
+}
+
+.wf-step-card.has-error {
+    border-color: var(--bs-danger, #ea5455);
+    background: rgba(234, 84, 85, 0.06);
+}
+
+.wf-step-card-trigger {
+    border-color: var(--bs-primary, #7367f0);
+    background: rgba(115, 103, 240, 0.06);
+}
+
+.wf-step-error-text {
+    color: var(--bs-danger, #ea5455);
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+    max-width: 20rem;
+}
+
+.wf-add-step {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--bs-border-color, #d8d6de);
+    background: transparent;
+    padding: 0;
+    line-height: 1;
+}
+
+// If/Else renders as a two-column flex row, each column its own nested
+// .wf-steps list — the branch's own tree, laid out side by side.
+.wf-branches {
+    display: flex;
+    gap: 2rem;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 1rem;
+    width: 100%;
+}
+
+.wf-branch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1 1 0;
+    min-width: 12rem;
+    border-top: 2px solid var(--bs-border-color, #d8d6de);
+    padding-top: 0.5rem;
+}
+
+.wf-branch-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+}
+
+.wf-branch-yes .wf-branch-label {
+    color: var(--bs-success, #28c76f);
+    background: rgba(40, 199, 111, 0.12);
+}
+
+.wf-branch-no .wf-branch-label {
+    color: var(--bs-danger, #ea5455);
+    background: rgba(234, 84, 85, 0.12);
+}
+
+.wf-path-end {
+    font-size: 0.75rem;
+    color: var(--bs-secondary, #82868b);
+    padding: 0.375rem 0;
+}
+
+// Below 1024px the schema does not support a usable free-form editor, so the
+// canvas becomes a read-only list rather than pretending to support editing
+// it cannot deliver (contract §13.1).
+.wf-narrow-notice {
+    display: none;
+}
+
+@media (max-width: 1023.98px) {
+    .wf-narrow-notice {
+        display: block;
+    }
+
+    .wf-builder[data-narrow-readonly="true"] .wf-add-step,
+    .wf-builder[data-narrow-readonly="true"] .wf-step-card {
+        pointer-events: none;
+        opacity: 0.85;
+    }
+
+    .wf-builder[data-narrow-readonly="true"] .wf-add-step {
+        display: none;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .wf-step-card {
+        width: 100%;
+    }
+
+    .wf-branches {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+
+    .wf-canvas-surface {
+        padding: 1.5rem 0.75rem 3rem;
+    }
+}
