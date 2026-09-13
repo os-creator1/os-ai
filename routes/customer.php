@@ -682,6 +682,10 @@
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
         // The account's AI Business OS plan (Settings → Plan & subscription).
         Route::get('{workspaceUid}/plan', 'Workspace\WorkspaceController@plan')->name('plan.show');
+        // The account's members, roles and Business access (Settings → Team).
+        Route::get('{workspaceUid}/team', 'Workspace\WorkspaceController@team')->name('team.show');
+        // The account's own Settings hub (the Agency account's settings).
+        Route::get('{workspaceUid}/settings', 'Workspace\WorkspaceController@settings')->name('settings.show');
         Route::post('{workspaceUid}/rename', 'Workspace\WorkspaceController@rename')->name('rename');
         Route::post('{workspaceUid}/deactivate', 'Workspace\WorkspaceController@deactivate')->name('deactivate');
         Route::post('{workspaceUid}/reactivate', 'Workspace\WorkspaceController@reactivate')->name('reactivate');
@@ -1166,6 +1170,9 @@
         | replace, or gate access to.
         |
         */
+        // A Business's Settings hub — the sidebar's one Settings destination.
+        Route::get('{workspaceUid}/businesses/{businessUid}/settings', 'Business\BusinessSettingsController@show')->name('businesses.settings.show');
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');
         });

@@ -264,6 +264,45 @@ trait CreatesCustomerContextFixtures
         return array_values(array_unique(array_filter($matches[1], fn (string $href) => ! str_starts_with($href, 'javascript:'))));
     }
 
+    /**
+     * The modules a Settings hub page renders, grouped by section, in page
+     * order: section key => module keys.
+     *
+     * @return array<string, array<int, string>>
+     */
+    protected function settingsHubModules(string $html): array
+    {
+        preg_match_all('/data-role="settings-section" data-section="([^"]+)"|data-role="settings-module" data-module="([^"]+)"/', $html, $matches, PREG_SET_ORDER);
+
+        $modules = [];
+        $section = null;
+
+        foreach ($matches as $match) {
+            if (($match[1] ?? '') !== '') {
+                $section = $match[1];
+                $modules[$section] = [];
+
+                continue;
+            }
+
+            $modules[$section][] = $match[2];
+        }
+
+        return $modules;
+    }
+
+    /**
+     * Every module key on a Settings hub page.
+     *
+     * @return array<int, string>
+     */
+    protected function settingsHubModuleKeys(string $html): array
+    {
+        $modules = $this->settingsHubModules($html);
+
+        return $modules === [] ? [] : array_merge(...array_values($modules));
+    }
+
     protected function sidebarHtml(string $html): string
     {
         $start = strpos($html, 'id="main-menu-navigation"');

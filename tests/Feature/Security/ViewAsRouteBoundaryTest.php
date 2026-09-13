@@ -277,12 +277,16 @@ class ViewAsRouteBoundaryTest extends TestCase
         $home = $this->home()->assertOk();
         $keys = $this->menuKeys($home->getContent());
 
-        foreach (['home', 'contacts', 'inbox', 'automations', 'website', 'gbp', 'analytics', 'usage-billing'] as $expected) {
+        foreach (['home', 'contacts', 'conversations', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys);
         }
 
-        foreach (['conversations', 'blocked-numbers', 'business-details', 'team', 'plan', 'advanced', 'accounts', 'prospecting', 'advisor'] as $forbidden) {
-            $this->assertNotContains($forbidden, $keys, "{$forbidden} is outside the viewed Business and must not be offered while viewing.");
+        // Settings is one entry now; its modules are gated the same way.
+        $modules = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $viewed->uid]))->assertOk()->getContent());
+        $this->assertContains('usage-billing', $modules);
+
+        foreach (['inbox', 'blocked-numbers', 'business-details', 'team', 'plan', 'advanced', 'accounts', 'prospecting', 'advisor'] as $forbidden) {
+            $this->assertNotContains($forbidden, array_merge($keys, $modules), "{$forbidden} is outside the viewed Business and must not be offered while viewing.");
         }
 
         foreach ($this->menuLinks($home->getContent()) as $link) {

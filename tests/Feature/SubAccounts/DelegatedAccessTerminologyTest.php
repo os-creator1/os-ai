@@ -74,8 +74,10 @@ class DelegatedAccessTerminologyTest extends TestCase
         $home = $this->home()->assertOk();
         $html = $home->getContent();
 
-        $this->assertContains('team-members', $this->menuKeys($html));
-        $this->assertContains(route('customer.sub_accounts.index'), $this->menuLinks($html));
+        // Superseded by the walkthrough settings decision: Settings → Team is
+        // the account membership, so this legacy surface is not offered in the
+        // shell at all — and still never called "sub account" anywhere.
+        $this->assertNotContains(route('customer.sub_accounts.index'), $this->menuLinks($html));
         $this->assertDoesNotMatchRegularExpression(self::FORBIDDEN_PATTERN, $this->shellText($html));
         $this->assertDoesNotMatchRegularExpression(self::FORBIDDEN_PATTERN, $this->navbarDropdownText($html));
         $this->assertStringNotContainsString('Team members', $this->navbarDropdownText($html), 'Team is a setting, not a personal menu item.');

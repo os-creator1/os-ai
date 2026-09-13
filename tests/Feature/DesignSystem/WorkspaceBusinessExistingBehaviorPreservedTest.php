@@ -86,9 +86,13 @@ class WorkspaceBusinessExistingBehaviorPreservedTest extends TestCase
 
         $response->assertSee('data-workspace-action="rename"', false);
         $response->assertSee('data-workspace-action="businesses"', false);
-        $response->assertSee('data-workspace-action="members"', false);
         $response->assertSee("document.querySelectorAll('form[data-workspace-action]')", false);
-        $response->assertSee("document.querySelectorAll('select[name=\"business_access_scope\"]')", false);
+
+        // Members moved to Settings → Team, with the same seams.
+        $team = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
+        $team->assertSee('data-workspace-action="members"', false);
+        $team->assertSee("document.querySelectorAll('form[data-workspace-action]')", false);
+        $team->assertSee("document.querySelectorAll('select[name=\"business_access_scope\"]')", false);
 
         // Account settings cleanup: deactivating the account and the technical
         // ownership-transfer form are no longer customer controls (the backend

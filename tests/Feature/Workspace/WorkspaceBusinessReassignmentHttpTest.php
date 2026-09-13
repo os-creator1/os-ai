@@ -535,10 +535,11 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
         $sourceShow = $this->get(route('customer.workspaces.show', $sourceWorkspace->uid))->assertOk();
         $this->assertEmpty($sourceShow->original->getData()['businesses']);
 
-        $targetShow = $this->get(route('customer.workspaces.show', $targetWorkspace->uid))->assertOk();
-        $this->assertTrue(
-            collect($targetShow->original->getData()['businesses'])->contains(fn ($row) => $row['name'] === $business->name)
-        );
+        // The target is a Core account, which has no account page listing its
+        // Business (owner decision) — so the move is proven where it lives.
+        $this->assertSame((int) $targetWorkspace->id, (int) $business->fresh()->workspace_id);
+        $this->assertTrue(app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $customer->user_id, $business->fresh()));
+        $this->get(route('customer.workspaces.show', $targetWorkspace->uid))->assertRedirect();
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

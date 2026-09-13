@@ -47,7 +47,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
 
         $this->assertSame(['Inbox & Conversations', 'Automations', 'Website'], $this->featureNames($region));
         // Each switch is named after its feature for assistive technology.
@@ -62,7 +62,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
 
         $this->assertSame(['Inbox & Conversations', 'Automations', 'Website', 'Google Business Profile'], $this->featureNames($region));
         $this->assertStringContainsString('Manage how your business appears on Google.', $region);
@@ -77,7 +77,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
         $this->authenticateAs($owner);
 
-        $html = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
+        $html = $this->settingsPage($workspace)->assertOk()->getContent();
 
         $this->assertStringNotContainsString('google_business_profile_module', $html);
         $this->assertStringNotContainsString('Google Business Profile', $html);
@@ -94,7 +94,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
 
         $this->assertNotContains('Client Management', $this->featureNames($region));
         $this->assertNotContains(PlatformFeature::Crm->value, BusinessFeatureSettings::CUSTOMER_TOGGLEABLE);
@@ -105,7 +105,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
         $visibleText = html_entity_decode(strip_tags($region));
 
         foreach (['crm', 'conversations', 'automations', 'website_generation', 'google_business_profile_module'] as $machineKey) {
@@ -123,7 +123,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Automations, (int) $owner->user_id);
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
 
         $this->assertSame([
             'Inbox & Conversations' => true,
@@ -143,7 +143,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
         app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Automations, WorkspaceEntitlementOverrideState::Deny, $this->platformAdminId(), 'Fixture deny.');
         $this->authenticateAs($owner);
 
-        $region = $this->featureRegion($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $region = $this->featureRegion($this->settingsPage($workspace)->assertOk()->getContent());
 
         $this->assertSame(['Inbox & Conversations', 'Website'], $this->featureNames($region));
     }
@@ -295,7 +295,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
 
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
         $this->authenticateAs($owner);
-        $html = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
+        $html = $this->settingsPage($workspace)->assertOk()->getContent();
 
         $this->assertStringContainsString("'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''", $html);
         $this->assertStringContainsString("'Accept': 'application/json'", $html);
@@ -309,7 +309,7 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
         $this->authenticateAs($owner);
-        $html = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
+        $html = $this->settingsPage($workspace)->assertOk()->getContent();
 
         $this->assertStringContainsString("result.body.status === 'success' && typeof result.body.enabled === 'boolean'", $html);
         $this->assertStringContainsString('show(result.body.enabled);', $html);
@@ -318,6 +318,17 @@ class WorkspaceBusinessFeatureSettingsTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+
+    /**
+     * A Core or Growth Business's feature switches live on its Settings hub:
+     * its account page is no longer shown (owner decision).
+     */
+    private function settingsPage(\App\Models\Workspace $workspace): \Illuminate\Testing\TestResponse
+    {
+        $business = $workspace->businesses()->firstOrFail();
+
+        return $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]));
+    }
 
     private function featureRegion(string $html): string
     {
