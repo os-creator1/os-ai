@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\Ai;
 
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Ai\AiBusinessActivityGate;
 use App\Library\Ai\AiCompletionResult;
 use App\Library\Ai\AiGateway;
@@ -61,14 +64,16 @@ class AiGatewayCorrectionsTest extends TestCase
     // =================================================================
 
     /**
-     * `ai_coo_basic` is Planned until AI-3 ships it, so the canonical
-     * entitlement system denies it today. The point of the gate is that the
-     * denial happens before anything is spent: no reservation, no ledger
-     * row, and above all no provider call.
+     * AI-3 made `ai_coo_basic` Available, so the gate now depends on the plan.
+     * A Workspace whose entitlement to it is denied (here, by a platform
+     * override on an otherwise active Growth plan, so the budget itself is
+     * not what refuses) is refused before anything is spent: no reservation,
+     * no ledger row, and above all no provider call.
      */
     public function test_the_coo_categories_are_refused_without_the_canonical_entitlement_and_spend_nothing(): void
     {
         [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::AiCooBasic, WorkspaceEntitlementOverrideState::Deny, $this->platformAdminId(), 'AI-3 fixture: deny COO AI.');
 
         foreach ([AiUsageCategory::CooDiagnosis, AiUsageCategory::CooInteractive, AiUsageCategory::ConversationCompaction] as $category) {
             $result = app(AiGateway::class)->complete($this->request($workspace, $business, $category));
@@ -98,6 +103,21 @@ class AiGatewayCorrectionsTest extends TestCase
         }
 
         $this->assertSame(3, $this->fakeClient->callCount());
+    }
+
+    /**
+     * And with AI-3 the gate is reachable: an entitled Business's COO call gets
+     * past it and reaches the provider (the interactive category, which is not
+     * dormancy-gated, so this measures the entitlement alone).
+     */
+    public function test_an_entitled_business_now_passes_the_coo_gate(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core);
+
+        $result = app(AiGateway::class)->complete($this->request($workspace, $business, AiUsageCategory::CooInteractive));
+
+        $this->assertTrue($result->ok, 'ai_coo_basic is packaged with Core and Available since AI-3.');
+        $this->assertSame(1, $this->fakeClient->callCount());
     }
 
     /** A COO call with no Business has nothing the feature could entitle. */

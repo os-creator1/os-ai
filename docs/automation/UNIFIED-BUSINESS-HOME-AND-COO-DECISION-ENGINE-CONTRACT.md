@@ -1384,3 +1384,77 @@ five or its open-only reading (`BusinessHomeTest`, `BusinessHomeBillingTest`,
 `DashboardQueryBudgetTest`, `DashboardComponentAdoptionTest`,
 `OpportunityDashboardHttpTest`) are rewritten in this slice to the one move,
 never deleted without a replacement assertion (§19.7).
+
+---
+
+## Appendix G — implementation record: AI-3
+
+### AI-3 — COO insight, "What we notice" and "Explain this change" (§8, §9, §2.5)
+
+**Home never calls AI.** `BusinessHomePresenter` reads at most one
+`coo_insights` row through `CooInsightDisplayReader`, whose dependency graph
+has no gateway, no provider client and no job. A test loads Home repeatedly,
+with and without an insight, and proves zero provider calls, zero gateway
+resolutions, zero ledger rows, zero budget periods and nothing queued
+(T-COO-1). The one added statement is the indexed `LIMIT 1` insight read §16
+budgets; `DashboardQueryBudgetTest` pins dashboard-owned statements at 10.
+
+| Promise | Delivered by |
+|---|---|
+| `coo_insights` per §9.1 | Migration `2026_09_19_100001_create_coo_insights_table`; `CooInsight`; unique `(business_id, kind, subject_type, subject_id, signal_fingerprint, prompt_version)`; soft invalidation only. Two columns beyond §9.1: `policy_version` (so §9.3's "never selected" is a real filter) and `period_key` (an insight is shown only under the window it explains, keyed like the B5 caches) |
+| Bucketed fingerprint | `CooInsightFacts::bucketed()` over C-3's `BusinessSignals` for Home's window and the one before it; the §9.1 bands live in `config('coo.insight.count_buckets')`; sha256 of canonical JSON plus `prompt_version` and `policy_version` |
+| Aggregate-only prompt (§8.3, §15.3) | `CooInsightFactsReader` composes `BusinessSignalReader`, `BusinessHomePresenter::raisedAttentionTypes()` (now the shared rule), 2B's awaiting count, B5's automation failures and the RFC-002 queue; Opportunity evidence is reduced to fact keys and the registry's static wording, never the stored observed value. T-INS-5 asserts on the captured request |
+| §8.2 triggers | E-1 and E-3 from `coo:dispatch-insight-reviews` (daily, and `--monthly`); E-2 from `TriggerCooInsightOnWorkFinished` on completion or execution success/failure (a v1 trigger approximation, below); E-4 from `CooInsightExplainController` (one per Business per `explain_window_hours`, interactive lane, `coo_interactive`). All queue `GenerateCooInsight`; nothing runs in a web request |
+| §8.1 refusals, cheapest first | `CooInsightGenerator`: AI off, `ai_coo_basic` denied (unassigned, inactive, suspended included), dormant (scheduled triggers only), trigger condition, identical identity cached, identity already paid or in flight — then the AI-1 gateway, which re-checks entitlement, dormancy and budget |
+| Never pay twice | The insight identity, plus a ledger idempotency family `coo_insight:{sha256(identity)}:{attempt}` read through `AiUsageLedgerManager::idempotencyFamily()`: a paid or in-flight attempt blocks another; an unpaid refusal lets the next attempt use the next key |
+| Validator (§8.3/§8.4) | `CooInsightOutputValidator`: fixed schema, 1–3 statements, ≤ 280 characters, fact references must exist, `known` must cite a metric and restate its number, `likely` must hedge, causal wording rejected in every class except the contract's own disclaimer sentence; one bad statement discards the answer |
+| Invalidation (§9.3) | `InvalidateCooInsights` (synchronous, queues nothing): context events retire the performance diagnosis; Opportunity work retires insights about, or citing, that Opportunity; the next signal read retires same-window rows whose fingerprint moved |
+| Displayability (§9.2) | Invalidated never; valid shown; expired shown only while AI is off or the account's included AI is used up (AI-2's state); `ai_coo_basic` lost stops the line, rows stay |
+| "What we notice" | Performance band: "AI summary", "Known/Likely/Unknown" as words, "Updated {date}", separate from "Why this?" |
+| `ai_coo_basic` | `PlatformFeatureRegistry` Planned → Available; Core/Growth/Agency packaging unchanged; no trial state |
+
+**E-1's exclusion — owner-approved v1 clarification.** §8.2 excludes changes
+that an Attention item or an Opportunity "touching those metrics" explains,
+and no canonical source relates an Attention or Opportunity type to a metric.
+The owner approved this v1 reading on PR #287: until a canonical
+Attention/Opportunity type→metric relation exists, **any** raised Attention
+item, or **any** Opportunity first detected in the period, counts as a
+deterministic explanation and suppresses E-1 generation
+(`CooInsightFacts::hasDeterministicExplanation()`). The reason is spend:
+conservative under-generation is preferred to unnecessary AI spend. E-1 can
+stay silent where AI might have helped; it can never pay for an explanation a
+rule may already give. AI-3 invents no type→metric map. Relating types to
+metrics, and narrowing this rule to match, needs a later contract amendment.
+
+**E-2's trigger — owner-approved v1 clarification.** §8.2 fires E-2 when "a
+move the COO surfaced" finishes, but the product does not persist which
+Opportunity C-2 actually rendered on Home. The owner approved this v1 reading
+on PR #287: any qualifying Business Opportunity completion
+(`OpportunityCompleted`), execution success (`OpportunityExecutionSucceeded`)
+or execution failure (`OpportunityExecutionFailed`) is an E-2 **trigger
+candidate** (`TriggerCooInsightOnWorkFinished`). This is a v1 trigger
+approximation, **not** proof that the Opportunity was rendered on Home. It
+widens only when E-2 is *asked*, never when it *pays*: generation still
+requires the post-event E-1 eligibility check to pass (at least two material
+metrics and no deterministic explanation, read after the event), and every
+§8.1 gate, the identical-identity cache and the AI-1 gateway still apply. No
+surfacing-history domain exists, and Home writes nothing on render to create
+one; recording what C-2 surfaced would be a later, separately approved slice.
+
+**A queued job judges entitlement as of itself.** Shared request-scoped
+memoization (PR #286) keys on the bound `request`, and a queue worker binds
+one console request for its whole life. The boundary that makes this safe is
+global: `ResetRequestScopedCacheAtJobBoundary` (PR #289) flushes the memo
+before every worker job and after it finishes or fails. `GenerateCooInsight`
+therefore keeps no cache clearing of its own. An interim per-job clear was
+removed when #289 landed; on the `sync` driver it would also have discarded
+the dispatching request's memo. A test runs real `GenerateCooInsight` jobs
+through Laravel's worker in one process. Job 1 is entitled, memoizes the plan
+read and pays. The plan is then suspended directly, between jobs. Job 2, for
+another Business in the same Workspace, makes no provider call and writes no
+ledger row. After a direct reactivation, job 3 for that Business pays, so job
+2's refusal was entitlement alone.
+
+**`known` restatement.** Only a metric fact carries a value text can be
+checked against, so a `known` statement must cite a metric and contain its
+count. A "known" claim about anything else is rejected rather than trusted.

@@ -8,8 +8,18 @@ use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
 use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Conversation\InboundMessageReceived;
+use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnected;
+use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnectionRevoked;
+use App\Events\GoogleBusinessProfile\GoogleBusinessProfileDisconnected;
+use App\Events\Opportunity\OpportunityCompleted;
+use App\Events\Opportunity\OpportunityDismissed;
+use App\Events\Opportunity\OpportunityExecutionFailed;
+use App\Events\Opportunity\OpportunityExecutionSucceeded;
+use App\Events\Website\WebsitePublished;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
+use App\Listeners\Coo\InvalidateCooInsights;
+use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
 use App\Listeners\Opportunity\TriggerBusinessAdvisorProducer;
 use App\Listeners\Support\ResetRequestScopedCacheAtJobBoundary;
 use App\Listeners\Usage\InitializeBusinessUsageProfile;
@@ -44,6 +54,8 @@ class EventServiceProvider extends ServiceProvider
         // mappings are inert.
         BusinessUpdated::class => [
             TriggerBusinessAdvisorProducer::class.'@handleBusinessUpdated',
+            // AI-3 §9.3 — a cached COO insight described the old profile.
+            InvalidateCooInsights::class.'@handleBusinessUpdated',
         ],
         BusinessPrimaryLocationUpdated::class => [
             TriggerBusinessAdvisorProducer::class.'@handleBusinessPrimaryLocationUpdated',
@@ -58,6 +70,37 @@ class EventServiceProvider extends ServiceProvider
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
             EnrollFromInboundMessage::class,
+        ],
+        // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
+        // shown when their facts stop holding. Invalidation queues nothing;
+        // only the separate E-2 trigger below may queue a regeneration, and
+        // it runs after invalidation so the job never reads a retired row.
+        OpportunityCompleted::class => [
+            InvalidateCooInsights::class.'@handleOpportunityCompleted',
+            TriggerCooInsightOnWorkFinished::class.'@handleOpportunityCompleted',
+        ],
+        OpportunityDismissed::class => [
+            InvalidateCooInsights::class.'@handleOpportunityDismissed',
+        ],
+        OpportunityExecutionSucceeded::class => [
+            InvalidateCooInsights::class.'@handleOpportunityExecutionSucceeded',
+            TriggerCooInsightOnWorkFinished::class.'@handleOpportunityExecutionSucceeded',
+        ],
+        OpportunityExecutionFailed::class => [
+            InvalidateCooInsights::class.'@handleOpportunityExecutionFailed',
+            TriggerCooInsightOnWorkFinished::class.'@handleOpportunityExecutionFailed',
+        ],
+        WebsitePublished::class => [
+            InvalidateCooInsights::class.'@handleWebsitePublished',
+        ],
+        GoogleBusinessProfileConnected::class => [
+            InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnected',
+        ],
+        GoogleBusinessProfileDisconnected::class => [
+            InvalidateCooInsights::class.'@handleGoogleBusinessProfileDisconnected',
+        ],
+        GoogleBusinessProfileConnectionRevoked::class => [
+            InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnectionRevoked',
         ],
         // RequestScopedCache's queue-job boundary: a worker's console Request
         // outlives every job it runs, so the memo is flushed at both edges of

@@ -58,6 +58,8 @@ final class ViewAsProhibitedActions
         'customer.contact.delete-contact-field',
         'customer.workspaces.businesses.contact.delete-contact-field',
         'user.account.delete',
+        // spending the viewed client's AI allowance (AI-3, contract §15.5)
+        'customer.workspaces.businesses.performance.explain',
         // funding the actor's own account
         'user.account.top_up',
         'user.account.pay',

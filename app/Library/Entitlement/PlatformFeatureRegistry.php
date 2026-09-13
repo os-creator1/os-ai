@@ -62,7 +62,17 @@ final class PlatformFeatureRegistry
         PlatformFeature::GoogleBusinessProfileModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::Calendar->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
-        PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Planned,
+        // Unified Business Home and COO Decision Engine contract §17, slice
+        // AI-3: flipped Planned -> Available, meeting the same evidentiary
+        // bar as every flip above — a real, executable, Business-scoped
+        // implementation now exists (App\Jobs\Coo\GenerateCooInsight through
+        // the AI-1 gateway, the coo_insights cache, the Business Home "What
+        // we notice" line and the "Explain this change" route). Plan
+        // packaging already existed for Core, Growth and Agency
+        // (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php)
+        // and is unchanged; an unassigned, inactive or suspended plan is
+        // still denied by EntitlementManager, and no trial state exists.
+        PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Available,
         PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Planned,

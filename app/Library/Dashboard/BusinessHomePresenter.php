@@ -12,8 +12,12 @@ use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
+use App\Enums\Coo\SignalDirection;
+use App\Library\Coo\Insight\CooInsightDisplayReader;
+use App\Library\Coo\Insight\CooInsightExplainLimiter;
 use App\Library\Coo\NextBestMove;
 use App\Library\Coo\NextBestMoveSelector;
+use App\Library\Coo\SignalComparator;
 use App\Library\Coo\WhyThis;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerShellComposer;
@@ -87,6 +91,8 @@ final class BusinessHomePresenter
         private readonly ParentAccountSwitch $parentSwitch,
         private readonly NextBestMoveSelector $nextBestMoveSelector,
         private readonly WhyThis $whyThis,
+        private readonly CooInsightDisplayReader $insights,
+        private readonly CooInsightExplainLimiter $explainLimiter,
     ) {
     }
 
@@ -344,23 +350,9 @@ final class BusinessHomePresenter
      */
     private function attention(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, string $scope, BusinessStatusRow $status, int $automationFailures, int $awaiting = 0): array
     {
-        $types = $status->attentionTypes();
-
-        if ($automationFailures > 0) {
-            $types[] = AttentionType::AutomationFailing;
-        }
-
-        // §7.2 (C-2) — raised from Slice 2B's count, never from a table read here.
-        if ($awaiting > 0) {
-            $types[] = AttentionType::ConversationsAwaitingReply;
-        }
-
         $items = [];
 
-        foreach ($types as $type) {
-            if (! $this->isActionable($type, $status)) {
-                continue;
-            }
+        foreach (self::raisedAttentionTypes($status, $automationFailures, $awaiting) as $type) {
 
             $url = $this->remediationUrl($type, $context, $user, $entitlements, $scoped);
 
@@ -378,6 +370,31 @@ final class BusinessHomePresenter
     }
 
     /**
+     * Which Attention types this Business's facts raise, before any question
+     * of who may act on them. The one definition both the Home (which then
+     * keeps only items whose fix this actor can reach) and the AI-3 insight
+     * facts (which need the Business's raised types with no actor at all)
+     * read, so the two can never disagree about what is wrong.
+     *
+     * @return array<int, AttentionType>
+     */
+    public static function raisedAttentionTypes(BusinessStatusRow $status, int $automationFailures, int $awaiting): array
+    {
+        $types = $status->attentionTypes();
+
+        if ($automationFailures > 0) {
+            $types[] = AttentionType::AutomationFailing;
+        }
+
+        // §7.2 (C-2) — raised from Slice 2B's count, never from a table read here.
+        if ($awaiting > 0) {
+            $types[] = AttentionType::ConversationsAwaitingReply;
+        }
+
+        return array_values(array_filter($types, fn (AttentionType $type): bool => self::isActionable($type, $status)));
+    }
+
+    /**
      * H-1 — Home speaks about billing only where the customer actually has
      * something to do. A balance under the customer's own automatic top-up
      * threshold is the NORMAL trigger for a top-up that then happens by
@@ -386,7 +403,7 @@ final class BusinessHomePresenter
      * (AutoRechargeFailing), which names the thing the customer can fix.
      * Every other case is a real block or a debt, and still appears.
      */
-    private function isActionable(AttentionType $type, BusinessStatusRow $status): bool
+    private static function isActionable(AttentionType $type, BusinessStatusRow $status): bool
     {
         if ($type !== AttentionType::LowBalance) {
             return true;
@@ -693,9 +710,13 @@ final class BusinessHomePresenter
         );
 
         $rangeParameters = $currentRange->queryParameters();
+        $insight = $this->insight($business, $entitlements, $currentRange);
 
         return [
             'items' => $items,
+            // AI-3 §2.5 — at most one cached insight, read and never generated.
+            'insight' => $insight,
+            'explain' => $this->explainControl($business, $context, $user, $entitlements, $scoped, $items, $currentRange, $insight),
             'range' => $currentRange,
             'previousRange' => $previousRange,
             'rangeRejected' => $rangeRejected,
@@ -706,6 +727,78 @@ final class BusinessHomePresenter
             // browser fetches it after the page; Home loads no series itself.
             'seriesUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.series', array_merge($scoped, $rangeParameters), ['view_reports']),
             'resultsUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.overview', array_merge($scoped, $rangeParameters), ['view_reports']),
+        ];
+    }
+
+    /**
+     * §2.5, §9.2 (AI-3) — "What we notice": the one cached COO insight for the
+     * window on screen, or nothing.
+     *
+     * READ ONLY. Home never calls AI, never reserves budget, never writes a
+     * ledger row and never queues a job because it rendered (§8.1, T-COO-1):
+     * CooInsightDisplayReader has none of those in its dependency graph. The
+     * plan losing `ai_coo_basic` stops the line at once (§9.3), decided from
+     * the request's one entitlement snapshot, not a query. A failed read is
+     * the same as no insight — never an error card.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function insight(Business $business, MenuEntitlements $entitlements, AnalyticsDateRange $range): ?array
+    {
+        if (! $entitlements->allows('ai_coo_basic')) {
+            return null;
+        }
+
+        try {
+            return $this->insights->forHome($business, $range);
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * §8.2 E-4 (AI-3) — the "Explain this change" control, offered only when
+     * there is a change to explain and the customer could actually get an
+     * answer: at least one figure on screen moved materially (C-3's own
+     * classification), AI is on, the plan includes `ai_coo_basic`, no insight
+     * already explains this window, and the explain route is reachable for
+     * this actor (never while viewing as a client). Rendering it costs no
+     * query; asking is the customer's own POST.
+     *
+     * @param  array<int, string>  $scoped
+     * @param  array<int, Headline>  $items
+     * @param  array<string, mixed>|null  $insight
+     * @return array{action: string, range: array<string, string>, requested: bool}|null
+     */
+    private function explainControl(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $items, AnalyticsDateRange $range, ?array $insight): ?array
+    {
+        if ($insight !== null || ! (bool) config('services.openai.active') || ! $entitlements->allows('ai_coo_basic')) {
+            return null;
+        }
+
+        $changed = false;
+
+        foreach ($items as $headline) {
+            $direction = SignalComparator::compare($headline->comparison->current, $headline->comparison->previous);
+            $changed = $changed || in_array($direction, [SignalDirection::MaterialIncrease, SignalDirection::MaterialDecrease], true);
+        }
+
+        if (! $changed) {
+            return null;
+        }
+
+        $action = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.performance.explain', $scoped, ['view_reports']);
+
+        if ($action === null) {
+            return null;
+        }
+
+        return [
+            'action' => $action,
+            'range' => $range->queryParameters(),
+            'requested' => $this->explainLimiter->claimed((int) $business->id),
         ];
     }
 
