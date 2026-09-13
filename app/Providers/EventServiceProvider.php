@@ -7,7 +7,9 @@ use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
 use App\Events\Business\CustomerOnboardingCompleted;
+use App\Events\Conversation\InboundMessageReceived;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Opportunity\TriggerBusinessAdvisorProducer;
 use App\Listeners\Usage\InitializeBusinessUsageProfile;
 use Illuminate\Auth\Events\Registered;
@@ -47,6 +49,11 @@ class EventServiceProvider extends ServiceProvider
         ],
         CustomerOnboardingCompleted::class => [
             TriggerBusinessAdvisorProducer::class.'@handleCustomerOnboardingCompleted',
+        ],
+        // Automations V2-F — an authoritatively attributed inbound message.
+        // Queued: the webhook's provider is not kept waiting on enrollment.
+        InboundMessageReceived::class => [
+            EnrollFromInboundMessage::class,
         ],
     ];
 
