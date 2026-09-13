@@ -42,6 +42,9 @@ export function createApiClient(basePath) {
         create(payload) {
             return request(basePath, { method: 'POST', body: JSON.stringify(payload) })
         },
+        openDraft(workflowBasePath) {
+            return request(`${workflowBasePath}/draft`, { method: 'GET' })
+        },
         saveDraft(workflowBasePath, definition, revision) {
             return request(`${workflowBasePath}/draft`, {
                 method: 'PUT',
@@ -59,6 +62,15 @@ export function createApiClient(basePath) {
                 method: 'POST',
                 body: JSON.stringify({ contact_uid: contactUid }),
             })
+        },
+        testContacts(workflowBasePath, search) {
+            return request(`${workflowBasePath}/test-contacts?q=${encodeURIComponent(search || '')}`, { method: 'GET' })
+        },
+        pause(workflowBasePath) {
+            return request(`${workflowBasePath}/pause`, { method: 'POST' })
+        },
+        resume(workflowBasePath) {
+            return request(`${workflowBasePath}/resume`, { method: 'POST' })
         },
     }
 }

@@ -99,9 +99,19 @@ export function createAutosave({ api, workflowBasePath, initialRevision, onState
         onSaved(result.body || {})
     }
 
+    /** Save now only if an edit is still waiting for its debounce. */
+    function flushPending() {
+        if (pendingDocument === null) {
+            return Promise.resolve()
+        }
+
+        return flushNow(pendingDocument)
+    }
+
     return {
         schedule,
         flushNow,
+        flushPending,
         getRevision: () => revision,
     }
 }
