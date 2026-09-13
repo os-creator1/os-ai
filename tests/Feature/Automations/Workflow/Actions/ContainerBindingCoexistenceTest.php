@@ -75,7 +75,7 @@ class ContainerBindingCoexistenceTest extends TestCase
         $this->assertInstanceOf(EloquentOpportunityRepository::class, $opportunities);
 
         $this->assertEqualsCanonicalizing(
-            ['trigger', 'end', 'send_sms', 'update_contact_field', 'internal_notification'],
+            ['trigger', 'end', 'send_sms', 'update_contact_field', 'internal_notification', 'wait', 'if_else'],
             $registry->registeredTypes(),
             'The merge must leave the executor registry complete.',
         );
@@ -90,10 +90,11 @@ class ContainerBindingCoexistenceTest extends TestCase
      * AI provider seam every AiGateway call depends on.
      *
      * The gateway is deliberately resolved as a whole rather than only its
-     * seam: it takes the policy resolver, the router, the ledger manager and
-     * the completion client, so a construction failure in any of them — the
-     * realistic outcome of a hunk resolved badly — surfaces here instead of
-     * inside a queue worker.
+     * seam: it takes the policy resolver, the router, the ledger manager, the
+     * completion client, the entitlement manager and the dormancy gate (which
+     * itself composes the analytics and conversation read models), so a
+     * construction failure in any of them — the realistic outcome of a hunk
+     * resolved badly — surfaces here instead of inside a queue worker.
      */
     public function test_the_ai_gateway_family_resolves_from_the_same_container_as_the_other_two(): void
     {
@@ -115,16 +116,22 @@ class ContainerBindingCoexistenceTest extends TestCase
         $this->assertInstanceOf(\App\Jobs\Ai\ExpireStaleAiReservations::class, app(\App\Jobs\Ai\ExpireStaleAiReservations::class));
     }
 
-    /** The types this slice does not own are still deliberately unserved. */
-    public function test_wait_and_if_else_remain_without_an_executor_after_the_merge(): void
+    /**
+     * The logic types are served too, and the COO merge did not disturb them.
+     *
+     * This asserted the opposite while `wait` and `if_else` were unimplemented;
+     * the logic runtime slice ships both, so what is worth checking here is that
+     * adding two more registrations to the same closure the COO slice touches
+     * still leaves both families intact.
+     */
+    public function test_the_logic_executors_are_served_alongside_the_coo_bindings(): void
     {
         $registry = app(NodeExecutorRegistry::class);
 
         foreach ([WorkflowNodeType::Wait, WorkflowNodeType::IfElse] as $type) {
-            $this->assertFalse(
-                $registry->has($type),
-                "'{$type->value}' must still have no executor, so the advancer holds those journeys.",
-            );
+            $this->assertTrue($registry->has($type), "'{$type->value}' must have an executor.");
         }
+
+        $this->assertInstanceOf(EloquentOpportunityRepository::class, app(OpportunityRepository::class));
     }
 }

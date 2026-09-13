@@ -1309,7 +1309,7 @@ D and E run in parallel.
 | Slice | Delivers | Depends on | Parallel with |
 |---|---|---|---|
 | **V2-0 Foundation** | Six migrations; six models; enums; `NodeTypeRegistry`; `WorkflowDefinitionValidator`; `WorkflowCompiler`; `WorkflowPublisher`; `WorkflowDraftService`; `WorkflowLimits`; and **interfaces**: `NodeExecutor`, `TriggerSource`, `EnrollmentService`, `ConditionSubject`, `WorkflowLifecycle`. Trigger-aware policy defaults and the stale-default validation rule (§7.5). The six migrations in the exact §4.7 order, with their migration tests. No runtime, UI or routes | This contract | — |
-| **V2-A Runtime engine** | `WorkflowEnrollmentService`; `WorkflowAdvancer`; `WorkflowStepClaimService`; `WorkflowCheckpoint`; `ConditionEvaluator` + subject registry; `WaitScheduler`; executors for `wait`, `if_else`, `end`, `trigger`; `AdvanceWorkflowEnrollment`; **`WorkflowLifecycleService`** (pause, resume, archive, stop-all) and **`RedispatchHeldEnrollments`** (§6.3); `automation:workflows-resume-due` + its scheduler line; `WorkflowSimulator` (Test workflow) | V2-0 | B, C, D, E |
+| **V2-A Runtime engine** | `WorkflowEnrollmentService`; `WorkflowAdvancer`; `WorkflowStepClaimService`; `WorkflowCheckpoint`; `ConditionEvaluator` + subject registry; **`WorkflowWakeService`** (the durable wake-scheduler responsibility — see the note below); executors for `wait`, `if_else`, `end`, `trigger`; `AdvanceWorkflowEnrollment`; **`WorkflowLifecycleService`** (pause, resume, archive, stop-all) and **`RedispatchHeldEnrollments`** (§6.3); `automation:workflows-resume-due` + its scheduler line; `WorkflowSimulator` (Test workflow) | V2-0 | B, C, D, E |
 | **V2-B Action executors** | `SendSmsNodeExecutor` (§10.1), `UpdateContactFieldNodeExecutor`, `InternalNotificationNodeExecutor` + `WorkflowInternalNotification` | V2-0 | A, C, D, E |
 | **V2-C Trigger sources** | `ContactCreatedTriggerSource` (+ `source` argument at the four callers); `DateReachedTriggerSource` + `automation:workflows-date-sweep`; `ManualEnrollmentTriggerSource`; `EnrollWorkflowContact` job; v2 dispatch added beside B4's at `:263`/`:715` | V2-0 | A, B, D, E |
 | **V2-D Builder UI** | List, chooser, builder shell, canvas module, drawer partials per node type, autosave, undo/redo, validation display, zoom/pan, recipe templates | V2-0 document schema; integrates with E | A, B, C, E |
@@ -1323,6 +1323,27 @@ by V2-0, so D can build against fixtures while E builds the real controllers.
 **Between A and E:** E's pause/resume/archive/stop-all endpoints call the
 `WorkflowLifecycle` interface fixed by V2-0; A supplies the implementation. E
 never dispatches enrollment work itself.
+
+**`WorkflowWakeService`, and why this table no longer says `WaitScheduler`.**
+Earlier revisions named V2-A's wait owner `WaitScheduler`. The delivered design
+keeps every responsibility that name covered, and splits it across three
+collaborators that already existed — so one class carrying the old name would
+have had to take work away from two of them:
+
+* **computing the instant** is `WaitNodeExecutor` (§12), which reads the step's
+  config in the **Business's** timezone and returns one moment;
+* **parking durably** is `WorkflowAdvancer`, which writes `status = waiting` and
+  `resume_at` in the same transaction that closes the step run;
+* **waking what is due** is **`WorkflowWakeService`**, driven by
+  `automation:workflows-resume-due` every minute, claiming each
+  `waiting → active` transition with a conditional `UPDATE` (§8.2, T-WF-11).
+
+`WorkflowWakeService` therefore IS this contract's durable wake-scheduler
+responsibility, under a name that does not promise a scheduler. That matters
+beyond taste: **v2 dispatches no delayed job anywhere** (T-WF-12), and a class
+called `WaitScheduler` in a design whose central rule is "waiting is a row, not
+a timer" invites exactly the delayed-job implementation that rule forbids. There
+is **one** wake owner and no duplicate service.
 
 **Outside this contract, running in parallel:** the **Tags** domain contract
 (D7) and a **Business-to-contact email transport** contract (D10). Neither is
