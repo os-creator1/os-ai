@@ -6,6 +6,8 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Support\RequestScopedCache;
 use App\Listeners\Support\ResetRequestScopedCacheAtJobBoundary;
@@ -13,6 +15,8 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Models\WorkspaceMembership;
+use App\Models\WorkspaceMembershipBusiness;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -83,13 +87,47 @@ class RequestScopedCacheQueueLifecycleTest extends TestCase
         return ['workspace' => $workspace->fresh(), 'business' => $business->fresh(), 'owner' => $owner];
     }
 
+    /**
+     * A Selected-scope Staff member, assigned to the fixture's Business —
+     * the only path through userCanAccessBusiness() that reads
+     * WorkspaceMembershipRepository::findByWorkspaceAndUser() and
+     * WorkspaceMembershipBusinessRepository::isAssigned() (an owner or
+     * direct customer short-circuits before either read).
+     */
+    private function scopedMember(array $fixture): WorkspaceMembership
+    {
+        $member = User::create([
+            'first_name' => 'Scoped', 'last_name' => 'Member',
+            'email' => 'member' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $membership = WorkspaceMembership::create([
+            'workspace_id' => $fixture['workspace']->id,
+            'user_id' => $member->id,
+            'role' => WorkspaceMembershipRole::Staff,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'is_active' => true,
+        ]);
+        WorkspaceMembershipBusiness::create([
+            'workspace_membership_id' => $membership->id,
+            'business_id' => $fixture['business']->id,
+        ]);
+
+        return $membership->fresh();
+    }
+
     private function push(string $label, array $fixture, bool $failAfterReading = false): void
+    {
+        $this->pushAs($label, $fixture, (int) $fixture['owner']->id, $failAfterReading);
+    }
+
+    private function pushAs(string $label, array $fixture, int $userId, bool $failAfterReading = false): void
     {
         Queue::connection('database')->push(new TenancyProbeJob(
             $label,
             (int) $fixture['workspace']->id,
             (int) $fixture['business']->id,
-            (int) $fixture['owner']->id,
+            $userId,
             $this->admin(),
             $failAfterReading,
         ));
@@ -335,5 +373,59 @@ class RequestScopedCacheQueueLifecycleTest extends TestCase
         Event::assertListening(JobProcessing::class, ResetRequestScopedCacheAtJobBoundary::class);
         Event::assertListening(JobProcessed::class, ResetRequestScopedCacheAtJobBoundary::class);
         Event::assertListening(JobExceptionOccurred::class, ResetRequestScopedCacheAtJobBoundary::class);
+    }
+
+    // =================================================================
+    // Phase 2 (#288) membership caches: the same boundary must also
+    // protect WorkspaceMembershipRepository::findByWorkspaceAndUser()
+    // and WorkspaceMembershipBusinessRepository::isAssigned() — neither
+    // is reached by the fixture above, which always resolves as the
+    // Workspace owner and short-circuits userCanAccessBusiness() before
+    // either read.
+    // =================================================================
+
+    public function test_a_membership_deactivated_between_jobs_denies_the_scoped_members_next_job(): void
+    {
+        $fixture = $this->entitledWorkspace();
+        $membership = $this->scopedMember($fixture);
+
+        $this->pushAs('job-1', $fixture, (int) $membership->user_id);
+        $this->workOne();
+
+        $this->assertTrue($this->observed('job-1')['can_access']);
+        $this->assertTrue($this->observed('job-1')['membership_memoized_after_read'], 'Precondition: job 1 really did memoize the membership read.');
+
+        // Deactivated by someone else, not through this process's repository
+        // (WorkspaceMembershipRepository::setActive() would forget the key itself).
+        DB::table('workspace_memberships')->where('id', $membership->id)->update(['is_active' => false]);
+
+        $this->pushAs('job-2', $fixture, (int) $membership->user_id);
+        $this->workOne();
+
+        $this->assertFalse($this->observed('job-2')['can_access'], 'A deactivated membership must deny the next job — never a memoized "allowed" from the job before.');
+    }
+
+    public function test_a_business_assignment_removed_between_jobs_denies_the_scoped_members_next_job(): void
+    {
+        $fixture = $this->entitledWorkspace();
+        $membership = $this->scopedMember($fixture);
+
+        $this->pushAs('job-1', $fixture, (int) $membership->user_id);
+        $this->workOne();
+
+        $this->assertTrue($this->observed('job-1')['can_access']);
+        $this->assertTrue($this->observed('job-1')['membership_memoized_after_read'], 'Precondition: job 1 really did memoize the membership read.');
+
+        // Unassigned by someone else, not through this process's repository
+        // (WorkspaceMembershipBusinessRepository::unassign() would forget the key itself).
+        DB::table('workspace_membership_businesses')
+            ->where('workspace_membership_id', $membership->id)
+            ->where('business_id', $fixture['business']->id)
+            ->delete();
+
+        $this->pushAs('job-2', $fixture, (int) $membership->user_id);
+        $this->workOne();
+
+        $this->assertFalse($this->observed('job-2')['can_access'], 'A removed Business assignment must deny the next job — never a memoized isAssigned() from the job before.');
     }
 }

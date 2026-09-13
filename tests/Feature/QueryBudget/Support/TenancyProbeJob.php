@@ -33,7 +33,7 @@ final class TenancyProbeJob implements ShouldQueue
 
     public int $tries = 1;
 
-    /** @var array<string, array{memoized_at_start: bool, allowed: bool, reason: string, can_access: bool, memoized_after_read: bool}> */
+    /** @var array<string, array{memoized_at_start: bool, allowed: bool, reason: string, can_access: bool, memoized_after_read: bool, membership_memoized_after_read: bool}> */
     public static array $observed = [];
 
     public function __construct(
@@ -56,6 +56,11 @@ final class TenancyProbeJob implements ShouldQueue
 
         $canAccess = $workspaces->userCanAccessBusiness($this->userId, $business);
 
+        // Only populated on the scoped-member path (userCanAccessBusiness
+        // short-circuits before this read for an owner or direct customer);
+        // absent there is expected, not a bug.
+        $membershipMemoizedAfterRead = $cache->has("membership:find:{$this->workspaceId}:{$this->userId}");
+
         try {
             $decision = $entitlements->decide($workspace, $business, PlatformFeature::Crm->value, $this->actorId);
             [$allowed, $reason] = [$decision->allowed, (string) $decision->reason];
@@ -71,6 +76,7 @@ final class TenancyProbeJob implements ShouldQueue
             'reason' => $reason,
             'can_access' => $canAccess,
             'memoized_after_read' => $cache->has($planKey),
+            'membership_memoized_after_read' => $membershipMemoizedAfterRead,
         ];
 
         if ($this->failAfterReading) {
