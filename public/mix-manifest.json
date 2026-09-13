@@ -1,6 +1,7 @@
 {
     "/js/core/app-menu.js": "/js/core/app-menu.js",
     "/js/core/theme-tokens.js": "/js/core/theme-tokens.js",
+    "/js/core/async-region.js": "/js/core/async-region.js",
     "/js/core/app.js": "/js/core/app.js",
     "/js/core/scripts.js": "/js/core/scripts.js",
     "/css/base/plugins/extensions/ext-component-ratings.css": "/css/base/plugins/extensions/ext-component-ratings.css",

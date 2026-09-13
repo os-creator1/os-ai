@@ -248,6 +248,7 @@ steps" list of up to 5.
 ### 2.5 Business performance
 
 - **Period selector:** This month (default), Last month, Last 7 / 30 / 90 days, and a custom range of up to 92 days. These are the same presets and validation as Results (§4.4).
+  - **Applying a period updates this band in place** — caption, tiles and chart — without reloading Home (`window.AsyncRegion`, `resources/js/core/async-region.js`; the band is `data-async-region="business-performance"`). The address bar keeps the chosen range, so refresh, a bookmark and Back/Forward show the same period. The control is still an ordinary GET form to the same URL, which is the no-JavaScript fallback. Results' own range control (and its Campaigns page and pagination) follows the same pattern.
 - **Tiles**, in L-6 order and canonical only: **New contacts**, **New conversations** (2B), **Messages received**. Each is compared with the previous equal-length period using `HeadlineComparison`, and `HeadlinePolarity` stays descriptive: a rise is never styled as a win unless the metric's own polarity says so.
 - **Chart:** new contacts per bucket, from the existing async B5 series endpoint with `AnalyticsChartBuckets` grouping. The Home request itself loads no series.
 - **"What we notice":** one optional line, rendered **only** from a displayable cached `coo_insights` row (§9). It is labelled "AI summary", carries KNOWN/LIKELY/UNKNOWN wording, and shows its "Updated {date}".

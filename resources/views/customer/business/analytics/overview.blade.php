@@ -43,7 +43,11 @@
     @include('auth.loggedAs')
     <x-view-as-banner />
 
-    <section id="business-results" aria-labelledby="results-heading">
+    {{-- Everything in this section follows the chosen range, so the range
+         control updates THIS section in place (window.AsyncRegion) and the
+         address bar keeps the range. Without JavaScript it is an ordinary GET
+         to the same URL. --}}
+    <section id="business-results" aria-labelledby="results-heading" data-async-region="results" data-series-url="{{ $seriesUrl }}">
         <div class="row">
             <div class="col-12">
                 <a href="{{ route('customer.workspaces.show', $workspaceUid) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
@@ -74,7 +78,7 @@
                 <x-card>
                     <h1 id="results-heading" class="h3 mb-0">Results</h1>
                     <p class="text-caption text-muted mb-2">{{ $analytics->business['name'] }}</p>
-                    @include('customer.business.analytics._range', ['range' => $range, 'formAction' => $overviewUrl, 'businessName' => $analytics->business['name']])
+                    @include('customer.business.analytics._range', ['range' => $range, 'formAction' => $overviewUrl, 'businessName' => $analytics->business['name'], 'asyncRegion' => 'results'])
                 </x-card>
             </div>
 
@@ -324,7 +328,7 @@
             // (window.PlatformTheme, resources/js/core/theme-tokens.js).
             var theme = window.PlatformTheme;
             var palette = theme.chartPalette();
-            var seriesUrl = @json($seriesUrl);
+            var charts = [];
 
             // The server groups the days (by day, week or month) and supplies
             // short axis labels plus the exact dates for each point. The axis
@@ -366,19 +370,23 @@
                 };
             }
 
-            function mount(selector, build) {
-                var el = document.querySelector(selector);
-                if (el) { new ApexCharts(el, build(el.clientWidth)).render(); }
+            function mount(region, selector, build) {
+                var el = region.querySelector(selector);
+                if (el) {
+                    var chart = new ApexCharts(el, build(el.clientWidth));
+                    charts.push(chart);
+                    chart.render();
+                }
             }
 
-            function render(charts) {
-                var contacts = charts.new_contacts;
-                mount('[data-role="chart-contact-growth"]', function (width) {
+            function render(region, series) {
+                var contacts = series.new_contacts;
+                mount(region, '[data-role="chart-contact-growth"]', function (width) {
                     return chartOptions('area', contacts, [{ name: 'New contacts', data: contacts.series.new_contacts }], [palette[0]], width);
                 });
 
-                var messages = charts.messages;
-                mount('[data-role="chart-message-volume"]', function (width) {
+                var messages = series.messages;
+                mount(region, '[data-role="chart-message-volume"]', function (width) {
                     return chartOptions('line', messages, [
                         { name: 'Received', data: messages.series.incoming },
                         { name: 'Sent', data: messages.series.accepted }
@@ -386,19 +394,39 @@
                 });
             }
 
-            fetch(seriesUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-                .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
-                .then(function (payload) {
-                    // Only a genuine series payload is charted; any error
-                    // envelope (including a throttled request) is not.
-                    if (!payload || !payload.charts || !payload.charts.new_contacts || !payload.charts.messages) { return Promise.reject('shape'); }
-                    return render(payload.charts);
-                })
-                .catch(function () {
-                    document.querySelectorAll('[data-role^="chart-"]').forEach(function (el) {
-                        el.innerHTML = '<p class="text-caption mb-0">Chart data is unavailable right now.</p>';
+            // Mounted on load, and again whenever the range updates this page
+            // in place — always from the series URL the CURRENT region carries,
+            // so the charts can never show a different period from the figures.
+            function mountCharts(region) {
+                charts.forEach(function (chart) { chart.destroy(); });
+                charts = [];
+
+                if (!region || !region.dataset.seriesUrl) { return; }
+
+                fetch(region.dataset.seriesUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                    .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
+                    .then(function (payload) {
+                        // Only a genuine series payload is charted; any error
+                        // envelope (including a throttled request) is not.
+                        if (!payload || !payload.charts || !payload.charts.new_contacts || !payload.charts.messages) { return Promise.reject('shape'); }
+                        // Swapped again while this request was out: leave it.
+                        if (!document.body.contains(region)) { return; }
+                        return render(region, payload.charts);
+                    })
+                    .catch(function () {
+                        region.querySelectorAll('[data-role^="chart-"]').forEach(function (el) {
+                            el.innerHTML = '<p class="text-caption mb-0">Chart data is unavailable right now.</p>';
+                        });
                     });
-                });
+            }
+
+            mountCharts(document.querySelector('[data-async-region="results"]'));
+
+            document.addEventListener('async-region:updated', function (event) {
+                if (event.detail && event.detail.name === 'results') {
+                    mountCharts(event.target);
+                }
+            });
         })();
     </script>
 @endsection
