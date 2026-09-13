@@ -68,7 +68,7 @@ class BusinessHomeTest extends TestCase
         // the Google tile is absent because Core is not entitled to it — the
         // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'activity', 'attention', 'recommendations', 'headlines', 'visibility', 'conversations', 'actions'],
+            ['billing_exception', 'activity', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'],
             $this->bandOrder($html),
             'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
         );
@@ -313,10 +313,16 @@ class BusinessHomeTest extends TestCase
         $this->assertContains('inbox', $this->quickActionKeys($html));
         $this->assertContains('new_conversations', $this->headlineKeys($html));
         $this->assertNotContains('automation_runs', $this->headlineKeys($html), 'Automation runs are not a Business performance figure (H-3 §2.5).');
-        $this->assertContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html));
-        $this->assertContains(AttentionType::GoogleConnectionLost->value, $this->attentionTypes($html));
+        // C-2: ONE move renders, so the two entitled items are proven in turn —
+        // the lost connection leads, and failing automations lead once Google
+        // is no longer entitled.
+        $this->assertSame([AttentionType::GoogleConnectionLost->value], $this->attentionTypes($html));
 
-        foreach (['conversations', 'automations', 'google_business_profile_module'] as $feature) {
+        app(\App\Library\Entitlement\EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::GoogleBusinessProfileModule, (int) $customer->user_id, 'Dashboard entitlement test.');
+        Cache::flush();
+        $this->assertSame([AttentionType::AutomationFailing->value], $this->attentionTypes($this->home()->assertOk()->getContent()), 'Permission alone never exposes an unentitled Google item.');
+
+        foreach (['conversations', 'automations'] as $feature) {
             app(\App\Library\Entitlement\EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::from($feature), (int) $customer->user_id, 'Dashboard entitlement test.');
         }
         Cache::flush();
@@ -367,11 +373,11 @@ class BusinessHomeTest extends TestCase
             $this->assertSame([$type->value], $this->raisedTypeValues($customer->user), "{$type->value} must appear on its condition, alone.");
 
             // H-1 §5.2: the five billing cases are shown as the exception
-            // strip and never inside the attention band.
+            // strip and never as the next best move (C-2 §6.4).
             $this->assertSame(
                 BusinessHomePresenter::isBilling($type) ? [] : [$type->value],
                 $this->attentionTypeValues($customer->user),
-                "{$type->value} belongs to " . (BusinessHomePresenter::isBilling($type) ? 'the billing strip' : 'the attention band') . '.'
+                "{$type->value} belongs to " . (BusinessHomePresenter::isBilling($type) ? 'the billing strip' : 'the next best move') . '.'
             );
 
             $this->clearAllConditions($business);
@@ -379,7 +385,7 @@ class BusinessHomeTest extends TestCase
             $this->assertSame([], $this->raisedTypeValues($customer->user), "{$type->value} must disappear when its condition clears.");
         }
 
-        $this->assertSame(9, count(AttentionType::cases()), 'BusinessPhoneMissing is deliberately not a case (Correction 1, decision B).');
+        $this->assertSame(10, count(AttentionType::cases()), 'C-2 added ConversationsAwaitingReply; BusinessPhoneMissing is deliberately not a case (Correction 1, decision B).');
         $this->assertFalse(Schema::hasTable('dashboard_attention_dismissals'), 'No dismissal is persisted anywhere.');
     }
 
@@ -404,6 +410,13 @@ class BusinessHomeTest extends TestCase
         }
     }
 
+    /**
+     * C-2 replaced the list with ONE move, so every non-billing type is proven
+     * as the move in turn: all ten conditions are raised, then each move is
+     * resolved so the next one leads. Each carries its type, a severity word,
+     * its scope, a plain sentence and a remediation this actor can open; the
+     * strip carries the most severe billing exception throughout.
+     */
     public function test_every_attention_item_carries_type_severity_word_scope_plain_text_and_a_reachable_route(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Shape Venue', 'Shape Account');
@@ -412,45 +425,38 @@ class BusinessHomeTest extends TestCase
         }
         $this->authenticateAs($customer);
 
-        $snapshot = $this->dashboardFor($customer->user);
-        $items = $snapshot->band(DashboardSnapshot::BAND_ATTENTION);
-        $billing = $snapshot->band(DashboardSnapshot::BAND_BILLING_EXCEPTION);
-
-        // Four non-billing items in the band, and the single most severe
-        // billing exception in the strip: nine conditions, one of which is
-        // represented by the strip (H-1 §5.2).
-        $this->assertCount(4, $items);
+        $billing = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_BILLING_EXCEPTION);
         $this->assertInstanceOf(AttentionItem::class, $billing);
         $this->assertTrue(BusinessHomePresenter::isBilling($billing->type));
         $this->assertSame(AttentionSeverity::Blocking, $billing->severity, 'The strip shows the most severe billing exception.');
 
-        $ranks = array_map(fn (AttentionItem $item) => $item->severity->rank(), $items);
-        $sorted = $ranks;
-        sort($sorted);
-        $this->assertSame($sorted, $ranks, 'Ordered by severity.');
+        $expected = [
+            AttentionType::ConversationsAwaitingReply,
+            AttentionType::GoogleConnectionLost,
+            AttentionType::AutomationFailing,
+            AttentionType::GoogleLocationUnhealthy,
+            AttentionType::WebsiteUnpublished,
+        ];
 
-        $items[] = $billing;
+        foreach ($expected as $type) {
+            Cache::flush();
+            $move = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move'];
 
-        foreach ($items as $item) {
-            $this->assertInstanceOf(AttentionType::class, $item->type);
-            $this->assertInstanceOf(AttentionSeverity::class, $item->severity);
-            $this->assertSame('Shape Venue', $item->scope);
-            $this->assertDoesNotMatchRegularExpression('/_|locale\.|twilio|stripe|google_business|' . preg_quote($item->type->value, '/') . '/i', $item->text, 'Plain customer sentence only.');
-            $this->assertUrlMatchesARegisteredRoute($item->url);
+            $this->assertSame($type->value, $move['key'], "{$type->value} leads in its turn.");
+            $this->assertSame($type->severity(), $move['severity']);
+            $this->assertDoesNotMatchRegularExpression('/_|locale\.|twilio|stripe|google_business|' . preg_quote($type->value, '/') . '/i', $move['headline'], 'Plain customer sentence only.');
+            $this->assertNotNull($move['actionUrl']);
+            $this->assertUrlMatchesARegisteredRoute($move['actionUrl']);
+            $this->get($move['actionUrl'])->assertOk();
+
+            $html = $this->home()->assertOk()->getContent();
+            $this->assertMatchesRegularExpression('#data-severity="' . $type->severity()->value . '".*?<span[^>]*>\s*' . $type->severity()->word() . '\s*</span>#s', $this->bandHtml($html, 'next_best_move'), 'Severity is rendered as a word.');
+
+            $this->clearOne($business, $type);
         }
 
-        $html = $this->home()->assertOk()->getContent();
-
-        foreach (AttentionSeverity::cases() as $severity) {
-            if (preg_match('/data-severity="' . $severity->value . '"/', $html)) {
-                $this->assertMatchesRegularExpression('#data-severity="' . $severity->value . '".*?<span[^>]*>\s*' . $severity->word() . '\s*</span>#s', $html, 'Severity is rendered as a word.');
-            }
-        }
-
-        // Each remediation opens for this actor.
-        foreach (array_unique(array_map(fn (AttentionItem $item) => $item->url, $items)) as $url) {
-            $this->get($url)->assertOk();
-        }
+        Cache::flush();
+        $this->assertNull($this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move']);
     }
 
     // =================================================================
@@ -464,51 +470,60 @@ class BusinessHomeTest extends TestCase
         $this->website($business, 'draft');
         $this->authenticateAs($customer);
 
-        $html = $this->home()->assertOk()->getContent();
+        $band = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE);
 
-        $this->assertContains('attention', $this->bandOrder($html));
-        $this->assertNotContains('recommendations', $this->bandOrder($html), 'No recommendation exists, so the band is absent — prerequisite failures are never promoted into it.');
+        $this->assertSame(AttentionType::WebsiteUnpublished->value, $band['move']['key'], 'The failure is an attention move.');
+        $this->assertNull($band['recommendations'], 'No recommendation exists — prerequisite failures are never counted as one.');
 
         $this->recommendation($business, ['title' => 'Grow repeat bookings with a follow-up']);
-        $html = $this->home()->assertOk()->getContent();
-        $recommendations = $this->bandHtml($html, 'recommendations');
+        Cache::flush();
+        $band = $this->dashboardFor($customer->user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE);
 
-        $this->assertStringContainsString('Grow repeat bookings with a follow-up', $recommendations);
+        $this->assertSame('opportunity', $band['move']['key'], 'A real recommendation outranks the unpublished website (§6.4).');
+        $this->assertSame(\App\Library\Opportunity\OpportunityTypeRegistry::get('business_advisor', 'missing_website')['title_template'], $band['move']['headline'], "The registry's title, never a stored or raw one.");
+        $this->assertSame('1', $band['recommendations']['label'], 'Only the recommendation is counted as one.');
         foreach ([AttentionType::WalletSuspended, AttentionType::WebsiteUnpublished] as $type) {
-            $this->assertStringNotContainsString($type->sentence(), $recommendations);
+            $this->assertNotContains($type->sentence(), $band['move']['why'], 'An attention sentence never explains a recommendation.');
         }
-        $this->assertStringNotContainsString('Grow repeat bookings', $this->bandHtml($html, 'attention'));
     }
 
-    public function test_only_open_and_current_recommendations_render_at_most_five_and_never_from_the_query_string(): void
+    /**
+     * C-2 replaced the list of five with ONE move drawn from the Opportunity
+     * work queue (RFC-002 §43, topForCustomer): freshness current and status
+     * open, awaiting approval or in progress — which is the queue the Advisor
+     * works from, and wider than Slice 4's open-only list. The query string
+     * still chooses nothing.
+     */
+    public function test_the_move_is_the_head_of_the_actionable_current_queue_and_never_from_the_query_string(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Advisor Venue', 'Advisor Account');
 
+        $ids = [];
+
         for ($i = 0; $i < 8; $i++) {
-            $this->recommendation($business, ['title' => 'Open Current ' . $i, 'priority_score' => 90 - $i]);
+            $ids['open ' . $i] = $this->recommendation($business, ['title' => 'Open Current ' . $i, 'priority_score' => 90 - $i]);
         }
-        $this->recommendation($business, ['title' => 'Stale Item', 'freshness' => 'stale', 'priority_score' => 99]);
+        $ids['stale'] = $this->recommendation($business, ['title' => 'Stale Item', 'freshness' => 'stale', 'priority_score' => 99]);
         foreach (['snoozed', 'awaiting_approval', 'in_progress', 'completed', 'dismissed'] as $status) {
-            $this->recommendation($business, ['title' => 'Status ' . $status, 'status' => $status, 'priority_score' => 99]);
+            $ids[$status] = $this->recommendation($business, ['title' => 'Status ' . $status, 'status' => $status, 'priority_score' => 99]);
         }
         $this->authenticateAs($customer);
 
         foreach ([route('user.home'), route('user.home', ['page' => 2])] as $url) {
-            $band = $this->bandHtml($this->get($url)->assertOk()->getContent(), 'recommendations');
+            $band = $this->bandHtml($this->get($url)->assertOk()->getContent(), 'next_best_move');
 
-            $this->assertSame(5, substr_count($band, 'data-role="recommendation"'));
-            foreach (range(0, 4) as $i) {
-                $this->assertStringContainsString('Open Current ' . $i, $band);
+            $this->assertSame(1, substr_count($band, 'data-role="next-best-move"'), 'One move, never a list.');
+            // Every fixture shares one registered type, so the head is told
+            // apart by the recommendation its one action opens.
+            $this->assertStringContainsString('href="' . route('customer.opportunities.show', $ids['awaiting_approval']) . '"', $band, 'Awaiting approval is actionable, scores 99, and has the lowest id among the tie.');
+            $this->assertStringContainsString('See all recommendations (10)', html_entity_decode($band), 'Eight open, plus awaiting approval and in progress.');
+            foreach (['stale', 'snoozed', 'completed', 'dismissed', 'open 0', 'in_progress'] as $absent) {
+                $this->assertStringNotContainsString('href="' . route('customer.opportunities.show', $ids[$absent]) . '"', $band, "{$absent} is not the move.");
             }
-            foreach (range(5, 7) as $i) {
-                $this->assertStringNotContainsString('Open Current ' . $i, $band);
-            }
-            $this->assertStringNotContainsString('Stale Item', $band);
-            $this->assertStringNotContainsString('Status ', $band);
         }
     }
 
-    public function test_the_recommendations_band_is_absent_not_empty_when_there_is_nothing_to_recommend(): void
+    public function test_nothing_actionable_to_recommend_is_all_caught_up_and_a_disabled_engine_recommends_nothing(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Quiet Venue', 'Quiet Account');
         $this->recommendation($business, ['title' => 'Stale Only', 'freshness' => 'stale']);
@@ -516,14 +531,16 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertNotContains('recommendations', $this->bandOrder($html));
+        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
+        $this->assertStringNotContainsString('Stale Only', $html);
         $this->assertStringNotContainsString('Recommended next steps', $html);
-        $this->assertStringNotContainsString('No opportunities', $html);
+        $this->assertStringNotContainsString('See all recommendations', $html);
 
         config(['opportunity.enabled' => false]);
         $this->recommendation($business, ['title' => 'Hidden When Disabled']);
         $html = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('Hidden When Disabled', $html);
+        $this->assertStringContainsString("You're all caught up.", html_entity_decode($this->bandHtml($html, 'next_best_move')));
     }
 
     // =================================================================
@@ -653,14 +670,14 @@ class BusinessHomeTest extends TestCase
         $this->authenticateAs($customer);
 
         $failing = Mockery::mock(OpportunityRepository::class);
-        $failing->shouldReceive('paginateForCustomer')->andThrow(new RuntimeException('Advisor store unavailable'));
+        $failing->shouldReceive('topForCustomer')->andThrow(new RuntimeException('Advisor store unavailable'));
         $this->app->instance(OpportunityRepository::class, $failing);
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'recommendations', 'headlines', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
-        $this->assertStringContainsString('data-band="recommendations" data-band-state="failed"', $html);
-        $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'recommendations'));
+        $this->assertSame(['billing_exception', 'next_best_move', 'headlines', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
+        $this->assertStringContainsString('data-band="next_best_move" data-band-state="failed"', $html);
+        $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'next_best_move'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));
         $this->assertStringNotContainsString('Advisor store unavailable', $html);
 
@@ -674,7 +691,7 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertStringContainsString('data-band="headlines" data-band-state="failed"', $html);
-        $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'recommendations'));
+        $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'next_best_move'));
         $this->assertContains('billing_exception', $this->bandOrder($html), 'The billing strip still renders while another band fails.');
         $this->assertContains('actions', $this->bandOrder($html));
     }
@@ -789,6 +806,36 @@ class BusinessHomeTest extends TestCase
         $this->googleConnection($business, GoogleConnectionState::Active);
         DB::table('business_google_locations')->where('business_id', $business->id)->update(['verification_state' => 'verified']);
         DB::table('automation_executions')->where('business_id', $business->id)->update(['status' => 'succeeded']);
+        $this->answerEveryWaitingCustomer($business);
+    }
+
+    /** C-2 — the Business replies, so nobody is waiting any more. */
+    private function answerEveryWaitingCustomer(Business $business): void
+    {
+        foreach (DB::table('chat_boxes')->where('business_id', $business->id)->pluck('id') as $boxId) {
+            DB::table('chat_box_messages')->insert([
+                'box_id' => $boxId,
+                'message' => 'Answered',
+                'sms_type' => 'sms',
+                'send_by' => 'from',
+                'direction' => 'outgoing',
+                'created_at' => now()->format('Y-m-d H:i:s'),
+                'updated_at' => now()->format('Y-m-d H:i:s'),
+            ]);
+        }
+    }
+
+    /** Clears only one condition, so the next move in the fixed order can lead. */
+    private function clearOne(Business $business, AttentionType $type): void
+    {
+        match ($type) {
+            AttentionType::ConversationsAwaitingReply => $this->answerEveryWaitingCustomer($business),
+            AttentionType::GoogleConnectionLost => $this->googleConnection($business, GoogleConnectionState::Active),
+            AttentionType::AutomationFailing => DB::table('automation_executions')->where('business_id', $business->id)->update(['status' => 'succeeded']),
+            AttentionType::GoogleLocationUnhealthy => DB::table('business_google_locations')->where('business_id', $business->id)->update(['verification_state' => 'verified']),
+            AttentionType::WebsiteUnpublished => $this->website($business, 'published'),
+            default => null,
+        };
     }
 
     private function raise(Business $business, AttentionType $type): void
@@ -803,17 +850,17 @@ class BusinessHomeTest extends TestCase
             AttentionType::GoogleConnectionLost => $this->googleConnection($business, GoogleConnectionState::Revoked),
             AttentionType::GoogleLocationUnhealthy => $this->googleLocation($business, 'suspended'),
             AttentionType::AutomationFailing => $this->automationRuns($business, 1, '2026-09-05', 'failed'),
+            AttentionType::ConversationsAwaitingReply => $this->conversationWith($business, [['incoming', now()->subMinutes(30)->format('Y-m-d H:i:s')]]),
         };
     }
 
     /** @return array<int, string> */
     private function attentionTypeValues(User $user): array
     {
-        $items = $this->dashboardFor($user)->band(DashboardSnapshot::BAND_ATTENTION) ?? [];
-        $values = array_map(fn (AttentionItem $item) => $item->type->value, $items);
-        sort($values);
+        // C-2: a non-billing type renders as the ONE next best move.
+        $move = $this->dashboardFor($user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move'] ?? null;
 
-        return $values;
+        return $move !== null && $move['kind'] === 'attention' ? [$move['key']] : [];
     }
 
     /**
@@ -825,14 +872,14 @@ class BusinessHomeTest extends TestCase
     private function raisedTypeValues(User $user): array
     {
         $snapshot = $this->dashboardFor($user);
-        $items = $snapshot->band(DashboardSnapshot::BAND_ATTENTION) ?? [];
+        $move = $snapshot->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move'] ?? null;
         $billing = $snapshot->band(DashboardSnapshot::BAND_BILLING_EXCEPTION);
 
-        if ($billing instanceof AttentionItem) {
-            $items[] = $billing;
-        }
+        $values = $move !== null && $move['kind'] === 'attention' ? [$move['key']] : [];
 
-        $values = array_map(fn (AttentionItem $item) => $item->type->value, $items);
+        if ($billing instanceof AttentionItem) {
+            $values[] = $billing->type->value;
+        }
         sort($values);
 
         return $values;
@@ -863,7 +910,8 @@ class BusinessHomeTest extends TestCase
     /** @return array<int, string> */
     private function attentionTypes(string $html): array
     {
-        preg_match_all('/data-attention-type="([a-z_]+)"/', $this->bandHtml($html, 'attention'), $matches);
+        // C-2: the one move, when it is an attention item.
+        preg_match_all('/data-move-kind="attention" data-move="([a-z_]+)"/', $this->bandHtml($html, 'next_best_move'), $matches);
 
         return $matches[1];
     }

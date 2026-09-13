@@ -21,6 +21,14 @@ enum AttentionType: string
     case PaidActivityPaused = 'paid_activity_paused';
     case LowBalance = 'low_balance';
     case AutoRechargeFailing = 'auto_recharge_failing';
+
+    /**
+     * Unified Business Home §7.2 (C-2) — a customer wrote last and nobody has
+     * answered. Raised from Slice 2B's awaitingReplyCount(), never from a
+     * conversation table read of the Dashboard's own.
+     */
+    case ConversationsAwaitingReply = 'conversations_awaiting_reply';
+
     case WebsiteUnpublished = 'website_unpublished';
     case GoogleConnectionLost = 'google_connection_lost';
     case GoogleLocationUnhealthy = 'google_location_unhealthy';
@@ -35,6 +43,7 @@ enum AttentionType: string
         return match ($this) {
             self::WalletSuspended, self::PaidActivityPaused => AttentionSeverity::Blocking,
             self::OutstandingDebt, self::LowBalance, self::AutoRechargeFailing,
+            self::ConversationsAwaitingReply,
             self::GoogleConnectionLost, self::GoogleLocationUnhealthy, self::AutomationFailing => AttentionSeverity::Warning,
             self::WebsiteUnpublished => AttentionSeverity::Informational,
         };
@@ -44,7 +53,7 @@ enum AttentionType: string
      * One plain customer sentence. No configuration key, enum value,
      * internal noun or provider name.
      */
-    public function sentence(): string
+    public function sentence(?int $count = null): string
     {
         return match ($this) {
             self::WalletSuspended => 'Paid messaging is suspended for this business until the account is back in good standing.',
@@ -52,10 +61,13 @@ enum AttentionType: string
             self::PaidActivityPaused => 'Paid activity is paused, so paid messages will not send.',
             self::LowBalance => 'The balance is below the automatic top-up threshold.',
             self::AutoRechargeFailing => 'Automatic top-up has not been able to add funds.',
+            self::ConversationsAwaitingReply => $count === 1
+                ? '1 customer is waiting for a reply.'
+                : ($count === null ? 'Customers are waiting for a reply.' : number_format($count) . ' customers are waiting for a reply.'),
             self::WebsiteUnpublished => 'The website has not been published yet.',
             self::GoogleConnectionLost => 'The Google connection has stopped working and needs to be reconnected.',
             self::GoogleLocationUnhealthy => 'A Google listing needs attention.',
-            self::AutomationFailing => 'Some automation runs failed in the last 30 days.',
+            self::AutomationFailing => 'Some automation runs have failed.',
         };
     }
 
@@ -84,6 +96,7 @@ enum AttentionType: string
         return match ($this) {
             self::WalletSuspended, self::OutstandingDebt, self::PaidActivityPaused,
             self::LowBalance, self::AutoRechargeFailing => 'Review billing',
+            self::ConversationsAwaitingReply => 'Reply',
             self::WebsiteUnpublished => 'Open website',
             self::GoogleConnectionLost => 'Review Google connection',
             self::GoogleLocationUnhealthy => 'Review Google listings',
