@@ -338,17 +338,37 @@ class Customer extends Model
 
 
     /**
-     * Get notifications.
-     *
-     * @return mixed
+     * The notification preferences a customer starts with — the values every
+     * account-creation path stores.
      */
-    public function getNotifications()
-    {
-        if ( ! $this->notifications) {
-            return json_decode('{}', true);
-        }
+    public const DEFAULT_NOTIFICATIONS = [
+        'login'        => 'no',
+        'sender_id'    => 'yes',
+        'keyword'      => 'yes',
+        'subscription' => 'yes',
+        'promotion'    => 'yes',
+        'profile'      => 'yes',
+    ];
 
-        return json_decode($this->notifications, true);
+    /**
+     * Get notifications: every preference key, always.
+     *
+     * Not every path that creates a customer stores preferences (a customer
+     * created alongside a Business, for one), and a stored set may predate a
+     * key. Callers index these keys directly — the Profile page, the login and
+     * sender ID notices — so a missing key was a crash, not an "off". A key
+     * the customer never chose reads as the default they would have been
+     * created with; anything they did choose wins.
+     *
+     * @return array<string, string>
+     */
+    public function getNotifications(): array
+    {
+        $stored = is_string($this->notifications) && $this->notifications !== ''
+            ? json_decode($this->notifications, true)
+            : null;
+
+        return array_merge(self::DEFAULT_NOTIFICATIONS, is_array($stored) ? $stored : []);
     }
 
     /**

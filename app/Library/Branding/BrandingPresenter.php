@@ -125,25 +125,34 @@ class BrandingPresenter
     }
 
     /**
-     * §6.4: composes "© {year} {company}. {wording}" — wording omitted
-     * entirely, not rendered as a stray period, if the owner has not set
-     * one. $currentYear is computed at render time on every call, never
-     * stored, never owner-editable as a literal value.
+     * The wording after the copyright holder when the platform owner has set
+     * none: ordinary copyright text, so the line never ends at a bare period.
+     */
+    public const DEFAULT_COPYRIGHT_WORDING = 'All rights reserved.';
+
+    /**
+     * §6.4: composes "© {year} {company}. {wording}" from the platform owner's
+     * configuration, with DEFAULT_COPYRIGHT_WORDING when no wording is set.
+     * $currentYear is computed at render time on every call, never stored,
+     * never owner-editable as a literal value.
      */
     public function footerCopyrightLine(): string
     {
         $config = $this->resolved();
-        $year = now()->year;
-        $company = $this->footerCompanyName();
         $wording = trim((string) ($config['footer_copyright_text'] ?? ''));
 
-        $line = "© {$year} {$company}.";
+        return self::copyrightLine($this->footerCompanyName(), $wording !== '' ? $wording : self::DEFAULT_COPYRIGHT_WORDING);
+    }
 
-        if ($wording !== '') {
-            $line .= " {$wording}";
-        }
+    /**
+     * "© {year} {holder}. {wording}" for any copyright holder — the platform
+     * owner's company, or an Agency's white-label brand (AuthBrandPresenter).
+     */
+    public static function copyrightLine(string $holder, string $wording = self::DEFAULT_COPYRIGHT_WORDING): string
+    {
+        $holder = rtrim(trim($holder), '.');
 
-        return $line;
+        return '© ' . now()->year . ' ' . $holder . '. ' . trim($wording);
     }
 
     /**

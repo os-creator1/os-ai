@@ -938,6 +938,8 @@
             'Prospecting'             => 'Prospecting',
             'Accounts'                => 'Accounts',
             'Profile'                 => 'Profile',
+            'Product updates'         => 'Product updates',
+            'Team'                    => 'Team',
             'Sign out'                => 'Sign out',
             'Platform Settings'       => 'Platform Settings',
             'Theme Presets'           => 'Theme Presets',

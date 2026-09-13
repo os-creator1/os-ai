@@ -113,14 +113,14 @@
             Route::post('pricing', 'AccountController@searchPricing');
             Route::post('pricing/view', 'AccountController@viewPricing')->name('account.pricing-view');
 
-            /*Version 3.9*/
-            /*Announcement*/
+            /*
+             * Product updates — read-only. The platform owner publishes
+             * (admin Announcements); a customer lists and opens what was sent
+             * to them, and opening one marks it read. No search, bulk or
+             * mark-read endpoints exist on this side any more.
+             */
             Route::get('announcement', 'AccountController@announcement')->name('account.announcement');
-            Route::post('announcement/search', 'AccountController@searchAnnouncement')->name('account.announcement.search');
             Route::get('announcement/{announcement}', 'AccountController@viewAnnouncement')->name('account.announcement.view');
-            Route::post('announcements/batch_action', 'AccountController@batchActionAnnouncement')->name('account.announcement.batch_action');
-            Route::post('announcements/mark-as-read', 'AccountController@markAsRead')->name('account.announcement.mark-as-read');
-            Route::post('announcements/mark-all-as-read', 'AccountController@markAllAsRead')->name('account.announcement.mark-all-as-read');
 
             Route::post('account/dlt-entity-id', 'AccountController@dltEntityId')->name('account.dlt-entity-id');
             Route::post('account/dlt-telemarketer-id', 'AccountController@dltTelemarketerId')->name('account.dlt-telemarketer-id');

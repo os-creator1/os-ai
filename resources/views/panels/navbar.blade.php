@@ -309,10 +309,7 @@
                             </span>
                                     <span class="user-status">{{ __('locale.labels.available') }}</span>
                                 </div>
-                                <span class="avatar">
-                            <img class="round" src="{{ route('user.avatar', Auth::user()->uid)  }}"
-                                 alt="{{config('app.name')}}" height="40" width="40" />
-                        </span>
+                                <x-user-avatar :user="Auth::user()" />
                             </a>
 
                             <div class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-user">
@@ -344,29 +341,14 @@
                                     </a>
 
                                     @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1)
-                                        {{-- The account's AI Business OS plan, never the inherited SMS
-                                             subscriptions / "Pricing Plans" pages (a separate domain,
-                                             kept in code but no longer linked for customers). --}}
-                                        @php($planWorkspace = isset($customerContext) && $customerContext instanceof \App\Library\Navigation\CustomerContext && $customerContext->canManageWorkspace() ? $customerContext->frameWorkspace() : null)
-                                        @if($planWorkspace !== null)
-                                            <a class="dropdown-item" href="{{ route('customer.workspaces.plan.show', $planWorkspace->uid) }}">
-                                                <x-ds-icon name="tag" class="me-50" />
-                                                {{ __('locale.menu.Plan & subscription') }}
-                                            </a>
-                                        @endif
-
-                                        <a class="dropdown-item" href="{{route('user.account.announcement')}}">
-                                            <x-ds-icon name="tv" class="me-50" />
-                                            {{ __('locale.menu.Announcements') }}
+                                        {{-- The person's own menu: who they are, what is new in the
+                                             product, and signing out. Plan & subscription and Team are
+                                             account and Business settings, so they live under Settings
+                                             in the sidebar — one destination each, never repeated here. --}}
+                                        <a class="dropdown-item" href="{{ route('user.account.announcement') }}" data-role="user-menu-product-updates">
+                                            <x-ds-icon name="bell" class="me-50" />
+                                            {{ __('locale.menu.Product updates') }}
                                         </a>
-
-                                        @if(config('account.create_subaccount'))
-                                            <a class="dropdown-item" href="{{route('customer.sub_accounts.index')}}">
-                                                <x-ds-icon name="users" class="me-50" />
-                                                {{ __('locale.labels.sub_accounts') }}
-                                            </a>
-                                        @endif
-
                                     @endif
 
                                     <div class="dropdown-divider"></div>

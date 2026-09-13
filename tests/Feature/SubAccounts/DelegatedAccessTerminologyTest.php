@@ -60,7 +60,13 @@ class DelegatedAccessTerminologyTest extends TestCase
         return $subAccountUser->fresh();
     }
 
-    public function test_navbar_dropdown_says_team_members_not_sub_accounts(): void
+    /**
+     * Customer shell cleanup moved this entry from the user dropdown to
+     * Settings → Team. Neither place says "sub account": the Settings leaf
+     * reads "Team", the dropdown no longer carries it at all, and its own
+     * pages keep "Team members".
+     */
+    public function test_the_settings_entry_says_team_and_the_dropdown_never_says_sub_accounts(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -68,9 +74,11 @@ class DelegatedAccessTerminologyTest extends TestCase
         $home = $this->home()->assertOk();
         $html = $home->getContent();
 
-        $home->assertSee('Team members', false);
-        $home->assertSee(route('customer.sub_accounts.index'), false);
+        $this->assertContains('team-members', $this->menuKeys($html));
+        $this->assertContains(route('customer.sub_accounts.index'), $this->menuLinks($html));
+        $this->assertDoesNotMatchRegularExpression(self::FORBIDDEN_PATTERN, $this->shellText($html));
         $this->assertDoesNotMatchRegularExpression(self::FORBIDDEN_PATTERN, $this->navbarDropdownText($html));
+        $this->assertStringNotContainsString('Team members', $this->navbarDropdownText($html), 'Team is a setting, not a personal menu item.');
     }
 
     public function test_sub_accounts_index_page_uses_team_member_wording(): void

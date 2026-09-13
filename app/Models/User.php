@@ -219,6 +219,25 @@
         }
 
         /**
+         * Up to two initials for an avatar with no photo ("Jazmin Media" → "JM").
+         * Empty when the name has no letter or digit to show.
+         */
+        public function initials(): string
+        {
+            $letters = '';
+
+            foreach ([$this->first_name, $this->last_name] as $part) {
+                $first = mb_strtoupper(mb_substr(trim((string) $part), 0, 1));
+
+                if ($first !== '' && preg_match('/[\p{L}\p{N}]/u', $first) === 1) {
+                    $letters .= $first;
+                }
+            }
+
+            return $letters;
+        }
+
+        /**
          * generate two-factor code
          */
         public function generateTwoFactorCode(): void

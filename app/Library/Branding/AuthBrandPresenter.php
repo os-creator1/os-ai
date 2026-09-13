@@ -63,6 +63,28 @@ class AuthBrandPresenter
         return $this->platformOrNeutral();
     }
 
+    /**
+     * The footer's copyright line for this request, with the same precedence
+     * as every other brand decision here.
+     *
+     * An authorized Agency white-label brand for this host is the copyright
+     * holder, with ordinary copyright wording — the platform owner's company
+     * name and wording never appear under an Agency's brand. Without one, the
+     * platform owner's configured footer (BrandingPresenter). No brand name is
+     * ever written into the product itself.
+     */
+    public function footerCopyrightLine(Request $request): string
+    {
+        $agency = $this->agencyBrands->resolve($request);
+        $name = $agency !== null ? $this->cleanText($agency->displayName, 80) : null;
+
+        if ($name !== null) {
+            return BrandingPresenter::copyrightLine($name);
+        }
+
+        return $this->platform->footerCopyrightLine();
+    }
+
     public function neutral(): AuthBrand
     {
         return new AuthBrand(

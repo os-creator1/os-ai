@@ -4052,178 +4052,59 @@ POSTXML;
     |
     */
 
-        public function announcement()
+        /**
+         * Product updates — the announcements the platform owner published to
+         * this person, newest first, read-only.
+         *
+         * The platform owner is the only publisher (admin Announcements). A
+         * customer reads what was sent to them and nothing else: no create,
+         * edit, delete, search endpoint or bulk action exists here. Opening an
+         * update is what marks it read.
+         */
+        public function announcement(): View|Factory|Application
         {
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url('dashboard'), 'name' => Auth::user()->displayName()],
-                ['name' => __('locale.menu.Announcements')],
+                ['name' => __('locale.menu.Product updates')],
             ];
 
+            $updates = Auth::user()->announcements()
+                ->orderByDesc('announcements.created_at')
+                ->orderByDesc('announcements.id')
+                ->paginate(20);
 
-            return view('auth.profile._announcements', compact('breadcrumbs'));
+            return view('auth.profile._announcements', compact('breadcrumbs', 'updates'));
         }
 
-        #[NoReturn]
-        public function searchAnnouncement(Request $request)
+        /**
+         * One product update, resolved by its uid among the updates published
+         * to THIS person — an update sent to someone else, or no update at
+         * all, is the same 404. Opening it marks it read (once; the first read
+         * time is kept).
+         */
+        public function viewAnnouncement(string $announcement): View|Factory|Application
         {
-            $columns = [
-                0 => 'responsive_id',
-                1 => 'uid',
-                2 => 'uid',
-                3 => 'date',
-                4 => 'title',
-                5 => 'actions',
-            ];
-
-
             $user = Auth::user();
 
-            $totalData = $user->announcements()->count();
+            /** @var Announcements|null $update */
+            $update = $user->announcements()->where('announcements.uid', $announcement)->first();
 
-            $totalFiltered = $totalData;
-
-            $limit = $request->input('length');
-            $start = $request->input('start');
-            $order = $columns[$request->input('order.0.column')];
-            $dir   = $request->input('order.0.dir');
-
-            if (empty($request->input('search.value'))) {
-                $announcements = $user->announcements()->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-            } else {
-                $search = $request->input('search.value');
-
-                $announcements = $user->announcements()->whereLike(['uid', 'title'], $search)
-                    ->offset($start)
-                    ->limit($limit)
-                    ->orderBy($order, $dir)
-                    ->get();
-
-                $totalFiltered = $user->announcements()->whereLike(['uid', 'title'], $search)->count();
+            if ($update === null) {
+                abort(404);
             }
 
-            $data = [];
-            if ( ! empty($announcements)) {
-                foreach ($announcements as $announcement) {
-                    $show = route('user.account.announcement.view', $announcement->uid);
-
-                    $isRead = Auth::user()->announcements->find($announcement->id)->pivot->read_at !== null;
-                    if ($isRead) {
-                        $tittle = '<a href="' . $show . '"><del>' . $announcement->title . '</del></a>';
-                    } else {
-                        $tittle = '<a href="' . $show . '"><b>' . $announcement->title . '</b></a>';
-                    }
-
-                    $nestedData['responsive_id'] = '';
-                    $nestedData['uid']           = $announcement->uid;
-                    $nestedData['created_at']    = Tool::formatHumanTime($announcement->created_at);
-                    $nestedData['title']         = $tittle;
-                    $nestedData['edit']          = $show;
-                    $data[]                      = $nestedData;
-
-                }
+            if ($update->pivot->read_at === null && config('app.stage') !== 'demo') {
+                $user->announcements()->updateExistingPivot($update->id, ['read_at' => now()]);
             }
 
-            $json_data = [
-                'draw'            => intval($request->input('draw')),
-                'recordsTotal'    => $totalData,
-                'recordsFiltered' => $totalFiltered,
-                'data'            => $data,
-            ];
-
-            echo json_encode($json_data);
-            exit();
-
-        }
-
-
-        public function viewAnnouncement(Announcements $announcement)
-        {
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url('dashboard'), 'name' => Auth::user()->displayName()],
-                ['name' => __('locale.menu.Announcements')],
+                ['link' => route('user.account.announcement'), 'name' => __('locale.menu.Product updates')],
+                ['name' => $update->title],
             ];
 
-            return view('auth.profile._view_announcement', compact('announcement', 'breadcrumbs'));
+            return view('auth.profile._view_announcement', ['announcement' => $update, 'breadcrumbs' => $breadcrumbs]);
         }
-
-        public function markAsRead(Request $request)
-        {
-
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            $announcement = Announcements::findByUid($request->uid);
-            // Mark the announcement as read for a specific user
-            $data = $announcement->users()->updateExistingPivot(Auth::user()->id, ['read_at' => now()]);
-            if ($data) {
-                return response()->json([
-                    'status'  => 'success',
-                    'message' => 'Announcement was successfully marked as read',
-                ]);
-            }
-
-            return response()->json([
-                'status'  => 'error',
-                'message' => 'Announcement was not marked as read',
-            ]);
-        }
-
-
-        public function batchActionAnnouncement(Request $request)
-        {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            $action = $request->get('action');
-            $ids    = $request->get('ids');
-
-            if ($action == 'mark_as_read' && count($ids) > 0) {
-                Announcements::whereIn('uid', $ids)->each(function ($announcement) {
-                    $announcement->users()->updateExistingPivot(Auth::user()->id, ['read_at' => now()]);
-                });
-
-                return response()->json([
-                    'status'  => 'success',
-                    'message' => 'Announcement was successfully marked as read',
-                ]);
-            }
-
-            return response()->json([
-                'status'  => 'error',
-                'message' => __('locale.labels.at_least_one_data'),
-            ]);
-
-        }
-
-        public function markAllAsRead()
-        {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-            Announcements::where('user_id', Auth::user()->id)->each(function ($announcement) {
-                $announcement->users()->updateExistingPivot(Auth::user()->id, ['read_at' => now()]);
-            });
-
-            return response()->json(['success' => true]);
-        }
-
 
         public function getUnits(Request $request)
         {
