@@ -8,6 +8,7 @@ use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\MessagingTransportMode;
 use App\Enums\Messaging\WebhookRejectionReason;
+use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Messaging\Contracts\MessagingProviderAdapter;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
@@ -15,12 +16,15 @@ use App\Library\SMSCounter;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
+use App\Models\ChatBox;
+use App\Models\ChatBoxMessage;
 use App\Models\Reports;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Slice 3 §4.6 — fail-closed attribution for managed Telnyx inbound traffic.
@@ -476,7 +480,7 @@ class InboundWebhookAttributionResolver
         $operationId = null;
 
         try {
-            DB::transaction(function () use ($identity, $event, $businessId, $messageType, $now, &$operationId): void {
+            DB::transaction(function () use ($identity, $event, $businessId, $destinationNumber, $messageType, $now, &$operationId): void {
                 $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
                     'business_id' => $businessId,
                     'business_messaging_identity_id' => (int) $identity->id,
@@ -504,6 +508,25 @@ class InboundWebhookAttributionResolver
                         MessagingTransportMode::Managed->value,
                     );
                 }
+
+                // Managed inbound → canonical conversation history bridge.
+                //
+                // Same transaction as the operation row: either both land, or
+                // neither does. A webhook redelivery never reaches here a
+                // second time — it was already turned away above as a
+                // duplicate before persistInbound() was ever called — so this
+                // write happens exactly once per real inbound message, same
+                // as the operation row and the domain event below.
+                if ($business instanceof Business && $event->fromNumber !== null && trim($event->fromNumber) !== '') {
+                    $this->bridgeToCanonicalConversation(
+                        $business,
+                        $destinationNumber,
+                        $event->fromNumber,
+                        $event->body,
+                        $event->mediaUrls,
+                        $messageType,
+                    );
+                }
             });
         } catch (UniqueConstraintViolationException) {
             return false;
@@ -524,6 +547,91 @@ class InboundWebhookAttributionResolver
         }
 
         return true;
+    }
+
+    /**
+     * The managed inbound → canonical conversation history bridge.
+     *
+     * Closes the exact gap this class's docblock never claimed to solve: a
+     * managed inbound message reached this method, agreed on ONE Business, and
+     * the only lasting effect used to be an operational row in
+     * `business_messaging_operations` — a table Inbox, BusinessConversationReadModel
+     * and `contact.replied_since_enrollment` have never read. This method makes it
+     * land in the SAME two tables the legacy path has always written —
+     * `chat_boxes` and `chat_box_messages` — in the SAME orientation
+     * (`from` = the Business's own number, `to` = the external contact), so a
+     * managed reply and a legacy reply from the same person converge on one
+     * thread instead of the customer's history depending on which transport
+     * happened to carry it.
+     *
+     * IDENTITY IS THE TWO NUMBERS ALREADY PROVEN, NEVER THE BODY. Both `$to`
+     * and the destination number were dual-signal attributed by the caller
+     * before this ever runs; the message text plays no part in deciding whose
+     * conversation this is.
+     *
+     * NORMALIZATION. `MessageReceivedTriggerSource::normalizePhone()` — the
+     * one scheme `contact.replied_since_enrollment` joins `chat_boxes.to`
+     * against — not a second, differently-formatted copy. Writing E.164 here
+     * instead would silently make every managed reply invisible to that
+     * subject, which is the exact defect this bridge exists to close.
+     *
+     * ATOMIC WITH THE OPERATION ROW. The caller runs this inside the same
+     * transaction as the `business_messaging_operations` insert, so a webhook
+     * that ends up with an operation row also ends up with its conversation
+     * row, and one that fails leaves neither — never a billed operation with
+     * silently missing history.
+     *
+     * @param  list<string>  $mediaUrls
+     */
+    private function bridgeToCanonicalConversation(
+        Business $business,
+        string $businessNumber,
+        string $contactNumber,
+        ?string $body,
+        array $mediaUrls,
+        string $messageType,
+    ): void {
+        $from = MessageReceivedTriggerSource::normalizePhone($businessNumber);
+        $to = MessageReceivedTriggerSource::normalizePhone($contactNumber);
+
+        if ($from === '' || $to === '') {
+            return;
+        }
+
+        $chatBox = ChatBox::query()->firstOrNew([
+            'user_id' => $business->customer_id,
+            'business_id' => (int) $business->id,
+            'from' => $from,
+            'to' => $to,
+        ]);
+
+        if (! $chatBox->exists) {
+            $chatBox->uid = (string) Str::uuid();
+        }
+
+        $chatBox->reply_by_customer = true;
+        $chatBox->save();
+
+        $chatBox->update([
+            'notification' => $chatBox->notification + 1,
+        ]);
+
+        // `ai_replied` is deliberately not $fillable (see ChatBox::$fillable),
+        // exactly like the legacy writer this mirrors — raw, for the same
+        // reason: resetting "has AI already answered this thread" is not a
+        // mass-assignable conversation attribute.
+        DB::table('chat_boxes')->where('id', $chatBox->id)->update([
+            'reply_by_customer' => true,
+            'ai_replied' => false,
+        ]);
+
+        ChatBoxMessage::create([
+            'box_id' => $chatBox->id,
+            'message' => $body,
+            'media_url' => $mediaUrls === [] ? null : implode(',', $mediaUrls),
+            'sms_type' => $messageType,
+            'direction' => Reports::DIRECTION_INCOMING,
+        ]);
     }
 
     /**
