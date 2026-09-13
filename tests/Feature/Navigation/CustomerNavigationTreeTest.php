@@ -379,6 +379,18 @@ class CustomerNavigationTreeTest extends TestCase
         $three = CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES;
         $baseline = $this->countQueriesResolving($workspace, $business, $three, $customer->user_id);
 
+        // Shared customer request query-budget optimization (Automations
+        // V2 §18) — snapshotBusinessFeatureDecisions()'s own reads are now
+        // memoized per REQUEST (RequestScopedCache, keyed off the current
+        // Illuminate Request the same way CustomerShellComposer's own menu
+        // snapshot already is). Both measurements below ask about the same
+        // Workspace/Business, so without a fresh request between them the
+        // second would be served entirely from the first's cache — a
+        // stronger form of the very flatness this test proves, but not
+        // what THIS assertion measures. A fresh request isolates the two
+        // measurements exactly as two real, separate page loads would be.
+        $this->app->instance('request', \Illuminate\Http\Request::create('/dashboard'));
+
         // Every Business-scoped Available feature, more than double the three
         // the menu gates on today.
         $many = ['crm', 'conversations', 'automations', 'website_generation', 'google_business_profile_module'];
