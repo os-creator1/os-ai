@@ -1419,8 +1419,8 @@ the repository's deterministic second-session lock pattern
 
 | Operation | Budget | How |
 |---|---|---|
-| Workflow list | ≤ 8 queries for any page size | One query with `withCount` / latest-run subselect; paginated |
-| Builder load | ≤ 10 queries **independent of node count** | The draft document is one row; the published graph is two queries (nodes, edges) |
+| Workflow list | **≤ 2 V2-E feature-owned queries** for any page size (§18.1) | One query with an `exists` draft subselect, paginated (count + page) |
+| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one joined groups/fields catalog, read once and used for both the pickers and `WorkflowCompiler::validate()` |
 | Autosave | 2 queries | One conditional `UPDATE` plus the revision read |
 | Publish, 50 nodes | ≤ 20 queries | In-memory compile; two bulk inserts; one transaction |
 | Trigger ingestion | 1 lookup per event | `(business_id, trigger_type, state)` index |
@@ -1430,6 +1430,77 @@ the repository's deterministic second-session lock pattern
 | Enrollment history / logs | Paginated, indexed | `(workflow_id, created_at)`, `(enrollment_id, created_at)` |
 
 Each budget is asserted with a query-count test in its slice.
+
+### 18.1 V2-E feature-owned budgets and shared request overhead (owner decision, PR #280)
+
+**This supersedes the earlier whole-request reading of the list and Builder rows.**
+Earlier revisions budgeted the workflow list at ≤ 8 and Builder load at ≤ 10
+queries without saying what was counted. Measured on real requests, most of that
+cost is not workflow work at all: it is the shared platform overhead every
+Business-scoped customer request pays, and meeting 8 or 10 as request totals would
+have meant redesigning platform-wide authentication, context and shell
+infrastructure to satisfy one feature's number. The owner therefore fixed the
+rule as follows.
+
+**V2-E is budgeted only for the SQL it owns:**
+
+| Request | V2-E feature-owned budget |
+|---|---|
+| Workflow list — page and JSON | **≤ 2**, for any page size |
+| Builder load | **≤ 4**, independent of node count and of how many contact groups and fields the draft references |
+
+**Shared platform request overhead is measured independently and is NOT charged
+against these budgets.** It includes: authentication and the resolved customer
+context; Account/Business authorization (`ResolvesBusinessTenancy`,
+`WorkspaceManager::userCanAccessBusiness()`); the entitlement snapshot;
+`app_config`; and the customer shell — theme, languages and notifications. Its
+own regression budget lives with the shared path
+(`tests/Feature/QueryBudget/BusinessScopedRequestQueryBudgetTest.php`).
+
+**How a statement is classified — by an explicit production seam, never by its
+SQL text.** `App\Http\Controllers\Customer\Business\Concerns\WorkflowFeatureQueryScope`
+is opened by `ResolvesAutomationWorkflows::resolveEntitledBusiness()` once the
+canonical tenancy and entitlement chain has completed, and closed when the
+controller action returns. A statement is **V2-E feature-owned** if and only if it
+executes while that scope is open; everything before it (middleware, the Gate,
+tenancy, entitlement) and after it (rendering the customer layout) is **shared**.
+The seam fails safe in one direction only: any SQL a workflow action runs is
+charged to the feature whatever table it reads, so feature work can be overstated
+but never filed as shared. Matching on table names is not used, because it would
+eventually misfile new feature SQL.
+
+**Whole-request totals remain measured, as diagnostics, not thresholds.** The
+§18 tests record every request's total alongside its shared/feature split on each
+run, so regressions stay visible, but the old 8 and 10 totals are not a V2-E
+merge blocker. Recorded at integration of `0846757` into PR #280:
+
+| Request | Whole request | Shared | V2-E feature-owned |
+|---|---|---|---|
+| Workflow list (page) | 16 | 14 | 2 |
+| Workflow list (JSON) | 11 | 9 | 2 |
+| Builder load — draft with 0 contact references | 18 | 14 | 4 |
+| Builder load — 1 field reference | 18 | 14 | 4 |
+| Builder load — 10 field references | 18 | 14 | 4 |
+| Builder load — 50 mixed references (the #290 §14.2 stress shape) | 18 | 14 | 4 |
+| Builder load — duplicated references | 18 | 14 | 4 |
+
+**Builder load reads one catalog, once.** The Builder needs the Business's
+contact groups and fields twice: for its pickers, and for
+`WorkflowCompiler::validate()`'s reference checks (§5.4 item 6). It loads them
+once, through `WorkflowReferenceCatalogLoader::forBusiness()`, and passes that
+same `WorkflowReferenceCatalog` object to `validate()` and to the picker props
+(`groups()`, `dateFields()`, `writableFields()`). The controller issues no catalog
+SQL of its own, and the compiler, handed a catalog, reads nothing, so however many
+`update_contact_field` steps, `contact.in_group` conditions or
+`contact.custom_field:{id}` conditions a draft holds — distinct or repeated — its
+reference checks cost no additional statement. Business scoping and every
+reference refusal are the catalog's and the compiler's, unchanged. The §18 tests
+prove this on the real Builder request: the same feature-owned count for drafts
+with 0, 1, 10 and 50 mixed references and with duplicates, exactly one catalog
+read among the feature-owned statements, one `forBusiness()` call per request
+whose result is the very object `validate()` receives, and the fifty-reference
+shape built from another Business's groups and fields refused in full at the same
+cost.
 
 ---
 
@@ -1583,7 +1654,8 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | Verb | Path | Purpose |
 |---|---|---|
 | GET | `/` | List |
-| POST | `/` | Create (from scratch or recipe) |
+| GET | `/new` | "New workflow" chooser page — from scratch or a recipe. **Must be registered before `/{workflowUid}`**, or `new` is read as a workflow uid |
+| POST | `/` | Create (from scratch or recipe) → 201 `{workflow, redirect}` |
 | GET | `/{workflowUid}` | Builder shell |
 | GET | `/{workflowUid}/draft` | Draft document + revision + validation errors (JSON) |
 | PUT | `/{workflowUid}/draft` | Autosave `{definition, definition_revision}` → 200 `{revision, errors}` or 409 |
@@ -1592,7 +1664,19 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | POST | `/{workflowUid}/simulate` | Test workflow `{contact_uid}` → simulated path (JSON), no side effects |
 | POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes via `WorkflowLifecycle`. `/resume` flips status in one short transaction and dispatches `RedispatchHeldEnrollments` after commit; it executes no step itself (§6.3) |
 | GET | `/{workflowUid}/settings`, `/enrollments`, `/enrollments/{enrollmentUid}/logs` | Tabs |
-| POST | `/{workflowUid}/enrollments` | Manual enrollment `{contact_uids[]}` (≤ 500, confirmed) |
+| POST | `/{workflowUid}/enrollments/manual` | Manual enrollment `{contact_uids[], confirmed}` (≤ 500, confirmed) → 202 `{request_uid, queued}`. **All or nothing.** A malformed body (not a list, empty, over 500, unconfirmed) is **422**. Any uid that names no contact of this Business — whether it exists nowhere or belongs to another Business — is **404**, byte-identical to every other V2-E not-found answer, naming no uid, with **no contact enqueued**, including the valid ones in the same batch (T-WF-21). A workflow that is not live is 409 |
+
+**`GET /new` — owner-approved (V2-E, PR #280).** V2-D's merged workflow list links
+"New workflow" to `{basePath}/new`. The chooser page is a legitimate part of the
+V2-E route set, recorded here rather than as an undocumented exception.
+
+**Manual enrollment path — owner-approved revision (V2-E, PR #280).** Earlier
+revisions of this table fixed manual enrollment at `POST /{workflowUid}/enrollments`.
+The owner approved `POST /{workflowUid}/enrollments/manual` for V2-E, and this row
+now records that path so the contract and the code agree. The change is
+additive-safe: `GET /{workflowUid}/enrollments` remains the history tab, and no
+client depended on the earlier POST path — V2-D's builder never calls manual
+enrollment.
 
 ---
 
