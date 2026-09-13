@@ -888,6 +888,15 @@
                                 'icon'   => 'shield',
                             ],
                             [
+                                // Slice AI-2 — the admin AI usage ledger summary.
+                                'url'    => url(config('app.admin_path') . '/ai-usage'),
+                                'slug'   => config('app.admin_path') . '/ai-usage',
+                                'name'   => 'AI Usage',
+                                'i18n'   => 'AI Usage',
+                                'access' => 'access backend',
+                                'icon'   => 'cpu',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/provider-events'),
                                 'slug'   => config('app.admin_path') . '/provider-events',
                                 'name'   => 'Provider Events',

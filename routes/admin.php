@@ -609,6 +609,11 @@
         });
         Route::get('usage-billing/safety-limits', 'UsageBillingController@safetyLimits')->name('usage-billing.safety-limits.index');
         Route::post('usage-billing/safety-limits', 'UsageBillingController@setSafetyLimit')->name('usage-billing.safety-limits.update');
+
+        // Unified Business Home & COO contract §10.3 C-9 (slice AI-2) — the
+        // admin-only AI usage ledger summary. Read-only, paginated, and inside
+        // this EnsureUserIsAdministrator group so no customer can reach it.
+        Route::get('ai-usage', 'AiUsageController@summary')->name('ai-usage.index');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
 
