@@ -268,6 +268,21 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
         $a = app(CustomerShellComposer::class)->currentMenuEntitlements($plainA);
         $b = app(CustomerShellComposer::class)->currentMenuEntitlements($plainB);
 
+        // Shared customer request query-budget optimization (Automations
+        // V2 §18) — the underlying data (Business, plan assignment/catalog,
+        // overrides, toggles) $a's resolution just read for businessA is
+        // now memoized per request (RequestScopedCache), and $viewingA
+        // names that same Business, so without a fresh request here
+        // $viewed's OWN resolution would correctly reuse those rows —
+        // they have not changed. Isolating it into a fresh request (as a
+        // real, separate page load would be) is what makes the query-cost
+        // assertion below a meaningful proof that view-as builds its own
+        // MenuEntitlements object, rather than a proxy invalidated by an
+        // optimization to a layer below the one this test exercises. The
+        // assertNotSame()s below are the actual security property and are
+        // unaffected either way.
+        $this->freshRequest();
+
         $viewed = null;
         $cost = $this->queriesDuring(function () use ($viewingA, &$viewed) {
             $viewed = app(CustomerShellComposer::class)->currentMenuEntitlements($viewingA);
@@ -335,8 +350,18 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
             return $this->queriesDuring(fn () => MenuEntitlements::forBusiness(app(EntitlementManager::class), $workspace, $business, $features, (int) $customer->user_id));
         };
 
+        $baseline = $count(CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES);
+
+        // Shared customer request query-budget optimization (Automations
+        // V2 §18) — see the equivalent comment in
+        // test_a_view_as_context_never_receives_a_non_view_as_or_other_business_snapshot():
+        // both calls ask about the same Workspace/Business, so a fresh
+        // request isolates them exactly as two real, separate page loads
+        // would be.
+        $this->freshRequest();
+
         $this->assertSame(
-            $count(CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES),
+            $baseline,
             $count(['crm', 'conversations', 'automations', 'website_generation', 'google_business_profile_module']),
         );
     }

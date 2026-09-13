@@ -94,7 +94,14 @@
                             <a class="nav-link" href="javascript:void(0);" data-bs-toggle="dropdown">
                                 <x-ds-icon name="bell" class="ficon" />
                                 @php
-                                    $count = Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->count();
+                                    // Shared customer request query-budget optimization
+                                    // (Automations V2 §18) — one read of this customer's
+                                    // unread notifications serves both the badge count
+                                    // and the dropdown's latest-10 list below, instead of
+                                    // querying the identical `user_id`/`mark_read` scope
+                                    // twice.
+                                    $unreadNotifications = Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->latest()->get();
+                                    $count = $unreadNotifications->count();
                                 @endphp
                                 @if($count)
                                     <span class="badge rounded-pill bg-danger badge-up">{{ $count }}</span>
@@ -110,7 +117,7 @@
                                 </li>
                                 <li class="scrollable-container media-list">
 
-                                    @foreach(Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->latest()->take('10')->cursor() as $value)
+                                    @foreach($unreadNotifications->take(10) as $value)
 
                                         <a class="d-flex" href="{{ route('user.account', ['tab' => 'notification']) }}">
                                             <div class="list-item d-flex align-items-start">
