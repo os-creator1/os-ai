@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Requests\Campaigns\CampaignBuilderRequest;
 use App\Http\Requests\Campaigns\MMSCampaignBuilderRequest;
 use App\Http\Requests\Campaigns\MMSQuickSendRequest;
@@ -57,6 +58,8 @@ use libphonenumber\PhoneNumberUtil;
  */
 class OutreachController extends CustomerBaseController
 {
+    use ResolvesBusinessTenancy;
+
     public function __construct(
         private readonly CampaignRepository $campaigns,
         private readonly WorkspaceRepository $workspaceRepository,
@@ -644,17 +647,7 @@ class OutreachController extends CustomerBaseController
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): Business
     {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null) {
-            abort(404);
-        }
-
-        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
-
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
-            abort(404);
-        }
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: false);
 
         return $business;
     }

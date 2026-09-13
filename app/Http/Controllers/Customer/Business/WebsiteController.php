@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Website\StoreWebsiteAssetRequest;
 use App\Library\Entitlement\EntitlementManager;
@@ -48,6 +49,8 @@ use Illuminate\Validation\ValidationException;
  */
 class WebsiteController extends CustomerBaseController
 {
+    use ResolvesBusinessTenancy;
+
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
@@ -420,33 +423,7 @@ class WebsiteController extends CustomerBaseController
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null || ! $workspace->is_active) {
-            abort(404);
-        }
-
-        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
-
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
-            abort(404);
-        }
-
-        if ($business->status !== BusinessStatus::Active) {
-            abort(404);
-        }
-
-        try {
-            $decision = $this->entitlementManager->decide($workspace, $business, PlatformFeature::WebsiteGeneration->value, (int) Auth::id());
-        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
-            abort(404);
-        }
-
-        if (! $decision->allowed) {
-            abort(404);
-        }
-
-        return [$workspace, $business];
+        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::WebsiteGeneration->value);
     }
 
     /**

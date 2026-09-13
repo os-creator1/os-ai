@@ -24,12 +24,23 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
             ->pluck('business_id');
     }
 
+    /**
+     * Shared customer request query-budget optimization (Automations V2
+     * §18, Phase 2) — the other half of userCanAccessBusiness()'s
+     * membership check, left unmemoized by Phase 1. Memoized per
+     * membership+business for the life of the current request only; every
+     * write below that can change what this answers invalidates the
+     * affected key(s).
+     */
     public function isAssigned(WorkspaceMembership $membership, int $businessId): bool
     {
-        return $this->query()
-            ->where('workspace_membership_id', $membership->id)
-            ->where('business_id', $businessId)
-            ->exists();
+        return $this->rememberForRequest(
+            "membership_business:isAssigned:{$membership->id}:{$businessId}",
+            fn () => $this->query()
+                ->where('workspace_membership_id', $membership->id)
+                ->where('business_id', $businessId)
+                ->exists(),
+        );
     }
 
     public function assign(WorkspaceMembership $membership, Business $business): WorkspaceMembershipBusiness
@@ -41,6 +52,7 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
             'workspace_membership_id' => $membership->id,
             'business_id' => $business->id,
         ]);
+        $this->forgetRequestCache("membership_business:isAssigned:{$membership->id}:{$business->id}");
 
         return $assignment;
     }
@@ -67,7 +79,7 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
             $this->guardSameWorkspace($membership, $business);
         }
 
-        return DB::transaction(function () use ($membership, $normalizedIds) {
+        $result = DB::transaction(function () use ($membership, $normalizedIds) {
             $this->query()
                 ->where('workspace_membership_id', $membership->id)
                 ->whereNotIn('business_id', $normalizedIds)
@@ -84,6 +96,10 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
                 ->where('workspace_membership_id', $membership->id)
                 ->get();
         });
+
+        $this->forgetRequestCachePrefixed("membership_business:isAssigned:{$membership->id}:");
+
+        return $result;
     }
 
     public function unassign(WorkspaceMembership $membership, int $businessId): void
@@ -92,6 +108,7 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
             ->where('workspace_membership_id', $membership->id)
             ->where('business_id', $businessId)
             ->delete();
+        $this->forgetRequestCache("membership_business:isAssigned:{$membership->id}:{$businessId}");
     }
 
     public function removeAllForBusinessInWorkspace(int $businessId, int $sourceWorkspaceId): Collection
@@ -106,6 +123,10 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
         }
 
         $this->query()->whereIn('id', $grants->pluck('id'))->delete();
+
+        foreach ($grants as $grant) {
+            $this->forgetRequestCache("membership_business:isAssigned:{$grant->workspace_membership_id}:{$businessId}");
+        }
 
         return $grants;
     }

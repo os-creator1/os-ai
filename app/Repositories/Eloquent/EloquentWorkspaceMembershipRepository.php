@@ -26,12 +26,24 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
         return $this->query()->whereKey($id)->lockForUpdate()->first();
     }
 
+    /**
+     * Shared customer request query-budget optimization (Automations V2
+     * §18, Phase 2) — this is the membership half of
+     * WorkspaceManager::userCanAccessBusiness(), which Phase 1 left
+     * unmemoized while it cached the Workspace/Business row reads either
+     * side of it. Memoized per workspace+user for the life of the current
+     * request only; every write below that can change what this answers
+     * invalidates the same key.
+     */
     public function findByWorkspaceAndUser(Workspace $workspace, int $userId): ?WorkspaceMembership
     {
-        return $this->query()
-            ->where('workspace_id', $workspace->id)
-            ->where('user_id', $userId)
-            ->first();
+        return $this->rememberForRequest(
+            "membership:find:{$workspace->id}:{$userId}",
+            fn () => $this->query()
+                ->where('workspace_id', $workspace->id)
+                ->where('user_id', $userId)
+                ->first(),
+        );
     }
 
     public function findByWorkspaceAndUserForUpdate(int $workspaceId, int $userId): ?WorkspaceMembership
@@ -77,6 +89,7 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
             ['workspace_id' => $workspace->id, 'user_id' => $userId],
             ['role' => $role, 'business_access_scope' => $scope, 'is_active' => true]
         );
+        $this->forgetRequestCache("membership:find:{$workspace->id}:{$userId}");
 
         return $membership;
     }
@@ -85,6 +98,7 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
     {
         $membership->role = $role;
         $membership->save();
+        $this->forgetMembershipCache($membership);
 
         return $membership;
     }
@@ -95,6 +109,7 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
     ): WorkspaceMembership {
         $membership->business_access_scope = $scope;
         $membership->save();
+        $this->forgetMembershipCache($membership);
 
         return $membership;
     }
@@ -103,7 +118,13 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
     {
         $membership->is_active = $isActive;
         $membership->save();
+        $this->forgetMembershipCache($membership);
 
         return $membership;
+    }
+
+    private function forgetMembershipCache(WorkspaceMembership $membership): void
+    {
+        $this->forgetRequestCache("membership:find:{$membership->workspace_id}:{$membership->user_id}");
     }
 }
