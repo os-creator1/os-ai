@@ -216,6 +216,12 @@ trait CreatesWebsiteFixtures
     protected function mockAiClient(?string $responseJson): \Mockery\MockInterface
     {
         $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        // AI-1 Correction 6 — the generator now asks the client whether the
+        // last call was refused for budget, so it can say "paused" instead
+        // of "unavailable" and skip a retry that cannot help. These doubles
+        // stand in for an ordinary, funded call.
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
         $mock->shouldReceive('complete')->andReturn($responseJson);
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
 
