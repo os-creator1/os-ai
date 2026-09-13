@@ -402,6 +402,72 @@ trait CreatesDashboardFixtures
         );
     }
 
+    /**
+     * Unified Business Home §14 (H-5) — a published website revision. The
+     * table is write-once, so this is exactly what publishing leaves behind;
+     * a rollback writes NO row here, which is why no rollback item exists.
+     */
+    protected function websiteRevision(Business $business, int $versionNumber, string $storageTimestamp): void
+    {
+        $websiteId = DB::table('websites')->where('business_id', $business->id)->value('id');
+
+        if ($websiteId === null) {
+            $this->website($business, 'published');
+            $websiteId = DB::table('websites')->where('business_id', $business->id)->value('id');
+        }
+
+        DB::table('website_revisions')->insert([
+            'uid' => (string) Str::uuid(),
+            'website_id' => $websiteId,
+            'version_number' => $versionNumber,
+            'snapshot' => json_encode(['pages' => []]),
+            'schema_version' => 1,
+            'created_by' => (int) $business->customer_id,
+            'created_at' => $storageTimestamp,
+        ]);
+    }
+
+    /** A transition of one opportunity into a status, as the Advisor records it. */
+    protected function opportunityTransition(int $opportunityId, string $toStatus, string $storageTimestamp): void
+    {
+        DB::table('opportunity_transitions')->insert([
+            'opportunity_id' => $opportunityId,
+            'category' => 'lifecycle',
+            'from_status' => 'open',
+            'to_status' => $toStatus,
+            'actor_type' => 'customer',
+            'reason_code' => 'customer_action',
+            'created_at' => $storageTimestamp,
+        ]);
+    }
+
+    /** One row in the Google operation ledger. */
+    protected function googleOperation(Business $business, string $type, string $storageTimestamp, string $status = 'succeeded'): void
+    {
+        DB::table('business_google_operations')->insert([
+            'uid' => (string) Str::uuid(),
+            'business_id' => $business->id,
+            'operation_type' => $type,
+            'local_operation_key' => $type . ':' . $business->id . ':' . Str::uuid(),
+            'status' => $status,
+            'created_at' => $storageTimestamp,
+            'updated_at' => $storageTimestamp,
+        ]);
+    }
+
+    /** One field-level Business detail change, as the knowledge profile records it. */
+    protected function businessDetailChange(Business $business, string $fieldKey, string $storageTimestamp, ?int $actorUserId = null): void
+    {
+        DB::table('business_knowledge_profile_changes')->insert([
+            'business_id' => $business->id,
+            'field_key' => $fieldKey,
+            'old_value' => json_encode('before'),
+            'new_value' => json_encode('after'),
+            'source' => 'customer',
+            'actor_user_id' => $actorUserId ?? (int) $business->customer_id,
+            'created_at' => $storageTimestamp,
+        ]);
+    }
     protected function website(Business $business, string $status): void
     {
         DB::table('websites')->updateOrInsert(['business_id' => $business->id], [

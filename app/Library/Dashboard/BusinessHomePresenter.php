@@ -78,6 +78,7 @@ final class BusinessHomePresenter
         private readonly BusinessConversationReadModel $conversations,
         private readonly OpportunityRepository $opportunities,
         private readonly HomeVisitMarker $visits,
+        private readonly RecentWorkReader $recentWorkReader,
         private readonly DashboardLinkGate $links,
         private readonly ParentAccountSwitch $parentSwitch,
     ) {
@@ -263,6 +264,19 @@ final class BusinessHomePresenter
                     $failed[] = DashboardSnapshot::BAND_AUTOMATIONS;
                 }
             }
+        }
+
+        // 7 — Recent work: what actually happened to this Business, from the
+        // rows that already prove it (§14). Absent when nothing did.
+        try {
+            $recent = $this->recentWork($context, $user, $entitlements, $scoped, $business);
+
+            if ($recent !== null) {
+                $bands[DashboardSnapshot::BAND_RECENT_WORK] = $recent;
+            }
+        } catch (Throwable $e) {
+            report($e);
+            $failed[] = DashboardSnapshot::BAND_RECENT_WORK;
         }
 
         // Spend: gone from the Business Home entirely (§5). Balance,
@@ -789,6 +803,41 @@ final class BusinessHomePresenter
                 ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations')
                 : null,
         ];
+    }
+
+    /**
+     * §14 (H-5) — Recent work: the factual timeline.
+     *
+     * The reader decides WHAT happened; this method decides only whether this
+     * actor can open each destination. When they cannot, the item still
+     * renders — as plain text rather than a link, because the event happened
+     * either way and hiding it would make the timeline lie by omission.
+     *
+     * @param  array<int, string>  $scoped
+     * @return array<string, mixed>|null
+     */
+    private function recentWork(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, Business $business): ?array
+    {
+        $items = [];
+
+        foreach ($this->recentWorkReader->recent($business) as $item) {
+            $items[] = [
+                'key' => $item->key,
+                'text' => $item->text,
+                'at' => $item->at,
+                'url' => $this->links->url(
+                    $context,
+                    $user,
+                    $entitlements,
+                    $item->routeName,
+                    $item->businessScoped ? array_merge($scoped, $item->routeParameters) : $item->routeParameters,
+                    $item->permissions,
+                    $item->featureKey,
+                ),
+            ];
+        }
+
+        return $items === [] ? null : ['items' => $items];
     }
 
     /**

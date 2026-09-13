@@ -212,9 +212,12 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $this->authenticateAs($customer);
 
         $sql = $this->sqlDuring(fn () => $this->home()->assertOk());
-        $websiteReads = count(array_filter($sql, fn (string $s) => str_contains($s, 'websites')));
+        $statusReads = count(array_filter($sql, fn (string $s) => str_contains($s, 'website_status')));
 
-        $this->assertSame(1, $websiteReads, 'The status row the page already reads is the only website read.');
+        // H-5's Recent work reads `website_revisions` joined to `websites` for
+        // its own factual item; what must stay true here is that Visibility
+        // adds no read, taking both its facts off the one status row.
+        $this->assertSame(1, $statusReads, 'The status row the page already reads is the only website STATUS read.');
         $this->assertSame(
             1,
             count(array_filter($sql, fn (string $s) => str_contains($s, 'business_google_locations'))),
@@ -618,9 +621,15 @@ class BusinessHomeOperatingHealthTest extends TestCase
         $this->authenticateAs($customer);
 
         $sql = $this->sqlDuring(fn () => $this->home()->assertOk());
-        $executionReads = count(array_filter($sql, fn (string $s) => str_contains($s, 'automation_executions')));
+        $kpiReads = count(array_filter($sql, fn (string $s) => str_contains($s, 'automation_executions') && str_contains($s, 'group by')));
+        $recentWorkReads = count(array_filter($sql, fn (string $s) => str_contains($s, 'automation_executions') && str_contains($s, 'automations')));
 
-        $this->assertLessThanOrEqual(2, $executionReads, 'The two B5 comparison periods, and nothing added: ' . implode(' | ', $sql));
+        // The band itself adds nothing: both reads are the B5 comparison's two
+        // periods. H-5's Recent work owns exactly one more, through the same
+        // seam — it joins `automations` for the name, which is what tells the
+        // two statements apart.
+        $this->assertSame(2, $kpiReads, 'The two B5 comparison periods: ' . implode(' | ', $sql));
+        $this->assertLessThanOrEqual(1, $recentWorkReads, 'Recent work reads the ledger once, through the seam that owns it.');
     }
 
     // =================================================================

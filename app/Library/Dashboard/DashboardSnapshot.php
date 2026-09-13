@@ -42,6 +42,9 @@ final class DashboardSnapshot
 
     public const BAND_AUTOMATIONS = 'automations';
 
+    /** Unified Business Home §14 (H-5) — the factual timeline of real events. */
+    public const BAND_RECENT_WORK = 'recent_work';
+
     public const BAND_ACTIONS = 'actions';
     public const BAND_CLIENTS = 'clients';
 
