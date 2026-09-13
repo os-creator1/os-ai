@@ -34,6 +34,14 @@ final class DashboardSnapshot
     public const BAND_ATTENTION = 'attention';
     public const BAND_RECOMMENDATIONS = 'recommendations';
     public const BAND_HEADLINES = 'headlines';
+
+    /** Unified Business Home §2.6 (H-4) — the three operating-health bands. */
+    public const BAND_VISIBILITY = 'visibility';
+
+    public const BAND_CONVERSATIONS = 'conversations';
+
+    public const BAND_AUTOMATIONS = 'automations';
+
     public const BAND_ACTIONS = 'actions';
     public const BAND_CLIENTS = 'clients';
 

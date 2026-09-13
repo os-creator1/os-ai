@@ -2,7 +2,9 @@
 
     namespace App\Repositories\Eloquent;
 
+    use App\Enums\Automation\Workflow\ContactCreationSource;
     use App\Exceptions\GeneralException;
+    use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
     use App\Jobs\AutomationJob;
     use App\Library\Tool;
     use App\Models\Campaigns;
@@ -230,7 +232,11 @@
          * @return JsonResponse
          * @throws Throwable
          */
-        public function storeContact(ContactGroups $contactGroups, array $input): JsonResponse
+        public function storeContact(
+            ContactGroups $contactGroups,
+            array $input,
+            ContactCreationSource $creationSource = ContactCreationSource::Other,
+        ): JsonResponse
         {
 
             $phone = str_replace(['+', '(', ')', '-', ' '], '', $input['phone']);
@@ -261,6 +267,16 @@
                         // no action/provider work runs inside this request.
                         if ($contact->business_id !== null) {
                             dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
+
+                            // Automations V2-C — the v2 trigger runs BESIDE B4's
+                            // dispatch above, never instead of it (§15.1): both
+                            // engines are live until V2-G retires B4, and a
+                            // customer's existing B4 automations must keep
+                            // behaving exactly as they did. Same conditions as
+                            // B4's — Business-scoped only, after commit, always
+                            // queued — and the creation source is the one the
+                            // caller declared, never inferred here.
+                            dispatch(EnrollWorkflowContact::forContactCreated((int) $contact->id, $creationSource))->afterCommit();
                         }
 
 
@@ -657,7 +673,11 @@
         /**
          * @throws Throwable
          */
-        public function createContactFromRequest(ContactGroups $contactGroups, array $input)
+        public function createContactFromRequest(
+            ContactGroups $contactGroups,
+            array $input,
+            ContactCreationSource $creationSource = ContactCreationSource::Other,
+        )
         {
             $messages = [];
             foreach ($contactGroups->getFields as $field) {
@@ -713,6 +733,15 @@
             // after commit and always queued.
             if ($subscriber->wasRecentlyCreated && $subscriber->business_id !== null) {
                 dispatch(AutomationJob::forContactCreated((int) $subscriber->id))->afterCommit();
+
+                // Automations V2-C — beside B4's dispatch, under the SAME
+                // conditions: firstOrNew() above may have matched an existing
+                // subscriber, and re-saving one is not a creation, so only a
+                // genuinely new, Business-scoped Contact triggers a v2
+                // enrollment. The source is the caller's declaration — this is
+                // the seam the public opt-in form and the in-app "Add contact"
+                // form share, and only the caller knows which one it is.
+                dispatch(EnrollWorkflowContact::forContactCreated((int) $subscriber->id, $creationSource))->afterCommit();
             }
 
             $contactGroups->updateCache();

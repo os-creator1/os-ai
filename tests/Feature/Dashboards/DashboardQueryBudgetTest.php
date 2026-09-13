@@ -34,7 +34,13 @@ class DashboardQueryBudgetTest extends TestCase
 
     private const BUSINESS_HOME_ANALYTICS = 6;
 
-    private const BUSINESS_HOME_CONVERSATIONS = 2;
+    /**
+     * Observed: the two Business performance periods (H-3), then H-4's two —
+     * ONE statement for Incoming and Replied together, and one for the
+     * current Awaiting reply state. The contract's own ceiling is 5, which
+     * leaves room for the since-visit count when the activity band renders.
+     */
+    private const BUSINESS_HOME_CONVERSATIONS = 4;
 
     /** Observed: status read, Workspace, three capacity reads, outreach, two Agency-wide control reads. */
     private const AGENCY_HOME_DASHBOARD_OWNED = 8;
@@ -84,12 +90,43 @@ class DashboardQueryBudgetTest extends TestCase
 
         $this->assertLessThanOrEqual(10, $cost['dashboard']);
         $this->assertLessThanOrEqual(6, $cost['analytics']);
-        $this->assertLessThanOrEqual(2, $cost['conversations']);
+        $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
         $this->assertLessThanOrEqual(18, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Total Business Home product-data ceiling.');
 
         // Within the TTL the Analytics seam costs nothing (B5's own cache).
         $warm = $this->businessHomeCost($customer->user, flush: false);
         $this->assertSame(0, $warm['analytics']);
+    }
+
+    /**
+     * H-3 §2.5 — Business performance gained a chart, and the page's cost did
+     * not move: the series is fetched afterwards by the browser from B5's own
+     * endpoint. No daily-bucket aggregate (B5's `CASE WHEN created_at < ?`
+     * expression, the only thing that produces one) runs on a Home request,
+     * whatever period the customer selected.
+     */
+    public function test_the_business_home_request_runs_no_series_aggregate_for_any_period(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Series Venue', 'Series Account');
+        $this->populate($business, 1);
+        $this->authenticateAs($customer);
+
+        $periods = [[], ['range' => 'last_90_days'], ['range' => 'custom', 'start' => '2026-06-01', 'end' => '2026-08-31']];
+
+        foreach ($periods as $period) {
+            Cache::flush();
+            $sql = $this->sqlDuring(fn () => $this->get(route('user.home', $period))->assertOk());
+
+            $this->assertNotEmpty($sql, 'Precondition: the request read something.');
+
+            foreach ($sql as $statement) {
+                $this->assertStringNotContainsString(
+                    'case when created_at <',
+                    strtolower($statement),
+                    'A daily-bucket series aggregate ran on the Home request: ' . $statement,
+                );
+            }
+        }
     }
 
     public function test_the_whole_dashboard_request_builds_the_entitlement_snapshot_exactly_once(): void
