@@ -839,6 +839,48 @@
             Route::post('/refresh', 'Business\GoogleBusinessProfileController@refresh')->middleware('throttle:10,1')->name('refresh');
         });
 
+        /*
+        |----------------------------------------------------------------
+        | Automations V2-E — visual workflows (contract §20.2)
+        |----------------------------------------------------------------
+        |
+        | REGISTERED BEFORE THE B4 GROUP BELOW, AND THAT ORDER IS LOAD-BEARING.
+        | B4 declares `GET automations/{automationUid}`. Registered after it,
+        | every `automations/workflows...` URL would be captured by that
+        | wildcard with automationUid = "workflows" and answered by the wrong
+        | controller. Laravel matches in registration order, so this group
+        | must come first — a test pins it.
+        |
+        | Every action runs the full chain (§14.1) inside
+        | ResolvesAutomationWorkflows: permission → Account → Business inside
+        | it → access → active → Automations entitlement → workflow inside that
+        | Business. No implicit route-model binding anywhere in the group.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/automations/workflows')->name('businesses.automations.workflows.')->group(function () {
+            Route::get('/', 'Business\AutomationWorkflowsController@listing')->name('index');
+            Route::post('/', 'Business\AutomationWorkflowsController@store')->name('store');
+            Route::get('/{workflowUid}', 'Business\AutomationWorkflowsController@show')->name('show');
+            Route::get('/{workflowUid}/settings', 'Business\AutomationWorkflowsController@settings')->name('settings');
+            Route::post('/{workflowUid}/pause', 'Business\AutomationWorkflowsController@pause')->name('pause');
+            Route::post('/{workflowUid}/resume', 'Business\AutomationWorkflowsController@resume')->name('resume');
+            Route::post('/{workflowUid}/archive', 'Business\AutomationWorkflowsController@archive')->name('archive');
+
+            Route::get('/{workflowUid}/draft', 'Business\AutomationWorkflowDraftController@show')->name('draft.show');
+            // §14.4 — throttled at the contract's autosave rate.
+            Route::put('/{workflowUid}/draft', 'Business\AutomationWorkflowDraftController@autosave')
+                ->middleware('throttle:' . \App\Library\Automation\Workflow\WorkflowLimits::MAX_AUTOSAVES_PER_MINUTE . ',1')
+                ->name('draft.autosave');
+            Route::post('/{workflowUid}/publish', 'Business\AutomationWorkflowDraftController@publish')->name('publish');
+            Route::post('/{workflowUid}/discard-draft', 'Business\AutomationWorkflowDraftController@discard')->name('discard-draft');
+            Route::post('/{workflowUid}/simulate', 'Business\AutomationWorkflowDraftController@simulate')->middleware('throttle:30,1')->name('simulate');
+
+            Route::post('/{workflowUid}/stop-all', 'Business\AutomationWorkflowEnrollmentsController@stopAll')->name('stop-all');
+            Route::get('/{workflowUid}/enrollments', 'Business\AutomationWorkflowEnrollmentsController@history')->name('enrollments.index');
+            Route::get('/{workflowUid}/enrollments/{enrollmentUid}/logs', 'Business\AutomationWorkflowEnrollmentsController@logs')->name('enrollments.logs');
+            Route::post('/{workflowUid}/enrollments/manual', 'Business\AutomationWorkflowEnrollmentsController@manual')->middleware('throttle:10,1')->name('enrollments.manual');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/automations')->name('businesses.automations.')->group(function () {
             Route::get('/', 'Business\AutomationsController@listing')->name('index');
             Route::get('/create', 'Business\AutomationsController@create')->name('create');
