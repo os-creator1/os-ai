@@ -38,6 +38,10 @@ class SettingsHubNavigationTest extends TestCase
 
     public function test_core_and_growth_get_a_flat_sidebar_with_one_direct_settings_destination(): void
     {
+        // The Opportunity engine is on, so an Advisor entry would render if
+        // there still were one.
+        config(['opportunity.enabled' => true]);
+
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
             [$customer, $business, $workspace] = $this->tenant($tier, 'Harbor Lane ' . $tier->value, 'Jazmin Media ' . $tier->value);
             $this->authenticateAs($customer);
@@ -50,7 +54,8 @@ class SettingsHubNavigationTest extends TestCase
             if ($tier === WorkspacePlanTier::Growth) {
                 array_splice($expected, 5, 0, ['gbp']);
             }
-            $this->assertSame($expected, array_values(array_diff($keys, ['advisor'])), "[{$tier->value}] the contracted flat sidebar, in order.");
+            $this->assertSame($expected, $keys, "[{$tier->value}] the contracted flat sidebar, in order — no Advisor.");
+            $this->assertStringNotContainsString('Advisor', $this->shellText($html), 'Business Home carries the next best move; there is no separate Advisor module.');
 
             $this->assertStringNotContainsString('has-sub', $sidebar, 'Nothing expands in the sidebar.');
             $this->assertStringNotContainsString('menu-content', $sidebar);
@@ -60,7 +65,7 @@ class SettingsHubNavigationTest extends TestCase
             $this->assertContains(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $links, 'Conversations goes straight to the Business conversations.');
             $this->assertContains(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]), $links, 'Settings goes straight to the hub.');
 
-            foreach (['messages', 'inbox', 'business', 'locations', 'text-messaging', 'usage-billing', 'plan', 'team', 'team-members', 'blocked-numbers', 'account-details', 'advanced'] as $gone) {
+            foreach (['advisor', 'messages', 'inbox', 'business', 'locations', 'text-messaging', 'usage-billing', 'plan', 'team', 'team-members', 'blocked-numbers', 'account-details', 'advanced'] as $gone) {
                 $this->assertNotContains($gone, $keys, "[{$tier->value}] [{$gone}] is not a sidebar entry.");
             }
 
@@ -100,9 +105,9 @@ class SettingsHubNavigationTest extends TestCase
             $this->assertSame([
                 'business-setup' => ['business-details', 'locations'],
                 'communication' => ['text-messaging'],
-                'account-billing' => ['usage-billing', 'plan', 'team'],
+                'billing-team' => ['usage-billing', 'plan', 'team'],
                 'features' => [],
-            ], $this->settingsHubModules($html), "[{$tier->value}] Business setup, Communication, Account & billing.");
+            ], $this->settingsHubModules($html), "[{$tier->value}] Business setup, Communication, Billing & team.");
 
             foreach ([
                 'business-details' => route('customer.business.edit'),
@@ -115,6 +120,11 @@ class SettingsHubNavigationTest extends TestCase
                 $this->assertMatchesRegularExpression('/data-module="' . $module . '">\s*<a href="' . preg_quote($url, '/') . '"/', $html, "[{$module}] links to its own screen.");
                 $this->get($url)->assertOk();
             }
+
+            // Plain words: the section is "Billing & team" — the technical account
+            // is not a thing a Core or Growth customer manages.
+            $this->assertMatchesRegularExpression('/data-section="billing-team">.*?Billing &amp; team/s', $html);
+            $this->assertStringNotContainsString('Account &amp; billing', $html);
 
             // The feature switches this Business had on its account page are here.
             $this->assertStringContainsString('data-business-feature-switch', $html);
@@ -259,8 +269,8 @@ class SettingsHubNavigationTest extends TestCase
 
         $modules = $this->settingsHubModules($this->hub($workspace, $clientOne)->getContent());
 
-        $this->assertSame(['communication', 'account-billing'], array_values(array_diff(array_keys($modules), ['business-setup'])));
-        $this->assertSame(['usage-billing'], $modules['account-billing'], "Only the client's own billing.");
+        $this->assertSame(['communication', 'billing-team'], array_values(array_diff(array_keys($modules), ['business-setup'])));
+        $this->assertSame(['usage-billing'], $modules['billing-team'], "Only the client's own billing.");
         foreach (['plan', 'team', 'account-details', 'blocked-numbers', 'messaging-provider'] as $agencyOnly) {
             $this->assertNotContains($agencyOnly, array_merge(...array_values($modules)), "[{$agencyOnly}] belongs to the Agency account.");
         }

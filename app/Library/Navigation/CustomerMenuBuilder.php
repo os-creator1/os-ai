@@ -153,9 +153,11 @@ final class CustomerMenuBuilder
 
         $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
 
-        if (config('opportunity.enabled', false)) {
-            $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
-        }
+        // No separate Advisor entry (owner decision): the Business Home already
+        // carries the next best move and the way into its recommendations, and
+        // customer-facing Opportunities belong to the CRM sales module. Two
+        // primary modules for one idea would confuse. The Advisor's routes,
+        // pages and Home links are untouched — only the sidebar entry went.
 
         // Conversations — ONE destination, the selected Business's own
         // conversations (owner decision: no "Messages → Inbox" group around a
@@ -278,7 +280,7 @@ final class CustomerMenuBuilder
      *
      *   Business setup     Business details, Locations
      *   Communication      Text messaging
-     *   Account & billing  Billing, Plan & subscription, Team
+     *   Billing & team     Billing, Plan & subscription, Team
      *
      * The Core/Growth account is not a customer-managed object of its own:
      * there is no "Account" module, and its plan and team sit here beside the
@@ -328,10 +330,10 @@ final class CustomerMenuBuilder
             ]),
         ];
 
-        $accountAndBilling = [];
+        $billingAndTeam = [];
 
         if ($context->canManageBilling()) {
-            $accountAndBilling[] = $this->item($user, 'usage-billing', 'Billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
+            $billingAndTeam[] = $this->item($user, 'usage-billing', 'Billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
                 'customer.workspaces.businesses.usage-billing.',
             ]);
         }
@@ -340,18 +342,19 @@ final class CustomerMenuBuilder
             if ((bool) $user->is_customer) {
                 // This account's own AI Business OS plan (Workspace plan
                 // domain) — never the inherited SMS plans/subscriptions page.
-                $accountAndBilling[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspace->uid], $current, [
+                $billingAndTeam[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspace->uid], $current, [
                     'customer.workspaces.plan.',
                 ]);
             }
 
-            $accountAndBilling[] = $this->teamItem($user, $workspace->uid, $current);
+            $billingAndTeam[] = $this->teamItem($user, $workspace->uid, $current);
         }
 
         return $this->sections([
             'business-setup' => ['Business setup', $setup],
             'communication' => ['Communication', $communication],
-            'account-billing' => [$agencyClient ? 'Billing' : 'Account & billing', $accountAndBilling],
+            // Plain words: "Account" is not a thing a Core or Growth customer manages.
+            'billing-team' => [$agencyClient ? 'Billing' : 'Billing & team', $billingAndTeam],
         ]);
     }
 

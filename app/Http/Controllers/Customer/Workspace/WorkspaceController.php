@@ -140,7 +140,7 @@ class WorkspaceController extends CustomerBaseController
      * OWNER DECISION — a Core or Growth account is not a customer-managed
      * object. It holds exactly one Business, and everything a customer
      * configures lives in that Business's Settings (Business setup,
-     * Communication, Account & billing — plan and team included). So this page
+     * Communication, Billing & team — plan and team included). So this page
      * is never shown for one: its customer is sent to their Business's
      * Settings instead. The one exception is an account with no Business yet,
      * where the page shows only the form that creates it (the zero-Business

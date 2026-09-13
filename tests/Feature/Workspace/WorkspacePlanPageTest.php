@@ -324,7 +324,7 @@ class WorkspacePlanPageTest extends TestCase
         $home = $this->home()->assertOk()->getContent();
         $settings = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
-        // Settings → Account & billing → Plan & subscription.
+        // Settings → Billing & team → Plan & subscription.
         $this->assertStringContainsString('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', $settings);
         $this->assertStringNotContainsString('href="' . route('customer.subscriptions.index') . '"', $settings);
         $this->assertStringNotContainsString('href="' . route('customer.subscriptions.index') . '"', $home, 'Neither the sidebar nor the profile menu links the legacy subscriptions page.');

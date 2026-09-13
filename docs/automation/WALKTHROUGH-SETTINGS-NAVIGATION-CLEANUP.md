@@ -14,10 +14,15 @@ CRM Opportunity domain, Telnyx provisioning, the Results body.
 
 ## 1. The Business sidebar is flat
 
-Home · Advisor (when the Opportunity engine is on — it exists today) ·
-Conversations · Contacts · Automations · Website · Get found · Results ·
+Home · Conversations · Contacts · Automations · Website · Get found · Results ·
 Settings. Only modules that exist are listed; there is no Opportunities or
 Forms link.
+
+- **No Advisor entry.** The Business Home already carries the next best move
+  and its way into the recommendations, and customer-facing Opportunities
+  belong to the CRM sales module. The Advisor's routes, pages, Home
+  recommendations and deep links from Home are untouched — only the Business
+  sidebar entry is gone. (The Agency account frame's own entry is unchanged.)
 
 - **Conversations** is one destination — the selected Business's
   conversations, entitlement-gated as before. The "Messages → Inbox" group is
@@ -39,7 +44,7 @@ cannot use is not there.
 |---|---|---|
 | Business setup | Business details (the customer's primary Business), Locations | same |
 | Communication | Text messaging | same |
-| Account & billing | Billing, Plan & subscription, Team | **Billing** only — plan and team are the Agency account's |
+| Billing & team | Billing, Plan & subscription, Team | **Billing** only — plan and team are the Agency account's |
 | Features | the Business's feature switches (managers) | — (on the Agency account page) |
 
 The feature switches (Conversations, Automations, Website, Get found) moved

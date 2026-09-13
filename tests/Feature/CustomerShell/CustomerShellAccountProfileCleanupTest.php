@@ -316,7 +316,7 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
-        $this->assertContains('team', $this->settingsHubModules($hub)['account-billing'] ?? []);
+        $this->assertContains('team', $this->settingsHubModules($hub)['billing-team'] ?? []);
         $this->assertStringContainsString('href="' . route('customer.workspaces.team.show', $workspace->uid) . '"', $hub);
         foreach ([$this->shellText($html), html_entity_decode(strip_tags($hub))] as $text) {
             $this->assertStringNotContainsStringIgnoringCase('sub-account', $text);
