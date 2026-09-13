@@ -49,11 +49,13 @@ class ContextSwitcherTest extends TestCase
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Business\s*</', $shell);
         $this->assertStringContainsString('Harbor Lane Studios', $shell);
 
-        // Their own Business is listed as current, and their account is the
-        // one other destination. Nothing else.
+        // Their own Business is listed as current, and their account is
+        // reached as settings — never as a frame that would only ask them to
+        // choose that same Business again. Nothing else.
         $this->assertSame(1, $this->optionCount($shell, 'context-option-business'));
-        $this->assertSame(1, $this->optionCount($shell, 'context-option-account'));
-        $this->assertStringContainsString('Jazmin Media', $shell);
+        $this->assertSame(0, $this->optionCount($shell, 'context-option-account'));
+        $this->assertStringContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $shell);
+        $this->assertStringContainsString('Account settings', $shell);
         $this->assertSame(1, substr_count($shell, 'aria-current="true"'));
 
         // No search box over one Business, and no invented multi-account UI.
@@ -80,56 +82,50 @@ class ContextSwitcherTest extends TestCase
         $this->assertStringNotContainsString('action="' . route('customer.workspaces.store') . '"', $shell);
     }
 
-    public function test_a_core_owner_can_enter_the_account_frame_and_come_back(): void
+    /**
+     * Customer shell cleanup — a Core account's own frame would only ask its
+     * customer to choose the one Business they have, so it is not a place the
+     * shell parks them. Its settings page stays reachable, inside the
+     * Business frame.
+     */
+    public function test_a_core_owner_is_never_parked_in_an_account_frame(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Harbor Lane Studios', 'Jazmin Media');
         $this->authenticateAs($customer);
 
         $this->home()->assertOk()->assertSee('Business navigation', false);
 
-        // Account: the shell becomes the account frame and STAYS there, even
-        // though exactly one Business could be resolved.
+        // Even a posted account choice (a stale page, a hand-made request)
+        // falls straight through to the Business, on this request and the next.
         $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
 
-        $account = $this->home()->assertOk();
-        $account->assertSee('Account navigation', false);
-        $accountShell = $this->shellHtml($account->getContent());
-        $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Account\s*</', $accountShell);
-        $this->assertStringContainsString('Jazmin Media', $accountShell);
-
-        // The block names the account it is standing in — never "No business
-        // yet" to someone who has one. That fallback was unreachable before
-        // this switcher could enter the account frame.
-        $this->assertMatchesRegularExpression(
-            '/customer-context-current-name[^>]*>\s*Jazmin Media\s*</',
-            $accountShell,
-            'The account frame names the account.'
-        );
-        $this->assertStringNotContainsString('No business yet', $accountShell);
-        $this->assertStringNotContainsString('No client account yet', $accountShell);
-
-        // The document title names the same context the block does.
-        $this->assertStringContainsString('<title>Dashboard · Jazmin Media', $account->getContent());
-        $this->assertContains('accounts', $this->menuKeys($account->getContent()));
-
-        // A second request keeps the choice (the preference, not a one-off).
-        $this->home()->assertOk()->assertSee('Account navigation', false);
-
-        // And the Business is one click away again.
-        $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
+        $home = $this->home()->assertOk();
+        $home->assertSee('Business navigation', false);
+        $home->assertDontSee('Account navigation', false);
+        $this->assertStringNotContainsString('data-kind="chooser"', $home->getContent());
+        $this->assertMatchesRegularExpression('/customer-context-current-name[^>]*>\s*Harbor Lane Studios\s*</', $this->shellHtml($home->getContent()));
         $this->home()->assertOk()->assertSee('Business navigation', false);
+
+        // The account itself is one click away as settings, without leaving the Business.
+        $settings = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $settings->assertSee('Business navigation', false);
+        $this->assertStringContainsString('Jazmin Media', $settings->getContent());
     }
 
     public function test_a_business_route_ends_a_deliberate_account_choice(): void
     {
-        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
-        $this->authenticateAs($customer);
+        // An Agency account frame is a real destination, so a choice to stand
+        // in it holds — until a Business-scoped page says otherwise.
+        [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Client Two');
+        $this->authenticateAs($agency);
 
+        $this->switchTo($workspace, $clientOne);
         $this->switchToAccount($workspace);
         $this->home()->assertOk()->assertSee('Account navigation', false);
 
         // Opening the Business's own page is a Business-frame intent.
-        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]))->assertOk();
         $this->home()->assertOk()->assertSee('Business navigation', false);
     }
 
@@ -139,18 +135,25 @@ class ContextSwitcherTest extends TestCase
 
     public function test_an_invited_second_account_is_offered_and_switchable(): void
     {
+        // The customer's own Growth account, and an Agency account they were
+        // invited into as an agency-wide admin.
         [$customer, $ownBusiness, $ownWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Lane Studios', 'Jazmin Media');
-        [$host, $hostBusiness, $hostWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Northwind Bakery', 'Northwind Group');
+        [$host, $hostBusiness, $hostWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Northwind Bakery', 'Northwind Group');
         $this->member($hostWorkspace, $customer->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
 
         $this->authenticateAs($customer);
         $shell = $this->shellHtml($this->home()->assertOk()->getContent());
 
-        // Both accounts, and the Businesses of both, each named by its account.
-        $this->assertSame(2, $this->optionCount($shell, 'context-option-account'));
+        // The Businesses of both, each named by its account. Only the Agency
+        // account is a frame of its own; the Growth account is entered
+        // through its Business.
+        $this->assertSame(1, $this->optionCount($shell, 'context-option-account'));
         $this->assertSame(2, $this->optionCount($shell, 'context-option-business'));
         $this->assertStringContainsString('Jazmin Media', $shell);
         $this->assertStringContainsString('Northwind Group', $shell);
+
+        $this->switchTo($ownWorkspace, $ownBusiness)->assertRedirect(route('user.home'));
+        $this->assertStringContainsString('Harbor Lane Studios', $this->shellText($this->home()->assertOk()->getContent()));
 
         // Entering the invited account's frame works and is remembered.
         $this->switchToAccount($hostWorkspace)->assertRedirect(route('user.home'));

@@ -116,6 +116,26 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
+     * Owner product decision — "remove Messaging channel from normal UX".
+     * Core and Growth both offer the plain-language Text messaging status
+     * item, and neither offers the Agency-only Advanced (BYO Messaging
+     * provider) surface.
+     */
+    public function test_core_and_growth_offer_text_messaging_but_never_the_advanced_byo_surface(): void
+    {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$customer] = $this->tenant($tier);
+            $this->authenticateAs($customer);
+
+            $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+            $this->assertContains('text-messaging', $keys, "[{$tier->value}] must offer Text messaging.");
+            $this->assertNotContains('advanced', $keys, "[{$tier->value}] must never offer the Agency-only Advanced surface.");
+            $this->assertNotContains('messaging-provider', $keys, "[{$tier->value}] must never offer Messaging provider.");
+        }
+    }
+
+    /**
      * Messages is Inbox only: the legacy outbound Send and Campaigns pages
      * are no longer customer destinations (their routes stay registered).
      */

@@ -201,6 +201,17 @@ final class CustomerMenuBuilder
             ]);
         }
 
+        // Owner product decision — the plain-language, read-only status
+        // surface every tier sees (Core, Growth, and an Agency Business
+        // using managed transport). No tier/permission-beyond-view_numbers
+        // gate: unlike the Agency-only Advanced (BYO) item below, this is
+        // never supposed to disappear for an ordinary customer.
+        $settings[] = $this->item($user, 'text-messaging', 'Text messaging', 'message-circle', ['view_numbers'], 'customer.workspaces.businesses.text-messaging.show', $scoped, $current, [
+            'customer.workspaces.businesses.text-messaging.',
+        ]);
+
+        $settings[] = $this->teamItem($user, $current);
+
         $advanced = $this->advancedItems($context, $user, $current, 'customer.workspaces.businesses.channels.index', $scoped);
 
         if ($advanced !== null) {
@@ -266,6 +277,8 @@ final class CustomerMenuBuilder
             ]);
         }
 
+        $settings[] = $this->teamItem($user, $current);
+
         $advanced = $this->advancedItems($context, $user, $current, 'customer.channels.index', []);
 
         if ($advanced !== null) {
@@ -279,6 +292,34 @@ final class CustomerMenuBuilder
         }
 
         return array_values(array_filter($items));
+    }
+
+    /**
+     * Settings → Team: the people who sign in to work on this customer's
+     * behalf, each with their own permissions (the delegated-access surface,
+     * named "Team members" on its own pages, Slice 1 terminology §4). It moved
+     * here from the user dropdown, which now carries only the person's own
+     * things; the destination is the same one, so nothing is duplicated.
+     *
+     * Offered to exactly the actors the dropdown offered it to, and the routes
+     * still enforce their own boundary (customer.sub_only):
+     *  - only while the platform allows customers to add team members;
+     *  - only to the account holder themselves — a team member (a user with a
+     *    parent) never manages the team, and neither does a team member who
+     *    is currently signed in AS the account holder;
+     *  - never while viewing as a client (the classification drops it).
+     */
+    private function teamItem(User $user, string $current): ?MenuItem
+    {
+        if (! config('account.create_subaccount') || ! (bool) $user->is_customer || $user->parent_id !== null) {
+            return null;
+        }
+
+        if (session()->has('parent_user_id') && session()->has('temp_user_id')) {
+            return null;
+        }
+
+        return $this->item($user, 'team-members', 'Team', 'users', ['access_backend'], 'customer.sub_accounts.index', [], $current, ['customer.sub_accounts.']);
     }
 
     /**

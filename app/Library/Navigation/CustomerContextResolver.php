@@ -134,12 +134,14 @@ final class CustomerContextResolver
         //     account must still be visible (it was resolved from the snapshot
         //     above), active, and one whose own frame this actor may stand in.
         //     A narrowed membership therefore drops the intent instead of
-        //     pinning the actor to a frame they no longer reach.
+        //     pinning the actor to a frame they no longer reach. So does an
+        //     account whose frame is only a hop (a Core or Growth account with
+        //     a Business to open): the choice falls through to that Business.
         if ($remembered['accountFrame']) {
             if ($selectedWorkspace !== null
                 && $remembered['workspace'] === $selectedWorkspace->uid
                 && $selectedWorkspace->isActive
-                && $selectedWorkspace->seesAccountFrame()) {
+                && $selectedWorkspace->hasAccountHome()) {
                 return $this->context($userId, $workspaces, $selectedWorkspace, null, ContextSource::AccountPreference, null, $preferenceCleared);
             }
 

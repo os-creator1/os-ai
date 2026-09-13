@@ -6,7 +6,7 @@
     <div class="row mb-2">
         <div class="col-12">
             <h4 class="mb-0">Messaging provider</h4>
-            <p class="text-caption mb-0">Connect a provider so this Business can send SMS and MMS through Outreach.</p>
+            <p class="text-caption mb-0">Advanced, provider-specific setup — most Businesses never need this page.</p>
         </div>
     </div>
 
@@ -19,7 +19,9 @@
                             <h5 class="mb-0">{{ $provider['label'] }}</h5>
                             <div class="mt-1">
                                 <x-badge variant="neutral">SMS</x-badge>
-                                <x-badge variant="neutral">MMS</x-badge>
+                                @if($provider['mms'])
+                                    <x-badge variant="neutral">MMS</x-badge>
+                                @endif
                             </div>
                         </div>
                         @if($provider['connections']->isEmpty())

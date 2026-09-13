@@ -9,6 +9,7 @@ use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Messaging\BusinessMessagingProviderCatalog;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -67,35 +68,12 @@ class MessagingChannelsController extends CustomerBaseController
 {
     use ResolvesBusinessTenancy;
 
-    /**
-     * B2's entire customer-facing provider allowlist. Server-side
-     * authoritative: a submitted provider outside this list is always
-     * rejected, regardless of how many providers the inherited backend
-     * actually supports.
-     */
-    private const ALLOWED_PROVIDERS = [
-        SendingServer::TYPE_TWILIO => [
-            'label' => 'Twilio',
-            'credential_fields' => [
-                'account_sid' => ['label' => 'Twilio account identifier', 'required' => true],
-                'auth_token' => ['label' => 'Twilio secret', 'required' => true],
-            ],
-        ],
-        SendingServer::TYPE_TELNYX => [
-            'label' => 'Telnyx',
-            'credential_fields' => [
-                'api_key' => ['label' => 'Telnyx access key', 'required' => true],
-                'c1' => ['label' => 'Messaging profile ID', 'required' => true],
-                'c2' => ['label' => 'Messaging connection ID', 'required' => false],
-            ],
-        ],
-    ];
-
     public function __construct(
         private readonly SendingServerRepository $sendingServers,
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
+        private readonly BusinessMessagingProviderCatalog $catalog,
     ) {
     }
 
@@ -141,16 +119,17 @@ class MessagingChannelsController extends CustomerBaseController
 
         $connections = CustomerBasedSendingServer::where('business_id', $business->id)
             ->whereHas('sendingServer', function ($query) {
-                $query->whereIn('settings', array_keys(self::ALLOWED_PROVIDERS));
+                $query->whereIn('settings', $this->catalog->types());
             })
             ->with('sendingServer')
             ->get();
 
         $providers = [];
-        foreach (self::ALLOWED_PROVIDERS as $type => $meta) {
+        foreach ($this->catalog->types() as $type) {
             $providers[$type] = [
                 'type' => $type,
-                'label' => $meta['label'],
+                'label' => $this->catalog->label($type),
+                'mms' => $this->catalog->supportsMms($type),
                 'connections' => $connections->filter(fn ($connection) => $connection->sendingServer?->settings === $type)->values(),
             ];
         }
@@ -179,8 +158,10 @@ class MessagingChannelsController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'provider' => $provider,
-            'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'],
-            'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'],
+            'providerLabel' => $this->catalog->label($provider),
+            'fields' => $this->catalog->credentialFields($provider),
+            'mmsSupported' => $this->catalog->supportsMms($provider),
+            'mmsFields' => $this->catalog->mmsFields($provider),
         ]);
     }
 
@@ -199,7 +180,12 @@ class MessagingChannelsController extends CustomerBaseController
             return $this->channelsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
-        [$errors, $credentials] = $this->validateCredentials($provider, $request->all(), false);
+        // A provider without MMS support never gets an MMS connection,
+        // regardless of what was submitted — the checkbox is defensive on
+        // the server, not just hidden in the form.
+        $mmsEnabled = $this->catalog->supportsMms($provider) && $request->boolean('enable_mms', true);
+
+        [$errors, $credentials] = $this->catalog->validate($provider, $request->all(), false, $mmsEnabled);
 
         if (! empty($errors)) {
             return redirect()->route('customer.workspaces.businesses.channels.connect', [$workspaceUid, $businessUid, $provider])
@@ -216,16 +202,17 @@ class MessagingChannelsController extends CustomerBaseController
         $input = array_merge($metadata, $credentials, [
             'settings' => $provider,
             'user_id' => $business->customer_id,
+            'mms' => $mmsEnabled,
         ]);
 
         // A new connection's SendingServer and its CustomerBasedSendingServer
         // assignment must be created together or not at all — otherwise a
         // failure between the two writes would leave an orphan,
         // credential-bearing SendingServer with no Business assignment.
-        DB::transaction(function () use ($input, $business): void {
+        $connection = DB::transaction(function () use ($input, $business): CustomerBasedSendingServer {
             $sendingServer = $this->sendingServers->store($input);
 
-            CustomerBasedSendingServer::create([
+            return CustomerBasedSendingServer::create([
                 'user_id' => $business->customer_id,
                 'business_id' => $business->id,
                 'sending_server' => $sendingServer->id,
@@ -233,9 +220,12 @@ class MessagingChannelsController extends CustomerBaseController
             ]);
         });
 
-        return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
+        // Land on the new connection's own detail page — the sensible
+        // customer-facing "what did I just set up" screen — not back on
+        // the generic list.
+        return redirect()->route('customer.workspaces.businesses.channels.connections.show', [$workspaceUid, $businessUid, $connection->uid])->with([
             'status' => 'success',
-            'message' => self::ALLOWED_PROVIDERS[$provider]['label'] . ' connected.',
+            'message' => $this->catalog->label($provider) . ' connected.',
         ]);
     }
 
@@ -254,8 +244,8 @@ class MessagingChannelsController extends CustomerBaseController
             'businessUid' => $businessUid,
             'connection' => $connection,
             'provider' => $provider,
-            'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'] ?? $provider,
-            'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'] ?? [],
+            'providerLabel' => $this->catalog->label($provider) ?? $provider,
+            'fields' => $this->catalog->credentialFields($provider),
             'managed' => $this->isManagedConnection($business, $connection),
             'inboundUrl' => $this->inboundUrl($provider, $connection->sendingServer->uid),
             'phoneNumbers' => PhoneNumbers::where('business_id', $business->id)->get(),
@@ -286,8 +276,12 @@ class MessagingChannelsController extends CustomerBaseController
         }
 
         // Blank credential fields intentionally preserve the current
-        // secret — only non-blank submitted values are applied.
-        [$errors, $credentials] = $this->validateCredentials($provider, $request->all(), true);
+        // secret — only non-blank submitted values are applied. This edit
+        // form has no MMS toggle of its own, so eligibility follows the
+        // connection's own already-stored mms state.
+        $mmsEnabled = $this->catalog->supportsMms($provider) && (bool) $connection->sendingServer->mms;
+
+        [$errors, $credentials] = $this->catalog->validate($provider, $request->all(), true, $mmsEnabled);
 
         if (! empty($errors)) {
             return redirect()->route('customer.workspaces.businesses.channels.connections.show', [$workspaceUid, $businessUid, $connection->uid])
@@ -453,35 +447,7 @@ class MessagingChannelsController extends CustomerBaseController
 
     private function isAllowedProvider(string $provider): bool
     {
-        return array_key_exists($provider, self::ALLOWED_PROVIDERS);
-    }
-
-    /**
-     * @return array{0: array<string,string>, 1: array<string,string>} [errors, valid credential values]
-     */
-    private function validateCredentials(string $provider, array $submitted, bool $isUpdate): array
-    {
-        $errors = [];
-        $values = [];
-
-        foreach (self::ALLOWED_PROVIDERS[$provider]['credential_fields'] as $key => $meta) {
-            $value = trim((string) ($submitted[$key] ?? ''));
-
-            if ($value === '') {
-                // Create: a required field left blank is an error. Update:
-                // a blank field means "keep the current value" — never an
-                // error, never applied.
-                if ($meta['required'] && ! $isUpdate) {
-                    $errors[$key] = $meta['label'] . ' is required.';
-                }
-
-                continue;
-            }
-
-            $values[$key] = $value;
-        }
-
-        return [$errors, $values];
+        return $this->catalog->isAllowed($provider);
     }
 
     private function isManagedConnection(Business $business, CustomerBasedSendingServer $connection): bool
