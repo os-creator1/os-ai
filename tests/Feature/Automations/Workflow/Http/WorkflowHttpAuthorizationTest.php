@@ -131,6 +131,42 @@ class WorkflowHttpAuthorizationTest extends TestCase
             ->assertJsonPath('workflow.uid', $tenant['workflow']->uid);
     }
 
+    /**
+     * The §18 correction identifies the Business from the request's resolved
+     * context when that context selected it. The context snapshot lists only
+     * Accounts the actor OWNS or reaches through an ACTIVE membership, but the
+     * canonical rule also admits the Business's own customer. So a Business owner
+     * whose Account is owned by somebody else, with no membership, is absent from
+     * the snapshot — and must still get in, through the repository fallback and
+     * the unchanged canonical check. This pins that nobody who could reach a
+     * Business before the correction is refused after it.
+     */
+    public function test_a_business_owner_the_context_snapshot_does_not_list_is_still_allowed(): void
+    {
+        $tenant = $this->tenantWithWorkflow();
+
+        // The Account now belongs to someone else; the Business's own customer
+        // keeps no membership in it.
+        $newAccountOwner = $this->createCustomer()->user;
+        DB::table('workspaces')->where('id', $tenant['workspace']->id)->update(['owner_user_id' => $newAccountOwner->id]);
+        DB::table('workspace_memberships')
+            ->where('workspace_id', $tenant['workspace']->id)
+            ->where('user_id', $tenant['business']->customer_id)
+            ->delete();
+
+        $this->authenticateAsCustomer($tenant['customer']);
+
+        $this->assertTrue(
+            app(\App\Library\Workspace\WorkspaceManager::class)
+                ->userCanAccessBusiness((int) $tenant['business']->customer_id, $tenant['business']->fresh()),
+            'Precondition: the canonical rule still admits the Business owner.',
+        );
+
+        $this->callJson('GET', $this->routeUrl('show', $tenant['workspace'], $tenant['business'], $tenant['workflow']))
+            ->assertOk()
+            ->assertJsonPath('workflow.uid', $tenant['workflow']->uid);
+    }
+
     public function test_an_active_admin_member_is_allowed(): void
     {
         $tenant = $this->tenantWithWorkflow();

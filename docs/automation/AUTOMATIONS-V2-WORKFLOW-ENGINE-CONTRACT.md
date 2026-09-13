@@ -1586,7 +1586,15 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | POST | `/{workflowUid}/simulate` | Test workflow `{contact_uid}` → simulated path (JSON), no side effects |
 | POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes via `WorkflowLifecycle`. `/resume` flips status in one short transaction and dispatches `RedispatchHeldEnrollments` after commit; it executes no step itself (§6.3) |
 | GET | `/{workflowUid}/settings`, `/enrollments`, `/enrollments/{enrollmentUid}/logs` | Tabs |
-| POST | `/{workflowUid}/enrollments` | Manual enrollment `{contact_uids[]}` (≤ 500, confirmed) |
+| POST | `/{workflowUid}/enrollments/manual` | Manual enrollment `{contact_uids[], confirmed}` (≤ 500, confirmed) |
+
+**Manual enrollment path — owner-approved revision (V2-E, PR #280).** Earlier
+revisions of this table fixed manual enrollment at `POST /{workflowUid}/enrollments`.
+The owner approved `POST /{workflowUid}/enrollments/manual` for V2-E, and this row
+now records that path so the contract and the code agree. The change is
+additive-safe: `GET /{workflowUid}/enrollments` remains the history tab, and no
+client depended on the earlier POST path — V2-D's builder never calls manual
+enrollment.
 
 ---
 

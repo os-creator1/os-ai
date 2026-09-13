@@ -61,8 +61,13 @@ class AutomationWorkflowsController extends CustomerBaseController
         return $this->respond(function () use ($workspaceUid, $businessUid): mixed {
             [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
+            // §18 "One query with withCount / latest-run subselect; paginated":
+            // whether each row has an open draft is a subselect on the page
+            // query itself, not a second query and never one per row.
             $page = AutomationWorkflow::query()
                 ->where('business_id', (int) $business->id)
+                ->withExists(['versions as has_open_draft' => fn ($query) => $query
+                    ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)])
                 ->orderByDesc('updated_at')
                 ->orderByDesc('id')
                 ->paginate(self::PAGE_SIZE);
@@ -76,19 +81,9 @@ class AutomationWorkflowsController extends CustomerBaseController
                 ]);
             }
 
-            // §18 — the list must cost the same whatever the page size, so
-            // "has a draft" is ONE query for the whole page rather than a
-            // draftVersion() lookup per row.
-            $withDraft = array_flip(AutomationWorkflowVersion::query()
-                ->whereIn('workflow_id', $page->getCollection()->pluck('id')->all())
-                ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)
-                ->pluck('workflow_id')
-                ->map(fn ($id): int => (int) $id)
-                ->all());
-
             return response()->json([
                 'workflows' => $page->getCollection()
-                    ->map(fn (AutomationWorkflow $w): array => $this->summary($w, isset($withDraft[(int) $w->id])))
+                    ->map(fn (AutomationWorkflow $w): array => $this->summary($w, (bool) $w->has_open_draft))
                     ->values(),
                 'meta' => [
                     'current_page' => $page->currentPage(),
@@ -245,33 +240,59 @@ class AutomationWorkflowsController extends CustomerBaseController
     }
 
     /**
-     * The builder's pickers, each read once and each scoped to this Business —
-     * three queries whatever the size of the Business, inside §18's builder-load
-     * budget. The phone field is excluded from the writable list here, as the
-     * view's own props contract requires: it is a contact's identity, and a
-     * picker that offered it would offer a write the executor refuses.
+     * The builder's pickers, scoped to this Business — ONE query whatever the
+     * size of the Business: every group LEFT JOINed to its fields, partitioned in
+     * memory into the group, date-field and writable-field lists. A group with no
+     * fields still appears, which is what the LEFT JOIN is for.
      *
-     * @return array{contactGroups: Collection<int, ContactGroups>, dateFields: Collection<int, ContactGroupFields>, writableFields: Collection<int, ContactGroupFields>}
+     * The phone field is excluded from the writable list, as the view's own props
+     * contract requires: it is a contact's identity, and a picker that offered it
+     * would offer a write the executor refuses.
+     *
+     * @return array{contactGroups: Collection<int, object>, dateFields: Collection<int, object>, writableFields: Collection<int, object>}
      */
     private function catalogs(Business $business): array
     {
-        $businessFields = fn () => ContactGroupFields::query()
-            ->select(['contact_group_fields.id', 'contact_group_fields.label', 'contact_group_fields.contact_group_id', 'contact_group_fields.type'])
-            ->join('contact_groups', 'contact_groups.id', '=', 'contact_group_fields.contact_group_id')
+        $rows = ContactGroups::query()
+            ->leftJoin('contact_group_fields', 'contact_group_fields.contact_group_id', '=', 'contact_groups.id')
             ->where('contact_groups.business_id', (int) $business->id)
-            ->orderBy('contact_group_fields.id');
+            ->orderBy('contact_groups.name')
+            ->orderBy('contact_group_fields.id')
+            ->toBase()
+            ->get([
+                'contact_groups.id as group_id',
+                'contact_groups.name as group_name',
+                'contact_group_fields.id as field_id',
+                'contact_group_fields.label as field_label',
+                'contact_group_fields.type as field_type',
+                'contact_group_fields.is_phone as field_is_phone',
+            ]);
+
+        $groups = $rows
+            ->unique('group_id')
+            ->map(fn (object $row): object => (object) ['id' => (int) $row->group_id, 'name' => (string) $row->group_name])
+            ->values();
+
+        $fields = $rows
+            ->whereNotNull('field_id')
+            ->map(fn (object $row): object => (object) [
+                'id' => (int) $row->field_id,
+                'label' => (string) $row->field_label,
+                'contact_group_id' => (int) $row->group_id,
+                'type' => (string) $row->field_type,
+                'is_phone' => (bool) $row->field_is_phone,
+            ])
+            ->sortBy('id')
+            ->values();
 
         return [
-            'contactGroups' => ContactGroups::query()
-                ->where('business_id', (int) $business->id)
-                ->orderBy('name')
-                ->get(['id', 'name']),
-            'dateFields' => $businessFields()
-                ->whereIn('contact_group_fields.type', [ContactGroupFields::TYPE_DATE, ContactGroupFields::TYPE_DATETIME])
-                ->get(),
-            'writableFields' => $businessFields()
-                ->where('contact_group_fields.is_phone', false)
-                ->get(),
+            'contactGroups' => $groups,
+            'dateFields' => $fields
+                ->filter(fn (object $field): bool => in_array($field->type, [ContactGroupFields::TYPE_DATE, ContactGroupFields::TYPE_DATETIME], true))
+                ->values(),
+            'writableFields' => $fields
+                ->reject(fn (object $field): bool => $field->is_phone)
+                ->values(),
         ];
     }
 
