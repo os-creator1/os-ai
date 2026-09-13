@@ -49,7 +49,41 @@
             'sending_server_id',
             'sms_count',
             'sender_id',
+            'automation_step_run_id',
         ];
+
+        /**
+         * Automations V2-F §10.1 — stamp automation output with its step run.
+         *
+         * An outbound row created while a workflow step is sending (inside
+         * AutomationSendContext::during()) carries that step run's id. One
+         * hook, because an automation send can create its Reports row in any
+         * of a dozen transport branches, and a branch nobody remembered to
+         * thread a parameter through would produce untagged automation output.
+         *
+         * Only OUTBOUND rows: an inbound message is never automation output,
+         * whatever else is happening in the process. An explicitly supplied
+         * value is never overwritten. Outside a send scope nothing is stamped,
+         * which is every campaign, inbox reply and API send.
+         */
+        protected static function booted(): void
+        {
+            static::creating(function (Reports $report): void {
+                if ($report->automation_step_run_id !== null) {
+                    return;
+                }
+
+                if ($report->direction === self::DIRECTION_INCOMING) {
+                    return;
+                }
+
+                $stepRunId = app(\App\Library\Automation\Workflow\Runtime\AutomationSendContext::class)->currentStepRunId();
+
+                if ($stepRunId !== null) {
+                    $report->automation_step_run_id = $stepRunId;
+                }
+            });
+        }
 
 
         /**

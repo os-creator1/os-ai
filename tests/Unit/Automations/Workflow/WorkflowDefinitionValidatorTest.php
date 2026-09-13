@@ -266,13 +266,22 @@ class WorkflowDefinitionValidatorTest extends TestCase
         ]));
     }
 
-    /** A trigger with no producer yet cannot be published. */
-    public function test_a_trigger_with_no_producer_is_refused(): void
+    /**
+     * Message received can be published now that V2-F ships its producer.
+     *
+     * This asserted the opposite while `message_received` had no producer — it
+     * was the one trigger the validator refused with "cannot start a workflow
+     * yet". The refusal rule itself is unchanged (NodeTypeRegistry still asks
+     * isIngestableInThisSlice()); there is simply no declared trigger left
+     * without a producer to demonstrate it on, so the invariant worth pinning is
+     * that this one is now accepted with its default policy.
+     */
+    public function test_message_received_is_publishable_now_it_has_a_producer(): void
     {
-        $this->assertInvalid($this->trigger([
+        $this->assertValid($this->trigger([
             'trigger_type' => 'message_received',
             'enrollment_policy' => 'once_per_occurrence',
-        ]), 'cannot start a workflow yet');
+        ]));
     }
 
     public function test_a_date_trigger_needs_its_group_field_offset_and_time(): void

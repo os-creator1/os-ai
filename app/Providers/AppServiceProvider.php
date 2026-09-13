@@ -289,9 +289,19 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\DateReachedTriggerSource::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\ManualEnrollmentTriggerSource::class));
 
+                    // Automations V2-F — the one line the note above anticipated.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class));
+
                     return $registry;
                 },
             );
+
+            // Automations V2-F §10.1 — MUST be a singleton. SendSmsNodeExecutor
+            // opens the send scope on it, and the Reports model's creating hook
+            // — a separately resolved object — reads the same instance. A
+            // per-resolution binding would hand the hook an empty context and
+            // every automation send would go out unmarked.
+            $this->app->singleton(\App\Library\Automation\Workflow\Runtime\AutomationSendContext::class);
 
             // Google Business Profile Slice A (correction pass item 6).
             // The call budget MUST be a singleton: withinOperation() sets
