@@ -8,8 +8,10 @@
     use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
     use App\Http\Controllers\Controller;
     use App\Http\Requests\ChatBox\SentRequest;
+    use App\Library\Conversations\ConversationContextReader;
     use App\Library\Entitlement\EntitlementManager;
     use App\Library\Navigation\CustomerContext;
+    use App\Library\Timeline\ContactActivityTimeline;
     use App\Library\Tool;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
@@ -39,6 +41,7 @@
     use Illuminate\Http\RedirectResponse;
     use Illuminate\Http\Request;
     use Illuminate\Support\Facades\Auth;
+    use Illuminate\Support\Facades\Gate;
     use Illuminate\Support\Facades\Validator;
     use Illuminate\Support\Str;
     use libphonenumber\NumberParseException;
@@ -443,6 +446,48 @@
         }
 
         /**
+         * The open conversation as ONE timeline for the person — messages,
+         * automation outcomes, opt-outs — and the contact panel beside it.
+         *
+         * Both are rendered here, on the server, so no message text is ever
+         * assembled into markup in the browser. The same §9 chain as every
+         * other action resolves the conversation first; `messages` keeps
+         * serving the raw thread unchanged.
+         *
+         * @throws AuthorizationException
+         */
+        public function timeline(ContactActivityTimeline $timeline, ConversationContextReader $contextReader, string $workspaceUid, string $businessUid, string $uid): JsonResponse
+        {
+            $box = $this->resolveConversation($workspaceUid, $businessUid, $uid);
+
+            if ($box === null) {
+                return $this->notFound();
+            }
+
+            $business = $box->business;
+
+            // Slice 2B §10: a Contact only when exactly one of this Business's
+            // contacts has the number. Everything contact-keyed hangs off it.
+            $contact = $box->resolveDisplayContact($business);
+            $context = $contextReader->read($business, $box, $contact);
+
+            return response()->json([
+                'status'   => 'success',
+                'pinned'   => $box->pinned ?? 0,
+                'title'    => $context->title(),
+                'timeline' => view('customer.ChatBox.partials._timeline', [
+                    'page' => $timeline->forConversation($business, $box, $contact),
+                ])->render(),
+                'context'  => view('customer.ChatBox.partials._context', [
+                    'context'    => $context,
+                    'profileUrl' => $context->hasContact() && Gate::allows('view_contact')
+                        ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $context->contactUid])
+                        : null,
+                ])->render(),
+            ]);
+        }
+
+        /**
          * The newest message and the unread count, for the live notifier.
          *
          * @throws AuthorizationException
@@ -742,7 +787,12 @@
                     $query->where('notification', '!=', 0);
                     break;
                 case 'read':
-                    $query->where('notification', 0);
+                    // A conversation that was never marked unread holds NULL,
+                    // not 0 (the column has no default) — it is read too.
+                    // Grouped, so the OR can never escape the business_id filter.
+                    $query->where(function ($q) {
+                        $q->where('notification', 0)->orWhereNull('notification');
+                    });
                     break;
                 case 'recents':
                     $query->orderBy('updated_at', 'desc');

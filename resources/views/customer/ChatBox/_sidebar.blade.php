@@ -45,39 +45,7 @@
 
             <ul class="chat-users-list-pinned chat-list media-list">
                 @foreach($pinnedChats as $chat)
-                    <li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}">
-        <span class="avatar">
-            <img src="{{asset('images/profile/profile.jpg')}}" height="36" width="54" alt="Avatar"/>
-        </span>
-                        <div class="chat-info flex-grow-1">
-                            <h6 class="mb-0">{{ $chat->to }}</h6>
-                            @php($displayName = $displayNames[$chat->id] ?? null)
-                            @if(!empty($displayName))
-                                <p class="card-text mb-0 text-truncate">
-                                    {{ str_limit($displayName, 15) }}
-                                </p>
-                            @endif
-                            <p class="card-text mb-0 text-truncate">
-                                {{ $chat->from }}
-                            </p>
-
-                            @if($chat->latestMessage !== null && ! empty($chat->latestMessage->message))
-                                <p class="card-text mb-0 text-truncate">
-                                    {{ str_limit($chat->latestMessage->message, 18) }}
-                                </p>
-                            @endif
-                        </div>
-                        <div class="chat-meta text-nowrap">
-                            <small class="float-end mb-25 chat-time">{{ \App\Library\Tool::customerDateTime($chat->updated_at) }}</small>
-                            @if($chat->notification)
-                                <span class="badge bg-primary rounded-pill float-end notification_count">{{ $chat->notification }}</span>
-                            @else
-                                <div class="counter" hidden>
-                                    <span class="badge bg-primary rounded-pill float-end notification_count"></span>
-                                </div>
-                            @endif
-                        </div>
-                    </li>
+                    @include('customer.ChatBox.partials._chat_row', ['chat' => $chat, 'displayName' => $displayNames[$chat->id] ?? null])
                 @endforeach
             </ul>
 

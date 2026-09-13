@@ -325,6 +325,27 @@
             // context-free copy and every reservation would fail closed.
             $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
 
+            // Conversations — the contact activity timeline. Its sources, in
+            // merge order, and the contact panel's optional sections (none
+            // registered yet). Email, forms, invoices, payments, bookings or a
+            // CRM opportunity summary join by tagging their own class here; the
+            // Conversations screen itself does not change.
+            $this->app->tag([
+                \App\Library\Timeline\Sources\ConversationMessagesSource::class,
+                \App\Library\Timeline\Sources\AttributedOutboundMessagesSource::class,
+                \App\Library\Timeline\Sources\AutomationActivitySource::class,
+                \App\Library\Timeline\Sources\ContactRecordSource::class,
+            ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
+
+            $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(
+                $app->tagged(\App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG),
+            ));
+
+            $this->app->bind(\App\Library\Conversations\ConversationContextReader::class, fn ($app) => new \App\Library\Conversations\ConversationContextReader(
+                $app->make(\App\Library\Contacts\ContactDirectory::class),
+                $app->tagged(\App\Library\Conversations\ConversationContextReader::SECTIONS_TAG),
+            ));
+
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
 

@@ -78,6 +78,191 @@
             box-shadow: 0 0 0 0.2rem var(--focus-ring-color); /* Match focus shadow of input fields */
         }
 
+        /*
+         * Conversations — three panes: the conversation list (content sidebar),
+         * the person's activity timeline with the composer under it, and the
+         * contact panel. Tokens only; the chat theme keeps drawing bubbles.
+         */
+        .chat-app-window .active-chat {
+            position: relative;
+        }
+
+        .conversation-body {
+            display: flex;
+            height: calc(100% - 65px);
+        }
+
+        .conversation-main {
+            display: flex;
+            flex: 1 1 auto;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .chat-app-window .conversation-main .user-chats {
+            flex: 1 1 auto;
+            height: auto;
+            min-height: 0;
+        }
+
+        .conversation-main .chat-app-form {
+            flex: 0 0 auto;
+        }
+
+        .conversation-header-text {
+            min-width: 0;
+        }
+
+        .conversation-channel-chip {
+            border: 1px solid var(--color-border-subtle);
+            border-radius: var(--radius-full);
+            color: var(--color-text-secondary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            margin-right: var(--space-2);
+            padding: var(--space-1) var(--space-2);
+        }
+
+        .timeline-divider {
+            align-items: center;
+            clear: both;
+            color: var(--color-text-muted);
+            display: flex;
+            font-size: 0.75rem;
+            gap: var(--space-3);
+            margin: var(--space-4) 0 var(--space-3);
+        }
+
+        .timeline-divider::before,
+        .timeline-divider::after {
+            border-top: 1px solid var(--color-border-subtle);
+            content: "";
+            flex: 1 1 auto;
+        }
+
+        .timeline-message {
+            clear: both;
+        }
+
+        .timeline-message-body {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .chat-app-window .chats .timeline-message .timeline-message-meta {
+            font-size: 0.75rem;
+            margin-bottom: 0;
+            opacity: 0.85;
+        }
+
+        .timeline-media img,
+        .timeline-media video {
+            border-radius: var(--radius-md);
+            max-height: 240px;
+            max-width: 240px;
+        }
+
+        .timeline-activity {
+            align-items: center;
+            background-color: var(--color-surface);
+            border: 1px solid var(--color-border-subtle);
+            border-radius: var(--radius-full);
+            clear: both;
+            color: var(--color-text-secondary);
+            display: flex;
+            flex-wrap: wrap;
+            font-size: 0.8125rem;
+            gap: var(--space-2);
+            justify-content: center;
+            margin: var(--space-2) auto var(--space-3);
+            max-width: 85%;
+            padding: var(--space-1) var(--space-3);
+            width: fit-content;
+        }
+
+        .timeline-activity-warning {
+            background-color: var(--color-status-warning-soft-bg);
+            border-color: var(--color-status-warning-border);
+            color: var(--color-status-warning-text);
+        }
+
+        .timeline-activity-detail,
+        .timeline-activity-time {
+            color: var(--color-text-muted);
+        }
+
+        .timeline-empty {
+            margin-top: var(--space-8);
+            text-align: center;
+        }
+
+        .conversation-context {
+            background-color: var(--color-surface);
+            border-left: 1px solid var(--color-border-subtle);
+            flex: 0 0 300px;
+            overflow-y: auto;
+            padding: var(--space-5) var(--space-4);
+            width: 300px;
+        }
+
+        .conversation-context-person {
+            border-bottom: 1px solid var(--color-border-subtle);
+            margin-bottom: var(--space-4);
+            padding-bottom: var(--space-4);
+            text-align: center;
+        }
+
+        .conversation-context-avatar {
+            font-size: 1.1rem;
+            height: 56px;
+            width: 56px;
+        }
+
+        .conversation-context-facts {
+            display: grid;
+            font-size: 0.875rem;
+            gap: var(--space-2) var(--space-3);
+            grid-template-columns: auto 1fr;
+            margin-bottom: var(--space-4);
+        }
+
+        .conversation-context-facts dt {
+            color: var(--color-text-muted);
+            font-weight: 400;
+        }
+
+        .conversation-context-facts dd {
+            color: var(--color-text-primary);
+            margin: 0;
+            word-break: break-word;
+        }
+
+        .conversation-context-heading {
+            color: var(--color-text-muted);
+            font-size: 0.75rem;
+            letter-spacing: 0.04em;
+            margin-bottom: var(--space-2);
+            text-transform: uppercase;
+        }
+
+        @media (max-width: 1199.98px) {
+            .conversation-context {
+                bottom: 0;
+                box-shadow: var(--shadow-lg);
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 65px;
+                width: min(320px, 100%);
+                z-index: 6;
+            }
+
+            .conversation-context.show {
+                display: block;
+            }
+        }
+
     </style>
 
 @endsection
@@ -111,11 +296,11 @@
             <!-- Chat Header -->
             <div class="chat-navbar">
                 <header class="chat-header">
-                    <div class="d-flex align-items-center">
+                    <div class="d-flex align-items-center conversation-header-text">
                         <div class="sidebar-toggle d-block d-lg-none me-1">
                             <x-ds-icon name="menu" class="font-medium-5" />
                         </div>
-                        <div class="avatar avatar-border user-profile-toggle m-0 me-1"></div>
+                        <h6 class="mb-0 text-truncate" data-role="conversation-title"></h6>
                         <span class="add-to-pin"> </span>
                     </div>
                     <div class="d-flex align-items-center">
@@ -128,51 +313,69 @@
                             <x-ds-icon name="trash" class="cursor-pointer font-medium-2 text-danger" />
                         </x-tooltip>
 
+                        {{-- Below xl the contact panel slides over the timeline; this opens it. --}}
+                        <span class="d-xl-none">
+                            <x-button variant="ghost" size="sm" class="conversation-context-toggle ms-1" icon="panel-right"
+                                      aria-label="Contact details" aria-controls="conversation-context" aria-expanded="false" />
+                        </span>
+
                     </div>
                 </header>
             </div>
             <!--/ Chat Header -->
 
-            <!-- User Chat messages -->
-            <div class="user-chats">
-                <div class="chats">
-                    <div class="chat_history"></div>
+            <div class="conversation-body">
+                <div class="conversation-main">
+                    <!-- The person's activity timeline: messages and what happened around them -->
+                    <div class="user-chats">
+                        <div class="chats">
+                            <div class="chat_history" data-role="conversation-timeline"></div>
+                        </div>
+                    </div>
+                    <!--/ The person's activity timeline -->
+
+                    <!-- Submit Chat form -->
+                    <form class="chat-app-form" action="javascript:void(0);" onsubmit="enter_chat();" autocomplete="off">
+                        <input type="hidden" value="" name="chat_id" class="chat_id">
+
+                        {{-- Replies go out as SMS — the only channel this conversation has today. --}}
+                        <span class="conversation-channel-chip" data-role="composer-channel">SMS</span>
+
+                        <div class="input-group input-group-merge me-1 form-send-message">
+                            <textarea type="text" id="message" class="form-control message" placeholder="..." autocomplete="off"></textarea>
+
+                            <span class="input-group-text">
+                                  <label for="media_image" class="attachment-icon form-label mb-0 position-relative">
+                                    <x-ds-icon name="image" id="mms-icon" class="cursor-pointer text-secondary" />
+                                    <input type="file" id="media_image" name="media_image" accept="image/*,video/*" hidden />
+                                  </label>
+                                </span>
+
+                        </div>
+
+
+                        <div class=" me-1">
+                            <select class="form-select select2" id="sms_template" data-placeholder="Select Template">
+                                <option value="0">Select Template</option>
+                                @foreach($templates as $template)
+                                    <option value="{{$template->id}}">{{ $template->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+
+
+                        <x-button variant="primary" class="send" onclick="enter_chat();">
+                            <x-ds-icon name="send" class="d-lg-none" />
+                            <span class="d-none d-lg-block">{{ __('locale.buttons.send') }}</span>
+                        </x-button>
+                    </form>
+                    <!--/ Submit Chat form -->
                 </div>
+
+                <!-- Contact panel -->
+                <aside id="conversation-context" class="conversation-context" data-role="conversation-context" aria-label="Contact details"></aside>
+                <!--/ Contact panel -->
             </div>
-            <!-- User Chat messages -->
-
-            <!-- Submit Chat form -->
-            <form class="chat-app-form" action="javascript:void(0);" onsubmit="enter_chat();" autocomplete="off">
-
-                <div class="input-group input-group-merge me-1 form-send-message">
-                    <textarea type="text" id="message" class="form-control message" placeholder="..." autocomplete="off"></textarea>
-
-                    <span class="input-group-text">
-                          <label for="media_image" class="attachment-icon form-label mb-0 position-relative">
-                            <x-ds-icon name="image" id="mms-icon" class="cursor-pointer text-secondary" />
-                            <input type="file" id="media_image" name="media_image" accept="image/*,video/*" hidden />
-                          </label>
-                        </span>
-
-                </div>
-
-
-                <div class=" me-1">
-                    <select class="form-select select2" id="sms_template" data-placeholder="Select Template">
-                        <option value="0">Select Template</option>
-                        @foreach($templates as $template)
-                            <option value="{{$template->id}}">{{ $template->name }}</option>
-                        @endforeach
-                    </select>
-                </div>
-
-
-                <x-button variant="primary" class="send" onclick="enter_chat();">
-                    <x-ds-icon name="send" class="d-lg-none" />
-                    <span class="d-none d-lg-block">{{ __('locale.buttons.send') }}</span>
-                </x-button>
-            </form>
-            <!--/ Submit Chat form -->
         </div>
         <!--/ Active Chat -->
     </section>
@@ -199,7 +402,7 @@
       // assembles a /chat-box/* path of its own. `__UID__` is replaced with
       // the conversation's public uid; no numeric id is ever used.
       const conversationRoutes = {
-        messages: "{{ route('customer.workspaces.businesses.conversations.messages', [$workspaceUid, $businessUid, '__UID__']) }}",
+        timeline: "{{ route('customer.workspaces.businesses.conversations.timeline', [$workspaceUid, $businessUid, '__UID__']) }}",
         notification: "{{ route('customer.workspaces.businesses.conversations.notification', [$workspaceUid, $businessUid, '__UID__']) }}",
         reply: "{{ route('customer.workspaces.businesses.conversations.reply', [$workspaceUid, $businessUid, '__UID__']) }}",
         delete: "{{ route('customer.workspaces.businesses.conversations.delete', [$workspaceUid, $businessUid, '__UID__']) }}",
@@ -291,24 +494,84 @@
       });
 
 
-      $(document).ready(function() {
-        // Cache chat container elements
-        const chatHistory = $(".chat_history");
-        const chatContainer = $(".user-chats .chats");
+      /**
+       * Load the person's activity timeline and contact panel for one
+       * conversation. Both arrive rendered and escaped by the server; nothing
+       * here builds markup out of a message. A response for a conversation the
+       * viewer has since left is ignored.
+       */
+      function loadTimeline(chat_id) {
+        return $.post(
+          conversationUrl('timeline', chat_id),
+          { _token: "{{ csrf_token() }}" }
+        )
+          .done(function(response) {
+            if ($(".chat_id").val() !== String(chat_id)) {
+              return;
+            }
 
+            let addToPin = $(".add-to-pin");
+
+            if (response.pinned === 1) {
+              addToPin.attr("title", '{{ __('locale.labels.unpin') }}');
+
+              addToPin.tooltip("dispose").tooltip();
+
+
+              // Swap the icon to 'delete'. A template literal, not a quoted
+              // string: the rendered SVG spans several lines, and a line break
+              // inside '...' is a syntax error that stops this whole script
+              // (search, load more, sending) from running.
+              addToPin.find("svg").remove();  // Remove the old icon element
+              addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);
+
+              // Re-initialize Feather icons to update
+              feather.replace();
+            } else {
+              addToPin.attr("title", '{{ __('locale.labels.pin') }}');
+
+              addToPin.tooltip("dispose").tooltip();
+
+              // Swap the icon to 'edit-2'
+              addToPin.find("svg").remove();  // Remove the old icon element
+              addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);
+
+              // Re-initialize Feather icons to update
+              feather.replace();
+            }
+
+            $("[data-role=conversation-title]").text(response.title);
+            $(".chat_history").html(response.timeline);
+            $("#conversation-context").html(response.context);
+
+            // Show the active chat area
+            $(".start-chat-area").addClass("d-none");  // Hide the initial "Start chat" screen
+            $(".active-chat").removeClass("d-none");   // Show the chat area
+            $(".counter").hide();
+
+            const $chats = $(".user-chats");
+            $chats.animate({ scrollTop: $chats[0].scrollHeight }, 400);  // Newest activity at the bottom
+          })
+          .fail(function(xhr, status, error) {
+            console.error("Error loading conversation:", error);
+          });
+      }
+
+
+      $(document).ready(function() {
         // Use event delegation to bind click events to dynamically loaded users
         $("#users-list").on("click", ".chat-users-list li, .chat-users-list-pinned li", function() {
-            // Destroy + recreate textarea to prevent browser restoring value
-let msg = $("#message");
-msg.replaceWith(msg.clone().val(""));
-$("#media_image").val("");
+          // Destroy + recreate textarea to prevent browser restoring value
+          let msg = $("#message");
+          msg.replaceWith(msg.clone().val(""));
+          $("#media_image").val("");
 
-            // HARD RESET composer immediately on chat switch
-$("#message").val("");
-$("#media_image").val("");
+          // HARD RESET composer immediately on chat switch
+          $("#message").val("");
+          $("#media_image").val("");
 
-          chatHistory.empty();  // Clear previous chat messages
-          chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 0);  // Scroll to the bottom initially
+          $(".chat_history").empty();  // Clear the previous person's timeline
+          $("#conversation-context").empty();
 
           $(this).find(".notification_count").remove();
 
@@ -317,136 +580,29 @@ $("#media_image").val("");
           $(".chat-users-list li, .chat-users-list-pinned li").removeClass("active");
           $(this).addClass("active");
 
-          // Fetch messages via POST request
-          $.post(
-            conversationUrl('messages', chat_id),
-            { _token: "{{ csrf_token() }}" }
-          )
-            .done(function(response) {
+          $(".chat_id").val(chat_id);
 
+          loadTimeline(chat_id).done(function() {
+            setTimeout(() => {
+              $("#message").val("");
+              $("#media_image").val("");
+            }, 50);
+          });
+        });
 
-              let details = `<input type="hidden" value="${chat_id}" name="chat_id" class="chat_id">`,
-                addToPin = $(".add-to-pin");
+        // The contact panel slides over the timeline on narrower screens.
+        $(".conversation-context-toggle").on("click", function() {
+          const $panel = $("#conversation-context");
+          const open = !$panel.hasClass("show");
 
-              // Parse the response data
-              const cwData = response.data;
-
-
-              if (response.pinned === 1) {
-                addToPin.attr("title", '{{ __('locale.labels.unpin') }}');
-
-                addToPin.tooltip("dispose").tooltip();
-
-
-                // Swap the icon to 'delete'. A template literal, not a quoted
-                // string: the rendered SVG spans several lines, and a line break
-                // inside '...' is a syntax error that stops this whole script
-                // (search, load more, sending) from running.
-                addToPin.find("svg").remove();  // Remove the old icon element
-                addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);
-
-                // Re-initialize Feather icons to update
-                feather.replace();
-              } else {
-                addToPin.attr("title", '{{ __('locale.labels.pin') }}');
-
-                addToPin.tooltip("dispose").tooltip();
-
-                // Swap the icon to 'edit-2'
-                addToPin.find("svg").remove();  // Remove the old icon element
-                addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);
-
-                // Re-initialize Feather icons to update
-                feather.replace();
-              }
-
-
-              // Append the hidden chat_id input, then render messages
-              chatHistory.append(details);
-
-              // Loop through messages and render them
-              cwData.forEach((sms) => {
-                const $chat = $(`
-                <div class="chat ${sms.direction === "incoming" ? "chat-left" : ""}">
-                    <div class="chat-avatar">
-                        <span class="avatar box-shadow-1 cursor-pointer">
-                            <img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36" />
-                        </span>
-                    </div>
-                    <div class="chat-body">
-                        <div class="chat-content"></div>
-                    </div>
-                </div>`);
-
-                const $content = $chat.find(".chat-content");
-
-                if (sms.media_url !== null) {
-                  $content.append(safeTypedMediaParagraph(sms.media_url, "media"));
-                }
-
-                if (sms.message) {
-                  $content.append(safeMessageParagraph(sms.message));
-                }
-
-                $content.append(`<p class="chat-time text-muted mt-1">${sms.created_at}</p>`);
-
-                chatHistory.append($chat);
-              });
-              chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 400);  // Scroll to bottom of chat after loading
-
-              // Show the active chat area
-              $(".start-chat-area").addClass("d-none");  // Hide the initial "Start chat" screen
-              $(".active-chat").removeClass("d-none");   // Show the chat area
-              $(".counter").hide();
-              
-              setTimeout(() => {
-  $("#message").val("");
-  $("#media_image").val("");
-}, 50);
-
-
-
-            })
-            .fail(function(xhr, status, error) {
-              console.error("Error loading messages:", error);
-            });
+          $panel.toggleClass("show", open);
+          $(this).attr("aria-expanded", open ? "true" : "false");
         });
       });
 
 
-      function isImageOrVideo(url) {
-        const videoExtensions = ["mp4", "avi", "mkv", "webm"];
-        const audioExtensions = ["mp3", "wav", "ogg"];
-        const imageExtensions = ["jpg", "jpeg", "png", "gif"];
-
-        const extension = url.split(".").pop().toLowerCase();
-
-        if (videoExtensions.includes(extension)) {
-          return "video";
-        } else if (audioExtensions.includes(extension)) {
-          return "audio";
-        } else if (imageExtensions.includes(extension)) {
-          return "image";
-        }
-        return "unknown";
-      }
-
       function safeMessageParagraph(value) {
         return $("<p></p>").text(value);
-      }
-
-      function safeTypedMediaParagraph(url, imgAlt) {
-        const type = isImageOrVideo(url);
-        let $media;
-        if (type === "video") {
-          $media = $("<video controls>Your browser does not support the video tag.</video>");
-        } else if (type === "audio") {
-          $media = $("<audio controls>Your browser does not support the audio element.</audio>");
-        } else {
-          $media = $("<img>").attr("alt", imgAlt);
-        }
-        $media.attr("src", url);
-        return $("<p></p>").append($media);
       }
 
 
@@ -518,13 +674,10 @@ $("#media_image").val("");
             } else if (response.status === "success") {
               toastr["success"](response.message);
 
+              // Shown straight away, as it always was; the persisted message
+              // takes its place the next time this timeline loads.
               let chatHistory = $(".chat_history");
-              const $chat = $(`<div class="chat">
-                <div class="chat-avatar">
-                  <span class="avatar box-shadow-1 cursor-pointer">
-                    <img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36"/>
-                  </span>
-                </div>
+              const $chat = $(`<div class="chat timeline-message" data-role="timeline-message" data-direction="outbound">
                 <div class="chat-body">
                   <div class="chat-content"></div>
                 </div>
@@ -546,7 +699,7 @@ $("#media_image").val("");
               chatHistory.append($chat);
               message.val("");
               $("#media_image").val(""); // reset file input
-              $(".user-chats").scrollTop(chatHistory.height());
+              $(".user-chats").scrollTop($(".user-chats > .chats").height());
             } else {
               toastr["warning"](response.message, "{{ __('locale.labels.attention') }}", {
                 closeButton: true,
@@ -813,8 +966,6 @@ $("#media_image").val("");
       });
 
       @if(config('broadcasting.connections.pusher.app_id'))
-      let activeChatID = $(".chat-users-list li.active").attr("data-id");
-
       window.Echo = new Echo({
         broadcaster: "pusher",
         key: "{{ config('broadcasting.connections.pusher.key') }}",
@@ -829,11 +980,17 @@ $("#media_image").val("");
       // "chat" channel every customer shared. routes/channels.php admits a
       // listener only when it could open this Business's inbox.
       Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", (e) => {
-        // chatHistory.empty();
-        chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 0);
-
         let chat_id = e.data.uid;
         let box_id = e.data.id;
+
+        // The open conversation reloads its timeline, so the new message
+        // arrives in the same server-rendered form as the rest of it. Any
+        // other conversation only gets its unread count.
+        if ($(".chat_id").val() === String(chat_id)) {
+          loadTimeline(chat_id);
+
+          return;
+        }
 
         $.ajax({
           url: conversationUrl('notification', chat_id),
@@ -842,56 +999,11 @@ $("#media_image").val("");
             _token: "{{csrf_token()}}"
           },
           success: function(response) {
-            activeChatID = $(".chat-users-list li.active").attr("data-id");
-            let details = `<input type="hidden" value="${chat_id}" name="chat_id" class="chat_id">`;
             const $contact = $(`.media-list li[data-box-id=${box_id}]`);
             const $counter = $(".counter", $contact).removeAttr("hidden");
             $(".notification_count", $contact).html(response.notification);
-
-          const sms = response.data;
-
-            const $chat = sms.direction === "incoming"
-              ? $(`<div class="chat chat-left">
-                        <div class="chat-avatar">
-                          <a class="avatar m-0" href="#">
-                            <img src="{{asset('images/profile/profile.jpg')}}" alt="avatar" height="40" width="40"/>
-                          </a>
-                        </div>
-                        <div class="chat-body">
-                          <div class="chat-content"></div>
-                        </div>
-                      </div>`)
-              : $(`<div class="chat">
-                        <div class="chat-avatar">
-                          <a class="avatar m-0" href="#">
-                            <img src="{{  route('user.avatar', Auth::user()->uid) }}" alt="avatar" height="40" width="40"/>
-                          </a>
-                        </div>
-                        <div class="chat-body">
-                          <div class="chat-content"></div>
-                          </div>
-                          </div>`);
-
-            const $content = $chat.find(".chat-content");
-
-            if (sms.media_url !== null) {
-              $content.append(safeTypedMediaParagraph(sms.media_url, ""));
-            }
-
-            if (sms.message !== null) {
-              $content.append(safeMessageParagraph(sms.message));
-            }
-
-            $content.append(`<p class="chat-time text-muted mt-1">${sms.created_at}</p>`);
-
-            if (chat_id === activeChatID) {
-              chatHistory.append(details);
-              chatHistory.append($chat);
-              chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 0);
-            } else {
-              $counter.html(response.notification);
-              $counter.removeAttr("hidden");
-            }
+            $counter.html(response.notification);
+            $counter.removeAttr("hidden");
           }
         });
       });
@@ -995,4 +1107,3 @@ $("#media_image").val("");
 
     </script>
 @endsection
-
