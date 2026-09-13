@@ -10,19 +10,25 @@ use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Jobs\Coo\GenerateCooInsight;
+use App\Library\Ai\AiCompletionRequest;
 use App\Library\Ai\AiCompletionResult;
+use App\Library\Ai\Contracts\AiCompletionClient;
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiUsageCategory;
+use App\Library\Ai\Providers\FakeAiCompletionClient;
 use App\Library\Coo\Insight\CooInsightGenerator;
 use App\Library\Coo\Insight\CooInsightOutcome;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Support\RequestScopedCache;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\Business;
 use App\Models\CooInsight;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Queue\WorkerOptions;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Coo\Insight\Concerns\CreatesCooInsightFixtures;
 use Tests\TestCase;
 
@@ -219,7 +225,7 @@ class GenerateCooInsightTest extends TestCase
         $this->assertNothingSpent();
     }
 
-    public function test_denied_suspended_and_unassigned_plans_spend_nothing(): void
+    public function test_denied_inactive_suspended_and_unassigned_plans_spend_nothing(): void
     {
         [, $denied, $deniedWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Denied Venue', 'Denied Account');
         $this->materialPeriod($denied);
@@ -229,13 +235,17 @@ class GenerateCooInsightTest extends TestCase
         $this->materialPeriod($suspended);
         app(EntitlementManager::class)->changePlanStatus($suspendedWorkspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'AI-3 fixture.');
 
+        [, $inactive, $inactiveWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Inactive Venue', 'Inactive Account');
+        $this->materialPeriod($inactive);
+        app(EntitlementManager::class)->changePlanStatus($inactiveWorkspace, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'AI-3 fixture.');
+
         $this->ensureRequiredAppConfigRowsExist();
         $owner = $this->createCustomer();
         $unassignedWorkspace = $this->createWorkspace($owner->user, ['name' => 'Unassigned Account']);
         $unassigned = $this->addBusiness($owner, $unassignedWorkspace, 'Unassigned Venue');
         $this->materialPeriod($unassigned);
 
-        foreach ([$denied, $suspended, $unassigned] as $business) {
+        foreach ([$denied, $suspended, $inactive, $unassigned] as $business) {
             foreach (CooInsightTrigger::cases() as $trigger) {
                 $this->assertSame(CooInsightOutcome::NOT_ENTITLED, $this->generate($business->fresh(), $trigger)->status, $business->name . ' / ' . $trigger->value);
             }
@@ -363,31 +373,67 @@ class GenerateCooInsightTest extends TestCase
         [, $business] = $this->tenant(WorkspacePlanTier::Growth);
         $this->materialPeriod($business);
 
-        app()->call([new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']), 'handle']);
-        app()->call([new GenerateCooInsight((int) $business->id, 'not-a-trigger'), 'handle']);
-        app()->call([new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value), 'handle']);
+        (new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']))->handle(app(CooInsightGenerator::class));
+        (new GenerateCooInsight((int) $business->id, 'not-a-trigger'))->handle(app(CooInsightGenerator::class));
+        (new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value))->handle(app(CooInsightGenerator::class));
 
         $this->assertSame(1, CooInsight::query()->count());
         $this->assertSame(1, $this->fakeAi->callCount());
     }
 
-    public function test_a_queued_job_never_trusts_an_entitlement_read_memoized_before_it_started(): void
+    public function test_a_plan_suspended_between_two_worker_jobs_denies_the_second_insight_and_spends_nothing(): void
     {
-        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
-        $this->materialPeriod($business);
+        [$customer, $first, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'First Venue', 'Shared Account');
+        $second = $this->addBusiness($customer, $workspace, 'Second Venue');
+        $this->materialPeriod($first);
+        $this->materialPeriod($second);
 
-        // An earlier job in the same worker process read the plan while it was active.
-        $this->assertTrue(app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::AiCooBasic->value, 0)->allowed);
+        // At each provider call, record whether this worker process holds the plan read memoized.
+        $planMemoKey = 'workspace_plan_assignment:find:' . $workspace->id;
+        $memoizedAtProviderCall = [];
+        $this->app->instance(AiCompletionClient::class, new class ($this->fakeAi, function () use (&$memoizedAtProviderCall, $planMemoKey): void {
+            $memoizedAtProviderCall[] = app(RequestScopedCache::class)->has($planMemoKey);
+        }) implements AiCompletionClient {
+            public function __construct(private readonly FakeAiCompletionClient $fake, private readonly \Closure $onCall)
+            {
+            }
 
-        // The plan is then suspended by another process, whose cache invalidation never reaches this worker.
+            public function complete(AiCompletionRequest $request): AiCompletionResult
+            {
+                ($this->onCall)();
+
+                return $this->fake->complete($request);
+            }
+        });
+
+        // JOB 1 — plan active: ai_coo_basic allowed, the plan read memoized, one insight bought.
+        $this->pushInsightJob($first);
+        $this->workOneInsightJob();
+
+        $this->assertSame(1, $this->fakeAi->callCount(), 'Precondition: job 1 was entitled and paid.');
+        $this->assertSame([true], $memoizedAtProviderCall, 'Precondition: job 1 memoized the plan read in this worker process.');
+        $ledgerAfterJobOne = AiUsageLedgerEntry::query()->count();
+
+        // Between jobs — suspended by another process, not through this worker's repository.
         $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => WorkspacePlanAssignmentStatus::Suspended->value]));
-        $this->assertTrue(app(EntitlementManager::class)->decide($workspace->fresh(), $business->fresh(), PlatformFeature::AiCooBasic->value, 0)->allowed, 'Precondition: the worker-lifetime memo still holds the pre-suspension answer.');
 
-        app()->call([new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']), 'handle']);
+        // JOB 2 — same worker, container and console request; nothing in the job or the test clears the memo.
+        $this->pushInsightJob($second);
+        $this->workOneInsightJob();
 
-        $this->assertNothingSpent();
-        $this->assertSame(CooInsightOutcome::NOT_ENTITLED, app(CooInsightGenerator::class)->generate($business->fresh(), CooInsightTrigger::MultiSignalChange, $this->thisMonth($business))->status, 'The job left the process judging the suspension, not the memo.');
-        $this->assertNothingSpent();
+        $this->assertSame(1, $this->fakeAi->callCount(), 'Job 2 made no provider call.');
+        $this->assertSame($ledgerAfterJobOne, AiUsageLedgerEntry::query()->count(), 'Job 2 reserved nothing and wrote no ledger row.');
+        $this->assertSame(0, CooInsight::query()->where('business_id', $second->id)->count(), 'Job 2 cached no insight.');
+
+        // JOB 3 — reactivated the same way: the same Business, same facts, now pays. Job 2's refusal was entitlement alone.
+        DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => WorkspacePlanAssignmentStatus::Active->value]);
+        $this->pushInsightJob($second);
+        $this->workOneInsightJob();
+
+        $this->assertSame(2, $this->fakeAi->callCount(), 'The next job sees the reactivation, too.');
+        $this->assertSame(1, CooInsight::query()->where('business_id', $second->id)->count());
+        $this->assertSame(0, DB::table('jobs')->count(), 'Every job was processed by the worker.');
+        $this->assertSame(0, DB::table('failed_jobs')->count(), 'None failed.');
     }
 
     // -----------------------------------------------------------------
@@ -395,6 +441,17 @@ class GenerateCooInsightTest extends TestCase
     private function generate(Business $business, CooInsightTrigger $trigger, ?int $actorUserId = null): CooInsightOutcome
     {
         return app(CooInsightGenerator::class)->generate($business->fresh(), $trigger, $this->thisMonth($business), $actorUserId);
+    }
+
+    private function pushInsightJob(Business $business): void
+    {
+        Queue::connection('database')->push(new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']));
+    }
+
+    /** One job, processed by Laravel's real worker, in this process — as `queue:work` would. */
+    private function workOneInsightJob(): void
+    {
+        app('queue.worker')->runNextJob('database', (string) config('coo.insight.queue', 'default'), new WorkerOptions(sleep: 0, maxTries: 1));
     }
 
     private function assertNothingSpent(): void

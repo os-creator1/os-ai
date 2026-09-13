@@ -1443,11 +1443,17 @@ one; recording what C-2 surfaced would be a later, separately approved slice.
 
 **A queued job judges entitlement as of itself.** Shared request-scoped
 memoization (PR #286) keys on the bound `request`, and a queue worker binds
-one console request for its whole life. `GenerateCooInsight::handle()`
-therefore clears that memo before it reads anything, so a plan suspended or a
-feature denied by another process after an earlier job ran is what this job
-sees. A test primes the memo, suspends the plan behind it, and proves the job
-makes no provider call and writes no ledger row.
+one console request for its whole life. The boundary that makes this safe is
+global: `ResetRequestScopedCacheAtJobBoundary` (PR #289) flushes the memo
+before every worker job and after it finishes or fails. `GenerateCooInsight`
+therefore keeps no cache clearing of its own. An interim per-job clear was
+removed when #289 landed; on the `sync` driver it would also have discarded
+the dispatching request's memo. A test runs real `GenerateCooInsight` jobs
+through Laravel's worker in one process. Job 1 is entitled, memoizes the plan
+read and pays. The plan is then suspended directly, between jobs. Job 2, for
+another Business in the same Workspace, makes no provider call and writes no
+ledger row. After a direct reactivation, job 3 for that Business pays, so job
+2's refusal was entitlement alone.
 
 **`known` restatement.** Only a metric fact carries a value text can be
 checked against, so a `known` statement must cite a metric and contain its

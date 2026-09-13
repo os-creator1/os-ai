@@ -6,7 +6,6 @@ use App\Enums\Coo\CooInsightTrigger;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Coo\Insight\CooInsightGenerator;
-use App\Library\Support\RequestScopedCache;
 use App\Models\Business;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -25,6 +24,11 @@ use InvalidArgumentException;
  *
  * Runs once. A refusal, a provider failure or a rejected output is final for
  * this attempt (no retry loop, §11.4); the next eligible trigger may try again.
+ *
+ * Entitlement is judged as of this job, never an earlier one in the same
+ * worker: the global queue-job boundary, ResetRequestScopedCacheAtJobBoundary,
+ * flushes the request-scoped memo before every worker job starts, so this job
+ * keeps no cache lifecycle of its own.
  */
 class GenerateCooInsight implements ShouldQueue, ShouldQueueAfterCommit
 {
@@ -48,14 +52,8 @@ class GenerateCooInsight implements ShouldQueue, ShouldQueueAfterCommit
         $this->onQueue((string) config('coo.insight.queue', 'default'));
     }
 
-    public function handle(CooInsightGenerator $generator, RequestScopedCache $requestCache): void
+    public function handle(CooInsightGenerator $generator): void
     {
-        // A queue worker binds one console request for its whole life, so the
-        // request-scoped memo of plan, override and Business reads would
-        // otherwise carry another job's answers into this one. Entitlement is
-        // judged as of this job, never as of an earlier one.
-        $requestCache->forgetPrefixed('');
-
         $trigger = CooInsightTrigger::tryFrom($this->trigger);
         $business = Business::query()->find($this->businessId);
 
