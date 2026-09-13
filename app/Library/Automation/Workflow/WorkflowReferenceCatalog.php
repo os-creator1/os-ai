@@ -6,7 +6,8 @@ use App\Models\ContactGroupFields;
 
 /**
  * Automations V2 §14.2 — every contact group and custom field ONE Business owns,
- * loaded once and answered from memory.
+ * and every CRM sales pipeline and stage it owns, loaded once and answered from
+ * memory.
  *
  * A workflow document points at groups and fields by id. Whether each id belongs
  * to the workflow's Business is a tenancy question, and asking the database once
@@ -29,11 +30,15 @@ final class WorkflowReferenceCatalog
     /**
      * @param array<int, array{id: int, name: string}> $groups keyed by id, in name order
      * @param array<int, array{id: int, contact_group_id: int, label: string, type: string, is_phone: bool}> $fields keyed by id, in id order
+     * @param array<int, array{id: int, name: string, archived: bool}> $pipelines CRM sales pipelines, keyed by id, in board order
+     * @param array<int, array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}> $stages CRM stages, keyed by id, in board order
      */
     public function __construct(
         public readonly int $businessId,
         private readonly array $groups,
         private readonly array $fields,
+        private readonly array $pipelines = [],
+        private readonly array $stages = [],
     ) {
     }
 
@@ -101,5 +106,51 @@ final class WorkflowReferenceCatalog
     public function writableFields(): array
     {
         return array_values(array_filter($this->fields, fn (array $field): bool => ! $field['is_phone']));
+    }
+
+    // ---------------------------------------------------------------
+    // CRM sales pipelines and stages (crm_* — never the Advisor domain)
+    // ---------------------------------------------------------------
+
+    /**
+     * The pipeline, when it belongs to this Business — archived or not.
+     *
+     * @return array{id: int, name: string, archived: bool}|null
+     */
+    public function pipeline(int $pipelineId): ?array
+    {
+        return $this->pipelines[$pipelineId] ?? null;
+    }
+
+    /**
+     * The stage, when it belongs to this Business through its pipeline.
+     *
+     * @return array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}|null
+     */
+    public function stage(int $stageId): ?array
+    {
+        return $this->stages[$stageId] ?? null;
+    }
+
+    /**
+     * Every pipeline, archived ones flagged, in board order — the Builder shows
+     * the active ones and keeps an archived one visible only where a workflow
+     * still names it.
+     *
+     * @return list<array{id: int, name: string, archived: bool}>
+     */
+    public function pipelines(): array
+    {
+        return array_values($this->pipelines);
+    }
+
+    /**
+     * Every stage of every pipeline, archived ones flagged, in board order.
+     *
+     * @return list<array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}>
+     */
+    public function stages(): array
+    {
+        return array_values($this->stages);
     }
 }

@@ -33,11 +33,10 @@ use Illuminate\Foundation\Events\Dispatchable;
  *   that recorded the change (`crm_opportunity_history.id`), so a replayed event
  *   composes the same key and V2's EnrollmentService refuses the duplicate.
  *
- * No Automations V2 trigger type is registered for these yet. V2's trigger
- * vocabulary (WorkflowTriggerType) is a closed contract set; adding a trigger
- * means a TriggerSource that listens to one of these events and calls
- * EnrollmentService — exactly how V2-F wired `message_received` — and no change
- * to anything in the CRM domain.
+ * Automations V2 consumes them without this domain knowing: WorkflowTriggerType
+ * declares one trigger per NAME, and EnrollFromCrmOpportunityEvent hands each
+ * event to CrmOpportunityTriggerSource, which calls EnrollmentService — exactly
+ * how V2-F wired `message_received`. Nothing here calls Automations.
  */
 abstract class CrmOpportunityEvent implements ShouldDispatchAfterCommit
 {

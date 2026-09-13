@@ -29,6 +29,17 @@ function fieldLabel(rows, id) {
     return field ? field.label : null
 }
 
+/** A CRM pipeline or stage name from the Business catalog, or null when not set or not found. */
+function crmName(rows, id) {
+    if (id === null || id === undefined || id === '') {
+        return null
+    }
+
+    const row = (rows || []).find((candidate) => String(candidate.id) === String(id))
+
+    return row ? row.name : null
+}
+
 function plural(amount, unit) {
     const singular = unit.replace(/s$/, '')
 
@@ -173,6 +184,33 @@ function summarizeTrigger(config, catalogs) {
 
         case 'manual_enrollment':
             return { title: info.title, summary: 'When you add a contact to this workflow', incomplete: false }
+
+        case 'opportunity_created':
+            return { title: info.title, summary: 'When a new opportunity is added, in any pipeline', incomplete: false }
+
+        case 'opportunity_stage_changed': {
+            const pipeline = crmName(catalogs.crmPipelines, config.pipeline_id)
+            const from = crmName(catalogs.crmStages, config.from_stage_id)
+            const to = crmName(catalogs.crmStages, config.to_stage_id)
+
+            let move = 'When an opportunity moves stage'
+
+            if (from && to) {
+                move = `When an opportunity moves from ${from} to ${to}`
+            } else if (to) {
+                move = `When an opportunity moves to ${to}`
+            } else if (from) {
+                move = `When an opportunity leaves ${from}`
+            }
+
+            return { title: info.title, summary: `${move}${pipeline ? ` · ${pipeline}` : ''}`, incomplete: false }
+        }
+
+        case 'opportunity_won':
+            return { title: info.title, summary: 'When an opportunity is marked won', incomplete: false }
+
+        case 'opportunity_lost':
+            return { title: info.title, summary: 'When an opportunity is marked lost', incomplete: false }
 
         default:
             return { title: info.title, summary: '', incomplete: false }

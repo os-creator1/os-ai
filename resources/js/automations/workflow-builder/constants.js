@@ -149,6 +149,36 @@ export const TRIGGER_TYPES = [
         icon: 'hand',
         defaultPolicy: 'once_ever',
     },
+    // CRM sales opportunities. Each defaults to "every time it happens": one
+    // contact can have many deals, and a deal many moves.
+    {
+        value: 'opportunity_created',
+        title: 'Opportunity created',
+        description: 'Starts when a new opportunity is added for a contact.',
+        icon: 'briefcase-business',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_stage_changed',
+        title: 'Opportunity moves stage',
+        description: 'Starts when an opportunity moves to another stage.',
+        icon: 'arrow-right-left',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_won',
+        title: 'Opportunity marked won',
+        description: 'Starts when an opportunity is marked won.',
+        icon: 'trophy',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_lost',
+        title: 'Opportunity marked lost',
+        description: 'Starts when an opportunity is marked lost.',
+        icon: 'circle-x',
+        defaultPolicy: 'once_per_occurrence',
+    },
 ]
 
 export function triggerTypeInfo(value) {

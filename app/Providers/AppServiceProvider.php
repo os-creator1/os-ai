@@ -306,6 +306,20 @@
                     // Automations V2-F — the one line the note above anticipated.
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class));
 
+                    // CRM sales opportunities — one source instance per trigger
+                    // type, so registry and enum still agree one-to-one.
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityCreated,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityStageChanged,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityWon,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityLost,
+                    ] as $crmTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+                            ['triggerType' => $crmTrigger],
+                        ));
+                    }
+
                     return $registry;
                 },
             );
