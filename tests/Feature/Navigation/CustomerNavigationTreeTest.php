@@ -44,7 +44,7 @@ class CustomerNavigationTreeTest extends TestCase
     /** Entries that may only ever exist while a Business is selected. */
     private const BUSINESS_ONLY_KEYS = [
         'conversations', 'messages', 'inbox', 'send', 'campaigns', 'contacts',
-        'automations', 'website', 'gbp', 'analytics',
+        'opportunities', 'automations', 'website', 'gbp', 'analytics',
     ];
 
     // =================================================================
@@ -152,6 +152,82 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertNotFalse($conversations);
         $this->assertSame('contacts', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations.');
         $this->assertDoesNotMatchRegularExpression('/<li class="[^"]*has-sub[^"]*" data-nav-key="conversations"/', $this->sidebarHtml($html));
+    }
+
+    // =================================================================
+    // Opportunities — the CRM sales board (PR #296)
+    // =================================================================
+
+    /**
+     * Opportunities sits directly after Contacts and before Automations, and
+     * opens the SELECTED Business's CRM board. Advisor stays absent even with
+     * the Opportunity (AI COO) engine switched on.
+     */
+    public function test_opportunities_follows_contacts_and_opens_the_selected_business_crm_board(): void
+    {
+        config(['opportunity.enabled' => true]);
+
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$customer, $business, $workspace] = $this->tenant($tier, 'Harbor Lane ' . $tier->value, 'Harbor ' . $tier->value);
+            $this->authenticateAs($customer);
+
+            $html = $this->home()->assertOk()->getContent();
+            $keys = $this->menuKeys($html);
+            $position = array_search('opportunities', $keys, true);
+
+            $this->assertNotFalse($position, "[{$tier->value}] offers Opportunities.");
+            $this->assertSame('contacts', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Contacts.");
+            $this->assertSame('automations', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Automations.");
+            $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]), $this->menuLinks($html));
+            $this->assertNotContains('advisor', $keys, "[{$tier->value}] Advisor stays out of the Business sidebar.");
+
+            // Active on the CRM screens, not on Contacts.
+            $active = $this->activeMenuKeys($this->get(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+            $this->assertSame(['opportunities'], $active);
+
+            auth()->logout();
+            $this->flushSession();
+        }
+    }
+
+    /**
+     * The same read permission the CRM board enforces. Without it the entry is
+     * gone, while Contacts — reachable through its other permissions — stays.
+     */
+    public function test_opportunities_requires_the_crm_board_read_permission(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $withoutRead = array_values(array_filter(
+            $this->allCustomerPermissions(),
+            static fn (string $permission): bool => $permission !== \App\Http\Controllers\Customer\Business\CrmOpportunitiesController::VIEW_PERMISSION,
+        ));
+
+        $this->authenticateAs($customer, $withoutRead);
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        $this->assertNotContains('opportunities', $keys);
+        $this->assertContains('contacts', $keys);
+    }
+
+    /**
+     * Never in the Agency account frame; offered once the Agency is inside an
+     * authorized client Business, pointing at that client's own board.
+     */
+    public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
+    {
+        [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Client Two');
+        $this->authenticateAs($agency);
+
+        $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
+
+        $this->switchTo($workspace, $clientOne);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertContains('opportunities', $this->menuKeys($html));
+        $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $clientOne->uid]), $this->menuLinks($html));
+        $this->assertNotContains('advisor', $this->menuKeys($html));
     }
 
     // =================================================================
@@ -311,6 +387,7 @@ class CustomerNavigationTreeTest extends TestCase
             'automations' => ['automations', 'automations'],
             'website' => ['website_generation', 'website'],
             'get found' => ['google_business_profile_module', 'gbp'],
+            'opportunities' => ['crm', 'opportunities'],
         ];
     }
 
