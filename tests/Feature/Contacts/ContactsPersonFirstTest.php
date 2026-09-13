@@ -135,6 +135,72 @@ class ContactsPersonFirstTest extends TestCase
     }
 
     /**
+     * The walkthrough defect this corrects: creating a contact used to end
+     * on the group's own legacy tabbed editor (Settings / Message / Manage
+     * Fields / Keywords / Import History) — not an acceptable landing page
+     * for "I just added someone." It must open the new person's own
+     * profile instead, with the chosen group assignment intact.
+     */
+    public function test_creating_a_contact_lands_on_the_new_persons_own_profile_with_its_group_preserved(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business, 'Customers');
+        $this->authenticateAs($owner);
+
+        $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
+        $response = $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone]);
+
+        $created = Contacts::query()->where('group_id', $group->id)->where('phone', $phone)->sole();
+        $response->assertRedirect(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $created->uid]));
+        $this->assertSame($group->id, $created->group_id, 'The chosen group assignment survives the person-first redirect.');
+
+        $secondPhone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
+        $this->followingRedirects()
+            ->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $secondPhone])
+            ->assertOk()
+            ->assertSee('data-role="contact-name"', false);
+    }
+
+    /**
+     * Tenancy (item 5): the redirect a person-first create lands on is
+     * built from THIS request's own Business, never inferred from the
+     * customer — so an Agency Business's newly added contact is invisible
+     * through a sibling Business's own route, exactly like every other
+     * Contacts lookup already is.
+     */
+    public function test_the_new_contact_redirect_stays_scoped_to_the_business_that_created_it(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $other = $this->addBusiness($owner, $workspace, 'Client Two');
+        $group = $this->group($business, 'Customers');
+        $this->authenticateAs($owner);
+
+        $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
+        $response = $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone]);
+
+        $created = Contacts::query()->where('group_id', $group->id)->where('phone', $phone)->sole();
+        $response->assertRedirect(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $created->uid]));
+
+        $this->get(route('customer.workspaces.businesses.people.show', [$workspace->uid, $other->uid, $created->uid]))->assertNotFound();
+    }
+
+    /**
+     * Groups are secondary segmentation (item 3): creating one returns the
+     * customer to the Groups list, not straight into the new group's own
+     * legacy tabbed editor.
+     */
+    public function test_creating_a_group_returns_to_the_groups_list_not_its_own_legacy_editor(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($owner);
+
+        $response = $this->post(route('customer.workspaces.businesses.contacts.store', [$workspace->uid, $business->uid]), ['name' => 'Referrals']);
+
+        $this->assertTrue(ContactGroups::query()->where('business_id', $business->id)->where('name', 'Referrals')->exists());
+        $response->assertRedirect(route('customer.workspaces.businesses.contacts.index', [$workspace->uid, $business->uid]));
+    }
+
+    /**
      * A customer who never used groups is not sent through the Groups
      * screen: one click creates the Business's first list and continues.
      */
@@ -341,10 +407,13 @@ class ContactsPersonFirstTest extends TestCase
             $this->get($create)->assertOk();
 
             $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
-            $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone])
-                ->assertRedirect(route('customer.workspaces.businesses.contacts.show', [$workspace->uid, $business->uid, $group->uid]));
+            $storeResponse = $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone]);
 
             $this->assertDatabaseHas('contacts', ['group_id' => $group->id, 'business_id' => $business->id, 'phone' => $phone]);
+            $created = Contacts::query()->where('group_id', $group->id)->where('phone', $phone)->sole();
+            // Person first (correction): lands on the new person's own
+            // profile, never the group's legacy tabbed editor.
+            $storeResponse->assertRedirect(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $created->uid]));
         }
     }
 

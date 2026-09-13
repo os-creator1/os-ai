@@ -356,7 +356,13 @@
 
             $group = $this->contactGroups->store($input);
 
-            return CrmRouting::redirectRoute('contacts.show', $group->uid)->with([
+            // Contacts, person first (correction) — a new group is secondary
+            // segmentation, not a destination: it returns the customer to
+            // the Groups list rather than straight into the new group's own
+            // legacy tabbed editor (Settings / Message / Manage Fields /
+            // Keywords / Import History), which is not an acceptable
+            // landing page for "I just created a group."
+            return CrmRouting::redirectRoute('contacts.index')->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_group_successfully_added'),
             ]);
@@ -840,10 +846,38 @@
                 return back()->withInput()->withErrors($validator);
             }
 
-            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+            return $this->afterContactCreated($contact, $subscriber)->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_successfully_added'),
             ]);
+        }
+
+        /**
+         * Contacts, person first (correction) — where "Add contact" lands
+         * after a successful create.
+         *
+         * The observed defect: creating a contact ended on the group's own
+         * legacy tabbed editor (Settings / Message / Manage Fields /
+         * Keywords / Import History) — not an acceptable primary Contacts
+         * experience, and never what "I just added someone" should open.
+         *
+         * A Business-addressable request (the person-first surface
+         * ContactDirectoryController serves) goes straight to the new
+         * person's own detail page instead. A legacy, non-Business request
+         * has no person-first surface to land on at all, so it keeps the
+         * exact group-editor redirect it has always used — unchanged, not
+         * modernized, because there is nowhere else for it to go yet.
+         */
+        private function afterContactCreated(ContactGroups $contact, Contacts $subscriber): RedirectResponse
+        {
+            $workspaceUid = request()->route('workspaceUid');
+            $businessUid  = request()->route('businessUid');
+
+            if ($workspaceUid !== null && $businessUid !== null) {
+                return redirect()->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $subscriber->uid]);
+            }
+
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact']);
         }
 
         /**
