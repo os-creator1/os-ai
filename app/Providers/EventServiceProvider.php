@@ -21,10 +21,14 @@ use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
 use App\Listeners\Opportunity\TriggerBusinessAdvisorProducer;
+use App\Listeners\Support\ResetRequestScopedCacheAtJobBoundary;
 use App\Listeners\Usage\InitializeBusinessUsageProfile;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Illuminate\Queue\Events\JobExceptionOccurred;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -97,6 +101,19 @@ class EventServiceProvider extends ServiceProvider
         ],
         GoogleBusinessProfileConnectionRevoked::class => [
             InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnectionRevoked',
+        ],
+        // RequestScopedCache's queue-job boundary: a worker's console Request
+        // outlives every job it runs, so the memo is flushed at both edges of
+        // each worker job (sync jobs, which run inside their dispatcher, are
+        // left alone). One listener for every job class.
+        JobProcessing::class => [
+            ResetRequestScopedCacheAtJobBoundary::class,
+        ],
+        JobProcessed::class => [
+            ResetRequestScopedCacheAtJobBoundary::class,
+        ],
+        JobExceptionOccurred::class => [
+            ResetRequestScopedCacheAtJobBoundary::class,
         ],
     ];
 
