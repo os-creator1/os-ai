@@ -1181,5 +1181,7 @@
     "/images/pages/verify-email-illustration-dark.svg": "/images/pages/verify-email-illustration-dark.svg",
     "/images/pages/verify-email-illustration.svg": "/images/pages/verify-email-illustration.svg",
     "/images/portrait/small/avatar-s-11.jpg": "/images/portrait/small/avatar-s-11.jpg",
-    "/images/profile/profile.jpg": "/images/profile/profile.jpg"
+    "/images/profile/profile.jpg": "/images/profile/profile.jpg",
+    "/js/automations/workflow-builder.js": "/js/automations/workflow-builder.js",
+    "/css/base/pages/automations-workflow-builder.css": "/css/base/pages/automations-workflow-builder.css"
 }
