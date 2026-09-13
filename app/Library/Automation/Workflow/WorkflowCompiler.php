@@ -9,7 +9,6 @@ use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\ContactGroupFields;
-use App\Models\ContactGroups;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -23,7 +22,10 @@ use Illuminate\Support\Facades\DB;
  *                 referenced contact group and custom field belongs to THIS
  *                 workflow's Business. A shape check cannot answer that, and
  *                 conflating the two is how an authorization check ends up
- *                 looking like a formatting rule.
+ *                 looking like a formatting rule. Every such check is
+ *                 answered from ONE WorkflowReferenceCatalog read, so its cost
+ *                 never grows with the number of steps, conditions or
+ *                 references in the document.
  *
  *   `compile()`   emits the node and edge rows, in one transaction, as two bulk
  *                 inserts. These rows are written once and never updated; from
@@ -41,16 +43,30 @@ class WorkflowCompiler
     public function __construct(
         private readonly WorkflowDefinitionValidator $validator,
         private readonly NodeTypeRegistry $registry,
+        private readonly WorkflowReferenceCatalogLoader $catalogs,
     ) {
     }
 
     /**
      * Every reason this version cannot be published, keyed by node.
      *
+     * @param WorkflowReferenceCatalog|null $catalog this Business's catalog, when
+     *        the caller already holds one (the Builder loads it for its pickers),
+     *        so the request pays for one read rather than two. Without it the
+     *        compiler loads the catalog itself — once, and only when the document
+     *        references a group or field at all.
+     *
      * @return array<string, list<string>>
      */
-    public function validate(AutomationWorkflowVersion $version): array
+    public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null): array
     {
+        // A catalog answers for exactly one Business. Checking a workflow against
+        // another Business's catalog would turn a tenancy check into a leak, so
+        // that is a programming error, never a validation result.
+        if ($catalog !== null && $catalog->businessId !== (int) $version->business_id) {
+            throw new \InvalidArgumentException('A reference catalog can only validate a workflow of its own Business.');
+        }
+
         $definition = $version->definition ?? [];
 
         $errors = $this->validator->validate($definition);
@@ -61,7 +77,7 @@ class WorkflowCompiler
             return $errors;
         }
 
-        return $this->validateReferences($version, $definition);
+        return $this->validateReferences($version, $definition, $catalog);
     }
 
     /**
@@ -248,12 +264,23 @@ class WorkflowCompiler
      * belong to this workflow's Business — re-verified at execution too, but
      * refused here so a cross-Business reference can never be published at all.
      *
+     * Every answer comes from the one catalog: however many steps, conditions or
+     * repeated ids the document holds, the Business's groups and fields are read
+     * at most once. A catalog holds only this Business's rows, so "not in the
+     * catalog" means nonexistent OR foreign, exactly as the per-row queries this
+     * replaced meant it.
+     *
      * @return array<string, list<string>>
      */
-    private function validateReferences(AutomationWorkflowVersion $version, array $definition): array
+    private function validateReferences(AutomationWorkflowVersion $version, array $definition, ?WorkflowReferenceCatalog $catalog): array
     {
         $errors = [];
         $businessId = (int) $version->business_id;
+
+        // Loaded on first use, so a document that references nothing reads nothing.
+        $references = function () use (&$catalog, $businessId): WorkflowReferenceCatalog {
+            return $catalog ??= $this->catalogs->forBusiness($businessId);
+        };
 
         $flattened = [];
         $this->flatten($definition['root'], 0, $flattened);
@@ -267,14 +294,14 @@ class WorkflowCompiler
                 $groupId = $entry['config']['contact_group_id'] ?? null;
                 $triggerGroupId = $groupId === null ? null : (int) $groupId;
 
-                if ($triggerGroupId !== null && ! $this->groupBelongsToBusiness($triggerGroupId, $businessId)) {
+                if ($triggerGroupId !== null && ! $references()->hasGroup($triggerGroupId)) {
                     $errors[$entry['key']][] = 'That contact group does not belong to this business.';
                 }
 
                 if ($triggerType === WorkflowTriggerType::ContactDateReached) {
                     $fieldId = (int) ($entry['config']['date_field_id'] ?? 0);
 
-                    if ($triggerGroupId === null || ! $this->fieldBelongsToGroup($fieldId, $triggerGroupId, $businessId)) {
+                    if ($triggerGroupId === null || ! $this->fieldBelongsToGroup($fieldId, $triggerGroupId, $references)) {
                         $errors[$entry['key']][] = 'That date field does not belong to the contact group this workflow watches.';
                     }
                 }
@@ -298,7 +325,7 @@ class WorkflowCompiler
 
             $fieldId = (int) ($entry['config']['field_id'] ?? 0);
 
-            if (! $this->fieldBelongsToGroup($fieldId, $triggerGroupId, $businessId)) {
+            if (! $this->fieldBelongsToGroup($fieldId, $triggerGroupId, $references)) {
                 $errors[$entry['key']][] = 'That field does not belong to the contact group this workflow watches.';
             }
         }
@@ -308,7 +335,7 @@ class WorkflowCompiler
                 continue;
             }
 
-            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $businessId) as $error) {
+            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references) as $error) {
                 $errors[$entry['key']][] = $error;
             }
         }
@@ -329,9 +356,11 @@ class WorkflowCompiler
      * A custom field also fixes its own operator family, so a date field asked
      * `contains` is refused here rather than quietly reading as text.
      *
+     * @param \Closure(): WorkflowReferenceCatalog $references
+     *
      * @return list<string>
      */
-    private function conditionReferenceErrors(array $config, int $businessId): array
+    private function conditionReferenceErrors(array $config, \Closure $references): array
     {
         $errors = [];
         $conditions = is_array($config['conditions'] ?? null) ? array_values($config['conditions']) : [];
@@ -348,7 +377,7 @@ class WorkflowCompiler
                 $operand = $condition['operand'] ?? null;
                 $groupId = is_int($operand) || (is_string($operand) && ctype_digit($operand)) ? (int) $operand : 0;
 
-                if ($groupId <= 0 || ! $this->groupBelongsToBusiness($groupId, $businessId)) {
+                if ($groupId <= 0 || ! $references()->hasGroup($groupId)) {
                     $errors[] = sprintf('Condition %d checks a contact group that does not belong to this business.', $position);
                 }
 
@@ -361,14 +390,7 @@ class WorkflowCompiler
                 continue;
             }
 
-            $field = ContactGroupFields::query()
-                ->whereKey($fieldId)
-                ->whereExists(fn ($query) => $query
-                    ->selectRaw('1')
-                    ->from('contact_groups')
-                    ->whereColumn('contact_groups.id', 'contact_group_fields.contact_group_id')
-                    ->where('contact_groups.business_id', $businessId))
-                ->first();
+            $field = $references()->field($fieldId);
 
             if ($field === null) {
                 $errors[] = sprintf('Condition %d checks a contact field that does not belong to this business.', $position);
@@ -382,7 +404,7 @@ class WorkflowCompiler
                 continue;
             }
 
-            $allowed = ContactGroupFields::getControlNameByType((string) $field->type) === 'date'
+            $allowed = ContactGroupFields::getControlNameByType($field['type']) === 'date'
                 ? ConditionOperator::forDate()
                 : ConditionOperator::forText();
 
@@ -394,28 +416,18 @@ class WorkflowCompiler
         return $errors;
     }
 
-    private function groupBelongsToBusiness(int $groupId, int $businessId): bool
-    {
-        return ContactGroups::query()
-            ->whereKey($groupId)
-            ->where('business_id', $businessId)
-            ->exists();
-    }
-
-    private function fieldBelongsToGroup(int $fieldId, int $groupId, int $businessId): bool
+    /**
+     * A field of this Business, in that group. An id that cannot be a row is
+     * refused without loading the catalog at all.
+     *
+     * @param \Closure(): WorkflowReferenceCatalog $references
+     */
+    private function fieldBelongsToGroup(int $fieldId, int $groupId, \Closure $references): bool
     {
         if ($fieldId <= 0) {
             return false;
         }
 
-        return ContactGroupFields::query()
-            ->whereKey($fieldId)
-            ->where('contact_group_id', $groupId)
-            ->whereExists(fn ($query) => $query
-                ->selectRaw('1')
-                ->from('contact_groups')
-                ->whereColumn('contact_groups.id', 'contact_group_fields.contact_group_id')
-                ->where('contact_groups.business_id', $businessId))
-            ->exists();
+        return $references()->fieldBelongsToGroup($fieldId, $groupId);
     }
 }
