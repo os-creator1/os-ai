@@ -77,6 +77,41 @@ final class AiUsageLedgerManager
      * yet has no snapshot, so the configured cap is the honest answer for
      * it — and is what that period will snapshot when it opens.
      */
+    /**
+     * Slice AI-3 — what the ledger already holds for one durable idempotency
+     * family (every key starting with `$keyPrefix`), so a caller whose work
+     * has a stable identity can tell, before asking the gateway again:
+     *
+     *  - `paid`: an attempt was committed, or failed after the provider billed
+     *    it — the same work must never be paid for twice;
+     *  - `in_flight`: an attempt still holds a reservation;
+     *  - `attempts`: how many keys the family has used, so the next attempt
+     *    after an unpaid outcome (a refusal, a release) gets a fresh key.
+     *
+     * One indexed prefix read on the unique `idempotency_key`, bounded.
+     *
+     * @return array{paid: bool, in_flight: bool, attempts: int}
+     */
+    public function idempotencyFamily(string $keyPrefix): array
+    {
+        $rows = AiUsageLedgerEntry::query()
+            ->where('idempotency_key', 'like', addcslashes($keyPrefix, '%_\\') . '%')
+            ->limit(100)
+            ->get(['status', 'actual_cost_microusd']);
+
+        $paid = false;
+        $inFlight = false;
+
+        foreach ($rows as $row) {
+            $paid = $paid
+                || $row->status === AiUsageEntryStatus::Committed
+                || ($row->status === AiUsageEntryStatus::Failed && (int) $row->actual_cost_microusd > 0);
+            $inFlight = $inFlight || $row->status === AiUsageEntryStatus::Reserved;
+        }
+
+        return ['paid' => $paid, 'in_flight' => $inFlight, 'attempts' => $rows->count()];
+    }
+
     public function enforcedWorkspaceCapMicrousd(int $workspaceId, AiBudgetPolicy $policy): int
     {
         $period = AiUsagePeriod::query()

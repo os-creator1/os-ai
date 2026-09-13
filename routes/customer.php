@@ -698,6 +698,11 @@
 
         // RFC-005 Milestone 2: Business-scoped Usage & Billing dashboard.
         Route::get('{workspaceUid}/businesses/{businessUid}/usage-billing', 'Business\UsageBillingController@show')->name('businesses.usage-billing.show');
+
+        // Unified Business Home §8.2 E-4 (slice AI-3): "Explain this change" on
+        // Business performance. Queues one interactive-lane insight; never
+        // answers synchronously and never available while viewing as a client.
+        Route::post('{workspaceUid}/businesses/{businessUid}/performance/explain', 'Business\CooInsightExplainController@store')->name('businesses.performance.explain');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/payer', 'Business\UsageBillingController@updatePayer')->name('businesses.usage-billing.payer');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/billing-contact', 'Business\UsageBillingController@updateBillingContact')->name('businesses.usage-billing.billing-contact');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/spend-cap', 'Business\UsageBillingController@updateSpendCap')->name('businesses.usage-billing.spend-cap');

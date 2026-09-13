@@ -43,8 +43,13 @@ class DashboardQueryBudgetTest extends TestCase
      * the "See all recommendations (N)" count from that one read. The waiting
      * reply count it ranks first is the Conversations band's own read, shared,
      * so it adds nothing here or to the analytics layer.
+     *
+     * AI-3 raised it from 9 to 10 with exactly the read §16 budgets: ONE
+     * indexed, LIMIT 1 statement for the cached "What we notice" insight.
+     * Its entitlement comes from the request's existing snapshot, and the
+     * "Explain this change" control costs no query at all.
      */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 9;
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 10;
 
     /**
      * Observed: three B5 methods per Business performance period, plus

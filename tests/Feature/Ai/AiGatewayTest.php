@@ -282,9 +282,9 @@ class AiGatewayTest extends TestCase
             'interactive_committed_microusd' => $interactiveCap,
         ]);
 
-        // Correction 1 put the COO categories behind `ai_coo_basic`, which
-        // is Planned until AI-3 — so a COO category would now be refused for
-        // entitlement before the lane was ever considered. The lane is an
+        // Correction 1 put the COO categories behind `ai_coo_basic` (Available
+        // since AI-3, but still a plan decision) — so this proof does not depend
+        // on the entitlement of the fixture's plan. The lane is an
         // explicit property of the request, so the 30% share is proven here
         // with a category that carries no entitlement of its own; the
         // mechanism under test is unchanged.
