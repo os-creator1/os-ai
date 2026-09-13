@@ -16,10 +16,14 @@
     ];
     $isCustom = $range->preset === AnalyticsDateRange::PRESET_CUSTOM;
     $businessName = $businessName ?? null;
+    // The region this control updates in place (window.AsyncRegion). Without it
+    // the form is an ordinary GET form, which is also the no-JavaScript fallback
+    // when it is set: the same URL, the same page.
+    $asyncRegion = $asyncRegion ?? null;
     $timezoneNote = 'Days follow ' . ($businessName ? $businessName . "'s" : "this Business's") . ' local time (' . $range->timezone . ').';
 @endphp
 
-<form method="get" action="{{ $formAction }}" class="row g-1 align-items-end" data-role="analytics-range">
+<form method="get" action="{{ $formAction }}" class="row g-1 align-items-end" data-role="analytics-range" @if($asyncRegion) data-async-form="{{ $asyncRegion }}" @endif>
     <div class="col-md-3 col-sm-6">
         <label class="form-label" for="range">Date range</label>
         <select id="range" name="range" class="form-select" data-role="range-preset">
@@ -57,14 +61,29 @@
 
 <script>
     (function () {
-        var form = document.querySelector('[data-role="analytics-range"]');
-        if (!form) { return; }
-        var preset = form.querySelector('[data-role="range-preset"]');
-        function sync() {
+        // Bound once per page, by delegation, so it keeps working for a range
+        // control swapped in by an in-place update (whose own copy of this
+        // script does not run) and for every range control on the page.
+        if (window.__analyticsRangeCustomDates) { return; }
+        window.__analyticsRangeCustomDates = true;
+
+        function sync(form) {
+            var preset = form && form.querySelector('[data-role="range-preset"]');
+            if (!preset) { return; }
             var custom = preset.value === 'custom';
             form.querySelectorAll('[data-role="custom-dates"]').forEach(function (el) { el.hidden = !custom; });
         }
-        preset.addEventListener('change', sync);
-        sync();
+
+        function syncAll(root) {
+            (root || document).querySelectorAll('[data-role="analytics-range"]').forEach(sync);
+        }
+
+        document.addEventListener('change', function (event) {
+            if (event.target && event.target.matches && event.target.matches('[data-role="range-preset"]')) {
+                sync(event.target.form);
+            }
+        });
+        document.addEventListener('async-region:updated', function (event) { syncAll(event.target); });
+        syncAll(document);
     })();
 </script>

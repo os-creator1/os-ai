@@ -13,7 +13,10 @@
 @endphp
 
 @section('content')
-    <section id="business-analytics-campaigns">
+    {{-- The range and the page number only change what this table shows, so both
+         update this section in place (window.AsyncRegion) and keep the address
+         bar in step. Without JavaScript they are ordinary links and GET forms. --}}
+    <section id="business-analytics-campaigns" data-async-region="results-campaigns">
         <div class="row">
             <div class="col-12">
                 <a href="{{ $overviewUrl }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
@@ -37,7 +40,7 @@
             <div class="col-12">
                 <x-card :title="$business->name . ' — Campaign performance'">
                     <p class="text-caption mb-2">Campaigns created in the selected period, most recent first.</p>
-                    @include('customer.business.analytics._range', ['range' => $range, 'formAction' => $campaignsUrl, 'businessName' => $business->name])
+                    @include('customer.business.analytics._range', ['range' => $range, 'formAction' => $campaignsUrl, 'businessName' => $business->name, 'asyncRegion' => 'results-campaigns'])
                 </x-card>
             </div>
 
@@ -67,7 +70,7 @@
                             @endforeach
                         </x-table>
                         <div class="p-2">
-                            <x-pagination :paginator="$paginator" />
+                            <x-pagination :paginator="$paginator" async-region="results-campaigns" />
                         </div>
                     @endif
                 </x-card>

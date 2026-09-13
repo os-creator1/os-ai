@@ -16,11 +16,12 @@
     <!-- Sidebar header start -->
     <div class="chat-fixed-search">
         <div class="d-flex align-items-center w-100">
-            <div class="input-group input-group-merge round ms-1 w-100">
-                <span class="input-group-text"><x-ds-icon name="search" class="text-muted" /></span>
-                <input type="text" class="form-control" id="chat-search"
-                       placeholder="{{ __('locale.labels.search') }}">
-            </div>
+            {{-- One control, one border, one focus ring (x-search-field). Stays a
+                 text input: the inbox filters on keyup, and a search input's
+                 built-in clear button would not fire it. --}}
+            <x-search-field id="chat-search" type="text" class="ms-1 w-100"
+                            :label="__('locale.labels.search')"
+                            :placeholder="__('locale.labels.search')" />
             <div class="d-block d-md-none">
                 <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}" class="text-dark ms-1"><x-ds-icon name="plus-circle" />
                 </a>

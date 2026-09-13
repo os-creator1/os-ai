@@ -1,5 +1,9 @@
 @props([
     'paginator', // Illuminate\Contracts\Pagination\LengthAwarePaginator
+    // Optional: the window.AsyncRegion region these links update in place.
+    // Unset, they are ordinary links; set, they are still real links with real
+    // hrefs, so a new tab, a refresh and no-JavaScript all behave normally.
+    'asyncRegion' => null,
 ])
 
 @if ($paginator->hasPages())
@@ -16,7 +20,7 @@
                 @if ($paginator->onFirstPage())
                     <span class="page-link transition-fast" aria-disabled="true"><x-ds-icon name="chevron-left" size="14" /></span>
                 @else
-                    <a class="page-link transition-fast" href="{{ $paginator->previousPageUrl() }}" rel="prev" aria-label="{{ __('Previous') }}"><x-ds-icon name="chevron-left" size="14" /></a>
+                    <a class="page-link transition-fast" href="{{ $paginator->previousPageUrl() }}" rel="prev" aria-label="{{ __('Previous') }}" @if($asyncRegion) data-async-link="{{ $asyncRegion }}" @endif><x-ds-icon name="chevron-left" size="14" /></a>
                 @endif
             </li>
             <li class="page-item disabled">
@@ -24,7 +28,7 @@
             </li>
             <li class="page-item @if (! $paginator->hasMorePages()) disabled @endif">
                 @if ($paginator->hasMorePages())
-                    <a class="page-link transition-fast" href="{{ $paginator->nextPageUrl() }}" rel="next" aria-label="{{ __('Next') }}"><x-ds-icon name="chevron-right" size="14" /></a>
+                    <a class="page-link transition-fast" href="{{ $paginator->nextPageUrl() }}" rel="next" aria-label="{{ __('Next') }}" @if($asyncRegion) data-async-link="{{ $asyncRegion }}" @endif><x-ds-icon name="chevron-right" size="14" /></a>
                 @else
                     <span class="page-link transition-fast" aria-disabled="true"><x-ds-icon name="chevron-right" size="14" /></span>
                 @endif

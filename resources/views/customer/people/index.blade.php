@@ -25,11 +25,17 @@
             @endcan
         </div>
 
-        <form method="GET" action="{{ route('customer.workspaces.businesses.people.index', [$workspaceUid, $businessUid]) }}" role="search" class="mb-2" data-role="contacts-search">
+        {{-- Searching and paging only change which contacts are listed, so they
+             update the list below in place (window.AsyncRegion) and keep the
+             address bar in step. The form sits outside the list on purpose: what
+             someone is typing is never replaced while the results change. Without
+             JavaScript both are an ordinary GET to the same URL. --}}
+        <form method="GET" action="{{ route('customer.workspaces.businesses.people.index', [$workspaceUid, $businessUid]) }}" role="search" class="mb-2" data-role="contacts-search" data-async-form="contacts-list">
             <label for="contacts-search" class="visually-hidden">Search contacts</label>
             <input type="search" class="form-control" id="contacts-search" name="q" value="{{ $search }}" placeholder="Search by name, phone, email or company" maxlength="100">
         </form>
 
+        <div data-async-region="contacts-list">
         @if ($contacts->total() === 0)
             @if ($search !== '')
                 <x-empty-state icon="search" title="No contacts match “{{ $search }}”." description="Try a name, a phone number, an email or a company." />
@@ -58,7 +64,8 @@
                 </x-table>
             </x-card>
 
-            <x-pagination :paginator="$contacts" />
+            <x-pagination :paginator="$contacts" async-region="contacts-list" />
         @endif
+        </div>
     </section>
 @endsection

@@ -65,53 +65,80 @@
                 // series endpoint for the SAME range the tiles above show,
                 // and charts only a genuine payload. Colours and grid come
                 // from the shared token namespace, exactly as Results does.
-                var mount = document.querySelector('[data-role="chart-new-contacts"]');
-
-                if (!mount || typeof ApexCharts === 'undefined' || !window.PlatformTheme) { return; }
+                //
+                // Mounted again whenever the Business performance band is
+                // updated in place (a new range), from the series URL that
+                // band now carries — never from the one the page loaded with.
+                if (typeof ApexCharts === 'undefined' || !window.PlatformTheme) { return; }
 
                 var theme = window.PlatformTheme;
                 var palette = theme.chartPalette();
                 var LABEL_SPACING_PX = 110;
+                var current = null;
 
-                function unavailable() {
-                    mount.innerHTML = '<p class="text-caption mb-0">Chart data is unavailable right now.</p>';
+                function mountChart(root) {
+                    var mount = root.querySelector('[data-role="chart-new-contacts"]');
+
+                    if (current) {
+                        current.destroy();
+                        current = null;
+                    }
+
+                    if (!mount) { return; }
+
+                    function unavailable() {
+                        mount.innerHTML = '<p class="text-caption mb-0">Chart data is unavailable right now.</p>';
+                    }
+
+                    fetch(mount.dataset.seriesUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                        .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
+                        .then(function (payload) {
+                            var chart = payload && payload.charts ? payload.charts.new_contacts : null;
+
+                            if (!chart || !chart.series || !chart.series.new_contacts) { return Promise.reject('shape'); }
+
+                            // The band may have been swapped again while this
+                            // request was out; never draw into a detached mount.
+                            if (!document.body.contains(mount)) { return; }
+
+                            var fitting = Math.max(2, Math.floor(mount.clientWidth / LABEL_SPACING_PX));
+                            mount.innerHTML = '';
+
+                            current = new ApexCharts(mount, {
+                                chart: { type: 'area', height: 220, toolbar: { show: false }, zoom: { enabled: false }, fontFamily: 'inherit' },
+                                colors: [palette[0]],
+                                series: [{ name: 'New contacts', data: chart.series.new_contacts }],
+                                grid: { borderColor: theme.chartGrid() },
+                                xaxis: {
+                                    type: 'category',
+                                    categories: chart.labels,
+                                    tickAmount: chart.labels.length > fitting ? fitting : undefined,
+                                    labels: { style: { colors: theme.chartAxis() }, rotate: 0, rotateAlways: false, hideOverlappingLabels: true, trim: false },
+                                    tooltip: { enabled: false }
+                                },
+                                yaxis: { labels: { style: { colors: theme.chartAxis() } }, min: 0, forceNiceScale: true },
+                                tooltip: {
+                                    theme: 'dark',
+                                    style: { fontSize: '12px' },
+                                    x: { formatter: function (value, opts) { return chart.tooltips[opts.dataPointIndex] || value; } }
+                                },
+                                dataLabels: { enabled: false },
+                                stroke: { curve: 'straight', width: 2 },
+                                fill: { opacity: 0.2 },
+                                legend: { show: false }
+                            });
+                            current.render();
+                        })
+                        .catch(unavailable);
                 }
 
-                fetch(mount.dataset.seriesUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-                    .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
-                    .then(function (payload) {
-                        var chart = payload && payload.charts ? payload.charts.new_contacts : null;
+                mountChart(document);
 
-                        if (!chart || !chart.series || !chart.series.new_contacts) { return Promise.reject('shape'); }
-
-                        var fitting = Math.max(2, Math.floor(mount.clientWidth / LABEL_SPACING_PX));
-                        mount.innerHTML = '';
-
-                        new ApexCharts(mount, {
-                            chart: { type: 'area', height: 220, toolbar: { show: false }, zoom: { enabled: false }, fontFamily: 'inherit' },
-                            colors: [palette[0]],
-                            series: [{ name: 'New contacts', data: chart.series.new_contacts }],
-                            grid: { borderColor: theme.chartGrid() },
-                            xaxis: {
-                                type: 'category',
-                                categories: chart.labels,
-                                tickAmount: chart.labels.length > fitting ? fitting : undefined,
-                                labels: { style: { colors: theme.chartAxis() }, rotate: 0, rotateAlways: false, hideOverlappingLabels: true, trim: false },
-                                tooltip: { enabled: false }
-                            },
-                            yaxis: { labels: { style: { colors: theme.chartAxis() } }, min: 0, forceNiceScale: true },
-                            tooltip: {
-                                theme: 'dark',
-                                style: { fontSize: '12px' },
-                                x: { formatter: function (value, opts) { return chart.tooltips[opts.dataPointIndex] || value; } }
-                            },
-                            dataLabels: { enabled: false },
-                            stroke: { curve: 'straight', width: 2 },
-                            fill: { opacity: 0.2 },
-                            legend: { show: false }
-                        }).render();
-                    })
-                    .catch(unavailable);
+                document.addEventListener('async-region:updated', function (event) {
+                    if (event.detail && event.detail.name === 'business-performance') {
+                        mountChart(event.target);
+                    }
+                });
             })();
         </script>
     @endsection

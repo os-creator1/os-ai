@@ -338,9 +338,12 @@ $("#media_image").val("");
                 addToPin.tooltip("dispose").tooltip();
 
 
-                // Swap the icon to 'delete'
+                // Swap the icon to 'delete'. A template literal, not a quoted
+                // string: the rendered SVG spans several lines, and a line break
+                // inside '...' is a syntax error that stops this whole script
+                // (search, load more, sending) from running.
                 addToPin.find("svg").remove();  // Remove the old icon element
-                addToPin.append('<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />');
+                addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);
 
                 // Re-initialize Feather icons to update
                 feather.replace();
@@ -351,7 +354,7 @@ $("#media_image").val("");
 
                 // Swap the icon to 'edit-2'
                 addToPin.find("svg").remove();  // Remove the old icon element
-                addToPin.append('<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />');
+                addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);
 
                 // Re-initialize Feather icons to update
                 feather.replace();

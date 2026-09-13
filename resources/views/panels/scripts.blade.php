@@ -41,6 +41,10 @@
 @endphp
 <script src="{{ asset($themeTokensSrc) }}"></script>
 <script src="{{ asset(mix('js/core/app.js')) }}"></script>
+{{-- window.AsyncRegion: in-place updates for controls that only change what a
+     screen shows (a range, a search, a page). Inert unless a page marks a
+     region and a form or link that targets it. --}}
+<script src="{{ asset(mix('js/core/async-region.js')) }}" data-error-message="{{ __('locale.exceptions.something_went_wrong') }}"></script>
 
 <!-- custom scripts file for user -->
 <script src="{{ asset(mix('js/core/scripts.js')) }}"></script>

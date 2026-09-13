@@ -10,8 +10,14 @@
     The chart is fetched by the browser from B5's own series endpoint for the
     same range: this page renders no series of its own. "See details" opens
     Results on that same period.
+
+    Changing the range updates THIS band in place (window.AsyncRegion,
+    data-async-region="business-performance"): the rest of Home does not
+    reload, and the address bar keeps the chosen range so a refresh or a
+    bookmark shows the same period. Without JavaScript the form is an ordinary
+    GET and the whole page loads with that range — the same URL either way.
 --}}
-<section class="mb-2" aria-labelledby="dashboard-headlines-heading" data-band="headlines" data-range="{{ $headlines['range']->cacheKey() }}">
+<section class="mb-2" aria-labelledby="dashboard-headlines-heading" data-band="headlines" data-range="{{ $headlines['range']->cacheKey() }}" data-async-region="business-performance">
     <x-card>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-50">
             <h2 class="h4 text-section-heading mb-0" id="dashboard-headlines-heading">Business performance</h2>
@@ -24,6 +30,7 @@
             @include('customer.business.analytics._range', [
                 'range' => $headlines['range'],
                 'formAction' => $headlines['formAction'],
+                'asyncRegion' => 'business-performance',
             ])
         </div>
 

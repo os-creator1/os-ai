@@ -69,6 +69,7 @@ mix.copyDirectory('resources/images', 'public/images')
 mix
     .js('resources/js/core/app-menu.js', 'public/js/core')
     .js('resources/js/core/theme-tokens.js', 'public/js/core')
+    .js('resources/js/core/async-region.js', 'public/js/core')
     .js('resources/js/core/app.js', 'public/js/core')
     .js('resources/assets/js/scripts.js', 'public/js/core')
     .js('resources/js/automations/workflow-builder/index.js', 'public/js/automations/workflow-builder.js')

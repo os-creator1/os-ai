@@ -18,7 +18,8 @@ use Tests\TestCase;
  * checks across the exact 4-view allowlist (§9 of the Slice 6 contract).
  * Proves the icon migration (14 static data-feather occurrences, 13
  * distinct names, migrated to <x-ds-icon>, including the two JS-string-
- * embedded pin/unpin icons), the untouched feather.replace() runtime (3
+ * embedded pin/unpin icons — the search icon now drawn by <x-search-field>),
+ * the untouched feather.replace() runtime (3
  * calls, all in index.blade.php), the elimination of the 3 hardcoded color
  * literals in index.blade.php's inline <style> block, and that native-
  * retained plugin wiring (Select2, SweetAlert2, #load-more/#chat-search
@@ -84,8 +85,17 @@ class ChatBoxDesignSystemContentTest extends TestCase
             $combined .= file_get_contents(base_path($view));
         }
 
+        // The inbox search icon is drawn by <x-search-field>, which renders
+        // <x-ds-icon name="search"> itself — the same seam, one level down.
+        $this->assertStringContainsString(
+            '<x-ds-icon name="search"',
+            (string) file_get_contents(resource_path('views/components/search-field.blade.php'))
+        );
+
         foreach (['x', 'search', 'plus-circle', 'refresh-cw', 'message-square', 'menu', 'shield', 'trash', 'image', 'send', 'delete', 'edit-2', 'info'] as $name) {
-            $present = str_contains($combined, 'name="' . $name . '"') || str_contains($combined, 'icon="' . $name . '"');
+            $present = str_contains($combined, 'name="' . $name . '"')
+                || str_contains($combined, 'icon="' . $name . '"')
+                || ($name === 'search' && str_contains($combined, '<x-search-field'));
             $this->assertTrue(
                 $present,
                 "Expected an <x-ds-icon name=\"{$name}\"> or <x-button icon=\"{$name}\"> marker somewhere across the 4-view allowlist."
@@ -96,7 +106,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
     public function test_exact_per_file_icon_marker_occurrence_counts(): void
     {
         $expected = [
-            'resources/views/customer/ChatBox/_sidebar.blade.php' => 4, // x, search, plus-circle (literal) + refresh-cw (icon prop)
+            'resources/views/customer/ChatBox/_sidebar.blade.php' => 3, // x, plus-circle (literal) + refresh-cw (icon prop); search is drawn by <x-search-field>
             'resources/views/customer/ChatBox/index.blade.php' => 8, // all 8 as literal <x-ds-icon> tags
             'resources/views/customer/ChatBox/new.blade.php' => 2, // info (literal) + send (icon prop)
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php' => 0,
@@ -110,21 +120,47 @@ class ChatBoxDesignSystemContentTest extends TestCase
             $total += $actual;
         }
 
-        $this->assertSame(14, $total);
+        $this->assertSame(13, $total);
     }
 
-    public function test_the_two_js_string_embedded_pin_unpin_icons_migrated_via_the_slice_5_precedent(): void
+    /**
+     * The two pin/unpin icons are embedded in a JavaScript string. The icon
+     * renders as a multi-line SVG, so the string must be a template literal:
+     * a line break inside '...' or "..." is a syntax error, and it stopped the
+     * inbox's whole page script — search, load more, sending — from running.
+     */
+    public function test_the_two_js_string_embedded_pin_unpin_icons_are_template_literals(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
         $this->assertStringContainsString(
-            "addToPin.append('<x-ds-icon name=\"delete\" class=\"cursor-pointer font-medium-2 mx-1 text-danger\" />');",
+            'addToPin.append(`<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />`);',
             $contents
         );
         $this->assertStringContainsString(
-            "addToPin.append('<x-ds-icon name=\"edit-2\" class=\"cursor-pointer font-medium-2 mx-1 text-info\" />');",
+            'addToPin.append(`<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />`);',
             $contents
         );
+        $this->assertDoesNotMatchRegularExpression(
+            '/[\'"]<x-ds-icon/',
+            $contents,
+            'An <x-ds-icon> inside a quoted JavaScript string renders a line break into it.'
+        );
+    }
+
+    public function test_the_rendered_pin_unpin_icon_strings_span_lines_only_inside_template_literals(): void
+    {
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
+
+        $html = $this->get(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->getContent();
+
+        preg_match_all('/addToPin\.append\((.)<svg/', $html, $matches);
+
+        $this->assertCount(2, $matches[1], 'Both pin/unpin icons render as inline SVG.');
+        $this->assertSame(['`', '`'], $matches[1]);
+        $this->assertStringContainsString("\n", substr($html, strpos($html, 'addToPin.append(`<svg'), 400), 'The rendered icon does span lines — which is why a quoted string cannot hold it.');
     }
 
     public function test_feather_replace_count_remains_exactly_3_in_index_and_feather_runtime_script_present(): void
@@ -190,37 +226,22 @@ class ChatBoxDesignSystemContentTest extends TestCase
     }
 
     /**
-     * Regression for the inbox search double-focus/seam defect. The
-     * bootstrap-extended `.round` utility (_utilities.scss) sets a full
-     * border-radius on whatever element carries it; the theme's own
-     * `.input-group.round` rule (_input-group.scss) is what actually
-     * distributes that radius correctly across a merged icon+input pair
-     * and shapes the `:focus-within` ring to match. `round` must sit on
-     * the `.input-group` wrapper — putting it on the icon span and the
-     * input individually (the prior defect) produces two independently
-     * rounded shapes with a visible seam and a mismatched outer ring.
+     * Regression for the inbox search stray square and doubled focus border.
+     * The icon used to sit in its own `.input-group-text` span: a separate
+     * bordered box (the theme's merge rule strips the input's left border,
+     * never the span's right one), and on focus the design system's ring
+     * outlined the input alone beside the span's grey border. Moving `round`
+     * between the wrapper and its children could not fix either, because the
+     * two bordered boxes remained. The search is now one <x-search-field>:
+     * a single input with the icon drawn over it.
      */
-    public function test_chat_search_round_modifier_sits_on_the_input_group_wrapper_not_its_children(): void
+    public function test_chat_search_is_the_single_control_search_field_not_an_icon_input_group(): void
     {
         $sidebar = file_get_contents(base_path('resources/views/customer/ChatBox/_sidebar.blade.php'));
 
-        $this->assertMatchesRegularExpression(
-            '/<div class="input-group input-group-merge round[^"]*">/',
-            $sidebar,
-            'The .round modifier must be on the .input-group wrapper so the theme shapes one merged control and one matching focus ring.'
-        );
-
-        $this->assertDoesNotMatchRegularExpression(
-            '/<span class="input-group-text round"/',
-            $sidebar,
-            'round must not sit on the search icon span — it produces an independently rounded shape and a seam against the input.'
-        );
-
-        $this->assertDoesNotMatchRegularExpression(
-            '/<input[^>]*class="form-control round"[^>]*id="chat-search"/',
-            $sidebar,
-            'round must not sit on #chat-search directly — it produces a second, independently rounded border under focus.'
-        );
+        $this->assertMatchesRegularExpression('/<x-search-field\s+id="chat-search"\s+type="text"/', $sidebar);
+        $this->assertStringNotContainsString('input-group', $sidebar);
+        $this->assertStringNotContainsString('input-group-text', $sidebar);
     }
 
     public function test_load_more_and_chat_search_ajax_wiring_retained(): void
@@ -308,15 +329,25 @@ class ChatBoxDesignSystemContentTest extends TestCase
         }
     }
 
-    public function test_chatbox_index_renders_the_merged_single_bordered_search_control(): void
+    public function test_chatbox_index_renders_the_single_bordered_search_control(): void
     {
         [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
         $response = $this->get(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
-        $response->assertSee('input-group input-group-merge round', false);
-        $response->assertDontSee('input-group-text round', false);
+
+        $html = $response->getContent();
+        $this->assertSame(1, preg_match('/<div class="position-relative ms-1 w-100" data-role="search-field">(.*?)<\/div>/s', $html, $field));
+
+        // One label, one decorative icon, one input — and nothing else that could draw a box.
+        $this->assertStringContainsString('<label for="chat-search" class="visually-hidden">', $field[1]);
+        $this->assertSame(1, substr_count($field[1], '<svg'));
+        $this->assertMatchesRegularExpression('/<svg[^>]*aria-hidden="true"/', $field[1]);
+        $this->assertSame(1, substr_count($field[1], '<input'));
+        $this->assertMatchesRegularExpression('/<input type="text"\s+id="chat-search"/', $field[1]);
+        $this->assertStringNotContainsString('<span', $field[1]);
+        $this->assertStringNotContainsString('input-group-text', substr($html, strpos($html, 'chat-fixed-search'), 1500));
     }
 
     public function test_chatbox_ajax_load_partial_renders_without_data_feather(): void
