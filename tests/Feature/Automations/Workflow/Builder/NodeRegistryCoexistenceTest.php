@@ -8,14 +8,15 @@ use App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry;
 use Tests\TestCase;
 
 /**
- * Automations V2 (contract §5.2, §16, V2-D ↔ #270/V2-B coexistence, PR #274) —
- * proves this slice's builder vocabulary has not drifted from the real,
- * current NodeTypeRegistry now that V2-B's action executors (send_sms,
- * update_contact_field, internal_notification) are merged alongside the
- * pre-existing logic executors (trigger, end). Wait and If/Else remain
- * builder-supported SCHEMA node types even though their own runtime
- * executors are not yet merged (Lane D) — this slice never removes a
- * registered node type merely because its executor lags.
+ * Automations V2 (contract §5.2, §16, V2-D ↔ #270/V2-B ↔ #277/V2-A
+ * coexistence, PR #274) — proves this slice's builder vocabulary has not
+ * drifted from the real, current NodeTypeRegistry now that BOTH V2-B's
+ * action executors (send_sms, update_contact_field, internal_notification)
+ * AND V2-A's logic executors (wait, if_else) are merged alongside the
+ * pre-existing structural executors (trigger, end). The registry is now
+ * COMPLETE — every builder-supported node type resolves a real executor —
+ * so this slice never has to special-case a type whose executor "hasn't
+ * shipped yet".
  */
 class NodeRegistryCoexistenceTest extends TestCase
 {
@@ -29,15 +30,21 @@ class NodeRegistryCoexistenceTest extends TestCase
         'end',
     ];
 
-    /** #270 proof: the executor registry actually resolves the three new action executors. */
-    public function test_the_v2b_action_executor_registry_still_resolves(): void
+    /** The executor registry resolves every one of the seven launch node types. */
+    public function test_the_full_executor_registry_resolves_every_launch_node_type(): void
     {
         $registry = $this->app->make(NodeExecutorRegistry::class);
 
-        foreach (['send_sms', 'update_contact_field', 'internal_notification', 'trigger', 'end'] as $type) {
+        foreach (self::LAUNCH_NODE_TYPES as $type) {
             $executor = $registry->for(WorkflowNodeType::from($type));
             $this->assertNotNull($executor, "NodeExecutorRegistry must resolve an executor for [{$type}].");
         }
+
+        $this->assertEqualsCanonicalizing(
+            self::LAUNCH_NODE_TYPES,
+            $registry->registeredTypes(),
+            'The registry must hold exactly the seven launch executors — no gaps, no strays.',
+        );
     }
 
     /** The builder's JS vocabulary is exactly WorkflowNodeType::cases() — no more, no less. */
@@ -59,8 +66,19 @@ class NodeRegistryCoexistenceTest extends TestCase
         }
     }
 
-    /** Wait and If/Else stay builder-supported even though their own executors have not merged yet. */
-    public function test_wait_and_if_else_remain_builder_supported_pending_their_own_executors(): void
+    /**
+     * Wait and If/Else are builder-supported schema node types AND now have
+     * real runtime executors, since #277/V2-A merged.
+     *
+     * This test previously asserted the opposite — that
+     * WaitNodeExecutor.php/IfElseNodeExecutor.php did not exist yet, because
+     * the builder (V2-D) shipped the schema-level node types ahead of their
+     * own runtime slice. That gap is closed now: the assertion is inverted
+     * rather than deleted, so a future regression that silently drops one of
+     * these executors from the container is still caught here, from the
+     * builder's own vantage point.
+     */
+    public function test_wait_and_if_else_are_builder_supported_and_now_have_real_executors(): void
     {
         $registry = new NodeTypeRegistry();
 
@@ -71,11 +89,18 @@ class NodeRegistryCoexistenceTest extends TestCase
         $this->assertStringContainsString("WAIT: 'wait'", $constants);
         $this->assertStringContainsString("IF_ELSE: 'if_else'", $constants);
 
-        // Their own executors are Lane D's, not yet merged — this is a fact
-        // about the runtime directory, not a reason to drop them from the
-        // schema-level builder.
-        $this->assertFileDoesNotExist(base_path('app/Library/Automation/Workflow/Executors/WaitNodeExecutor.php'));
-        $this->assertFileDoesNotExist(base_path('app/Library/Automation/Workflow/Executors/IfElseNodeExecutor.php'));
+        $this->assertFileExists(base_path('app/Library/Automation/Workflow/Executors/WaitNodeExecutor.php'));
+        $this->assertFileExists(base_path('app/Library/Automation/Workflow/Executors/IfElseNodeExecutor.php'));
+
+        $executorRegistry = $this->app->make(NodeExecutorRegistry::class);
+        $this->assertInstanceOf(
+            \App\Library\Automation\Workflow\Executors\WaitNodeExecutor::class,
+            $executorRegistry->for(WorkflowNodeType::Wait),
+        );
+        $this->assertInstanceOf(
+            \App\Library\Automation\Workflow\Executors\IfElseNodeExecutor::class,
+            $executorRegistry->for(WorkflowNodeType::IfElse),
+        );
     }
 
     /** No unsupported node type was added alongside the real V2-B merge. */
