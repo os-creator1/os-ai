@@ -143,9 +143,12 @@ class JsonExceptionStatusTest extends TestCase
 
     public function test_an_unexpected_server_fault_is_a_json_500(): void
     {
+        // The status is the subject here. The message outside `local` is the
+        // generic one — the raw text of an unexpected fault is never returned
+        // to a client; see JsonServerErrorSanitizationTest for that contract.
         $this->getJson('/__handler-test/server-fault')
             ->assertStatus(500)
-            ->assertExactJson(['status' => 'error', 'message' => 'Something broke inside.']);
+            ->assertExactJson(['status' => 'error', 'message' => __('locale.exceptions.something_went_wrong')]);
     }
 
     public function test_an_exception_carrying_its_own_response_keeps_that_status(): void

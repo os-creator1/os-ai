@@ -77,10 +77,12 @@
             // body — and a tenancy denial answered a foreign Account's request
             // with a success status. The status now says what actually happened.
             if ($request->wantsJson()) {
+                $status = $this->ownJsonStatus($exception);
+
                 return response()->json([
                     'status'  => 'error',
-                    'message' => $exception->getMessage(),
-                ], $this->jsonStatusFor($exception));
+                    'message' => $status === null ? $this->unexpectedErrorMessage($exception) : $exception->getMessage(),
+                ], $status ?? Response::HTTP_INTERNAL_SERVER_ERROR);
             }
 
             if (config('app.env') != 'local') {
@@ -137,10 +139,13 @@
          *   4xx/5xx would be redefining a business-error contract, not
          *   correcting an HTTP status.
          *
-         * Anything else that carries no HTTP status is an unexpected server
-         * fault, and says so with 500.
+         * Anything else carries no HTTP status of its own, and this returns null
+         * for it: that is an unexpected server fault, which the caller answers
+         * with 500 AND a sanitized message (unexpectedErrorMessage()). One
+         * classification decides both, so a fault can never get a 500 while
+         * still leaking its raw message, or a safe message on the wrong status.
          */
-        private function jsonStatusFor(Throwable $exception): int
+        private function ownJsonStatus(Throwable $exception): ?int
         {
             if ($exception instanceof GeneralException) {
                 return Response::HTTP_OK;
@@ -168,7 +173,41 @@
                 return $prepared->getStatusCode();
             }
 
-            return Response::HTTP_INTERNAL_SERVER_ERROR;
+            return null;
+        }
+
+        /**
+         * What a JSON client is told about an unexpected server fault.
+         *
+         * An exception with no HTTP status of its own was not written for a
+         * customer to read. Its message is whatever the failing layer produced:
+         * a QueryException carries the SQL and the connection it ran on, an
+         * ErrorException carries a server file path, a driver error carries a
+         * host name. None of that belongs in a response body.
+         *
+         * So outside `local` the client receives one generic, localized message
+         * — the application's existing `locale.exceptions.something_went_wrong`,
+         * already shown to customers and already translated in every locale —
+         * while the full exception still reaches the logs, because report() runs
+         * before render() and is untouched by this.
+         *
+         * `local` keeps the raw message: that is where a developer needs it, and
+         * it is the same `app.env` test this handler's page branch already uses
+         * to decide between developer output and production pages. It is keyed on
+         * the ENVIRONMENT, deliberately not on `app.debug`: a production server
+         * deployed with debug accidentally left on must still not leak.
+         *
+         * Expected exceptions never reach this — a 404, 401, 403, 419, 422, a
+         * GeneralException — their messages are written for the client and are
+         * returned unchanged.
+         */
+        private function unexpectedErrorMessage(Throwable $exception): string
+        {
+            if (config('app.env') === 'local') {
+                return $exception->getMessage();
+            }
+
+            return __('locale.exceptions.something_went_wrong');
         }
 
     }

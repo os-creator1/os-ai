@@ -7,13 +7,14 @@ use App\Enums\Dashboard\AttentionSeverity;
 use App\Enums\Dashboard\AttentionType;
 use App\Enums\Dashboard\HeadlinePolarity;
 use App\Enums\Dashboard\HeadlineTrend;
-use App\Enums\Opportunity\OpportunityFreshness;
-use App\Enums\Opportunity\OpportunityStatus;
 use App\Http\Requests\Analytics\AnalyticsRangeRequest;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
+use App\Library\Coo\NextBestMove;
+use App\Library\Coo\NextBestMoveSelector;
+use App\Library\Coo\WhyThis;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Navigation\MenuEntitlements;
@@ -21,8 +22,6 @@ use App\Models\Business;
 use App\Models\Opportunity;
 use App\Models\User;
 use App\Repositories\Contracts\OpportunityRepository;
-use Illuminate\Pagination\PaginationState;
-use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
@@ -65,8 +64,13 @@ use Throwable;
  */
 final class BusinessHomePresenter
 {
-    /** §6 — the same source-controlled bound as the former panel. Never request input. */
-    public const RECOMMENDATION_LIMIT = 5;
+    /**
+     * §2.4 (C-2) — how much of the Opportunity work queue one Home read takes.
+     * The first row is the move's candidate; the count is "See all
+     * recommendations (N)", shown as "20+" once the read fills. A fixed
+     * source constant, never request input.
+     */
+    public const RECOMMENDATION_QUEUE_CAP = 20;
 
     public const MAX_QUICK_ACTIONS = 4;
 
@@ -81,6 +85,8 @@ final class BusinessHomePresenter
         private readonly RecentWorkReader $recentWorkReader,
         private readonly DashboardLinkGate $links,
         private readonly ParentAccountSwitch $parentSwitch,
+        private readonly NextBestMoveSelector $nextBestMoveSelector,
+        private readonly WhyThis $whyThis,
     ) {
     }
 
@@ -148,29 +154,41 @@ final class BusinessHomePresenter
             }
         }
 
-        // 0 — Billing exception strip, 1 — Attention
+        // Awaiting reply is read ONCE and shared: the Conversations band shows
+        // the figure, and the next best move is raised from the same number.
+        $conversationsShown = $entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box');
+        $awaiting = null;
+        $awaitingFailed = false;
+
+        if ($conversationsShown) {
+            try {
+                $awaiting = $this->conversations->awaitingReplyCount($business);
+            } catch (Throwable $e) {
+                report($e);
+                $awaitingFailed = true;
+            }
+        }
+
+        $automationFailures = $automationsShown && $comparison !== null && $comparison['current']['automations'] instanceof AutomationKpis
+            ? $comparison['current']['automations']->failed()
+            : 0;
+
+        // 0 — Billing exception strip.
         //
         // Billing left the Business Home as a metric (§5): it appears here
         // only as ONE compact exception a customer can actually act on, and
         // only for an actor whose remediation route resolves. Everything else
         // billing lives in Settings.
-        if ($statusFailed) {
-            $failed[] = DashboardSnapshot::BAND_ATTENTION;
-        } else {
-            $automationFailures = $automationsShown && $comparison !== null && $comparison['current']['automations'] instanceof AutomationKpis
-                ? $comparison['current']['automations']->failed()
-                : 0;
-            $items = $this->attention($context, $user, $entitlements, $scoped, $candidate->name, $status, $automationFailures);
+        $attention = [];
+
+        if (! $statusFailed) {
+            $items = $this->attention($context, $user, $entitlements, $scoped, $candidate->name, $status, $automationFailures, (int) ($awaiting ?? 0));
 
             $billing = array_values(array_filter($items, fn (AttentionItem $item) => self::isBilling($item->type)));
             $attention = array_values(array_filter($items, fn (AttentionItem $item) => ! self::isBilling($item->type)));
 
             if ($billing !== []) {
                 $bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] = $billing[0];
-            }
-
-            if ($attention !== []) {
-                $bands[DashboardSnapshot::BAND_ATTENTION] = $attention;
             }
         }
 
@@ -187,17 +205,32 @@ final class BusinessHomePresenter
             $failed[] = DashboardSnapshot::BAND_ACTIVITY;
         }
 
-        // 2 — Recommended next steps
-        if (config('opportunity.enabled', false)) {
+        // 2 — Your next best move (§2.4, §6.4). Always shown: when nothing
+        // needs doing it says so. It cannot be computed honestly without the
+        // status row (a real exception might be hidden) or, when this actor can
+        // see conversations, without the waiting count — so either failing
+        // degrades the band rather than claiming "all caught up".
+        if ($statusFailed || $awaitingFailed) {
+            $failed[] = DashboardSnapshot::BAND_NEXT_BEST_MOVE;
+        } else {
             try {
-                $recommendations = $this->recommendations($business, $context, $user, $entitlements);
-
-                if ($recommendations !== null) {
-                    $bands[DashboardSnapshot::BAND_RECOMMENDATIONS] = $recommendations;
-                }
+                $bands[DashboardSnapshot::BAND_NEXT_BEST_MOVE] = $this->nextBestMove(
+                    $business,
+                    $context,
+                    $user,
+                    $entitlements,
+                    $attention,
+                    [
+                        'awaiting' => (int) ($awaiting ?? 0),
+                        'graceMinutes' => max(0, (int) config('conversations.awaiting_reply_grace_minutes', 5)),
+                        'failedRuns' => $automationFailures,
+                        'window' => self::windowPhrase($selectedRange),
+                        'unhealthyListings' => $status?->unhealthyGoogleLocations ?? 0,
+                    ],
+                );
             } catch (Throwable $e) {
                 report($e);
-                $failed[] = DashboardSnapshot::BAND_RECOMMENDATIONS;
+                $failed[] = DashboardSnapshot::BAND_NEXT_BEST_MOVE;
             }
         }
 
@@ -236,9 +269,13 @@ final class BusinessHomePresenter
         // 5 — Conversations: are customers writing, are we answering, and is
         // anyone waiting right now (§2.6). Every figure comes from Slice 2B's
         // read model, the only reader of the conversation table.
-        if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
+        if ($conversationsShown) {
             try {
-                $bands[DashboardSnapshot::BAND_CONVERSATIONS] = $this->conversations($business, $context, $user, $entitlements, $scoped, $selectedRange);
+                if ($awaitingFailed) {
+                    throw new \RuntimeException('Awaiting reply could not be read.');
+                }
+
+                $bands[DashboardSnapshot::BAND_CONVERSATIONS] = $this->conversations($business, $context, $user, $entitlements, $scoped, $selectedRange, (int) $awaiting);
             } catch (Throwable $e) {
                 report($e);
                 $failed[] = DashboardSnapshot::BAND_CONVERSATIONS;
@@ -305,12 +342,17 @@ final class BusinessHomePresenter
      * @param  array<int, string>  $scoped
      * @return array<int, AttentionItem>
      */
-    private function attention(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, string $scope, BusinessStatusRow $status, int $automationFailures): array
+    private function attention(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, string $scope, BusinessStatusRow $status, int $automationFailures, int $awaiting = 0): array
     {
         $types = $status->attentionTypes();
 
         if ($automationFailures > 0) {
             $types[] = AttentionType::AutomationFailing;
+        }
+
+        // §7.2 (C-2) — raised from Slice 2B's count, never from a table read here.
+        if ($awaiting > 0) {
+            $types[] = AttentionType::ConversationsAwaitingReply;
         }
 
         $items = [];
@@ -326,7 +368,7 @@ final class BusinessHomePresenter
                 continue;
             }
 
-            $text = $type->sentence();
+            $text = $type->sentence($type === AttentionType::ConversationsAwaitingReply ? $awaiting : null);
             $consequence = $type->consequence();
 
             $items[] = new AttentionItem($type, $type->severity(), $scope, $consequence === null ? $text : $text . ' ' . $consequence, $type->actionLabel(), $url);
@@ -392,6 +434,7 @@ final class BusinessHomePresenter
             AttentionType::LowBalance, AttentionType::AutoRechargeFailing => $context->canManageBilling()
                 ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.usage-billing.show', $scoped, ['access_backend'])
                 : null,
+            AttentionType::ConversationsAwaitingReply => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.conversations.index', $scoped, ['chat_box'], 'conversations'),
             AttentionType::WebsiteUnpublished => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
             AttentionType::GoogleConnectionLost, AttentionType::GoogleLocationUnhealthy => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.gbp.index', $scoped, ['view_google_business_profile'], 'google_business_profile_module'),
             AttentionType::AutomationFailing => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations'),
@@ -472,58 +515,92 @@ final class BusinessHomePresenter
     }
 
     /**
-     * §6 — AI recommendations only, never a prerequisite failure: open AND
-     * current, the first five, for the selected Business. Null (the band is
-     * absent) when there is nothing to recommend.
+     * §2.4, §6.4, §6.5 (C-2) — Your next best move: exactly ONE.
      *
-     * The Advisor pages resolve the actor's own PRIMARY Business
-     * (OpportunityController), so a recommendation links there only when the
-     * selected Business is that one; for any other Business the band still
-     * shows its recommendations, without a link that would open a different
-     * Business's list.
+     * The pool is the non-billing attention items whose fix this actor can
+     * reach (the attention builder already drops any other, Slice 4 §5.1) and
+     * the head of the Opportunity work queue, read through RFC-002's own
+     * ordering. NextBestMoveSelector picks by a fixed order; this method only
+     * explains the pick and links it.
      *
-     * @return array{items: array<int, array{title: string, detected: ?string, url: ?string}>, allUrl: ?string}|null
+     * LINKS. Every destination goes through DashboardLinkGate. An attention
+     * move always has one (that is why it is in the pool). An Opportunity move
+     * links to the Advisor page only when that page would open THIS Business —
+     * the Advisor resolves the actor's own primary Business — and otherwise
+     * renders its title and "Why this?" as plain text with no action. It is
+     * never replaced by "You're all caught up." while real work exists, and an
+     * unauthorized destination is never linked (T-NBM-4).
+     *
+     * NO AI. "Why this?" is deterministic (§6.5).
+     *
+     * @param  array<int, AttentionItem>  $attention
+     * @param  array{awaiting: int, graceMinutes: int, failedRuns: int, window: string, unhealthyListings: int}  $facts
+     * @return array<string, mixed>
      */
-    private function recommendations(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements): ?array
+    private function nextBestMove(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $attention, array $facts): array
     {
-        // paginateForCustomer() pages from the request's `page` input; the
-        // dashboard always reads the first page, so a query string can never
-        // choose which recommendations render. The framework's own resolvers
-        // are restored immediately afterwards.
-        Paginator::currentPageResolver(static fn () => 1);
-
-        try {
-            $page = $this->opportunities->paginateForCustomer($business, [
-                'status' => OpportunityStatus::Open->value,
-                'freshness' => OpportunityFreshness::Current->value,
-            ]);
-        } finally {
-            PaginationState::resolveUsing(app());
-        }
-
-        $rows = collect($page->items())->take(self::RECOMMENDATION_LIMIT);
-
-        if ($rows->isEmpty()) {
-            return null;
-        }
+        $queue = config('opportunity.enabled', false)
+            ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
+            : collect();
 
         $candidate = $context->selectedBusiness;
-        $linksToAdvisor = $candidate !== null && $candidate->customerId === $context->userId && $candidate->isPrimary;
+        $advisorOpensThisBusiness = $candidate !== null && $candidate->customerId === $context->userId && $candidate->isPrimary;
 
-        $items = $rows->map(fn (Opportunity $opportunity) => [
-            'title' => (string) $opportunity->title,
-            'detected' => $opportunity->first_detected_at?->format('M j, Y'),
-            'url' => $linksToAdvisor
-                ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.show', [(string) $opportunity->id], ['access_backend'])
-                : null,
-        ])->values()->all();
+        $move = $this->nextBestMoveSelector->select($attention, $queue->first());
+
+        $payload = null;
+
+        if ($move !== null && $move->isAttention()) {
+            $item = $move->attention;
+            $payload = [
+                'kind' => NextBestMove::KIND_ATTENTION,
+                'key' => $item->type->value,
+                'headline' => $item->text,
+                'severity' => $item->severity,
+                'why' => $this->whyThis->forAttention($item->type, $item->text, $facts),
+                'actionLabel' => $item->actionLabel,
+                'actionUrl' => $item->url,
+            ];
+        } elseif ($move !== null && $move->isOpportunity()) {
+            $opportunity = $move->opportunity;
+            $payload = [
+                'kind' => NextBestMove::KIND_OPPORTUNITY,
+                'key' => 'opportunity',
+                'headline' => self::opportunityTitle($opportunity),
+                'severity' => null,
+                'why' => $this->whyThis->forOpportunity($opportunity),
+                'actionLabel' => 'Open recommendation',
+                'actionUrl' => $advisorOpensThisBusiness
+                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.show', [(string) $opportunity->id], ['access_backend'])
+                    : null,
+            ];
+        }
+
+        $count = $queue->count();
 
         return [
-            'items' => $items,
-            'allUrl' => $linksToAdvisor
-                ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.index', [], ['access_backend'])
-                : null,
+            'move' => $payload,
+            'recommendations' => $count === 0 ? null : [
+                'label' => $count >= self::RECOMMENDATION_QUEUE_CAP ? self::RECOMMENDATION_QUEUE_CAP . '+' : (string) $count,
+                'url' => $advisorOpensThisBusiness
+                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.index', [], ['access_backend'])
+                    : null,
+            ],
         ];
+    }
+
+    /**
+     * The registry's own title for an opportunity, never a raw type name; the
+     * title stored on the row when the registry does not define its type.
+     */
+    private static function opportunityTitle(Opportunity $opportunity): string
+    {
+        $definition = \App\Library\Opportunity\OpportunityTypeRegistry::get(
+            (string) ($opportunity->worker_key?->value ?? $opportunity->worker_key),
+            (string) $opportunity->type,
+        );
+
+        return (string) ($definition['title_template'] ?? $opportunity->title);
     }
 
     /**
@@ -708,12 +785,12 @@ final class BusinessHomePresenter
      * @param  array<int, string>  $scoped
      * @return array<string, mixed>
      */
-    private function conversations(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, AnalyticsDateRange $range): array
+    private function conversations(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, AnalyticsDateRange $range, int $awaiting): array
     {
         $window = self::windowPhrase($range);
-        // One statement for the pair (§16), one for the current state.
+        // One statement for the pair (§16). The current state was read once,
+        // above, and is shared with the next best move.
         ['incoming' => $incoming, 'replied' => $replied] = $this->conversations->periodCounts($business, $range->startUtc, $range->endUtc);
-        $awaiting = $this->conversations->awaitingReplyCount($business);
         $grace = max(0, (int) config('conversations.awaiting_reply_grace_minutes', 5));
 
         return [
