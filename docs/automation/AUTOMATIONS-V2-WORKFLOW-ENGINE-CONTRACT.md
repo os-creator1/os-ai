@@ -612,7 +612,13 @@ rows. Pure, deterministic, unit-testable, and it enforces:
 4. Keys unique within the document.
 5. **Limits** (§8.4): node count, If / Else depth, condition count.
 6. **Tenancy** (§14.2): every referenced group, field, sender/channel and
-   notification recipient belongs to the workflow's Business.
+   notification recipient belongs to the workflow's Business. Group and field
+   references are answered from ONE Business-scoped read —
+   `WorkflowReferenceCatalogLoader` LEFT JOINs the Business's groups to their
+   fields into a `WorkflowReferenceCatalog` — so the cost is constant in node,
+   condition and reference count (none at all when nothing is referenced). A
+   caller already holding the catalog, such as the Builder for its pickers,
+   passes it to `validate()` and the compiler reads nothing more.
 7. **Reachability**: every emitted node reachable from the root; `nodes =
    edges + 1`. With `UNIQUE(to_node_id)` this proves a tree.
 8. Trigger/action compatibility (e.g. B4 §7.B: `update_contact_field` requires
