@@ -142,6 +142,14 @@
                 \App\Library\Messaging\TelnyxMessagingAdapter::class,
             );
 
+            // Text messaging setup/number/compliance hub — the same
+            // fail-closed-constructor discipline, for the separate
+            // number-provisioning/registration boundary.
+            $this->app->bind(
+                \App\Library\Messaging\Contracts\MessagingProvisioningAdapter::class,
+                \App\Library\Messaging\TelnyxProvisioningAdapter::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,

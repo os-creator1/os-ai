@@ -5,6 +5,7 @@ namespace App\Library\Messaging;
 use App\Enums\Messaging\BusinessMessagingIdentityStatus;
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\MessagingProvider;
+use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
@@ -211,6 +212,7 @@ class BusinessMessagingIdentityResolver
         bool $isPrimary = false,
         BusinessMessagingNumberStatus $status = BusinessMessagingNumberStatus::Pending,
         ?string $providerNumberReference = null,
+        PhoneNumberType $numberType = PhoneNumberType::Local,
     ): BusinessMessagingNumber {
         $normalized = E164Normalizer::normalize($phoneNumber);
 
@@ -221,7 +223,7 @@ class BusinessMessagingIdentityResolver
         }
 
         try {
-            return DB::transaction(function () use ($identity, $normalized, $isPrimary, $status, $providerNumberReference): BusinessMessagingNumber {
+            return DB::transaction(function () use ($identity, $normalized, $isPrimary, $status, $providerNumberReference, $numberType): BusinessMessagingNumber {
                 $claimed = BusinessMessagingNumber::query()
                     ->where('phone_number', $normalized)
                     ->whereIn('status', [
@@ -241,6 +243,7 @@ class BusinessMessagingIdentityResolver
                 $number = new BusinessMessagingNumber([
                     'business_messaging_identity_id' => (int) $identity->id,
                     'phone_number' => $normalized,
+                    'number_type' => $numberType->value,
                     'provider_number_reference' => $providerNumberReference,
                     'status' => $status->value,
                     'is_primary' => $isPrimary,

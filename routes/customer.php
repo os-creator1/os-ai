@@ -1149,22 +1149,36 @@
 
         /*
         |----------------------------------------------------------------
-        | Text messaging — plain-language, read-only Business status
+        | Text messaging — the entire messaging setup/health hub
         |----------------------------------------------------------------
         |
         | Owner product decision: the customer should never need to
         | understand or configure a "messaging channel". This is the ONE
         | customer-facing Settings surface every tier (Core, Growth, and an
-        | Agency Business using managed transport) sees — number, Ready/
-        | Setup needed/Issue status, texting/picture-message availability,
-        | a link to usage & billing. No provider name, no credential field,
-        | no MMS-channel chooser: those stay confined to the Agency-only
-        | Advanced (BYO) surface above, which this route does not touch,
-        | replace, or gate access to.
+        | Agency Business using managed transport) sees — get a number,
+        | complete messaging registration, then number/Ready status,
+        | texting/picture-message availability, Delivery & usage, and a
+        | link to usage & billing. No provider name, no credential field,
+        | no "10DLC": those stay confined to the Agency-only Advanced
+        | (BYO) surface above, which these routes do not touch, replace,
+        | or gate access to.
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');
+
+            // STATE 1 — no number yet.
+            Route::post('/number/search', 'Business\TextMessagingController@searchNumber')->name('number.search');
+            Route::post('/number/order', 'Business\TextMessagingController@orderNumber')->name('number.order');
+
+            // STATE 2 — number acquired, messaging registration required.
+            Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
+            Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');
+
+            // STATE 3 — Delivery & usage (relocated out of Business Results,
+            // see AnalyticsController's own overview: operational messaging
+            // metrics live here now, never on the Results page).
+            Route::get('/delivery-usage', 'Business\TextMessagingController@deliveryUsage')->name('delivery-usage');
         });
 
         /*
