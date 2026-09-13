@@ -879,7 +879,7 @@
                 $user    = User::find($user_id);
 
 
-                Reports::create([
+                $inboundReport = Reports::create([
                     'user_id'           => $user_id,
                     'business_id'       => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
                     'from'              => $from,
@@ -1059,6 +1059,23 @@ $chatBox->touch();
                     
                     
                     
+
+                    // Automations V2-F §9 — the domain fact, beside (never
+                    // instead of) the inbox broadcast below. Emitted only when
+                    // the Business is AUTHORITATIVE: the one Business the
+                    // receiving number carries and its own customer owns — the
+                    // Business this conversation is filed under. Never the
+                    // Reports row's primary-Business fallback above, which is
+                    // exactly the guess that would enroll a Business B contact
+                    // into Business A's workflow. `$to` is the external sender.
+                    // After commit, queued: nothing here waits on enrollment.
+                    if ($conversationBusinessId !== null) {
+                        event(\App\Events\Conversation\InboundMessageReceived::fromLegacyReport(
+                            $conversationBusinessId,
+                            (string) $to,
+                            (int) $inboundReport->id,
+                        ));
+                    }
 
                     event(new MessageReceived($user, $message, $chatBox));
                     //  $user->notify(new \App\Notifications\MessageReceived($message, $to));

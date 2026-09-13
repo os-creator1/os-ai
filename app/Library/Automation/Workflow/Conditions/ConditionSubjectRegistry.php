@@ -6,6 +6,7 @@ use App\Enums\Automation\Workflow\ConditionOperator;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactCustomFieldSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactIdentitySubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactInGroupSubject;
+use App\Library\Automation\Workflow\Conditions\Subjects\ContactRepliedSinceEnrollmentSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactSubscribedSubject;
 use App\Library\Automation\Workflow\Contracts\ConditionSubject;
 use App\Models\ContactGroupFields;
@@ -22,11 +23,13 @@ use Illuminate\Support\Collection;
  * and no raw SQL anywhere in the path — which is the whole reason conditions go
  * through a registry instead of through a query builder.
  *
- * WHAT IS DELIBERATELY ABSENT. `contact.replied_since_enrollment` is V2-F: it
- * needs the inbound producer and automation-send tagging that do not exist yet,
- * and a subject that silently reads false would be worse than one that does not
- * exist. Opportunity, Forms, Booking, Payment, Tag and Pipeline subjects are
- * excluded by §10 and are not stubbed here either.
+ * `contact.replied_since_enrollment` arrived with V2-F, once the inbound producer
+ * and automation-send tagging it depends on existed — it is boolean, reads the
+ * Business's conversation history strictly after the enrollment, and is
+ * same-Business only (ContactRepliedSinceEnrollmentSubject).
+ *
+ * WHAT IS DELIBERATELY ABSENT. Opportunity, Forms, Booking, Payment, Tag and
+ * Pipeline subjects are excluded by §10 and are not stubbed here.
  *
  * READS ARE BOUNDED. Evaluating five conditions must not cost five round trips,
  * so the two things every subject needs — the contact's stored values, and the
@@ -55,6 +58,9 @@ class ConditionSubjectRegistry
     public const SUBSCRIBED = 'contact.subscribed';
 
     public const IN_GROUP = 'contact.in_group';
+
+    /** V2-F — has the contact written to the Business since entering this journey? */
+    public const REPLIED_SINCE_ENROLLMENT = 'contact.replied_since_enrollment';
 
     /** `contact.custom_field:{field_id}` — the only parameterised subject. */
     public const CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
@@ -89,6 +95,10 @@ class ConditionSubjectRegistry
             return new ContactInGroupSubject();
         }
 
+        if ($key === self::REPLIED_SINCE_ENROLLMENT) {
+            return new ContactRepliedSinceEnrollmentSubject();
+        }
+
         $fieldId = self::customFieldId($key);
 
         return $fieldId === null ? null : new ContactCustomFieldSubject($fieldId, $this);
@@ -114,6 +124,7 @@ class ConditionSubjectRegistry
         return array_key_exists($key, self::IDENTITY_SUBJECTS)
             || $key === self::SUBSCRIBED
             || $key === self::IN_GROUP
+            || $key === self::REPLIED_SINCE_ENROLLMENT
             || self::customFieldId($key) !== null;
     }
 
@@ -132,7 +143,7 @@ class ConditionSubjectRegistry
             return ConditionOperator::forText();
         }
 
-        if ($key === self::SUBSCRIBED) {
+        if ($key === self::SUBSCRIBED || $key === self::REPLIED_SINCE_ENROLLMENT) {
             return ConditionOperator::forBoolean();
         }
 
@@ -162,7 +173,7 @@ class ConditionSubjectRegistry
     /** @return list<string> the non-parameterised keys, for the builder and tests. */
     public function staticKeys(): array
     {
-        return [...array_keys(self::IDENTITY_SUBJECTS), self::SUBSCRIBED, self::IN_GROUP];
+        return [...array_keys(self::IDENTITY_SUBJECTS), self::SUBSCRIBED, self::IN_GROUP, self::REPLIED_SINCE_ENROLLMENT];
     }
 
     /**

@@ -473,10 +473,11 @@ class InboundWebhookAttributionResolver
         $now = Carbon::now();
         $businessId = (int) $identity->business_id;
         $messageType = $event->mediaUrls === [] ? 'sms' : 'mms';
+        $operationId = null;
 
         try {
-            DB::transaction(function () use ($identity, $event, $businessId, $messageType, $now): void {
-                DB::table(ManagedMessageDispatcher::TABLE)->insert([
+            DB::transaction(function () use ($identity, $event, $businessId, $messageType, $now, &$operationId): void {
+                $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
                     'business_id' => $businessId,
                     'business_messaging_identity_id' => (int) $identity->id,
                     'transport_mode' => MessagingTransportMode::Managed->value,
@@ -506,6 +507,20 @@ class InboundWebhookAttributionResolver
             });
         } catch (UniqueConstraintViolationException) {
             return false;
+        }
+
+        // Automations V2-F §9 — the domain fact, emitted only here: after the
+        // dual-signal attribution above agreed on ONE identity, and only for
+        // the copy of this message that won the unique insert, so a duplicate
+        // webhook delivery emits nothing. Keyed by the operation row just
+        // written. The sender is carried as a value because this path stores
+        // no per-message sender anywhere.
+        if ($operationId !== null && $event->fromNumber !== null && trim($event->fromNumber) !== '') {
+            event(\App\Events\Conversation\InboundMessageReceived::fromManagedOperation(
+                $businessId,
+                $event->fromNumber,
+                (int) $operationId,
+            ));
         }
 
         return true;

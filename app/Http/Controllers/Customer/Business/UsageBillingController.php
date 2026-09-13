@@ -13,6 +13,7 @@ use App\Http\Requests\Customer\Business\UpdateBusinessBillingContactRequest;
 use App\Http\Requests\Customer\Business\UpdateBusinessFeatureLimitRequest;
 use App\Http\Requests\Customer\Business\UpdateBusinessPayerRequest;
 use App\Http\Requests\Customer\Business\UpdateBusinessSpendCapRequest;
+use App\Library\Ai\AiUsagePresenter;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\UsageBillingPresenter;
 use App\Library\Usage\UsageWalletManager;
@@ -43,6 +44,7 @@ class UsageBillingController extends CustomerBaseController
         private readonly UsageBillingPresenter $presenter,
         private readonly UsageWalletManager $walletManager,
         private readonly BillingProfileManager $billingProfileManager,
+        private readonly AiUsagePresenter $aiUsagePresenter,
     ) {
     }
 
@@ -70,11 +72,23 @@ class UsageBillingController extends CustomerBaseController
 
         $wallet = $this->walletManager;
 
+        // Unified Business Home & COO contract §11.3 (slice AI-2) — the AI
+        // usage state. Its audience is the canonical billing authority, not
+        // mere access to this page: whoever may manage this Business's billing
+        // sees the state (restricted staff do not), and only the Agency owner
+        // or an Agency-wide admin sees the per-Business rows.
+        $aiUsage = $this->aiUsagePresenter->forBillingPage(
+            $business,
+            (bool) $responsibility['actor_manages_billing_contact'],
+            (bool) $responsibility['actor_manages_responsibility'],
+        );
+
         return view('customer.business.usage-billing.show', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'dashboard' => $viewModel,
             'responsibility' => $responsibility,
+            'aiUsage' => $aiUsage,
             'workspaceControls' => $workspaceControls,
             'capabilities' => $capabilities,
             'capabilityLabel' => fn (?string $featureKey): string => $wallet->capabilityLabel($featureKey),

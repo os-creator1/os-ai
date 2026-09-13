@@ -40,12 +40,15 @@ enum WorkflowTriggerType: string
     }
 
     /**
-     * Whether a producer exists today. V2-F flips MessageReceived to true when
-     * it ships its after-commit producer; nothing else changes.
+     * Whether a producer exists today. Every trigger now has one: V2-F shipped
+     * MessageReceived's after-commit producer (InboundMessageReceived, emitted
+     * from both inbound paths) and its trigger source. The method stays, because
+     * the validator asks it — a future trigger declared before its producer
+     * exists returns false here and is refused at publish.
      */
     public function isIngestableInThisSlice(): bool
     {
-        return $this !== self::MessageReceived;
+        return true;
     }
 
     public function label(): string

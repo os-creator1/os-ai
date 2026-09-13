@@ -110,7 +110,15 @@ class RuntimeCompletionTest extends TestCase
         );
     }
 
-    public function test_the_trigger_sources_still_number_exactly_three(): void
+    /**
+     * All four trigger sources, one per declared trigger type.
+     *
+     * Until V2-F this asserted three, with `message_received` deliberately
+     * absent. It now asserts the complete set, and cross-checks the enum so a
+     * declared trigger with no source — or a source for an undeclared one — is a
+     * failure in either direction.
+     */
+    public function test_every_declared_trigger_type_has_its_source(): void
     {
         $sources = app(TriggerSourceRegistry::class);
 
@@ -118,6 +126,7 @@ class RuntimeCompletionTest extends TestCase
             WorkflowTriggerType::ContactCreated->value => ContactCreatedTriggerSource::class,
             WorkflowTriggerType::ContactDateReached->value => DateReachedTriggerSource::class,
             WorkflowTriggerType::ManualEnrollment->value => ManualEnrollmentTriggerSource::class,
+            WorkflowTriggerType::MessageReceived->value => \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -126,11 +135,11 @@ class RuntimeCompletionTest extends TestCase
         }
 
         $this->assertSame(array_keys($expected), $sources->registeredTypes());
-
-        // V2-F's is still absent, and reporting that honestly is what keeps the
-        // validator's refusal to publish such a workflow correct.
-        $this->assertNull($sources->for(WorkflowTriggerType::MessageReceived));
-        $this->assertFalse($sources->available(WorkflowTriggerType::MessageReceived));
+        $this->assertEqualsCanonicalizing(
+            array_map(fn (WorkflowTriggerType $type) => $type->value, WorkflowTriggerType::cases()),
+            $sources->registeredTypes(),
+            'The trigger-source registry and the trigger enum must agree exactly.',
+        );
     }
 
     public function test_the_two_registries_are_independent_singletons(): void
@@ -141,7 +150,7 @@ class RuntimeCompletionTest extends TestCase
         $this->assertSame($executors, app(NodeExecutorRegistry::class));
         $this->assertSame($sources, app(TriggerSourceRegistry::class));
         $this->assertCount(7, $executors->registeredTypes());
-        $this->assertCount(3, $sources->registeredTypes());
+        $this->assertCount(4, $sources->registeredTypes());
     }
 
     // =================================================================

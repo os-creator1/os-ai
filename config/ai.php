@@ -198,4 +198,20 @@ return [
         'agency_prospect_reply' => 'routine',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Customer presentation (contract §11.3, slice AI-2)
+    |--------------------------------------------------------------------------
+    |
+    | Settings -> Billing -> AI usage says "Nearing limit" once committed
+    | usage reaches this share of the period's cap, in basis points like
+    | `interactive_share_bps` (8000 = the contract's 0.8). Presentation
+    | only: it never refuses, reserves or routes a call, and changing it
+    | changes a sentence, not a budget.
+    |
+    */
+    'presentation' => [
+        'nearing_limit_bps' => (int) env('AI_PRESENTATION_NEARING_LIMIT_BPS', 8000),
+    ],
+
 ];

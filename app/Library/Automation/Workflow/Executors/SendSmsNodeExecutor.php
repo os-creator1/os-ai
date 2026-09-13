@@ -5,8 +5,10 @@ namespace App\Library\Automation\Workflow\Executors;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
+use App\Library\Automation\Workflow\Runtime\AutomationSendContext;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Models\AutomationEnrollment;
+use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
 use App\Models\Campaigns;
@@ -78,6 +80,7 @@ class SendSmsNodeExecutor implements NodeExecutor
     public function __construct(
         private readonly CampaignRepository $campaigns,
         private readonly BusinessMessagingIdentityResolver $identities,
+        private readonly AutomationSendContext $sendContext,
     ) {
     }
 
@@ -159,7 +162,16 @@ class SendSmsNodeExecutor implements NodeExecutor
             // THE provider call. Exactly one per claimed step, outside every
             // transaction — the advancer guarantees the second part, and this
             // method opens none of its own.
-            $response = $this->campaigns->quickSend($campaign, $sendData)->getData();
+            //
+            // V2-F §10.1 — made inside this step run's send scope, so whichever
+            // transport branch writes the Reports row stamps it with the step
+            // run. That durable mark is what lets a reply to this message be
+            // recognised as a reply to automation output, and stops this
+            // workflow re-triggering off its own send (T-WF-25).
+            $send = fn () => $this->campaigns->quickSend($campaign, $sendData);
+            $stepRunId = $this->claimedStepRunId($node, $enrollment);
+
+            $response = ($stepRunId === null ? $send() : $this->sendContext->during($stepRunId, $send))->getData();
         } catch (Throwable $exception) {
             // The outcome is unknown, so this is a failure and never a retry:
             // the step run is already claimed, and External steps are never
@@ -174,6 +186,29 @@ class SendSmsNodeExecutor implements NodeExecutor
         }
 
         return NodeExecutionOutcome::failed('send_failed');
+    }
+
+    /**
+     * The step run the advancer claimed for this node before calling execute().
+     *
+     * Found by `UNIQUE(enrollment_id, node_id)`, so it is exactly one row and
+     * exactly the claim this send belongs to. The advancer always creates it
+     * first; null is only possible for a caller that invokes the executor
+     * outside the advancer, and such a send is simply not marked as automation
+     * output rather than being refused.
+     */
+    private function claimedStepRunId(AutomationWorkflowNode $node, AutomationEnrollment $enrollment): ?int
+    {
+        if ($enrollment->getKey() === null || $node->getKey() === null) {
+            return null;
+        }
+
+        $id = AutomationStepRun::query()
+            ->where('enrollment_id', $enrollment->getKey())
+            ->where('node_id', $node->getKey())
+            ->value('id');
+
+        return $id === null ? null : (int) $id;
     }
 
     /**

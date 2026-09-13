@@ -156,6 +156,33 @@
                 </x-card>
             </div>
 
+            {{-- 2b. AI usage — Unified Business Home & COO contract §11.3 (slice AI-2).
+                 A state and its sentence only: no tokens, amounts, percentage,
+                 provider or model. $aiUsage is null for an actor outside the
+                 billing authority, and for an account with no included AI. --}}
+            @if ($aiUsage !== null)
+                <div class="col-12">
+                    <x-card id="usage-billing-ai-usage" :title="__('locale.usage_billing.ai_usage.title')">
+                        <p class="mb-0" role="status" data-role="ai-usage-state" data-state="{{ $aiUsage->state->value }}">{{ $aiUsage->sentence }}</p>
+                        @if ($aiUsage->trialLine !== null)
+                            <p class="text-caption mt-50 mb-0" data-role="ai-usage-trial-line">{{ $aiUsage->trialLine }}</p>
+                        @endif
+
+                        @if ($aiUsage->businessRows !== [])
+                            <h3 class="text-section-heading h5 mt-2 mb-1" id="usage-billing-ai-usage-businesses">{{ __('locale.usage_billing.ai_usage.businesses_title') }}</h3>
+                            <ul class="list-unstyled mb-0" aria-labelledby="usage-billing-ai-usage-businesses" data-role="ai-usage-business-rows">
+                                @foreach ($aiUsage->businessRows as $row)
+                                    <li class="d-flex flex-wrap align-items-center justify-content-between gap-1 py-50 border-bottom" data-role="ai-usage-business-row" data-business-uid="{{ $row->businessUid }}" data-state="{{ $row->state->value }}">
+                                        <span class="text-break">{{ $row->businessName }}</span>
+                                        <x-badge :variant="$row->state === \App\Library\Ai\Enums\AiUsageState::Normal ? 'success' : 'warning'">{{ $row->label }}</x-badge>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        @endif
+                    </x-card>
+                </div>
+            @endif
+
             {{-- 3. Funding — only the payer ever sees add-funds / automatic top-up (T-PAYER-4) --}}
             @if ($actorIsPayer)
                 <div class="col-12">
