@@ -94,7 +94,11 @@ class MessageReceivedCoexistenceTest extends TestCase
         ))->pluck('ref', 'name');
 
         $this->assertSame('automations', $foreignKeys['reports_automation_id_foreign'] ?? null, "B4's reference is untouched.");
-        $this->assertSame('automation_step_runs', $foreignKeys['reports_automation_step_run_id_foreign'] ?? null);
+        $this->assertNotContains(
+            'automation_step_runs',
+            $foreignKeys->values()->all(),
+            'The v2 mark is a plain reference, so the V2 schema still rolls back on its own.',
+        );
 
         $this->assertTrue(class_exists(AutomationJob::class), 'B4 stays live until V2-G retires it.');
 

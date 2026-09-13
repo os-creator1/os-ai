@@ -453,6 +453,27 @@ class MessageReceivedTriggerTest extends TestCase
         $this->assertSame(0, (int) AutomationEnrollment::query()->where('workflow_id', $workflowA->id)->value('causation_depth'));
     }
 
+    public function test_a_mark_whose_step_run_no_longer_exists_names_no_producer(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->messageReceivedWorkflow($business);
+        $contact = $this->contact($business, $this->contactGroup($business), '14155551023');
+
+        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, 'report:gone');
+        $this->outbound($business, '14155551023', $this->stepRunOn($earlier));
+
+        // The journey — and with it the step run — is deleted. The message keeps
+        // its now-dangling mark, because the mark is a reference rather than an
+        // enforced key; it must not be read as this workflow's own output.
+        DB::table('automation_enrollments')->where('id', $earlier->id)->delete();
+
+        $result = $this->messageSource()->handleInboundMessage($this->legacyInbound($business, '14155551023'));
+
+        $this->assertSame(0, $result['skipped'][MessageReceivedTriggerSource::SKIPPED_SELF_REPLY] ?? 0);
+        $this->assertSame(1, $result['enrolled']);
+        $this->assertSame(0, (int) AutomationEnrollment::query()->where('workflow_id', $workflow->id)->value('causation_depth'));
+    }
+
     // =================================================================
     // The event and its listener
     // =================================================================

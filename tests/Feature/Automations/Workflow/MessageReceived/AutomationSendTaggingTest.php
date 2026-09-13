@@ -183,7 +183,7 @@ class AutomationSendTaggingTest extends TestCase
         $this->assertNull(DB::table('reports')->where('to', '14155553009')->value('automation_step_run_id'));
     }
 
-    public function test_deleting_the_journey_keeps_the_message_and_only_drops_the_mark(): void
+    public function test_deleting_the_journey_keeps_the_message(): void
     {
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
@@ -194,16 +194,30 @@ class AutomationSendTaggingTest extends TestCase
         // them. Deliberately unlike B4's `reports.automation_id`, which cascades.
         DB::table('automation_enrollments')->where('id', $enrollment->id)->delete();
 
+        $this->assertSame(0, DB::table('automation_step_runs')->count(), 'Sanity: the step run went with its journey.');
         $this->assertNotNull(Reports::query()->find($report->id), "The Business's record of what was said survives.");
-        $this->assertNull($report->fresh()->automation_step_run_id);
     }
 
-    public function test_a_mark_must_reference_a_real_step_run(): void
+    /**
+     * A reference, not an enforced foreign key: V2-0 guarantees the V2 schema
+     * rolls back on its own (T-WF-29), and a key from the legacy `reports`
+     * table into it would break that. Readers treat an unresolvable mark as no
+     * mark — proven in MessageReceivedTriggerTest.
+     */
+    public function test_the_mark_is_a_reference_so_the_v2_schema_stays_independently_reversible(): void
     {
-        [, $business] = $this->entitledTenant();
+        $keysIntoStepRuns = DB::select(
+            'SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME = ?',
+            ['reports', 'automation_step_runs'],
+        );
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->assertSame([], $keysIntoStepRuns, 'No legacy table may hold an enforced key into the V2 schema.');
 
-        $this->outbound($business, '14155553011', 987654321);
+        $index = collect(DB::select('SHOW INDEX FROM ' . DB::getTablePrefix() . 'reports WHERE Key_name = ?', ['reports_business_to_direction_index']))
+            ->pluck('Column_name')
+            ->all();
+
+        $this->assertSame(['business_id', 'to', 'direction'], $index, 'The thread lookup keeps its index.');
     }
 }
