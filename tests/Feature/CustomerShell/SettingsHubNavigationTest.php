@@ -50,9 +50,10 @@ class SettingsHubNavigationTest extends TestCase
             $sidebar = $this->sidebarHtml($html);
             $keys = $this->menuKeys($html);
 
-            $expected = ['home', 'conversations', 'contacts', 'automations', 'website', 'analytics', 'settings'];
+            // Opportunities (the CRM sales board) sits directly after Contacts.
+            $expected = ['home', 'conversations', 'contacts', 'opportunities', 'automations', 'website', 'analytics', 'settings'];
             if ($tier === WorkspacePlanTier::Growth) {
-                array_splice($expected, 5, 0, ['gbp']);
+                array_splice($expected, 6, 0, ['gbp']);
             }
             $this->assertSame($expected, $keys, "[{$tier->value}] the contracted flat sidebar, in order — no Advisor.");
             $this->assertStringNotContainsString('Advisor', $this->shellText($html), 'Business Home carries the next best move; there is no separate Advisor module.');

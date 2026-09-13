@@ -64,6 +64,51 @@ final class ContactDirectory
         ]);
     }
 
+    /**
+     * This Business's contacts matching a search, newest first, for a picker
+     * (CRM "Add opportunity"). The same matching as the Contacts list.
+     *
+     * @return list<array{uid: string, name: ?string, phone: string}>
+     */
+    public function search(Business $business, string $search, int $limit = 20): array
+    {
+        $contacts = $this->query($business, $search)
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get(['id', 'uid', 'phone']);
+
+        $summaries = $this->summarize($contacts);
+
+        return array_values(array_map(fn (Contacts $contact) => $summaries[$contact->id], $contacts->all()));
+    }
+
+    /**
+     * Name and phone for a set of contacts, keyed by id, in two queries. A
+     * contact of any other Business is simply absent.
+     *
+     * @param  list<int>  $contactIds
+     * @return array<int, array{uid: string, name: ?string, phone: string}>
+     */
+    public function summaries(Business $business, array $contactIds): array
+    {
+        if ($contactIds === []) {
+            return [];
+        }
+
+        return $this->summarize(
+            Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds)->get(['id', 'uid', 'phone'])
+        );
+    }
+
+    /**
+     * The ids of this Business's contacts matching a search, as a subquery, for
+     * lists of other records filtered by their contact (the CRM board search).
+     */
+    public function matchingContactIds(Business $business, string $search): Builder
+    {
+        return $this->query($business, $search)->select('contacts.id');
+    }
+
     public function findForBusiness(Business $business, string $contactUid): ?Contacts
     {
         return Contacts::query()
@@ -319,6 +364,26 @@ final class ContactDirectory
         }
 
         return $latest;
+    }
+
+    /**
+     * @param  Collection<int, Contacts>  $contacts
+     * @return array<int, array{uid: string, name: ?string, phone: string}>
+     */
+    private function summarize(Collection $contacts): array
+    {
+        $identity = $this->identityFor($contacts->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $summaries = [];
+
+        foreach ($contacts as $contact) {
+            $summaries[(int) $contact->id] = [
+                'uid' => (string) $contact->uid,
+                'name' => $this->fullName($identity[$contact->id] ?? []),
+                'phone' => $this->displayPhone($contact),
+            ];
+        }
+
+        return $summaries;
     }
 
     private function groupNameFor(Business $business, Contacts $contact): ?string

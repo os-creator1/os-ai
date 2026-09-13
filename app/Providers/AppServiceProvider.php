@@ -325,6 +325,11 @@
             // context-free copy and every reservation would fail closed.
             $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
 
+            // CRM Opportunities — one registry of internal Business Templates per
+            // container, so a template registered once is the one every applier
+            // and controller sees.
+            $this->app->singleton(\App\Library\Crm\Templates\BusinessTemplateRegistry::class);
+
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
 

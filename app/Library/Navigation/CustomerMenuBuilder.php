@@ -2,6 +2,7 @@
 
 namespace App\Library\Navigation;
 
+use App\Http\Controllers\Customer\Business\CrmOpportunitiesController;
 use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
 use Illuminate\Support\Facades\Gate;
@@ -80,10 +81,11 @@ final class CustomerMenuBuilder
     /**
      * Slice 2A §6.2 — the Business-scoped features that gate a menu entry.
      *
-     * Deliberately short. `crm` is Available and Business-scoped but Contacts
-     * is NOT gated here: whether any tier's catalog genuinely excludes CRM
-     * cannot be established from code, and hiding Contacts from a tier that
-     * pays for it is a worse failure than showing it to one that does not.
+     * Deliberately short. `crm` is listed for the Opportunities entry — the
+     * CRM sales board, which its HTTP boundary gates on `crm` — but Contacts
+     * is still NOT gated on it: whether any tier's catalog genuinely excludes
+     * CRM cannot be established from code, and hiding Contacts from a tier
+     * that pays for it is a worse failure than showing it to one that does not.
      * `conversations` IS gated since Slice 2B (§16): Inbox now lives on the
      * Business-scoped conversations route, so there is always a Business to
      * evaluate it against. It has to be listed here, not only checked below —
@@ -96,6 +98,7 @@ final class CustomerMenuBuilder
         'website_generation',
         'google_business_profile_module',
         'conversations',
+        'crm',
         // Not a menu entry: AI-3's Business Home "What we notice" line reads
         // this answer from the same one bulk snapshot, so checking it costs
         // the page no entitlement query of its own (§16).
@@ -175,6 +178,16 @@ final class CustomerMenuBuilder
         $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
             'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
         ]);
+
+        // Opportunities — the CRM sales board of the selected Business
+        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
+        // Business frame only: an Agency reaches it after choosing a client
+        // Business. Offered exactly when the CRM boundary would let the actor
+        // in — the `crm` entitlement and the board's own read permission.
+        $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
+            'customer.workspaces.businesses.crm.',
+        ]));
+
         $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
             'customer.workspaces.businesses.automations.', 'customer.automations.',
         ]));

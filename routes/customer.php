@@ -1050,6 +1050,42 @@
 
         /*
         |----------------------------------------------------------------
+        | CRM Opportunities — the Business's sales pipelines
+        |----------------------------------------------------------------
+        |
+        | A distinct CRM sales domain (crm_* tables, `crm.` route names).
+        | NOT the AI COO / Business Advisor recommendations, which keep
+        | customer.opportunities.* untouched. Business-scoped like every
+        | route in this group, so view-as treats them as BusinessScoped.
+        | Static segments are registered before {opportunityUid}.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/opportunities')->name('businesses.crm.')->group(function () {
+            Route::get('/', 'Business\CrmOpportunitiesController@board')->name('board');
+            Route::post('/setup', 'Business\CrmPipelinesController@setup')->name('setup');
+            Route::get('/new', 'Business\CrmOpportunitiesController@create')->name('opportunities.create');
+            Route::post('/', 'Business\CrmOpportunitiesController@store')->name('opportunities.store');
+            Route::get('/contacts', 'Business\CrmOpportunitiesController@contactSearch')->name('contacts.search');
+
+            Route::post('/pipelines', 'Business\CrmPipelinesController@store')->name('pipelines.store');
+            Route::get('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@settings')->name('pipelines.settings');
+            Route::post('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@update')->name('pipelines.update');
+            Route::post('/pipelines/{pipelineUid}/stages', 'Business\CrmPipelinesController@storeStage')->name('stages.store');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}', 'Business\CrmPipelinesController@updateStage')->name('stages.update');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}/position', 'Business\CrmPipelinesController@moveStage')->name('stages.move');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}/archive', 'Business\CrmPipelinesController@archiveStage')->name('stages.archive');
+
+            Route::get('/{opportunityUid}', 'Business\CrmOpportunitiesController@show')->name('opportunities.show');
+            Route::post('/{opportunityUid}', 'Business\CrmOpportunitiesController@update')->name('opportunities.update');
+            Route::post('/{opportunityUid}/stage', 'Business\CrmOpportunitiesController@move')->name('opportunities.move');
+            Route::post('/{opportunityUid}/won', 'Business\CrmOpportunitiesController@won')->name('opportunities.won');
+            Route::post('/{opportunityUid}/lost', 'Business\CrmOpportunitiesController@lost')->name('opportunities.lost');
+            Route::post('/{opportunityUid}/reopen', 'Business\CrmOpportunitiesController@reopen')->name('opportunities.reopen');
+            Route::post('/{opportunityUid}/contact-status', 'Business\CrmOpportunitiesController@contactStatus')->name('opportunities.contact-status');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)
         |----------------------------------------------------------------
         |
