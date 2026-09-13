@@ -25,9 +25,19 @@ use Illuminate\Http\Request;
  * separate request. Keying storage off the Request object itself (fresh
  * per dispatch, in production and in tests alike) is what makes "one
  * request" mean the same thing here as it does everywhere else this
- * codebase already memoizes per-request state, and it also means a
- * console command or job with no current request simply never caches
- * (see storeFor()) rather than silently caching for the wrong scope.
+ * codebase already memoizes per-request state.
+ *
+ * CONSOLE AND QUEUE WORKERS DO HAVE A REQUEST, AND IT NEVER CHANGES.
+ * Laravel's SetRequestForConsole bootstrapper binds one synthetic Request
+ * when a console process starts, and that same object stays bound for the
+ * life of the process. A `queue:work` daemon therefore has exactly one
+ * "request" across every job it runs, and on its own this cache would
+ * carry job A's plan, override and Business answers into job B — an
+ * entitlement allowed in job A would stay allowed in job B after the plan
+ * was suspended. So a queued job is a unit of work of its own, and
+ * ResetRequestScopedCacheAtJobBoundary flush()es this cache before every
+ * worker job starts and after it finishes or fails. That listener is the
+ * one place the queue boundary is enforced; no job clears this itself.
  *
  * This is NOT a second source of truth and NOT a place to cache anything
  * cross-request: it exists solely so that asking the database the exact
@@ -87,6 +97,20 @@ final class RequestScopedCache
         if ($changed) {
             $this->putStore($store);
         }
+    }
+
+    /**
+     * Forget everything memoized for the current unit of work.
+     *
+     * Called at a lifecycle boundary — the start and end of a queued job —
+     * never in the middle of one: inside a single HTTP request or a single
+     * job, targeted forget()/forgetPrefixed() on write is what keeps reads
+     * fresh, and discarding the whole store there would only throw away
+     * reads that are still correct.
+     */
+    public function flush(): void
+    {
+        $this->currentRequest()?->attributes->remove(self::ATTRIBUTE);
     }
 
     /** Test/debug seam only — never called from production request code. */

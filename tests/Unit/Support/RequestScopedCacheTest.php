@@ -108,4 +108,54 @@ class RequestScopedCacheTest extends TestCase
         $this->assertFalse($this->cache()->has('k'), 'A fresh request must start with an empty cache.');
         $this->assertSame('second-request-value', $this->cache()->remember('k', fn () => 'second-request-value'));
     }
+
+    /**
+     * flush() is the lifecycle reset: it empties the store for the current
+     * Request without replacing the Request — exactly what a long-lived
+     * console process needs, because its Request is never replaced.
+     */
+    public function test_flush_forgets_every_key_for_the_current_request(): void
+    {
+        $this->cache()->remember('a', fn () => 1);
+        $this->cache()->remember('b:c', fn () => 2);
+
+        $request = app('request');
+
+        $this->cache()->flush();
+
+        $this->assertSame($request, app('request'), 'flush() resets the store, never the Request.');
+        $this->assertFalse($this->cache()->has('a'));
+        $this->assertFalse($this->cache()->has('b:c'));
+
+        $calls = 0;
+        $this->cache()->remember('a', function () use (&$calls) {
+            $calls++;
+
+            return 'fresh';
+        });
+        $this->assertSame(1, $calls, 'After a flush the resolver must run again.');
+    }
+
+    public function test_flush_is_harmless_on_an_empty_store_and_can_repeat(): void
+    {
+        $this->cache()->flush();
+        $this->cache()->flush();
+
+        $this->assertFalse($this->cache()->has('anything'));
+        $this->assertSame('v', $this->cache()->remember('anything', fn () => 'v'));
+    }
+
+    public function test_flush_touches_only_the_current_request(): void
+    {
+        $this->cache()->remember('k', fn () => 'old');
+        $previous = app('request');
+
+        $this->app->instance('request', Request::create('/other'));
+        $this->cache()->remember('k', fn () => 'other');
+
+        $this->cache()->flush();
+
+        $this->assertFalse($this->cache()->has('k'));
+        $this->assertSame(['k' => 'old'], $previous->attributes->get('__request_scoped_cache'), 'Another Request\'s store is not reached.');
+    }
 }
