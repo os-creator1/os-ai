@@ -1149,6 +1149,26 @@
 
         /*
         |----------------------------------------------------------------
+        | Text messaging — plain-language, read-only Business status
+        |----------------------------------------------------------------
+        |
+        | Owner product decision: the customer should never need to
+        | understand or configure a "messaging channel". This is the ONE
+        | customer-facing Settings surface every tier (Core, Growth, and an
+        | Agency Business using managed transport) sees — number, Ready/
+        | Setup needed/Issue status, texting/picture-message availability,
+        | a link to usage & billing. No provider name, no credential field,
+        | no MMS-channel chooser: those stay confined to the Agency-only
+        | Advanced (BYO) surface above, which this route does not touch,
+        | replace, or gate access to.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
+            Route::get('/', 'Business\TextMessagingController@show')->name('show');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | Agency AI Prospecting foundation
         |----------------------------------------------------------------
         |

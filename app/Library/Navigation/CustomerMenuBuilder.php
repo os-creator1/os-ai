@@ -201,6 +201,15 @@ final class CustomerMenuBuilder
             ]);
         }
 
+        // Owner product decision — the plain-language, read-only status
+        // surface every tier sees (Core, Growth, and an Agency Business
+        // using managed transport). No tier/permission-beyond-view_numbers
+        // gate: unlike the Agency-only Advanced (BYO) item below, this is
+        // never supposed to disappear for an ordinary customer.
+        $settings[] = $this->item($user, 'text-messaging', 'Text messaging', 'message-circle', ['view_numbers'], 'customer.workspaces.businesses.text-messaging.show', $scoped, $current, [
+            'customer.workspaces.businesses.text-messaging.',
+        ]);
+
         $advanced = $this->advancedItems($context, $user, $current, 'customer.workspaces.businesses.channels.index', $scoped);
 
         if ($advanced !== null) {
