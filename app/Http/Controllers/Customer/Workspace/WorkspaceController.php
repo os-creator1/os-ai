@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer\Workspace;
 
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -38,6 +39,8 @@ use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Entitlement\WorkspacePlanPresenter;
+use App\Library\Navigation\CustomerMenuBuilder;
+use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\AccountFrameAccess;
 use App\Library\Workspace\WorkspaceManager;
@@ -127,16 +130,132 @@ class WorkspaceController extends CustomerBaseController
      * RFC-003 Milestone 3 Slice 3B/3C: read-only Workspace overview. 404
      * (never 403) for an unknown uid or a user with no owner/active-
      * membership path to this Workspace — owner status always wins over an
-     * anomalous coexisting membership row. The embedded membership
-     * directory is populated only for the owner and an active Admin; for
-     * active Staff the `directory` key is omitted from the view data
-     * entirely rather than rendered empty. `businesses` is always present
+     * anomalous coexisting membership row. `businesses` is always present
      * (owner, Admin, and Staff alike) and is the RFC-003 §14.1 effective-
      * access filter over this Workspace's Businesses via
      * WorkspaceManager::userCanAccessBusiness() — never a second,
-     * partially reimplemented algorithm.
+     * partially reimplemented algorithm. The membership directory is not part
+     * of the overview any more: it is Settings → Team (team()).
+     *
+     * OWNER DECISION — a Core or Growth account is not a customer-managed
+     * object. It holds exactly one Business, and everything a customer
+     * configures lives in that Business's Settings (Business setup,
+     * Communication, Account & billing — plan and team included). So this page
+     * is never shown for one: its customer is sent to their Business's
+     * Settings instead. The one exception is an account with no Business yet,
+     * where the page shows only the form that creates it (the zero-Business
+     * Home links here while onboarding is off) — no status, role, rename or
+     * Business list. An Agency account, and an account with no plan assigned,
+     * keep the overview exactly as it was.
      */
-    public function show(string $workspaceUid): View
+    public function show(string $workspaceUid): View|RedirectResponse
+    {
+        [$workspace, $roleKey] = $this->resolveAccountPage($workspaceUid);
+        $userId = (int) Auth::id();
+
+        // An inactive account can't open its Business at all, so its page stays
+        // — reactivating it is the one thing left to do there.
+        if ($workspace->is_active && $this->isBusinessFirstAccount($workspace)) {
+            $business = $this->accessibleBusinesses($workspace, $userId)
+                ->first(fn (Business $business) => $business->status === BusinessStatus::Active);
+
+            if ($business !== null) {
+                return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]);
+            }
+
+            if ($this->accessibleBusinesses($workspace, $userId)->isNotEmpty()) {
+                // Its Business exists but is not active yet (just created, or
+                // still being set up). Home says exactly that and what to do
+                // next; a second Business is never the answer.
+                return redirect()->route('user.home');
+            }
+
+            if (! in_array($roleKey, ['owner', 'admin'], true)) {
+                // Nothing to open and nothing Staff may create.
+                abort(404);
+            }
+
+            return view('customer.workspaces.show', $this->accountPageData($workspace, $roleKey, 'first-business'));
+        }
+
+        return view('customer.workspaces.show', $this->accountPageData($workspace, $roleKey, 'account'));
+    }
+
+    /**
+     * Settings → Team — the ONE customer destination for who works in this
+     * account: members, their role, and which Businesses each may open (an
+     * Agency assigns client-account access here). The same membership rules
+     * and the same member actions as before; they now have a page of their
+     * own instead of sharing the account overview.
+     *
+     * Owner and active Admins only, exactly the actors the directory was ever
+     * shown to. Anyone else — Staff, a selected-scope member, a stranger —
+     * gets the same 404 as an unknown account.
+     */
+    public function team(string $workspaceUid): View
+    {
+        [$workspace, $roleKey] = $this->resolveAccountPage($workspaceUid);
+
+        if (! in_array($roleKey, ['owner', 'admin'], true)) {
+            abort(404);
+        }
+
+        return view('customer.workspaces.show', $this->accountPageData($workspace, $roleKey, 'team'));
+    }
+
+    /**
+     * An account's own Settings hub — above all the Agency account's (Agency
+     * account details, Plan & subscription, Team, Outreach, Advanced), built
+     * by the same gates as every menu entry (CustomerMenuBuilder::
+     * settingsSections()). A Core or Growth account with a Business has no
+     * account settings of its own: its customer is sent to that Business's
+     * Settings. Anyone the account frame refuses gets the same 404 as an
+     * unknown account, and so does an actor with nothing to configure here.
+     */
+    public function settings(string $workspaceUid, CustomerShellComposer $shell, CustomerMenuBuilder $menu): View|RedirectResponse
+    {
+        [$workspace] = $this->resolveAccountPage($workspaceUid);
+        $user = Auth::user();
+
+        if ($this->isBusinessFirstAccount($workspace)) {
+            $business = $this->accessibleBusinesses($workspace, (int) $user->id)
+                ->first(fn (Business $business) => $business->status === BusinessStatus::Active);
+
+            if ($business !== null) {
+                return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]);
+            }
+        }
+
+        $context = $shell->currentContext($user);
+        $account = $context->frameWorkspace();
+
+        if ($account === null || $account->uid !== $workspace->uid) {
+            abort(404);
+        }
+
+        $sections = $menu->settingsSections($context, $user, $shell->currentMenuEntitlements($context), $account);
+
+        if ($sections === []) {
+            abort(404);
+        }
+
+        return view('customer.settings.index', [
+            'heading' => $account->isAgency() ? 'Agency account settings' : 'Account settings',
+            'subheading' => $account->name,
+            'sections' => $sections,
+            'featureSwitches' => null,
+        ]);
+    }
+
+    /**
+     * The account and the actor's effective role on it, for the account-frame
+     * pages. Slice 1B Correction Round 1: these pages are the account frame, so
+     * a selected-scope membership resolves to no role (404) while every
+     * mutation keeps its own, unchanged authorization.
+     *
+     * @return array{0: Workspace, 1: string}
+     */
+    private function resolveAccountPage(string $workspaceUid): array
     {
         $workspace = $this->workspaceRepository->findByUid($workspaceUid);
 
@@ -144,17 +263,43 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
-        $userId = (int) Auth::id();
-        // Slice 1B Correction Round 1: the overview is the account frame, so
-        // a selected-scope membership resolves to no role here (404) while
-        // every mutation keeps its own, unchanged authorization.
-        $roleKey = $this->effectiveRoleKey($workspace, $userId, accountFrameOnly: true);
+        $roleKey = $this->effectiveRoleKey($workspace, (int) Auth::id(), accountFrameOnly: true);
 
         if ($roleKey === null) {
             abort(404);
         }
 
+        return [$workspace, $roleKey];
+    }
+
+    /**
+     * Core and Growth — one Business, configured from that Business. Decided by
+     * the account's own plan, never by who is looking, so someone in a Growth
+     * account and an Agency account sees each one the way that account is.
+     */
+    private function isBusinessFirstAccount(Workspace $workspace): bool
+    {
+        return in_array(
+            $this->entitlementManager->getWorkspaceEntitlementSummary($workspace)->tier,
+            [WorkspacePlanTier::Core, WorkspacePlanTier::Growth],
+            true,
+        );
+    }
+
+    /**
+     * The account page's data for one of its sections: `account` (the
+     * overview), `first-business` (a Core or Growth account's first Business
+     * form) or `team` (Settings → Team).
+     *
+     * @return array<string, mixed>
+     */
+    private function accountPageData(Workspace $workspace, string $roleKey, string $section): array
+    {
+        $userId = (int) Auth::id();
+        $manages = in_array($roleKey, ['owner', 'admin'], true);
+
         $viewData = [
+            'section' => $section,
             'workspace' => [
                 'name' => $workspace->name,
                 'is_active' => (bool) $workspace->is_active,
@@ -163,9 +308,15 @@ class WorkspaceController extends CustomerBaseController
             'businesses' => $this->effectiveBusinesses($workspace, $userId),
         ];
 
-        if (in_array($roleKey, ['owner', 'admin'], true)) {
-            $viewData['entitlement'] = $this->entitlementViewData($workspace, $userId);
+        if ($section === 'team') {
             $viewData['directory'] = $this->membershipDirectory($workspace);
+            $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
+
+            return $viewData;
+        }
+
+        if ($manages && $section === 'account') {
+            $viewData['entitlement'] = $this->entitlementViewData($workspace, $userId);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
 
             // Customer Experience Slice 5, Correction Round 1 §8 — the Agency
@@ -184,7 +335,7 @@ class WorkspaceController extends CustomerBaseController
         // the account chooser is offered only when index() would show one.
         request()->attributes->set('showsAccountChooser', $this->accountChoices($userId)->count() > 1);
 
-        return view('customer.workspaces.show', $viewData);
+        return $viewData;
     }
 
     /**
@@ -590,7 +741,7 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member added.');
     }
 
@@ -627,7 +778,7 @@ class WorkspaceController extends CustomerBaseController
     private function memberCannotBeAdded(string $workspaceUid): RedirectResponse
     {
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->withErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED])
             ->withInput(['member_email' => (string) request()->input('member_email')]);
     }
@@ -668,7 +819,7 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member role updated.');
     }
 
@@ -725,7 +876,7 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member Business access updated.');
     }
 
@@ -752,7 +903,7 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member deactivated.');
     }
 
@@ -778,7 +929,7 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
+            ->route('customer.workspaces.team.show', $workspaceUid)
             ->with('flash_success', 'Member reactivated.');
     }
 

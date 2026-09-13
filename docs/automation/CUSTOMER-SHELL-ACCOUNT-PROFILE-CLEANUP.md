@@ -76,6 +76,11 @@ data — no second store:
 
 ## 5. Team
 
+> **Superseded** by `WALKTHROUGH-SETTINGS-NAVIGATION-CLEANUP.md` §4: Settings →
+> Team is now the account membership (`customer.workspaces.team.show`), and the
+> delegated-access surface below is no longer offered in the shell. §2's
+> "Account settings" switcher link is likewise gone for Core and Growth.
+
 Settings → **Team** (`customer.sub_accounts.index`, the delegated-access
 surface its own pages call "Team members") in both frames. Offered only while
 the platform allows customers to add team members, only to the account holder

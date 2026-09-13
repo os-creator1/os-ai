@@ -35,35 +35,29 @@ class ContextSwitcherTest extends TestCase
     // Core / Growth: one account, one Business
     // -----------------------------------------------------------------
 
-    public function test_a_core_owner_with_one_business_gets_a_clickable_block_with_no_clutter(): void
+    /**
+     * A Core or Growth customer has one Business and no account to manage
+     * (owner decision): nothing to switch to, and no account link. The block
+     * is the labelled identity of the Business they work in, not a menu with
+     * one row (navigation redesign §7.1: no switcher for Core or Growth).
+     */
+    public function test_a_core_owner_with_one_business_gets_a_plain_identity_with_no_clutter(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Harbor Lane Studios', 'Jazmin Media');
         $this->authenticateAs($customer);
 
         $shell = $this->shellHtml($this->home()->assertOk()->getContent());
 
-        // The whole block is one control: frame label, current name, chevron.
         $this->assertStringContainsString('data-role="sidebar-context"', $shell);
-        $this->assertStringContainsString('id="customer-context-switcher-toggle"', $shell);
-        $this->assertStringContainsString('aria-label="Current business: Harbor Lane Studios. Switch business"', $shell);
+        $this->assertStringContainsString('data-role="context-identity"', $shell);
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Business\s*</', $shell);
         $this->assertStringContainsString('Harbor Lane Studios', $shell);
 
-        // Their own Business is listed as current, and their account is
-        // reached as settings — never as a frame that would only ask them to
-        // choose that same Business again. Nothing else.
-        $this->assertSame(1, $this->optionCount($shell, 'context-option-business'));
+        $this->assertStringNotContainsString('id="customer-context-switcher-toggle"', $shell, 'Nothing to switch to.');
         $this->assertSame(0, $this->optionCount($shell, 'context-option-account'));
-        $this->assertStringContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $shell);
-        $this->assertStringContainsString('Account settings', $shell);
-        $this->assertSame(1, substr_count($shell, 'aria-current="true"'));
-
-        // No search box over one Business, and no invented multi-account UI.
-        // (The block still ships the small focus-return script every actor
-        // needs for Escape; what a one-Business customer must not get is the
-        // filter.)
+        $this->assertStringNotContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $shell, 'No account page.');
+        $this->assertStringNotContainsString('Account settings', $shell);
         $this->assertStringNotContainsString('data-role="context-switcher-filter"', $shell);
-        $this->assertStringNotContainsString('Search business', $shell);
     }
 
     public function test_the_switcher_never_offers_to_create_an_account(): void
@@ -106,10 +100,9 @@ class ContextSwitcherTest extends TestCase
         $this->assertMatchesRegularExpression('/customer-context-current-name[^>]*>\s*Harbor Lane Studios\s*</', $this->shellHtml($home->getContent()));
         $this->home()->assertOk()->assertSee('Business navigation', false);
 
-        // The account itself is one click away as settings, without leaving the Business.
-        $settings = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
-        $settings->assertSee('Business navigation', false);
-        $this->assertStringContainsString('Jazmin Media', $settings->getContent());
+        // There is no account page to stand in: it opens the Business's Settings.
+        $this->get(route('customer.workspaces.show', $workspace->uid))
+            ->assertRedirect(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]));
     }
 
     public function test_a_business_route_ends_a_deliberate_account_choice(): void
@@ -385,7 +378,8 @@ class ContextSwitcherTest extends TestCase
 
     public function test_the_block_renders_once_and_only_in_the_sidebar(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($customer, $workspace, 'Client Two');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();

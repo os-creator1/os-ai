@@ -152,7 +152,7 @@ class WorkspaceAddMemberBusinessAccessFormTest extends TestCase
 
     private function membersForm(string $workspaceUid): string
     {
-        $html = $this->get(route('customer.workspaces.show', $workspaceUid))->assertOk()->getContent();
+        $html = $this->get(route('customer.workspaces.team.show', $workspaceUid))->assertOk()->getContent();
         $start = strpos($html, 'data-workspace-action="members"');
         $this->assertNotFalse($start, 'The Add member form must render.');
         $end = strpos($html, '</form>', $start);

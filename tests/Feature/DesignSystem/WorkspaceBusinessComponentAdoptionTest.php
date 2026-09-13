@@ -173,7 +173,10 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
     {
         $contents = file_get_contents(base_path('resources/views/customer/workspaces/show.blade.php'));
 
-        $this->assertMatchesRegularExpression('/<div class="card">\s*<div class="card-header">\s*<h4 class="card-title">Businesses<\/h4>/', $contents);
+        // The title reads "Your Business" on a Core or Growth account's
+        // first-Business form (walkthrough settings cleanup) and "Businesses"
+        // everywhere else; the native ancestor is unchanged.
+        $this->assertMatchesRegularExpression('/<div class="card">\s*<div class="card-header">\s*<h4 class="card-title">\{\{ \$section === \'first-business\' \? \'Your Business\' : \'Businesses\' \}\}<\/h4>/', $contents);
     }
 
     public function test_admin_business_edit_card_header_remains_native_with_owner_subtitle(): void

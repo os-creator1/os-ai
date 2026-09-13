@@ -34,6 +34,50 @@ final class CustomerMenuBuilder
     private const BLACKLIST_PERMISSIONS = ['view_blacklist', 'create_blacklist', 'update_blacklist', 'delete_blacklist'];
 
     /**
+     * The screens a Business's Settings hub leads to. The single Settings
+     * entry is active on the hub and on every one of them.
+     */
+    private const BUSINESS_SETTINGS_ROUTES = [
+        'customer.workspaces.businesses.settings.',
+        'customer.business.',
+        'customer.workspaces.businesses.locations.',
+        'customer.workspaces.businesses.text-messaging.',
+        'customer.workspaces.businesses.usage-billing.',
+        'customer.workspaces.plan.',
+        'customer.workspaces.team.',
+    ];
+
+    /** The screens an account's Settings hub leads to (see BUSINESS_SETTINGS_ROUTES). */
+    private const ACCOUNT_SETTINGS_ROUTES = [
+        'customer.workspaces.settings.',
+        'customer.workspaces.plan.',
+        'customer.workspaces.team.',
+        'customer.blacklists.',
+        'customer.channels.',
+        'customer.senderid.',
+        'customer.numbers.',
+        'customer.keywords.',
+    ];
+
+    /**
+     * One plain sentence per Settings hub module, keyed like the module.
+     */
+    public const SETTINGS_DESCRIPTIONS = [
+        'business-details' => 'Name, contact details and what the business does.',
+        'locations' => 'Addresses and the areas this business serves.',
+        'text-messaging' => 'This business’s number and whether texting is ready.',
+        'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
+        'plan' => 'What your plan includes and your subscription.',
+        'team' => 'Who can work here, their role and what they can open.',
+        'account-details' => 'Agency account name, client accounts and who pays for each.',
+        'blocked-numbers' => 'Numbers that are never messaged.',
+        'messaging-provider' => 'Connect your own messaging provider.',
+        'sender-ids' => 'Sender names used on outgoing messages.',
+        'numbers' => 'Phone numbers on this account.',
+        'keywords' => 'Words people can text in to reach you.',
+    ];
+
+    /**
      * Slice 2A §6.2 — the Business-scoped features that gate a menu entry.
      *
      * Deliberately short. `crm` is Available and Business-scoped but Contacts
@@ -113,22 +157,16 @@ final class CustomerMenuBuilder
             $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
         }
 
-        // Messages — the selected Business's Inbox, and only that. The legacy
-        // outbound surfaces (Send, Campaigns) are not a local-business workflow
-        // and are no longer offered here; their routes stay registered for now.
-        // Agency outbound prospecting lives in the Agency account frame
-        // (Prospecting), never in a client Business's Messages.
-        $messages = array_values(array_filter([
-            // Slice 2B §16 — the selected Business's own inbox, shown only when
-            // that Business is entitled to Conversations.
-            $this->entitled('conversations', $this->item($user, 'inbox', 'Inbox', 'inbox', ['chat_box'], 'customer.workspaces.businesses.conversations.index', $scoped, $current, [
-                'customer.workspaces.businesses.conversations.',
-            ])),
+        // Conversations — ONE destination, the selected Business's own
+        // conversations (owner decision: no "Messages → Inbox" group around a
+        // single child). Shown only when that Business is entitled to
+        // Conversations (Slice 2B §16). The legacy outbound surfaces (Send,
+        // Campaigns) are not a local-business workflow and are not offered;
+        // their routes stay registered. Agency outbound prospecting lives in
+        // the Agency account frame (Prospecting), never in a client Business.
+        $items[] = $this->entitled('conversations', $this->item($user, 'conversations', 'Conversations', 'message-square', ['chat_box'], 'customer.workspaces.businesses.conversations.index', $scoped, $current, [
+            'customer.workspaces.businesses.conversations.',
         ]));
-
-        if ($messages !== []) {
-            $items[] = new MenuItem('messages', 'Messages', null, 'message-square', false, $messages);
-        }
 
         // Contacts opens the people first ("All contacts"); groups are its
         // secondary tab and keep the entry active too.
@@ -148,80 +186,18 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',
         ]);
 
-        $settings = [];
+        // Settings — ONE destination (owner decision). Nothing expands under it
+        // in the sidebar: it opens the Settings hub, a page of cards for the
+        // configuration a Business does not need day to day, each linking to
+        // its own screen. The entry stays active on every one of those screens.
+        if ($this->businessSettingsSections($context, $user, $current) !== []) {
+            // An Agency client Business's hub has no Plan or Team (they are the
+            // Agency account's), so those screens do not light it up.
+            $activeRoutes = $context->selectedWorkspace?->isAgency()
+                ? array_values(array_diff(self::BUSINESS_SETTINGS_ROUTES, ['customer.workspaces.plan.', 'customer.workspaces.team.']))
+                : self::BUSINESS_SETTINGS_ROUTES;
 
-        // Settings → Business — the Business's own record and the numbers it
-        // refuses. Blocked numbers is presented here but its route stays
-        // account-scoped; that mismatch is recorded debt (§9), not fixed by
-        // moving a route this slice may not touch.
-        $businessSettings = [];
-
-        if ($context->selectedBusiness !== null
-            && $context->selectedBusiness->customerId === $context->userId
-            && $context->selectedBusiness->isPrimary) {
-            // BusinessController@edit resolves the customer's PRIMARY
-            // Business; it is only offered when that is the selected one.
-            $businessSettings[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
-        }
-
-        // Customer Experience Slice 1A — the selected Business's physical
-        // locations. A location is part of the Business, never an account or
-        // a switcher level; the destination enforces its own tenancy.
-        $businessSettings[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
-            'customer.workspaces.businesses.locations.',
-        ]);
-
-        $businessSettings[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
-
-        $businessSettings = array_values(array_filter($businessSettings));
-
-        if ($businessSettings !== []) {
-            $settings[] = new MenuItem('business', 'Business', null, 'briefcase', false, $businessSettings);
-        }
-
-        if ($context->canManageBilling()) {
-            $settings[] = $this->item($user, 'usage-billing', 'Billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
-                'customer.workspaces.businesses.usage-billing.',
-            ]);
-        }
-
-        if ($context->canManageWorkspace() && $workspaceUid !== null) {
-            // Team and member management are sections of this page; §3 forbids
-            // a standalone Team leaf naming a destination that does not exist.
-            $settings[] = $this->item($user, 'team', 'Account', 'user-check', ['access_backend'], 'customer.workspaces.show', [$workspaceUid], $current, [
-                'customer.workspaces.show', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
-            ]);
-        }
-
-        if ($context->canManageWorkspace() && (bool) $user->is_customer && $workspaceUid !== null) {
-            // This account's own AI Business OS plan (Workspace plan domain) —
-            // never the inherited SMS plans/subscriptions page.
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspaceUid], $current, [
-                'customer.workspaces.plan.',
-            ]);
-        }
-
-        // Owner product decision — the plain-language, read-only status
-        // surface every tier sees (Core, Growth, and an Agency Business
-        // using managed transport). No tier/permission-beyond-view_numbers
-        // gate: unlike the Agency-only Advanced (BYO) item below, this is
-        // never supposed to disappear for an ordinary customer.
-        $settings[] = $this->item($user, 'text-messaging', 'Text messaging', 'message-circle', ['view_numbers'], 'customer.workspaces.businesses.text-messaging.show', $scoped, $current, [
-            'customer.workspaces.businesses.text-messaging.',
-        ]);
-
-        $settings[] = $this->teamItem($user, $current);
-
-        $advanced = $this->advancedItems($context, $user, $current, 'customer.workspaces.businesses.channels.index', $scoped);
-
-        if ($advanced !== null) {
-            $settings[] = $advanced;
-        }
-
-        $settings = array_values(array_filter($settings));
-
-        if ($settings !== []) {
-            $items[] = new MenuItem('settings', 'Settings', null, 'settings', false, $settings);
+            $items[] = $this->item($user, 'settings', 'Settings', 'settings', ['access_backend'], 'customer.workspaces.businesses.settings.show', $scoped, $current, $activeRoutes);
         }
 
         return array_values(array_filter($items));
@@ -265,61 +241,214 @@ final class CustomerMenuBuilder
             ]);
         }
 
-        $settings = [];
-        $planWorkspace = $context->frameWorkspace();
+        // Settings — the account's own hub, one destination, as in the
+        // Business frame. With several accounts and none chosen there is no
+        // account to configure, so there is no entry.
+        $account = $context->frameWorkspace();
 
-        if ($planWorkspace !== null && $context->canManageWorkspace() && (bool) $user->is_customer) {
-            // The Agency (or only) account's own plan — explicit, never a
-            // client Business's and never the inherited SMS subscriptions page.
-            // With several accounts and none chosen there is no plan to name.
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$planWorkspace->uid], $current, [
-                'customer.workspaces.plan.',
-            ]);
-        }
-
-        $settings[] = $this->teamItem($user, $current);
-
-        $advanced = $this->advancedItems($context, $user, $current, 'customer.channels.index', []);
-
-        if ($advanced !== null) {
-            $settings[] = $advanced;
-        }
-
-        $settings = array_values(array_filter($settings));
-
-        if ($settings !== []) {
-            $items[] = new MenuItem('settings', 'Settings', null, 'settings', false, $settings);
+        if ($account !== null && $this->accountSettingsSections($context, $account, $user, $current) !== []) {
+            $items[] = $this->item($user, 'settings', 'Settings', 'settings', ['access_backend'], 'customer.workspaces.settings.show', [$account->uid], $current, self::ACCOUNT_SETTINGS_ROUTES);
         }
 
         return array_values(array_filter($items));
     }
 
     /**
-     * Settings → Team: the people who sign in to work on this customer's
-     * behalf, each with their own permissions (the delegated-access surface,
-     * named "Team members" on its own pages, Slice 1 terminology §4). It moved
-     * here from the user dropdown, which now carries only the person's own
-     * things; the destination is the same one, so nothing is duplicated.
+     * The Settings hub's sections: for the Business the context selected, or
+     * — given $account — for that account itself (the Agency account's own
+     * settings). Every module is gated exactly as a menu entry is: its route
+     * must exist, the actor must hold a permission that reaches it, and it
+     * must be reachable while viewing as a client.
      *
-     * Offered to exactly the actors the dropdown offered it to, and the routes
-     * still enforce their own boundary (customer.sub_only):
-     *  - only while the platform allows customers to add team members;
-     *  - only to the account holder themselves — a team member (a user with a
-     *    parent) never manages the team, and neither does a team member who
-     *    is currently signed in AS the account holder;
-     *  - never while viewing as a client (the classification drops it).
+     * @return array<int, array{key: string, title: string, items: array<int, MenuItem>}>
      */
-    private function teamItem(User $user, string $current): ?MenuItem
+    public function settingsSections(CustomerContext $context, User $user, ?MenuEntitlements $entitlements = null, ?WorkspaceCandidate $account = null): array
     {
-        if (! config('account.create_subaccount') || ! (bool) $user->is_customer || $user->parent_id !== null) {
-            return null;
+        $current = (string) Route::currentRouteName();
+        $this->viewingAsClient = $context->isViewingAsClient();
+        $this->entitlements = $entitlements ?? MenuEntitlements::none();
+
+        return $account !== null
+            ? $this->accountSettingsSections($context, $account, $user, $current)
+            : $this->businessSettingsSections($context, $user, $current);
+    }
+
+    /**
+     * A Business's Settings hub (owner decision).
+     *
+     *   Business setup     Business details, Locations
+     *   Communication      Text messaging
+     *   Account & billing  Billing, Plan & subscription, Team
+     *
+     * The Core/Growth account is not a customer-managed object of its own:
+     * there is no "Account" module, and its plan and team sit here beside the
+     * Business they serve. An Agency client Business is different — its plan
+     * and team belong to the Agency account and are configured in the Agency
+     * account's own Settings, never repeated inside a client Business. Only
+     * the client's own Billing stays here.
+     *
+     * Blocked numbers (the legacy, user-scoped blacklist) is not a Business
+     * setting and is not offered here; see accountSettingsSections().
+     *
+     * @return array<int, array{key: string, title: string, items: array<int, MenuItem>}>
+     */
+    private function businessSettingsSections(CustomerContext $context, User $user, string $current): array
+    {
+        $workspace = $context->selectedWorkspace;
+        $business = $context->selectedBusiness;
+
+        if ($workspace === null || $business === null) {
+            return [];
         }
 
+        $scoped = [$workspace->uid, $business->uid];
+        $agencyClient = $workspace->isAgency();
+
+        $setup = [];
+
+        if ($business->customerId === $context->userId && $business->isPrimary) {
+            // BusinessController@edit resolves the customer's PRIMARY
+            // Business; it is only offered when that is the selected one.
+            $setup[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
+        }
+
+        // Customer Experience Slice 1A — the selected Business's physical
+        // locations. A location is part of the Business, never an account or
+        // a switcher level; the destination enforces its own tenancy.
+        $setup[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
+            'customer.workspaces.businesses.locations.',
+        ]);
+
+        // Owner product decision — the plain-language, read-only status
+        // surface every tier sees (Core, Growth, and an Agency Business using
+        // managed transport).
+        $communication = [
+            $this->item($user, 'text-messaging', 'Text messaging', 'message-circle', ['view_numbers'], 'customer.workspaces.businesses.text-messaging.show', $scoped, $current, [
+                'customer.workspaces.businesses.text-messaging.',
+            ]),
+        ];
+
+        $accountAndBilling = [];
+
+        if ($context->canManageBilling()) {
+            $accountAndBilling[] = $this->item($user, 'usage-billing', 'Billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
+                'customer.workspaces.businesses.usage-billing.',
+            ]);
+        }
+
+        if (! $agencyClient && $context->canManageWorkspace()) {
+            if ((bool) $user->is_customer) {
+                // This account's own AI Business OS plan (Workspace plan
+                // domain) — never the inherited SMS plans/subscriptions page.
+                $accountAndBilling[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspace->uid], $current, [
+                    'customer.workspaces.plan.',
+                ]);
+            }
+
+            $accountAndBilling[] = $this->teamItem($user, $workspace->uid, $current);
+        }
+
+        return $this->sections([
+            'business-setup' => ['Business setup', $setup],
+            'communication' => ['Communication', $communication],
+            'account-billing' => [$agencyClient ? 'Billing' : 'Account & billing', $accountAndBilling],
+        ]);
+    }
+
+    /**
+     * An account's own Settings hub — above all the Agency account's.
+     *
+     *   Agency account  Agency account details, Plan & subscription, Team
+     *   Outreach        Blocked numbers
+     *   Advanced        the provider-level surfaces, owner only (§8.6)
+     *
+     * Agency account details is the Agency account page (its name, its client
+     * accounts and who pays for each). A Core or Growth account has no such
+     * module: it is not a customer-managed object, and its plan and team live
+     * in its Business's Settings. This hub is only reached for one when it
+     * has no Business to open yet.
+     *
+     * Blocked numbers is the legacy, user-scoped blacklist, kept for Agencies
+     * exactly as it is — not repurposed. SEAM: an Agency's real need is an
+     * outreach suppression list, which belongs here as Prospecting →
+     * Suppression list; when it exists it replaces this module.
+     *
+     * @return array<int, array{key: string, title: string, items: array<int, MenuItem>}>
+     */
+    private function accountSettingsSections(CustomerContext $context, WorkspaceCandidate $account, User $user, string $current): array
+    {
+        $manages = $account->canManage();
+        $accountItems = [];
+
+        if ($manages && $account->isAgency()) {
+            $accountItems[] = $this->item($user, 'account-details', 'Agency account details', 'user-check', ['access_backend'], 'customer.workspaces.show', [$account->uid], $current, [
+                'customer.workspaces.show',
+            ]);
+        }
+
+        if ($manages && (bool) $user->is_customer) {
+            $accountItems[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$account->uid], $current, [
+                'customer.workspaces.plan.',
+            ]);
+        }
+
+        if ($manages) {
+            $accountItems[] = $this->teamItem($user, $account->uid, $current);
+        }
+
+        $outreach = [];
+
+        if ($account->isAgency()) {
+            $outreach[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
+        }
+
+        return $this->sections([
+            'account' => [$account->isAgency() ? 'Agency account' : 'Account', $accountItems],
+            'outreach' => ['Outreach', $outreach],
+            'advanced' => ['Advanced', $this->advancedItems($context, $user, $current, 'customer.channels.index', [])],
+        ]);
+    }
+
+    /**
+     * Settings → Team: the ONE customer destination for who works in this
+     * account — members, their role, and which Businesses each may open
+     * (the account membership, RFC-003; an Agency assigns client-account
+     * access here). Offered only to the account's owner and active Admins,
+     * the same authority the member actions enforce — and never to a team
+     * member who is currently signed in AS the account holder.
+     *
+     * The legacy delegated-access surface (customer.sub_accounts.*, "Team
+     * members") is deliberately NOT offered any more: two team destinations
+     * is the duplication this replaces. Its routes, models and permissions are
+     * untouched and still reachable directly, pending its separately
+     * contracted retirement (navigation redesign §12.3).
+     */
+    private function teamItem(User $user, string $workspaceUid, string $current): ?MenuItem
+    {
         if (session()->has('parent_user_id') && session()->has('temp_user_id')) {
             return null;
         }
 
-        return $this->item($user, 'team-members', 'Team', 'users', ['access_backend'], 'customer.sub_accounts.index', [], $current, ['customer.sub_accounts.']);
+        return $this->item($user, 'team', 'Team', 'users', ['access_backend'], 'customer.workspaces.team.show', [$workspaceUid], $current, ['customer.workspaces.team.']);
+    }
+
+    /**
+     * @param  array<string, array{0: string, 1: array<int, MenuItem|null>}>  $definitions
+     * @return array<int, array{key: string, title: string, items: array<int, MenuItem>}>
+     */
+    private function sections(array $definitions): array
+    {
+        $sections = [];
+
+        foreach ($definitions as $key => [$title, $items]) {
+            $items = array_values(array_filter($items));
+
+            if ($items !== []) {
+                $sections[] = ['key' => $key, 'title' => $title, 'items' => $items];
+            }
+        }
+
+        return $sections;
     }
 
     /**
@@ -327,11 +456,12 @@ final class CustomerMenuBuilder
      * each still permission-gated, and never part of the Core/Growth menu.
      *
      * @param  array<int, string|null>  $channelsParameters
+     * @return array<int, MenuItem>
      */
-    private function advancedItems(CustomerContext $context, User $user, string $current, string $channelsRoute, array $channelsParameters): ?MenuItem
+    private function advancedItems(CustomerContext $context, User $user, string $current, string $channelsRoute, array $channelsParameters): array
     {
         if (! $this->hasAdvancedProviderAccess($context, $user)) {
-            return null;
+            return [];
         }
 
         // Developers is NOT here any more (§8). Its six routes stay
@@ -347,11 +477,7 @@ final class CustomerMenuBuilder
             $this->item($user, 'keywords', 'Keywords', 'hash', ['view_keywords'], 'customer.keywords.index', [], $current, ['customer.keywords.']),
         ]));
 
-        if ($children === []) {
-            return null;
-        }
-
-        return new MenuItem('advanced', 'Advanced', null, 'sliders', false, $children);
+        return $children;
     }
 
     /**

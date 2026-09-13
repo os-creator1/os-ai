@@ -22,20 +22,24 @@ class WorkspaceAccountSettingsViewTest extends TestCase
 
     public function test_the_owner_sees_rename_and_team_but_no_deactivation_or_ownership_transfer(): void
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Lane Studios', 'Harbor Lane');
+        // Renaming is an Agency account detail, and the team is Settings → Team.
+        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Harbor Lane Studios', 'Harbor Lane');
         $this->authenticateAs($owner);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $team = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $response->assertSee('data-workspace-action="rename"', false);
-        $response->assertSee('data-workspace-action="members"', false);
+        $team->assertSee('data-workspace-action="members"', false);
 
-        foreach (['data-workspace-action="deactivate"', 'data-workspace-action="ownership/transfer"', 'name="new_owner_user_uid"', 'name="previous_owner_disposition"', 'id="ownership-transfer-scope"'] as $markup) {
-            $response->assertDontSee($markup, false);
-        }
+        foreach ([$response, $team] as $page) {
+            foreach (['data-workspace-action="deactivate"', 'data-workspace-action="ownership/transfer"', 'name="new_owner_user_uid"', 'name="previous_owner_disposition"', 'id="ownership-transfer-scope"'] as $markup) {
+                $page->assertDontSee($markup, false);
+            }
 
-        foreach (['Deactivate account', 'Transfer ownership', 'New owner User UID', 'Previous owner disposition', 'User UID'] as $text) {
-            $response->assertDontSee($text);
+            foreach (['Deactivate account', 'Transfer ownership', 'New owner User UID', 'Previous owner disposition', 'User UID'] as $text) {
+                $page->assertDontSee($text);
+            }
         }
 
         $this->assertTrue(Route::has('customer.workspaces.deactivate'), 'Kept for support.');

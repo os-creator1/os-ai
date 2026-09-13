@@ -318,12 +318,15 @@ class WorkspacePlanPageTest extends TestCase
 
     public function test_customer_navigation_opens_this_plan_page_not_the_legacy_subscriptions(): void
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
         $home = $this->home()->assertOk()->getContent();
+        $settings = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
-        $this->assertContains(route('customer.workspaces.plan.show', $workspace->uid), $this->menuLinks($home));
+        // Settings → Account & billing → Plan & subscription.
+        $this->assertStringContainsString('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', $settings);
+        $this->assertStringNotContainsString('href="' . route('customer.subscriptions.index') . '"', $settings);
         $this->assertStringNotContainsString('href="' . route('customer.subscriptions.index') . '"', $home, 'Neither the sidebar nor the profile menu links the legacy subscriptions page.');
         $this->assertStringNotContainsString('href="' . route('user.account.pricing') . '"', $home, 'Nor the legacy pricing plans page.');
     }
@@ -334,9 +337,11 @@ class WorkspacePlanPageTest extends TestCase
         $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
 
-        $html = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
+        // The Agency account's own Settings name its plan.
+        $html = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent();
 
-        $this->assertContains(route('customer.workspaces.plan.show', $workspace->uid), $this->menuLinks($html));
+        $this->assertContains('plan', $this->settingsHubModules($html)['account'] ?? []);
+        $this->assertStringContainsString('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', $html);
         $this->assertStringNotContainsString('href="' . route('customer.subscriptions.index') . '"', $html);
     }
 
@@ -345,7 +350,8 @@ class WorkspacePlanPageTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
-        $this->assertContains('plan', $this->activeMenuKeys($this->planPage($workspace)->getContent()));
+        // The plan is a Settings screen: the one Settings entry stays active on it.
+        $this->assertContains('settings', $this->activeMenuKeys($this->planPage($workspace)->getContent()));
     }
 
     // -----------------------------------------------------------------

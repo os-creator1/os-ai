@@ -179,7 +179,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             ]
         );
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $this->assertNotNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -306,7 +306,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHas('flash_success');
 
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $target->id)->first();
@@ -388,7 +388,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
-        ])->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        ])->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
 
         $this->assertNotNull(WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $target->id)->first());
     }
@@ -564,7 +564,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
         $this->assertNull(WorkspaceMembership::where('user_id', $customer->user->id)->first());
     }
@@ -673,7 +673,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
         $this->assertSame(0, WorkspaceMembership::where('workspace_id', $workspace->id)->count());
     }
@@ -794,7 +794,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'role' => 'admin',
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHas('flash_success');
         $this->assertSame(WorkspaceMembershipRole::Admin, $member->fresh()->role);
     }
@@ -918,7 +918,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_uids' => [$businessA->uid, $businessB->uid],
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHas('flash_success');
         $fresh = $member->fresh();
         $this->assertSame(WorkspaceBusinessAccessScope::Selected, $fresh->business_access_scope);
@@ -1116,7 +1116,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $response = $this->post(route('customer.workspaces.members.deactivate', [$workspace->uid, $member->user->uid]));
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHas('flash_success');
         $this->assertFalse((bool) $member->fresh()->is_active);
     }
@@ -1274,7 +1274,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $active = $this->createNamedMember($workspace, 'Act', 'Ive', ['is_active' => true]);
         $inactive = $this->createNamedMember($workspace, 'Ina', 'Ctive', ['is_active' => false]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $rows = $response->original->getData()['directory'];
         $this->assertCount(2, $rows);
@@ -1312,7 +1312,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         $genuineMember = $this->createNamedMember($workspace, 'Gen', 'Uine', ['is_active' => true]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $rows = $response->original->getData()['directory'];
         $this->assertCount(1, $rows);
@@ -1352,7 +1352,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $rows = $response->original->getData()['manageableBusinesses'];
         $this->assertCount(1, $rows);
@@ -1393,7 +1393,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_id' => $assignedBusiness->id,
         ]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
         $html = $response->getContent();
 
         $assignedInputId = 'access-' . $member->user->uid . '-' . $assignedBusiness->uid;
@@ -1419,7 +1419,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
         $html = $response->getContent();
 
         $this->assertStringContainsString(
@@ -1445,7 +1445,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         $this->createNamedMember($workspace, 'Sta', 'Ffer', ['role' => WorkspaceMembershipRole::Staff]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $response->assertDontSee('data-member-action="role"', false);
         $response->assertDontSee('Change role');
@@ -1463,7 +1463,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $adminTarget = $this->createNamedMember($workspace, 'Ano', 'Ther', ['role' => WorkspaceMembershipRole::Admin]);
         $staffTarget = $this->createNamedMember($workspace, 'Sta', 'Ffer', ['role' => WorkspaceMembershipRole::Staff]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
         $html = $response->getContent();
 
         $this->assertDoesNotMatchRegularExpression(
@@ -1486,7 +1486,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $response->assertDontSee('<option value="admin">Admin</option>', false);
     }
@@ -1496,7 +1496,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
 
         $response->assertSee('<option value="admin">Admin</option>', false);
     }
@@ -1527,7 +1527,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         // account frame) by direct URL, so the form-level guard this test
         // used to inspect is never rendered for them at all. The 404 page
         // carries neither the access form nor the explanatory copy.
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $html = $response->getContent();
 
         $this->assertDoesNotMatchRegularExpression(
@@ -1559,7 +1559,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         // Slice 1B Correction Round 1: the overview is closed to a
         // selected-scope Admin; the change itself is still authorized by the
         // manager on the POST because every assigned Business is visible.
-        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+        $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
 
         $this->post(route('customer.workspaces.members.access', [$workspace->uid, $target->user->uid]), [
             'business_access_scope' => 'selected',
@@ -1579,7 +1579,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $this->createNamedMember($workspace, 'Dana', 'Lee', ['is_active' => true]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
         $html = $response->getContent();
 
         $scriptPosition = strpos($html, "document.querySelectorAll('form[data-member-action]')");
