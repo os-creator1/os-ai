@@ -102,6 +102,9 @@
                                         @if ($entry->refusal_reason !== null)
                                             <br><span class="text-caption text-muted">{{ $entry->refusal_reason->value }}</span>
                                         @endif
+                                        @if ($entry->refusal_scope !== null)
+                                            <br><span class="text-caption text-muted" data-role="ai-usage-refusal-scope">limit: {{ $entry->refusal_scope->value }}</span>
+                                        @endif
                                     </td>
                                     <td class="text-numeric">{{ $entry->input_tokens }} / {{ $entry->cached_input_tokens }} / {{ $entry->output_tokens }}</td>
                                     <td class="text-numeric">{{ $usd($entry->estimated_cost_microusd) }}</td>

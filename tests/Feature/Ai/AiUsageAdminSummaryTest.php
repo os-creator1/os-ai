@@ -92,6 +92,7 @@ class AiUsageAdminSummaryTest extends TestCase
             'category' => 'agency_prospect_reply',
             'status' => 'refused',
             'refusal_reason' => 'budget_exhausted',
+            'refusal_scope' => 'workspace',
         ]);
 
         $this->actingAsAdmin();
@@ -103,7 +104,7 @@ class AiUsageAdminSummaryTest extends TestCase
             'website_generation', 'routine', 'openai', 'fixture-model-2026',
             '4321 / 21 / 654',                                          // tokens
             '$0.009876', '$0.001234',                                   // estimated and actual cost
-            'committed', 'refused', 'budget_exhausted', 'agency_prospect_reply',
+            'committed', 'refused', 'budget_exhausted', 'limit: workspace', 'agency_prospect_reply',
             'website:fixture-provenance',
         ] as $expected) {
             $this->assertStringContainsString($expected, $html, "The admin summary should show {$expected}.");
@@ -238,6 +239,7 @@ class AiUsageAdminSummaryTest extends TestCase
             'price_version' => 1,
             'status' => 'committed',
             'refusal_reason' => null,
+            'refusal_scope' => null,
             'input_tokens' => 10,
             'cached_input_tokens' => 0,
             'output_tokens' => 5,

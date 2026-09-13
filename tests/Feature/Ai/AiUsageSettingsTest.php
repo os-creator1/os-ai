@@ -201,7 +201,7 @@ class AiUsageSettingsTest extends TestCase
 
         // Back under the cap, but a budget refusal happened this period.
         DB::table('ai_usage_periods')->where('scope_id', $workspace->id)->update(['committed_microusd' => 10]);
-        $this->recordRefusal($workspace, null, 'budget_exhausted', self::PERIOD);
+        $this->recordRefusal($workspace, null, 'budget_exhausted', self::PERIOD, 'workspace');
         $this->assertStringContainsString(self::LIMIT, $this->text((string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent())));
     }
 
@@ -210,9 +210,9 @@ class AiUsageSettingsTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core);
         $this->authenticateAs($customer);
 
-        $this->recordRefusal($workspace, null, 'interactive_share_exhausted', self::PERIOD);
+        $this->recordRefusal($workspace, null, 'interactive_share_exhausted', self::PERIOD, 'interactive_share');
         $this->recordRefusal($workspace, null, 'request_too_expensive', self::PERIOD);
-        $this->recordRefusal($workspace, null, 'budget_exhausted', '2026-08');
+        $this->recordRefusal($workspace, null, 'budget_exhausted', '2026-08', 'workspace');
 
         $this->assertStringContainsString(self::NORMAL, $this->text((string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent())));
     }
@@ -253,7 +253,7 @@ class AiUsageSettingsTest extends TestCase
     {
         [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Refusal Agency');
         $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
-        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD);
+        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'business'); // its own $6 cap
         $this->authenticateAs($owner);
 
         $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
@@ -271,7 +271,7 @@ class AiUsageSettingsTest extends TestCase
     public function test_an_agency_workspace_level_refusal_does_mean_the_account_limit_was_reached(): void
     {
         [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Workspace Refusal Agency');
-        $this->recordRefusal($workspace, null, 'budget_exhausted', self::PERIOD); // e.g. prospecting, Workspace cap only
+        $this->recordRefusal($workspace, null, 'budget_exhausted', self::PERIOD, 'workspace'); // e.g. prospecting, Workspace cap only
         $this->authenticateAs($owner);
 
         $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
@@ -280,10 +280,85 @@ class AiUsageSettingsTest extends TestCase
         $this->assertSame('normal', $this->rowStates($section)[$first->uid], 'The Business itself was not refused.');
     }
 
+    /**
+     * The Workspace allowance refused a Business-scoped call while committed is
+     * still just under the cap — the next request did not fit. The account is
+     * used up; the client's own allowance is not, and its row says so.
+     */
+    public function test_a_business_scoped_call_refused_by_the_workspace_cap_makes_the_account_limit_reached(): void
+    {
+        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Workspace Cap Agency');
+        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        $workspaceCap = (int) config('ai.budgets.agency.workspace_cap_microusd');
+        $businessCap = (int) config('ai.budgets.agency.business_cap_microusd');
+
+        $this->openWorkspacePeriod($workspace, WorkspacePlanTier::Agency, $workspaceCap, $workspaceCap - 1);
+        $this->openBusinessPeriod($workspace, $second, $businessCap, intdiv($businessCap, 10));
+        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'workspace');
+        $this->authenticateAs($owner);
+
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+
+        $this->assertStringContainsString(self::LIMIT, $this->text($section), 'Committed is under 100%, but the Workspace allowance refused a call.');
+        $this->assertSame('normal', $this->rowStates($section)[$second->uid], 'Client Two\'s own allowance is at 10%, and its row stays truthful.');
+    }
+
+    public function test_a_call_both_caps_refused_is_shown_on_the_account_and_on_the_business(): void
+    {
+        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Both Caps Agency');
+        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'workspace_and_business');
+        $this->authenticateAs($owner);
+
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+
+        $this->assertStringContainsString(self::LIMIT, $this->text($section));
+        $this->assertSame('limit_reached', $this->rowStates($section)[$second->uid]);
+        $this->assertSame('normal', $this->rowStates($section)[$first->uid]);
+    }
+
+    public function test_an_interactive_share_refusal_is_neither_the_account_nor_the_business_limit(): void
+    {
+        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Interactive Agency');
+        $this->recordRefusal($workspace, $first, 'interactive_share_exhausted', self::PERIOD, 'interactive_share');
+        $this->authenticateAs($owner);
+
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+
+        $this->assertStringContainsString(self::NORMAL, $this->text($section));
+        $this->assertSame('normal', $this->rowStates($section)[$first->uid]);
+    }
+
+    /**
+     * Refusals written before the scope column existed stay readable. Their
+     * scope is taken as the Workspace's only where the Workspace cap was the
+     * only cap that call could have met.
+     */
+    public function test_refusals_recorded_before_the_scope_existed_are_read_conservatively(): void
+    {
+        // Agency, Business-scoped, no scope: unknown — never forces the account headline.
+        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Legacy Client', 'Legacy Agency');
+        $this->recordRefusal($workspace, $first, 'budget_exhausted', self::PERIOD);
+        $this->authenticateAs($owner);
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+        $this->assertStringContainsString(self::NORMAL, $this->text($section));
+        $this->assertSame('limit_reached', $this->rowStates($section)[$first->uid], 'It was this Business\'s call that was refused.');
+
+        // Agency, no Business on the call: only the Workspace cap was checked.
+        $this->recordRefusal($workspace, null, 'budget_exhausted', self::PERIOD);
+        $this->assertStringContainsString(self::LIMIT, $this->text((string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent())));
+
+        // One allowance: every budget refusal was that allowance.
+        [$growthOwner, $growthBusiness, $growthWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Legacy Growth', 'Legacy Growth Account');
+        $this->recordRefusal($growthWorkspace, $growthBusiness, 'budget_exhausted', self::PERIOD);
+        $this->authenticateAs($growthOwner);
+        $this->assertStringContainsString(self::LIMIT, $this->text((string) $this->aiUsageSection($this->billingPage($growthWorkspace, $growthBusiness)->getContent())));
+    }
+
     public function test_with_one_allowance_a_business_scoped_refusal_is_the_account_limit(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
-        $this->recordRefusal($workspace, $business, 'budget_exhausted', self::PERIOD);
+        $this->recordRefusal($workspace, $business, 'budget_exhausted', self::PERIOD, 'workspace');
         $this->authenticateAs($customer);
 
         $this->assertStringContainsString(self::LIMIT, $this->text((string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent())));
@@ -484,7 +559,7 @@ class AiUsageSettingsTest extends TestCase
         ];
     }
 
-    private function recordRefusal(Workspace $workspace, ?Business $business, string $reason, string $periodKey): void
+    private function recordRefusal(Workspace $workspace, ?Business $business, string $reason, string $periodKey, ?string $scope = null): void
     {
         DB::table('ai_usage_ledger')->insert([
             'uid' => (string) Str::uuid(),
@@ -498,6 +573,7 @@ class AiUsageSettingsTest extends TestCase
             'price_version' => 1,
             'status' => 'refused',
             'refusal_reason' => $reason,
+            'refusal_scope' => $scope,
             'estimated_cost_microusd' => 1000,
             'period_key' => $periodKey,
             'idempotency_key' => 'ai2-fixture:' . Str::uuid(),

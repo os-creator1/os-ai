@@ -3,10 +3,12 @@
 namespace App\Library\Ai;
 
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Ai\Enums\AiRefusalScope;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Slice AI-2 — the one read seam over AI-1's `ai_usage_periods` and
@@ -43,6 +45,7 @@ final class AiUsageReadModel
         'ai_usage_ledger.price_version',
         'ai_usage_ledger.status',
         'ai_usage_ledger.refusal_reason',
+        'ai_usage_ledger.refusal_scope',
         'ai_usage_ledger.input_tokens',
         'ai_usage_ledger.cached_input_tokens',
         'ai_usage_ledger.output_tokens',
@@ -62,24 +65,20 @@ final class AiUsageReadModel
      * the page and the gateway can never disagree about which cap counts.
      *
      * WHICH REFUSALS SPEAK FOR THE WORKSPACE. §11.3 counts a `budget_exhausted`
-     * refusal as the allowance being used up, and the ledger records that a
-     * call was refused but not which cap refused it.
+     * refusal as the allowance being used up — but only the refusals the
+     * Workspace allowance actually caused. AiUsageLedgerManager::reserve()
+     * records that on every refusal as `refusal_scope`, from the locked
+     * figures it refused on, and this reads it; nothing here guesses.
      *
-     *  - With one allowance (no per-Business cap: Core, Growth, trial) every
-     *    such refusal is that allowance running out.
-     *  - With a per-Business cap (Agency) a refusal of a Business-scoped call
-     *    is most often that Business reaching its own allowance, which says
-     *    nothing about the other Businesses. It belongs on that Business's row,
-     *    not on the account headline — otherwise one client reaching its limit
-     *    would tell the agency that AI is paused for everyone. Only a refusal
-     *    of a Workspace-level call, which is checked against the Workspace cap
-     *    alone, speaks for the Workspace here.
+     * So a Business-scoped call refused because the Workspace cap was the
+     * limit makes the headline Limit reached even while committed is still
+     * just under 100% (the next request would not fit), and an Agency client
+     * reaching its own per-Business cap does not.
      *
-     * The one case this leaves to committed usage is a Business-scoped call
-     * refused by the Workspace cap while committed is still under it. That can
-     * only happen within one request's estimate of the cap, where committed is
-     * already far past the nearing-limit threshold, so the headline already
-     * says the allowance is nearly used.
+     * Rows written before the scope was recorded have none. One of those
+     * still speaks for the Workspace only where the Workspace cap is the only
+     * cap that call could have met: the policy has no per-Business cap, or the
+     * call carried no Business, so there was no Business row to refuse it.
      */
     public function workspaceStanding(int $workspaceId, AiBudgetPolicy $policy): AiUsageStanding
     {
@@ -94,7 +93,16 @@ final class AiUsageReadModel
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
-            ->when($policy->businessCapMicrousd !== null, fn ($query) => $query->whereNull('business_id'))
+            ->where(function (Builder $query) use ($policy): void {
+                $query->whereIn('refusal_scope', self::scopesIncludingWorkspace())
+                    ->orWhere(function (Builder $legacy) use ($policy): void {
+                        $legacy->whereNull('refusal_scope');
+
+                        if ($policy->businessCapMicrousd !== null) {
+                            $legacy->whereNull('business_id');
+                        }
+                    });
+            })
             ->exists();
 
         return new AiUsageStanding(
@@ -108,6 +116,13 @@ final class AiUsageReadModel
      * Each named Business's own standing against its per-Business cap, in two
      * statements however many Businesses there are. Only meaningful where the
      * policy has a Business sub-cap (Agency); the caller decides that.
+     *
+     * A row describes that Business's OWN allowance, so only refusals its own
+     * cap caused count here (`business`, or `workspace_and_business`). A
+     * refusal the Workspace cap alone caused belongs to the account headline;
+     * counting it on the row would say a client's allowance is spent when it
+     * is not. A pre-scope refusal of this Business's call has no recorded
+     * scope and is kept on the row, where it was always shown.
      *
      * @param  array<int, int>  $businessIds
      * @return array<int, AiUsageStanding> keyed by Business id
@@ -134,6 +149,10 @@ final class AiUsageReadModel
             ->where('period_key', $policy->periodKey)
             ->where('status', AiUsageEntryStatus::Refused->value)
             ->where('refusal_reason', AiRefusalReason::BudgetExhausted->value)
+            ->where(function (Builder $query): void {
+                $query->whereIn('refusal_scope', self::scopesIncludingBusiness())
+                    ->orWhereNull('refusal_scope');
+            })
             ->distinct()
             ->pluck('business_id')
             ->map(fn ($id): int => (int) $id)
@@ -214,6 +233,24 @@ final class AiUsageReadModel
                 'businesses.name as business_name',
             ]))
             ->paginate($this->clampPerPage($perPage), ['*'], 'ledger_page');
+    }
+
+    /** @return array<int, string> */
+    private static function scopesIncludingWorkspace(): array
+    {
+        return array_values(array_map(
+            fn (AiRefusalScope $scope): string => $scope->value,
+            array_filter(AiRefusalScope::cases(), fn (AiRefusalScope $scope): bool => $scope->includesWorkspace()),
+        ));
+    }
+
+    /** @return array<int, string> */
+    private static function scopesIncludingBusiness(): array
+    {
+        return array_values(array_map(
+            fn (AiRefusalScope $scope): string => $scope->value,
+            array_filter(AiRefusalScope::cases(), fn (AiRefusalScope $scope): bool => $scope->includesBusiness()),
+        ));
     }
 
     private function clampPerPage(int $perPage): int

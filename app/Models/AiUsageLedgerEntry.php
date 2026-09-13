@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiModelRoute;
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Ai\Enums\AiRefusalScope;
 use App\Library\Ai\Enums\AiUsageCategory;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Library\Traits\HasUid;
@@ -39,6 +40,7 @@ class AiUsageLedgerEntry extends Model
         'price_version',
         'status',
         'refusal_reason',
+        'refusal_scope',
         'input_tokens',
         'cached_input_tokens',
         'output_tokens',
@@ -60,6 +62,7 @@ class AiUsageLedgerEntry extends Model
         'price_version' => 'integer',
         'status' => AiUsageEntryStatus::class,
         'refusal_reason' => AiRefusalReason::class,
+        'refusal_scope' => AiRefusalScope::class,
         'input_tokens' => 'integer',
         'cached_input_tokens' => 'integer',
         'output_tokens' => 'integer',
