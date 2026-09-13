@@ -117,15 +117,18 @@ class BrandingPresenterFallbackTest extends TestCase
         $this->assertSame('images/branding/owner-auth.png', $presenter->illustration('auth')['src']);
     }
 
-    public function test_footer_copyright_line_contains_the_current_year_and_omits_wording_when_unset(): void
+    /**
+     * Customer shell cleanup: with no wording configured the line ends in
+     * ordinary copyright text, never at a bare period.
+     */
+    public function test_footer_copyright_line_contains_the_current_year_and_normal_wording_when_unset(): void
     {
         config(['app.footer_company_name' => null, 'app.name' => 'AI Business OS', 'app.footer_copyright_text' => null]);
 
         $presenter = new BrandingPresenter();
         $line = $presenter->footerCopyrightLine();
 
-        $this->assertStringContainsString((string) now()->year, $line);
-        $this->assertStringContainsString('AI Business OS', $line);
+        $this->assertSame('© ' . now()->year . ' AI Business OS. ' . BrandingPresenter::DEFAULT_COPYRIGHT_WORDING, $line);
         $this->assertStringNotContainsString('  ', $line);
     }
 
