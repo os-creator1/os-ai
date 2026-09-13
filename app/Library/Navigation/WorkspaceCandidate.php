@@ -80,6 +80,29 @@ final class WorkspaceCandidate
     }
 
     /**
+     * Whether this account's own frame is a place to BE, rather than a hop on
+     * the way to the Business the actor actually works in.
+     *
+     * An Agency account is its portfolio: the Agency Account Home and its
+     * client accounts. A Core or Growth account holds the one Business its
+     * customer works inside, so its frame would only ever say "Choose a
+     * business" over that single row; the account is reached as Settings →
+     * Account instead (navigation redesign §7.1). The one exception is an
+     * account with no Business to open yet — there the account frame is the
+     * only way in, and its Home is the "create your first business" state,
+     * not a chooser.
+     *
+     * Presentation, like seesAccountFrame(): it decides what the switcher
+     * offers and which remembered choice the resolver honours. It grants
+     * nothing — the account page and SwitchAccountAction still authorize.
+     */
+    public function hasAccountHome(): bool
+    {
+        return $this->seesAccountFrame()
+            && ($this->isAgency() || $this->selectableBusinesses() === []);
+    }
+
+    /**
      * @return array<int, BusinessCandidate>
      */
     public function selectableBusinesses(): array

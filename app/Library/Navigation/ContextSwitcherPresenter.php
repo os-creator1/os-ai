@@ -23,7 +23,10 @@ use Illuminate\Support\Facades\Route;
  *    path to it (WorkspaceCandidate::seesAccountFrame(), the same
  *    owner-or-active-scope-all rule the account page enforces before it
  *    answers 404), which is also why a client who is only a selected-scope
- *    member of an agency account never learns that account's name (S-6);
+ *    member of an agency account never learns that account's name (S-6) —
+ *    and only when that frame is a destination at all
+ *    (WorkspaceCandidate::hasAccountHome(): an Agency portfolio, or an
+ *    account with no Business to open yet);
  *  - every choice posts to a server-authorized action that re-resolves and
  *    re-authorizes the submitted uids (S-3).
  *
@@ -129,6 +132,13 @@ final class ContextSwitcherPresenter
      * already refuses an inactive account's Business, so listing it would
      * offer a door that does not open.
      *
+     * So is an account whose frame is only a hop (WorkspaceCandidate::
+     * hasAccountHome()): a Core or Growth account is entered through its
+     * Business, which is already listed, and managed through "Account
+     * settings" below — never through a Home that asks the customer to choose
+     * the one Business they have. An actor in several accounts still moves
+     * between them by their Businesses, each named by its account.
+     *
      * @return array<int, ContextSwitcherOption>
      */
     private function accounts(CustomerContext $context): array
@@ -142,7 +152,7 @@ final class ContextSwitcherPresenter
         $options = [];
 
         foreach ($context->workspaces as $workspace) {
-            if (! $workspace->isActive || ! $workspace->seesAccountFrame()) {
+            if (! $workspace->isActive || ! $workspace->hasAccountHome()) {
                 continue;
             }
 
