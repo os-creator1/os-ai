@@ -242,6 +242,12 @@ class WebsiteAiGenerationTest extends TestCase
         // a later withArgs()-constrained one and this payload assertion
         // would never actually run.
         $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        // AI-1 Correction 6 — the generator now asks the client whether the
+        // last call was refused for budget, so it can say "paused" instead
+        // of "unavailable" and skip a retry that cannot help. These doubles
+        // stand in for an ordinary, funded call.
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
         $mock->shouldReceive('complete')
             ->withArgs(function (array $messages) use ($business, $otherBusiness, $allowedFields) {
                 $userMessage = collect($messages)->firstWhere('role', 'user')['content'] ?? '';

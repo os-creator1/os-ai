@@ -123,6 +123,9 @@
     <script>
       $(document).ready(function () {
 
+          // §11.4 — set when the included AI is used up for this period.
+          let aiBudgetExhausted = false;
+
         let $activeForm = null;
 
         function isArabic(text) {
@@ -417,6 +420,7 @@
 
           loader.removeClass('d-none').addClass('d-flex');
           generateBtn.prop('disabled', true);
+          aiBudgetExhausted = false;
 
           $.ajax({
             url: "{{ route('customer.openai.generate') }}",
@@ -427,13 +431,20 @@
               if (data.success && data.message) {
                 $activeForm.find('[data-role="message"]').val(data.message).trigger('change');
                 bootstrap.Modal.getInstance(document.getElementById('aiMessageModal')).hide();
+              } else if (data.budget_exhausted) {
+                // §11.4 — the included AI is used up for this period: say so
+                // and leave the button disabled rather than inviting a retry
+                // that cannot succeed. Writing the message by hand is
+                // unaffected.
+                aiBudgetExhausted = true;
+                toastr['warning'](data.message, "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: 'toast-top-right', progressBar: true, newestOnTop: true, rtl: isRtl });
               } else {
-                toastr['warning']("{{ __('locale.ai.error') }}", "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: 'toast-top-right', progressBar: true, newestOnTop: true, rtl: isRtl });
+                toastr['warning'](data.message || "{{ __('locale.ai.error') }}", "{{ __('locale.labels.attention') }}", { closeButton: true, positionClass: 'toast-top-right', progressBar: true, newestOnTop: true, rtl: isRtl });
               }
             },
             complete: function () {
               loader.removeClass('d-flex').addClass('d-none');
-              generateBtn.prop('disabled', false);
+              generateBtn.prop('disabled', aiBudgetExhausted);
             }
           });
         });

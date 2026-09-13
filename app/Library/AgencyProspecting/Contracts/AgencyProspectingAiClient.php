@@ -2,22 +2,39 @@
 
 namespace App\Library\AgencyProspecting\Contracts;
 
+use App\Models\Workspace;
+
 /**
  * Runtime pass — the small, prospecting-scoped AI client seam the audit
- * found no reusable generic abstraction for (the only existing AI call,
- * CampaignController::generateAIMessage(), is a bare inline
- * OpenAI::client() call with no service class). Deliberately narrow: one
+ * found no reusable generic abstraction for. Deliberately narrow: one
  * method, raw chat messages in, raw assistant text out. All structure/
  * validation of that text lives in AgencyProspectAiDecision — never here.
+ *
+ * AI Gateway Contract §10.1/§10.3a (slice AI-1) — every implementation
+ * now routes through App\Library\Ai\AiGateway, attributed to the calling
+ * Workspace (agency prospecting has no single Business, so it is
+ * checked against the Workspace cap only). $workspace and $actorUserId
+ * were added here so that attribution — the whole point of the gateway
+ * — is possible; the raw-messages-in/raw-text-out shape is otherwise
+ * unchanged.
  */
 interface AgencyProspectingAiClient
 {
     /**
      * @param  array<int, array{role: string, content: string}>  $messages
      * @return string|null the raw assistant content, or null if the client
-     *                      is not configured/active or the request failed —
-     *                      callers must treat null as "fail closed: send
-     *                      nothing, advance nothing", never fabricate a reply.
+     *                      is not configured/active, the request failed, or
+     *                      the AI budget gateway refused it — callers must
+     *                      treat null as "fail closed: send nothing, advance
+     *                      nothing", never fabricate a reply.
      */
-    public function complete(array $messages): ?string;
+    /**
+     * @param  string|null  $idempotencyKey  Correction 8 — the durable
+     *         identity of the work this reply answers, so a redelivered job
+     *         or two concurrent executions for the same inbound message
+     *         reach the provider at most once and charge the budget at most
+     *         once. Callers that genuinely have no durable identity may
+     *         omit it, and each call is then its own work.
+     */
+    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null, ?string $idempotencyKey = null): ?string;
 }
