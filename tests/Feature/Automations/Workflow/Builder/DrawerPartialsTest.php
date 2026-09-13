@@ -106,7 +106,7 @@ class DrawerPartialsTest extends TestCase
         $this->assertStringNotContainsString('until_business_hours', $body, '§12: "Non-goal" for initial v2.');
     }
 
-    /** T24 — If/Else offers only the §11 launch subject set, nothing invented. */
+    /** T24 — If/Else offers exactly ConditionSubjectRegistry's static subjects, nothing invented. */
     public function test_if_else_drawer_offers_only_the_launch_condition_subjects(): void
     {
         // The subject list lives in the condition-ROW template
@@ -115,12 +115,18 @@ class DrawerPartialsTest extends TestCase
         // the match selector and the row container.
         $body = $this->templateBody($this->renderBuilder(), 'wf-if-else-condition-row');
 
-        foreach (['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company', 'contact.subscribed', 'contact.in_group'] as $subject) {
-            $this->assertStringContainsString('value="' . $subject . '"', $body);
-        }
+        preg_match_all('/<option value="([^"]+)"/', $body, $offered);
 
-        // Not launched: needs V2-F's inbound producer.
-        $this->assertStringNotContainsString('replied_since_enrollment', $body);
+        // Every static subject the registry knows, and nothing else: custom
+        // fields are added per Business by drawer.js from the catalog.
+        $this->assertEqualsCanonicalizing(
+            (new \App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry())->staticKeys(),
+            $offered[1],
+        );
+
+        // V2-F shipped the inbound producer, so "Customer replied" is offered —
+        // in customer words, never as its internal key.
+        $this->assertStringContainsString('value="contact.replied_since_enrollment">Customer replied<', $body);
 
         // Never invented — no Lead/Booking/Form/Payment/Tag/Pipeline domain.
         foreach (['lead.', 'booking.', 'form.', 'payment.', 'tag.', 'pipeline.', 'opportunity.'] as $forbidden) {
@@ -136,15 +142,21 @@ class DrawerPartialsTest extends TestCase
         $this->assertStringNotContainsString('data-field=', $body, 'NodeTypeRegistry::validateEnd() rejects any config at all.');
     }
 
-    /** Trigger vocabulary is exactly the launch set — no message_received yet, no Forms/Calendar/Payment trigger. */
+    /** Trigger vocabulary is exactly the ingestable set — including V2-F's message_received, and no Forms/Calendar/Payment trigger. */
     public function test_trigger_drawer_offers_only_ingestable_trigger_types(): void
     {
         $body = $this->templateBody($this->renderBuilder(), 'wf-node-form-trigger');
 
-        $this->assertStringContainsString('value="contact_created"', $body);
-        $this->assertStringContainsString('value="contact_date_reached"', $body);
-        $this->assertStringContainsString('value="manual_enrollment"', $body);
-        $this->assertStringNotContainsString('value="message_received"', $body, 'Withheld until V2-F ships a real producer (WorkflowTriggerType::isIngestableInThisSlice()).');
+        preg_match_all('/name="wf-trigger-type" value="([^"]+)"/', $body, $offered);
+
+        $ingestable = array_values(array_map(
+            static fn (WorkflowTriggerType $type): string => $type->value,
+            array_filter(WorkflowTriggerType::cases(), static fn (WorkflowTriggerType $type): bool => $type->isIngestableInThisSlice()),
+        ));
+
+        $this->assertEqualsCanonicalizing($ingestable, $offered[1], 'The builder offers exactly the triggers something in the product reports.');
+        $this->assertStringContainsString('Customer sends a text', $body, 'message_received is offered in customer words.');
+
         foreach (['form_submitted', 'appointment', 'payment', 'tag_added'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $body);
         }

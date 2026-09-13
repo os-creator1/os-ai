@@ -1,62 +1,72 @@
 {{--
-    Automations V2 (contract §11, V2-D) — If/Else drawer. Subjects are
-    exactly the contract §11 launch set — `contact.replied_since_enrollment`
-    is withheld until V2-F ships its producer, and nothing outside this list
-    (no Lead/Booking/Form/Payment/Tag subject) is ever offered, because none
-    of those domains is registered in ConditionSubjectRegistry.
+    Automations V2 (contract §11) — If / Else form. Subjects are exactly
+    ConditionSubjectRegistry's: V2-F's "Customer replied"
+    (`contact.replied_since_enrollment`, offered now that its inbound producer
+    has shipped), the contact's identity fields, subscription, group membership
+    and the Business's custom fields. Nothing outside that set — no Lead,
+    Booking, Form, Payment, Tag or Pipeline subject — is ever offered, because
+    none is registered.
 
-    Custom-field subjects reuse the same writable-field catalog the Update
-    Contact Field drawer uses (workflow-builder/index.js's `catalogs.writableFields`)
-    — a conservative choice in the absence of a separate "readable fields"
-    catalog in the endpoint contract; it never under-offers a canonical
-    field, only (harmlessly) withholds `is_phone` ones from conditions too.
+    Custom-field subjects reuse the writable-field catalog the Update contact
+    field form uses (workflow-builder/drawer.js's `catalogs.writableFields`):
+    it never under-offers a canonical field, and only withholds `is_phone`.
 --}}
 <template id="wf-node-form-if_else">
-    <div class="mb-3">
-        <label class="form-label">{{ __('automations.v2.if_else_form.match') }}</label>
+    <div class="wf-field">
+        <label class="wf-field__label">{{ __('automations.v2.if_else_form.match') }}</label>
         <select class="form-select" data-field="match">
             <option value="all">{{ __('automations.v2.if_else_form.match_all') }}</option>
             <option value="any">{{ __('automations.v2.if_else_form.match_any') }}</option>
         </select>
     </div>
 
-    <label class="form-label">{{ __('automations.v2.if_else_form.conditions') }}</label>
-    <div data-role="wf-conditions-list"></div>
-    <button type="button" class="btn btn-outline-secondary btn-sm mt-2" data-role="wf-add-condition">
-        {{ __('automations.v2.if_else_form.add_condition') }}
-    </button>
+    <div class="wf-field">
+        <p class="wf-field__label">{{ __('automations.v2.if_else_form.conditions') }}</p>
+        <div class="wf-conditions" data-role="wf-conditions-list"></div>
+        <button type="button" class="wf-add-condition" data-role="wf-add-condition">
+            <x-ds-icon name="plus" size="16" />
+            <span>{{ __('automations.v2.if_else_form.add_condition') }}</span>
+        </button>
+        <p class="wf-help mb-0" data-role="wf-condition-limit" hidden>{{ __('automations.v2.if_else_form.limit_reached', ['count' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_CONDITIONS_PER_BRANCH]) }}</p>
+    </div>
+
+    <p class="wf-help mb-0">{{ __('automations.v2.if_else_form.paths_help') }}</p>
 </template>
 
 <template id="wf-if-else-condition-row">
-    <div class="border rounded p-2 mb-2" data-role="wf-condition-row">
-        <div class="d-flex justify-content-end">
-            <button type="button" class="btn btn-flat-secondary btn-sm" data-role="wf-remove-condition">
-                {{ __('automations.v2.if_else_form.remove_condition') }}
-            </button>
-        </div>
-        <label class="form-label">{{ __('automations.v2.if_else_form.subject') }}</label>
-        <select class="form-select mb-2" data-role="wf-condition-subject">
-            <optgroup label="{{ __('Contact') }}">
-                <option value="contact.first_name">{{ __('First name') }}</option>
-                <option value="contact.last_name">{{ __('Last name') }}</option>
-                <option value="contact.email">{{ __('Email') }}</option>
-                <option value="contact.company">{{ __('Company') }}</option>
-                <option value="contact.subscribed">{{ __('Subscribed') }}</option>
-                <option value="contact.in_group">{{ __('Contact group') }}</option>
-            </optgroup>
-            <optgroup label="{{ __('Custom fields') }}" data-role="wf-condition-custom-field-group"></optgroup>
-        </select>
+    <div class="wf-condition" data-role="wf-condition-row">
+        <span class="wf-condition__join" data-role="wf-condition-join" hidden></span>
+        <div class="wf-condition__card">
+            <div class="wf-condition__head">
+                <label class="wf-field__label mb-0">{{ __('automations.v2.if_else_form.subject') }}</label>
+                <button type="button" class="wf-icon-button wf-icon-button--small" data-role="wf-remove-condition" aria-label="{{ __('automations.v2.if_else_form.remove_condition') }}" title="{{ __('automations.v2.if_else_form.remove_condition') }}">
+                    <x-ds-icon name="x" size="16" />
+                </button>
+            </div>
+            <select class="form-select" data-role="wf-condition-subject">
+                <optgroup label="{{ __('automations.v2.if_else_form.group_conversation') }}">
+                    <option value="contact.replied_since_enrollment">{{ __('automations.v2.if_else_form.subject_replied') }}</option>
+                </optgroup>
+                <optgroup label="{{ __('automations.v2.if_else_form.group_contact') }}">
+                    <option value="contact.first_name">{{ __('automations.v2.if_else_form.subject_first_name') }}</option>
+                    <option value="contact.last_name">{{ __('automations.v2.if_else_form.subject_last_name') }}</option>
+                    <option value="contact.email">{{ __('automations.v2.if_else_form.subject_email') }}</option>
+                    <option value="contact.company">{{ __('automations.v2.if_else_form.subject_company') }}</option>
+                    <option value="contact.subscribed">{{ __('automations.v2.if_else_form.subject_subscribed') }}</option>
+                    <option value="contact.in_group">{{ __('automations.v2.if_else_form.subject_in_group') }}</option>
+                </optgroup>
+                <optgroup label="{{ __('automations.v2.if_else_form.group_custom_fields') }}" data-role="wf-condition-custom-field-group"></optgroup>
+            </select>
+            <p class="wf-help" data-role="wf-condition-help" hidden>{{ __('automations.v2.if_else_form.replied_help') }}</p>
 
-        <label class="form-label">{{ __('automations.v2.if_else_form.operator') }}</label>
-        <select class="form-select mb-2" data-role="wf-condition-operator"></select>
+            <select class="form-select" data-role="wf-condition-operator" aria-label="{{ __('automations.v2.if_else_form.operator') }}"></select>
 
-        <div data-role="wf-condition-operand-wrapper">
-            <label class="form-label">{{ __('automations.v2.if_else_form.operand') }}</label>
-            <input type="text" class="form-control" maxlength="255" data-role="wf-condition-operand">
-        </div>
-        <div data-role="wf-condition-operand-group-wrapper" class="d-none">
-            <label class="form-label">{{ __('automations.v2.if_else_form.operand') }}</label>
-            <select class="form-select" data-role="wf-condition-operand-group"></select>
+            <div data-role="wf-condition-operand-wrapper">
+                <input type="text" class="form-control" maxlength="255" data-role="wf-condition-operand" aria-label="{{ __('automations.v2.if_else_form.operand') }}" placeholder="{{ __('automations.v2.if_else_form.operand_placeholder') }}">
+            </div>
+            <div data-role="wf-condition-operand-group-wrapper" hidden>
+                <select class="form-select" data-role="wf-condition-operand-group" aria-label="{{ __('automations.v2.if_else_form.operand') }}"></select>
+            </div>
         </div>
     </div>
 </template>

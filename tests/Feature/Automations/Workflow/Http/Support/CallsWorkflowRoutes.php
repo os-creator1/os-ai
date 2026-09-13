@@ -42,6 +42,7 @@ trait CallsWorkflowRoutes
             ['POST', 'publish', true, false],
             ['POST', 'discard-draft', true, false],
             ['POST', 'simulate', true, false],
+            ['GET', 'test-contacts', true, false],
             ['POST', 'stop-all', true, false],
             ['GET', 'enrollments.index', true, false],
             ['GET', 'enrollments.logs', true, true],
