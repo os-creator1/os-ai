@@ -29,7 +29,7 @@ class CustomerContextResolutionTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
-    private const BUSINESS_FRAME_KEYS = ['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
+    private const BUSINESS_FRAME_KEYS = ['home', 'conversations', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
 
     private const ACCOUNT_FRAME_ONLY_KEYS = ['accounts', 'prospecting'];
 
@@ -48,22 +48,25 @@ class CustomerContextResolutionTest extends TestCase
         $html = $response->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (array_merge(self::BUSINESS_FRAME_KEYS, ['business-details', 'blocked-numbers', 'usage-billing', 'team', 'plan']) as $expected) {
+        $modules = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+
+        foreach (self::BUSINESS_FRAME_KEYS as $expected) {
             $this->assertContains($expected, $keys, "Business frame must offer {$expected}.");
         }
 
-        foreach (array_merge(self::ACCOUNT_FRAME_ONLY_KEYS, self::ADVANCED_KEYS) as $forbidden) {
-            $this->assertNotContains($forbidden, $keys, "Core/Growth must never see {$forbidden} (§8.2, §8.6).");
+        foreach (['business-details', 'usage-billing', 'team', 'plan'] as $expected) {
+            $this->assertContains($expected, $modules, "Settings must offer {$expected}.");
         }
 
-        // Lane E: the context block is the one control that changes context,
-        // so a single-Business OWNER gets it too — their Business is listed as
-        // current and their own account is the other destination. It stays
-        // simple: no second account, and no search box over one row. A member
-        // who cannot reach the account frame still gets the plain identity
-        // (test_selected_scope_staff_land_in_their_sole_assigned_business...).
-        $response->assertSee('id="customer-context-switcher-toggle"', false);
-        $response->assertDontSee('data-role="context-identity"', false);
+        foreach (array_merge(self::ACCOUNT_FRAME_ONLY_KEYS, self::ADVANCED_KEYS, ['blocked-numbers']) as $forbidden) {
+            $this->assertNotContains($forbidden, array_merge($keys, $modules), "Core/Growth must never see {$forbidden} (§8.2, §8.6).");
+        }
+
+        // One Business and no account to manage (walkthrough settings
+        // decision): nothing to switch to, so the block is the plain,
+        // labelled identity of that Business — no menu of one row.
+        $response->assertSee('data-role="context-identity"', false);
+        $response->assertDontSee('id="customer-context-switcher-toggle"', false);
         $response->assertDontSee('data-role="context-switcher-filter"', false);
         $this->assertStringContainsString($business->name, $this->shellText($html));
 
@@ -122,11 +125,17 @@ class CustomerContextResolutionTest extends TestCase
         $html = $response->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'accounts', 'prospecting', 'settings', 'plan', 'advanced', 'sender-ids', 'numbers', 'keywords', 'messaging-provider'] as $expected) {
-            $this->assertContains($expected, $keys, "Agency account frame must offer {$expected} (§8.3, §8.6).");
+        $accountSettings = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent());
+
+        foreach (['home', 'accounts', 'prospecting', 'settings'] as $expected) {
+            $this->assertContains($expected, $keys, "Agency account frame must offer {$expected} (§8.3).");
         }
 
-        foreach (['messages', 'inbox', 'send', 'contacts', 'campaigns', 'website', 'gbp', 'analytics', 'automations'] as $businessOnly) {
+        foreach (['plan', 'team', 'sender-ids', 'numbers', 'keywords', 'messaging-provider'] as $expected) {
+            $this->assertContains($expected, $accountSettings, "Agency account Settings must offer {$expected} (§8.3, §8.6).");
+        }
+
+        foreach (['conversations', 'messages', 'inbox', 'send', 'contacts', 'campaigns', 'website', 'gbp', 'analytics', 'automations'] as $businessOnly) {
             $this->assertNotContains($businessOnly, $keys, 'No Business entry before a client account is selected (§8.1).');
         }
 
@@ -170,14 +179,16 @@ class CustomerContextResolutionTest extends TestCase
         $keys = $this->menuKeys($html);
 
         $this->assertContains('analytics', $keys);
-        $this->assertContains('inbox', $keys);
+        $this->assertContains('conversations', $keys);
         $response->assertSee('data-role="context-identity"', false);
         $response->assertDontSee('customer-context-switcher-toggle', false);
         $this->assertStringContainsString('Assigned Client', $this->shellText($html));
         $this->assertStringNotContainsString('Unassigned Client', $html);
 
-        foreach (['accounts', 'prospecting', 'team', 'plan', 'usage-billing', 'advanced'] as $forbidden) {
-            $this->assertNotContains($forbidden, $keys, "Staff never see {$forbidden} (§6, §9.3).");
+        $modules = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $assigned->uid]))->assertOk()->getContent());
+
+        foreach (['accounts', 'prospecting', 'team', 'plan', 'usage-billing', 'advanced', 'messaging-provider'] as $forbidden) {
+            $this->assertNotContains($forbidden, array_merge($keys, $modules), "Staff never see {$forbidden} (§6, §9.3).");
         }
     }
 
@@ -198,8 +209,10 @@ class CustomerContextResolutionTest extends TestCase
             $this->assertContains($expected, $keys);
         }
 
+        $modules = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $clientBusiness->uid]))->assertOk()->getContent());
+
         foreach (array_merge(self::ACCOUNT_FRAME_ONLY_KEYS, self::ADVANCED_KEYS, ['team', 'plan']) as $forbidden) {
-            $this->assertNotContains($forbidden, $keys, "A client owner must not see {$forbidden} (§5.4).");
+            $this->assertNotContains($forbidden, array_merge($keys, $modules), "A client owner must not see {$forbidden} (§5.4).");
         }
 
         $shell = $this->shellText($html);
@@ -220,10 +233,15 @@ class CustomerContextResolutionTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        // Customer Experience Slice 1A adds Settings → Business → Locations,
-        // which every actor who can reach the Business may read (restricted
-        // staff read locations; they cannot change them).
-        $this->assertSame(['home', 'contacts', 'settings', 'business', 'locations'], $keys, 'Only Home, the permitted Contacts entry and the read-only Locations entry remain (§9.3 #6).');
+        // Customer Experience Slice 1A's Locations, which every actor who can
+        // reach the Business may read (restricted staff read locations; they
+        // cannot change them), is a module of the one Settings entry.
+        $this->assertSame(['home', 'contacts', 'settings'], $keys, 'Only Home, the permitted Contacts entry and Settings remain (§9.3 #6).');
+        $this->assertSame(
+            ['business-setup' => ['locations']],
+            $this->settingsHubModules($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent()),
+            'Settings holds only the read-only Locations module.',
+        );
     }
 
     public function test_the_platform_owner_shell_carries_no_customer_navigation(): void
@@ -266,8 +284,10 @@ class CustomerContextResolutionTest extends TestCase
         $response->assertSee('First Account', false);
         $response->assertSee('Second Account', false);
 
-        // Choosing the second account (its own page) makes its sole Business unambiguous.
-        $this->get(route('customer.workspaces.show', $secondWorkspace->uid))->assertOk();
+        // Choosing the second account (its own page, which opens its Business's
+        // Settings) makes its sole Business unambiguous.
+        $this->get(route('customer.workspaces.show', $secondWorkspace->uid))
+            ->assertRedirect(route('customer.workspaces.businesses.settings.show', [$secondWorkspace->uid, $secondBusiness->uid]));
         $afterChoice = $this->home()->assertOk();
         $this->assertStringContainsString('Second Business', $this->shellText($afterChoice->getContent()));
         $this->assertContains('contacts', $this->menuKeys($afterChoice->getContent()));
@@ -379,8 +399,12 @@ class CustomerContextResolutionTest extends TestCase
         $this->assertSame([], $this->activeMenuKeys($campaigns->getContent()));
         $this->assertNotContains('accounts', $this->menuKeys($campaigns->getContent()));
 
-        $team = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
-        $this->assertSame(['team'], $this->activeMenuKeys($team->getContent()), 'The Workspace page is reached as Settings → Team inside the Business frame, never as an Account-frame item.');
+        // The Agency's Team is an Agency account setting: opened from inside a
+        // client Business it marks nothing active — least of all an
+        // Account-frame item.
+        $team = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
+        $this->assertSame([], $this->activeMenuKeys($team->getContent()));
+        $this->assertNotContains('accounts', $this->menuKeys($team->getContent()));
     }
 
     public function test_automatic_redirects_are_deterministic_and_never_loop(): void
@@ -512,10 +536,12 @@ class CustomerContextResolutionTest extends TestCase
         $chooser->assertSee('First Account', false);
         $chooser->assertSee('Second Account', false);
 
-        // Once a frame is selected, the per-account page also stays clean.
-        $show = $this->get(route('customer.workspaces.show', $firstWorkspace->uid))->assertOk();
+        // Once a frame is selected, the account opens its Business's Settings,
+        // which stays clean too.
+        $show = $this->followingRedirects()->get(route('customer.workspaces.show', $firstWorkspace->uid))->assertOk();
         $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($show->getContent()));
-        $show->assertSee('Account overview', false);
+        $show->assertDontSee('Account overview', false);
+        $show->assertSee('First Business', false);
     }
 
     public function test_agency_prospecting_pages_use_account_vocabulary_not_workspace(): void

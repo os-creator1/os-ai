@@ -1137,17 +1137,18 @@ repository's committed-asset discipline.
 
 | Need | How |
 |---|---|
-| Node rendering | Nested `<ol>`; each step a card from the design system's `card` styles |
-| Branches | If / Else renders a two-column flex row labelled **Yes** / **No** |
-| Add step | A **+** button between every pair and at the end of each lane, opening a step-type menu (`menu` component) |
-| Configure a step | **Bootstrap 5.1 `offcanvas`** drawer, already in the stack; one server-rendered form partial per node type |
+| Node rendering | Nested `<ol>`; the trigger is the fixed top card, then one connected column. Each card shows the step's icon, its customer name and a plain-language summary of what it does ("Wait 2 days", "If customer has not replied yet") — never an identifier |
+| Branches | If / Else opens two equal lanes labelled **Yes** / **No**. Lanes never rejoin (the schema has no merge, §5.3): every path is capped with an explicit end marker — "End of path" under a lane, "Workflow ends" under the main column |
+| Add step | A **+** on every link and at the end of each open path, opening a **searchable step picker** grouped by outcome (Messages, Contact, Timing, Logic). It offers only types valid at that spot: End only where nothing follows, If / Else only below the nesting limit. An If / Else inserted above existing steps takes those steps into its Yes path, and the picker says so first |
+| Configure a step | A **step inspector docked to the right of the canvas**, so the flow and the selected card stay visible; one server-rendered form partial per node type, in customer words (trigger choices as cards, merge-tag chips, a Wait mode switch, conditions with plain comparisons) |
 | Zoom / pan | CSS `transform: scale()` + `translate()` on the canvas container; wheel/pinch zoom, drag or scrollbar pan; **zoom-to-fit** and **reset** buttons |
 | Reorder | **Move up / Move down** in each step's menu — keyboard-accessible and valid by construction. Drag-to-reorder is deferred (§13.3) |
 | Autosave | Debounced 1.5 s `PUT` of the whole document with `definition_revision`; 409 on a stale revision (§14.4) |
 | Undo / redo | A client-side snapshot stack of the document (bounded to 50), restored then autosaved |
 | Validation | The server returns errors keyed by `node_key`; the canvas marks those steps and the drawer shows the message |
 | Saved state | "Saving…", "Saved", "Offline — changes kept locally" |
-| Test workflow | Opens a contact picker and renders the simulated path (§16, V2-A) — **no side effects** |
+| Test workflow | A docked panel: search this Business's contacts by name or number (`GET /{workflowUid}/test-contacts`, §20.2), pick one, and see the simulated path (§16, V2-A) as a step-by-step story and as a highlighted path on the canvas — **no side effects** |
+| Lifecycle | The header shows the status (Draft, Published, Paused, Archived) and only the actions it allows: Publish (or Publish changes), Pause when live, Resume when paused. An archived workflow opens read-only |
 | Keyboard | Arrow keys move between steps; Enter opens the drawer; Escape closes it; Delete removes a step after confirmation |
 | Viewport | Designed for 1280 px and up; usable at 1024 px; below that a read-only list with a "use a larger screen to edit" notice |
 
@@ -1174,8 +1175,16 @@ reviewed change.
 become **workflow templates** — a pre-filled draft document) or *Start from
 scratch* — reconciling CX §14.1's "What would you like to automate?" entry
 with a canvas → **Builder** with tabs **Builder · Settings · Enrollment
-history · Execution logs** (`tabs` component); top bar: back, name, saved
-state, undo/redo, Test workflow, Draft/Publish.
+history · Execution logs** (`tabs` component); top bar: back, name, status,
+saved state, undo/redo, Test, Pause / Resume, Publish.
+
+**Builder vocabulary for V2-F.** Now that V2-F's producer has shipped, the builder
+offers `message_received` as the trigger **"Customer sends a text"** and
+`contact.replied_since_enrollment` as the condition **"Customer replied"**
+(has replied / has not replied yet). Both are exactly the registered trigger and
+subject; the builder adds no semantics of its own. Creating a workflow sends the
+§20.2 body — a name and a trigger type — and a recipe's document is then saved into
+the new draft through the ordinary autosave.
 
 ---
 
@@ -1662,6 +1671,7 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | POST | `/{workflowUid}/publish` | Publish → 200, or 422 with errors keyed by `node_key` |
 | POST | `/{workflowUid}/discard-draft` | Discard draft |
 | POST | `/{workflowUid}/simulate` | Test workflow `{contact_uid}` → simulated path (JSON), no side effects |
+| GET | `/{workflowUid}/test-contacts?q=` | Test workflow's contact picker → 200 `{contacts: [{uid, name, phone}]}`, at most 8, this Business only. Read-only; needs `view_contact` as well as `automations` (401 without it, checked after tenancy) |
 | POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes via `WorkflowLifecycle`. `/resume` flips status in one short transaction and dispatches `RedispatchHeldEnrollments` after commit; it executes no step itself (§6.3) |
 | GET | `/{workflowUid}/settings`, `/enrollments`, `/enrollments/{enrollmentUid}/logs` | Tabs |
 | POST | `/{workflowUid}/enrollments/manual` | Manual enrollment `{contact_uids[], confirmed}` (≤ 500, confirmed) → 202 `{request_uid, queued}`. **All or nothing.** A malformed body (not a list, empty, over 500, unconfirmed) is **422**. Any uid that names no contact of this Business — whether it exists nowhere or belongs to another Business — is **404**, byte-identical to every other V2-E not-found answer, naming no uid, with **no contact enqueued**, including the valid ones in the same batch (T-WF-21). A workflow that is not live is 409 |
@@ -1669,6 +1679,15 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 **`GET /new` — owner-approved (V2-E, PR #280).** V2-D's merged workflow list links
 "New workflow" to `{basePath}/new`. The chooser page is a legitimate part of the
 V2-E route set, recorded here rather than as an undocumented exception.
+
+**`GET /{workflowUid}/test-contacts` — added by the builder redesign; needs owner
+approval.** §13.1 has always required Test workflow to "open a contact picker",
+but `simulate` takes a contact uid and nothing gave the builder a way to find one,
+so the V2-D builder asked a person to type the uid into a browser prompt. This
+read-only route is the missing picker: `ContactDirectory::page()` — the Contacts
+page's own Business-scoped search by name, email or phone — trimmed to the uid,
+name and phone the picker shows. It writes nothing, reaches no other Business,
+and is covered by the V2-E authorization matrix through the route inventory.
 
 **Manual enrollment path — owner-approved revision (V2-E, PR #280).** Earlier
 revisions of this table fixed manual enrollment at `POST /{workflowUid}/enrollments`.

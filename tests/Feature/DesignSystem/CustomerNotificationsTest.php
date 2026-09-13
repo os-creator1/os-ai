@@ -107,7 +107,7 @@ class CustomerNotificationsTest extends TestCase
         $this->authenticateAsCustomer($customer);
 
         $page = $this->withSession(['status' => 'error', 'message' => 'We couldn\'t complete that action. Please try again.'])
-            ->get(route('customer.workspaces.show', $workspace->uid))
+            ->get(route('customer.workspaces.team.show', $workspace->uid))
             ->assertOk();
 
         $this->assertSame([['variant' => 'error', 'title' => null, 'message' => 'We couldn\'t complete that action. Please try again.']], $this->pageToasts($page));
@@ -120,7 +120,7 @@ class CustomerNotificationsTest extends TestCase
         $this->authenticateAsCustomer($customer);
 
         $page = $this->withSession(['status' => 'success', 'message' => 'Member added'])
-            ->get(route('customer.workspaces.show', $workspace->uid))
+            ->get(route('customer.workspaces.team.show', $workspace->uid))
             ->assertOk();
         $html = (string) $page->getContent();
 

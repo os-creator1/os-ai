@@ -9,11 +9,12 @@ use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
- * Messages is Inbox only (product decision after preview testing).
+ * Messages is Inbox only (product decision after preview testing), and since
+ * the walkthrough cleanup that one destination is simply Conversations.
  *
  * Send and Campaigns are legacy outbound surfaces, not a local-business
  * workflow: a Core or Growth Business — and an Agency client Business once it
- * is selected — gets Messages → Inbox and nothing else, and Home no longer
+ * is selected — gets one Conversations entry and nothing else, and Home no longer
  * promotes "Send a message". Agency outbound prospecting stays where it
  * belongs, in the Agency account frame. The legacy routes are not deleted and
  * stay fail-closed.
@@ -38,8 +39,8 @@ class MessagesInboxOnlyTest extends TestCase
 
             $html = $this->home()->assertOk()->getContent();
 
-            $this->assertSame(['inbox'], $this->messagesChildren($html), "{$tier->value}: Messages holds Inbox only.");
-            $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $this->navHref($html, 'inbox'));
+            $this->assertConversationsIsOneEntry($html, $tier->value);
+            $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $this->navHref($html, 'conversations'));
             $this->assertStringNotContainsString('/outreach', $this->shellHtml($html), "{$tier->value}: no menu link reaches Send or Campaigns.");
 
             foreach (['Send', 'Campaigns'] as $label) {
@@ -71,7 +72,7 @@ class MessagesInboxOnlyTest extends TestCase
 
         $this->assertContains('prospecting', $keys);
         $this->assertSame(route('customer.prospecting.index'), $this->navHref($html, 'prospecting'));
-        $this->assertNotContains('messages', $keys, 'Messages belongs to a selected Business, never the Agency account frame.');
+        $this->assertNotContains('conversations', $keys, 'Conversations belongs to a selected Business, never the Agency account frame.');
 
         // Reachable in its own context: the entry resolves the Agency account.
         $this->get(route('customer.prospecting.index'))
@@ -88,12 +89,12 @@ class MessagesInboxOnlyTest extends TestCase
         $this->switchTo($workspace, $client)->assertRedirect();
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['inbox'], $this->messagesChildren($html));
-        $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $client->uid]), $this->navHref($html, 'inbox'), 'The Inbox is the selected client Business\'s own.');
+        $this->assertConversationsIsOneEntry($html, 'agency client');
+        $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $client->uid]), $this->navHref($html, 'conversations'), 'Conversations is the selected client Business\'s own.');
         $this->assertNotContains('prospecting', $this->menuKeys($html), 'Prospecting stays in the Agency account frame.');
         $this->assertStringNotContainsString('/outreach', $this->shellHtml($html));
 
-        $this->get($this->navHref($html, 'inbox'))->assertOk();
+        $this->get($this->navHref($html, 'conversations'))->assertOk();
     }
 
     public function test_prospecting_is_not_reachable_for_a_business_without_the_agency_plan(): void
@@ -128,20 +129,17 @@ class MessagesInboxOnlyTest extends TestCase
     // -----------------------------------------------------------------
 
     /**
-     * The data-nav-key children of the Messages group, in order.
-     *
-     * @return list<string>
+     * Conversations is one direct sidebar destination: no Messages group, no
+     * Inbox child, nothing nested.
      */
-    private function messagesChildren(string $html): array
+    private function assertConversationsIsOneEntry(string $html, string $label): void
     {
-        $sidebar = $this->sidebarHtml($html);
-        $start = strpos($sidebar, 'data-nav-key="messages"');
-        $this->assertNotFalse($start, 'The Messages group renders.');
-        $end = strpos($sidebar, '</ul>', $start);
+        $keys = $this->menuKeys($html);
 
-        preg_match_all('/data-nav-key="([^"]+)"/', substr($sidebar, $start, $end - $start), $matches);
-
-        return array_values(array_diff($matches[1], ['messages']));
+        $this->assertContains('conversations', $keys, "{$label}: Conversations renders.");
+        $this->assertNotContains('messages', $keys, "{$label}: no Messages group.");
+        $this->assertNotContains('inbox', $keys, "{$label}: no Inbox child.");
+        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($html), "{$label}: nothing expands.");
     }
 
     private function navHref(string $html, string $key): string

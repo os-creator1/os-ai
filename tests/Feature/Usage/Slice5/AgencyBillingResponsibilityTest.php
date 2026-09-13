@@ -100,7 +100,8 @@ class AgencyBillingResponsibilityTest extends TestCase
             [$owner, , $workspace] = $this->tenantWithWallet($tier, 'Harbor Lane Studios', 'Harbor Lane');
             $this->authenticateAs($owner);
 
-            $response = $this->get($this->accountFrameUrl($workspace))->assertOk();
+            // Their account page opens their Business's Settings; neither shows it.
+            $response = $this->followingRedirects()->get($this->accountFrameUrl($workspace))->assertOk();
             $html = $response->getContent();
 
             $this->assertStringNotContainsString('data-role="billing-responsibility"', $html);

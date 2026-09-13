@@ -65,12 +65,10 @@
                     </a>
                 </li>
 
-                <li class="nav-item">
-                    <a class="nav-link {{ old('tab') == 'webhook' ? 'active':null }}" id="webhook-tab"
-                       data-bs-toggle="tab" href="#webhook" aria-controls="webhook" role="tab" aria-selected="false">
-                        <x-ds-icon name="link" /> {{__('locale.developers.webhook_url')}}
-                    </a>
-                </li>
+                {{-- No "Webhook URL" tab: forwarding inbound messages to a URL is
+                     messaging infrastructure, not a personal preference. The stored
+                     users.webhook_url, its save route and the legacy inbound
+                     forwarding that reads it are untouched. --}}
             @endif
 
 
@@ -130,13 +128,6 @@
                      aria-labelledby="information-tab" role="tabpanel">
                     <!-- users edit Info form start -->
                     @include('auth.profile._information')
-                    <!-- users edit Info form ends -->
-                </div>
-
-                <div class="tab-pane {{ old('tab') == 'webhook' ? 'active': null }}" id="webhook"
-                     aria-labelledby="webhook-tab" role="tabpanel">
-                    <!-- users edit Info form start -->
-                    @include('auth.profile._webhook')
                     <!-- users edit Info form ends -->
                 </div>
 

@@ -218,8 +218,8 @@ class BusinessLocationsController extends Controller
     }
 
     /**
-     * The upgrade/contact destination: the account page that shows the
-     * plan, offered only to the account owner, who can always reach it.
+     * The upgrade/contact destination: the account's plan page, offered only
+     * to the account owner, who can always reach it.
      */
     private function planUrl(Workspace $workspace, Business $business): ?string
     {
@@ -227,7 +227,9 @@ class BusinessLocationsController extends Controller
             return null;
         }
 
-        return route('customer.workspaces.show', [$workspace->uid]);
+        // The plan — what it includes and the capacity it gives — is its own
+        // page (Settings → Plan & subscription), not the account page.
+        return route('customer.workspaces.plan.show', [$workspace->uid]);
     }
 
     /**

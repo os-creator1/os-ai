@@ -230,7 +230,9 @@ class BusinessLocaleFieldsTest extends TestCase
 
     private function createBusinessForm(): TestResponse
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        // The Create Business form lives on the Agency account page: a Growth
+        // account with its Business is never offered another (owner decision).
+        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
         $this->authenticateAs($owner);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();

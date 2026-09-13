@@ -39,7 +39,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user, ['name' => 'Harbor Lane']);
 
-        $form = $this->membersForm($this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent());
+        $form = $this->membersForm($this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk()->getContent());
 
         $this->assertStringContainsString('name="member_email"', $form);
         $this->assertStringContainsString('type="email"', $form);
@@ -55,15 +55,15 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $this->from(route('customer.workspaces.show', $workspace->uid))
+        $this->from(route('customer.workspaces.team.show', $workspace->uid))
             ->post(route('customer.workspaces.members.store', $workspace->uid), [
                 'member_email' => 'mila@example.test',
                 'role' => 'staff',
                 'business_access_scope' => 'all',
             ])
-            ->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+            ->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
 
-        $page = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
+        $page = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk()->getContent();
         $form = $this->membersForm($page);
 
         $this->assertStringContainsString(e(self::MEMBER_CANNOT_BE_ADDED), $form, 'The message sits on the email field.');
@@ -85,7 +85,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
         $response->assertSessionHas('flash_success', 'Member added.');
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $mila->id)->firstOrFail();
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
@@ -146,13 +146,13 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
 
         foreach (['mila', 'mila@', '@example.test', 'mila example.test'] as $malformed) {
-            $this->from(route('customer.workspaces.show', $workspace->uid))
+            $this->from(route('customer.workspaces.team.show', $workspace->uid))
                 ->post(route('customer.workspaces.members.store', $workspace->uid), [
                     'member_email' => $malformed,
                     'role' => 'staff',
                     'business_access_scope' => 'all',
                 ])
-                ->assertRedirect(route('customer.workspaces.show', $workspace->uid))
+                ->assertRedirect(route('customer.workspaces.team.show', $workspace->uid))
                 ->assertSessionHasErrors(['member_email' => 'Enter a valid email address, like name@example.com.']);
         }
 
@@ -173,7 +173,7 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
                 'role' => 'admin',
                 'business_access_scope' => 'all',
             ]);
-            $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+            $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
             $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
             $outcomes[] = [$response->status(), $response->headers->get('Location')];
         }

@@ -12,9 +12,18 @@
     $resolvedCustomerContext = request()->attributes->get('customerContext');
     $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
     $accountNounPlural = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountsNoun() : 'accounts';
+
+    // One page, two Settings destinations: `account` is Settings → Account
+    // details (the account itself and, for an Agency, its client accounts);
+    // `team` is Settings → Team (members, roles, Business access). Nothing
+    // renders under both. A Core or Growth account never reaches the overview
+    // (WorkspaceController::show() sends its customer to their Business's
+    // Settings); before its first Business exists it gets `first-business`,
+    // which is only the form that creates it.
+    $section = $section ?? 'account';
 @endphp
 
-@section('title', ucfirst($accountNoun) . ' overview')
+@section('title', $section === 'team' ? 'Team' : ucfirst($accountNoun) . ' overview')
 
 @section('vendor-style')
     <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
@@ -77,6 +86,7 @@
                 @endif
             </div>
 
+            @if ($section === 'account')
             <div class="col-12">
                 <x-card title="{{ $workspace['name'] }}">
                     <dl class="row mb-0">
@@ -117,7 +127,7 @@
                         </form>
                     @endif
 
-                    {{-- Account settings are the account name and the team. Deactivating
+                    {{-- Account details are the account name (the team is Settings → Team). Deactivating
                          the account and transferring ownership are not customer
                          controls here: cancellation belongs to Plan & subscription,
                          and a real ownership handover needs its own designed flow
@@ -133,13 +143,18 @@
                     @endif
                 </x-card>
             </div>
+            @endif
 
+            @if (in_array($section, ['account', 'first-business'], true))
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h4 class="card-title">Businesses</h4>
+                        <h4 class="card-title">{{ $section === 'first-business' ? 'Your Business' : 'Businesses' }}</h4>
                     </div>
                     <div class="card-body">
+                        {{-- Creating a Business: an Agency's client accounts, or a Core or
+                             Growth account's FIRST Business. A Core or Growth account that
+                             already has its Business never reaches this page. --}}
                         @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
                             <form method="POST" data-workspace-action="businesses" class="mb-2">
                                 @csrf
@@ -180,6 +195,7 @@
                                  here (the reassignment route stays for support). --}}
                         @endif
 
+                        @if ($section === 'account')
                         @if (empty($businesses))
                             <x-empty-state icon="inbox" title="No Businesses are accessible in this {{ $accountNoun }}." />
                         @else
@@ -190,6 +206,7 @@
                                     </tr>
                                 @endforeach
                             </x-table>
+                        @endif
                         @endif
 
                         @isset($entitlement)
@@ -243,33 +260,7 @@
                                          straight away through the existing enable/disable routes. --}}
                                     @php $featureSettings = $entitlement['featureSettings'] ?? []; @endphp
                                     @if (collect($featureSettings)->flatten(1)->isNotEmpty())
-                                        <div id="business-feature-settings" class="mt-2">
-                                            <h5>Features</h5>
-                                            <p class="text-caption mb-1">Turn features on or off for each Business. Changes are saved straight away.</p>
-                                            @foreach ($manageableBusinesses as $business)
-                                                @if (! empty($featureSettings[$business['uid']] ?? []))
-                                                    <h6 class="mt-1">{{ $business['name'] }}</h6>
-                                                    <ul class="list-group mb-2" data-role="business-features">
-                                                        @foreach ($featureSettings[$business['uid']] as $setting)
-                                                            @php $switchId = 'business-feature-' . $business['uid'] . '-' . $loop->index; @endphp
-                                                            <li class="list-group-item d-flex justify-content-between align-items-start" data-role="business-feature">
-                                                                <div class="me-2">
-                                                                    <div class="fw-bolder" id="{{ $switchId }}-name">{{ $setting['name'] }}</div>
-                                                                    <div class="text-caption" id="{{ $switchId }}-description">{{ $setting['description'] }}</div>
-                                                                    <div class="text-danger small mt-25" data-role="business-feature-error" role="alert" hidden></div>
-                                                                </div>
-                                                                <div class="form-check form-switch flex-shrink-0 mb-0">
-                                                                    <input class="form-check-input" type="checkbox" role="switch" id="{{ $switchId }}" data-business-feature-switch data-business-uid="{{ $business['uid'] }}" data-feature="{{ $setting['key'] }}" aria-describedby="{{ $switchId }}-description" @checked($setting['enabled'])>
-                                                                    {{-- The switch is named after the feature; its on/off state is
-                                                                         the switch's own, so the visible word is not read twice. --}}
-                                                                    <label class="form-check-label" for="{{ $switchId }}"><span class="visually-hidden">{{ $setting['name'] }}</span><span aria-hidden="true" data-role="business-feature-state">{{ $setting['enabled'] ? 'Enabled' : 'Disabled' }}</span></label>
-                                                                </div>
-                                                            </li>
-                                                        @endforeach
-                                                    </ul>
-                                                @endif
-                                            @endforeach
-                                        </div>
+                                        @include('customer.workspaces.partials.business-feature-switches', ['workspaceUid' => request()->route('workspaceUid'), 'businesses' => $manageableBusinesses, 'featureSettings' => $featureSettings, 'showHeading' => true, 'showBusinessNames' => true])
                                     @endif
                                 </div>
                             @endif
@@ -277,8 +268,9 @@
                     </div>
                 </div>
             </div>
+            @endif
 
-            @isset($directory)
+            @if ($section === 'team' && isset($directory))
                 <div class="col-12">
                     <x-card title="Members">
                         <form method="POST" data-workspace-action="members" class="mb-2">
@@ -413,30 +405,34 @@
                         @endif
                     </x-card>
                 </div>
-            @endisset
+            @endif
 
             @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
                 <script>
+                    // The account page and Settings → Team share these forms, so their
+                    // actions are built from the account URL, never from the page URL.
+                    var accountBasePath = @json(route('customer.workspaces.show', request()->route('workspaceUid')));
+
                     document.querySelectorAll('form[data-workspace-action]').forEach(function (form) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var basePath = accountBasePath;
                         form.setAttribute('action', basePath + '/' + form.getAttribute('data-workspace-action'));
                     });
 
                     document.querySelectorAll('form[data-member-action]').forEach(function (form) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var basePath = accountBasePath;
                         var memberUid = form.getAttribute('data-member-uid');
                         form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
                     });
 
                     document.querySelectorAll('form[data-business-action]').forEach(function (form) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var basePath = accountBasePath;
                         var businessUid = form.getAttribute('data-business-uid');
                         var resourcePath = ['businesses', businessUid, form.getAttribute('data-business-action')].join('/');
                         form.setAttribute('action', basePath + '/' + resourcePath);
                     });
 
                     document.querySelectorAll('a[data-business-action]').forEach(function (anchor) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var basePath = accountBasePath;
                         var businessUid = anchor.getAttribute('data-business-uid');
                         var resourcePath = ['businesses', businessUid, anchor.getAttribute('data-business-action')].join('/');
                         anchor.setAttribute('href', basePath + '/' + resourcePath);
@@ -465,80 +461,6 @@
                         syncBusinessCheckboxes();
                     });
 
-                    // Business feature switches: each change is saved at once through the
-                    // existing enable/disable route (same CSRF, auth and entitlement checks),
-                    // without leaving the page. The switch shows only what the server
-                    // confirms; on any failure it returns to its previous state.
-                    (function () {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
-                        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-                        var genericError = 'We couldn\'t save that change. Please try again.';
-
-                        document.querySelectorAll('input[data-business-feature-switch]').forEach(function (input) {
-                            var row = input.closest('[data-role="business-feature"]');
-                            var state = row.querySelector('[data-role="business-feature-state"]');
-                            var error = row.querySelector('[data-role="business-feature-error"]');
-                            var saving = false;
-
-                            var show = function (enabled) {
-                                input.checked = enabled;
-                                state.textContent = enabled ? 'Enabled' : 'Disabled';
-                            };
-
-                            // A second click while a change is being saved does nothing.
-                            input.addEventListener('click', function (event) {
-                                if (saving) {
-                                    event.preventDefault();
-                                }
-                            });
-
-                            input.addEventListener('change', function () {
-                                var wanted = input.checked;
-                                var previous = ! wanted;
-                                var url = [basePath, 'businesses', encodeURIComponent(input.getAttribute('data-business-uid')), 'features', encodeURIComponent(input.getAttribute('data-feature')), wanted ? 'enable' : 'disable'].join('/');
-
-                                saving = true;
-                                input.setAttribute('aria-disabled', 'true');
-                                row.setAttribute('aria-busy', 'true');
-                                error.hidden = true;
-                                error.textContent = '';
-
-                                fetch(url, {
-                                    method: 'POST',
-                                    credentials: 'same-origin',
-                                    headers: {
-                                        'Accept': 'application/json',
-                                        'X-Requested-With': 'XMLHttpRequest',
-                                        'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
-                                    }
-                                }).then(function (response) {
-                                    return response.json().catch(function () {
-                                        return null;
-                                    }).then(function (body) {
-                                        return { ok: response.ok, body: body };
-                                    });
-                                }).then(function (result) {
-                                    if (result.ok && result.body && result.body.status === 'success' && typeof result.body.enabled === 'boolean') {
-                                        show(result.body.enabled);
-
-                                        return;
-                                    }
-
-                                    show(previous);
-                                    error.textContent = (result.body && typeof result.body.customer_message === 'string') ? result.body.customer_message : genericError;
-                                    error.hidden = false;
-                                }).catch(function () {
-                                    show(previous);
-                                    error.textContent = genericError;
-                                    error.hidden = false;
-                                }).then(function () {
-                                    saving = false;
-                                    input.removeAttribute('aria-disabled');
-                                    row.removeAttribute('aria-busy');
-                                });
-                            });
-                        });
-                    })();
                 </script>
             @endif
         </div>

@@ -682,6 +682,10 @@
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
         // The account's AI Business OS plan (Settings → Plan & subscription).
         Route::get('{workspaceUid}/plan', 'Workspace\WorkspaceController@plan')->name('plan.show');
+        // The account's members, roles and Business access (Settings → Team).
+        Route::get('{workspaceUid}/team', 'Workspace\WorkspaceController@team')->name('team.show');
+        // The account's own Settings hub (the Agency account's settings).
+        Route::get('{workspaceUid}/settings', 'Workspace\WorkspaceController@settings')->name('settings.show');
         Route::post('{workspaceUid}/rename', 'Workspace\WorkspaceController@rename')->name('rename');
         Route::post('{workspaceUid}/deactivate', 'Workspace\WorkspaceController@deactivate')->name('deactivate');
         Route::post('{workspaceUid}/reactivate', 'Workspace\WorkspaceController@reactivate')->name('reactivate');
@@ -882,6 +886,9 @@
             Route::post('/{workflowUid}/publish', 'Business\AutomationWorkflowDraftController@publish')->name('publish');
             Route::post('/{workflowUid}/discard-draft', 'Business\AutomationWorkflowDraftController@discard')->name('discard-draft');
             Route::post('/{workflowUid}/simulate', 'Business\AutomationWorkflowDraftController@simulate')->middleware('throttle:30,1')->name('simulate');
+            // Test workflow's contact picker — a read-only search, so the person
+            // chooses who to test with instead of typing an identifier.
+            Route::get('/{workflowUid}/test-contacts', 'Business\AutomationWorkflowDraftController@testContacts')->middleware('throttle:60,1')->name('test-contacts');
 
             Route::post('/{workflowUid}/stop-all', 'Business\AutomationWorkflowEnrollmentsController@stopAll')->name('stop-all');
             Route::get('/{workflowUid}/enrollments', 'Business\AutomationWorkflowEnrollmentsController@history')->name('enrollments.index');
@@ -1164,6 +1171,9 @@
         | or gate access to.
         |
         */
+        // A Business's Settings hub — the sidebar's one Settings destination.
+        Route::get('{workspaceUid}/businesses/{businessUid}/settings', 'Business\BusinessSettingsController@show')->name('businesses.settings.show');
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');
 
