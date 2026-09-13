@@ -72,7 +72,9 @@ export function createZoomPan(viewport, surface) {
     }
 
     function onPointerDown(event) {
-        if (event.button !== 0) {
+        // Pan from the empty canvas only: pressing a card, a "+" or a menu is a
+        // click on that control, never the start of a drag.
+        if (event.button !== 0 || event.target.closest('button, a, input, select, textarea, [role="button"], .dropdown-menu')) {
             return
         }
 
