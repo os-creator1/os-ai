@@ -429,9 +429,13 @@ class MessagingProviderAuthorizationTest extends TestCase
 
     public function test_slice_three_exposes_no_voice_capability_anywhere(): void
     {
-        // 1. The provider allowlist the relocated surface offers.
-        $reflection = new \ReflectionClass(\App\Http\Controllers\Customer\Business\MessagingChannelsController::class);
-        $allowed = $reflection->getConstant('ALLOWED_PROVIDERS');
+        // 1. The provider allowlist the relocated surface offers. Customer
+        // Messaging Setup UX Cleanup moved this out of the controller's own
+        // ALLOWED_PROVIDERS constant into BusinessMessagingProviderCatalog
+        // (still exactly Twilio/Telnyx) so it could be unit-tested and
+        // carry an mms/mms_fields capability declaration; this assertion
+        // follows it to its new home rather than being weakened.
+        $allowed = \App\Library\Messaging\BusinessMessagingProviderCatalog::defaults();
 
         $this->assertIsArray($allowed);
         foreach ($allowed as $provider => $definition) {
@@ -439,6 +443,10 @@ class MessagingProviderAuthorizationTest extends TestCase
             $this->assertDoesNotMatchRegularExpression('/voice|call|dial|sip|ivr/i', (string) ($definition['label'] ?? ''));
 
             foreach (array_keys($definition['credential_fields'] ?? []) as $field) {
+                $this->assertDoesNotMatchRegularExpression('/voice|dial|sip|ivr/i', (string) $field);
+            }
+
+            foreach (array_keys($definition['mms_fields'] ?? []) as $field) {
                 $this->assertDoesNotMatchRegularExpression('/voice|dial|sip|ivr/i', (string) $field);
             }
         }

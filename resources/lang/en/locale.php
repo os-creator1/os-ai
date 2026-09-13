@@ -929,6 +929,7 @@
             'Plan & subscription'     => 'Plan & subscription',
             'Advanced'                => 'Advanced',
             'Messaging provider'      => 'Messaging provider',
+            'Text messaging'          => 'Text messaging',
             'Sender IDs'              => 'Sender IDs',
             'Choose an account'       => 'Choose an account',
             'Business'                => 'Business',

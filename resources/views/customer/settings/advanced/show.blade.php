@@ -29,10 +29,10 @@
                         @endif
                     </dd>
 
-                    <dt class="col-sm-4">SMS</dt>
+                    <dt class="col-sm-4">Text (SMS)</dt>
                     <dd class="col-sm-8">{{ $connection->sendingServer->plain ? 'Supported' : 'Not supported' }}</dd>
 
-                    <dt class="col-sm-4">MMS</dt>
+                    <dt class="col-sm-4">Pictures (MMS)</dt>
                     <dd class="col-sm-8">{{ $connection->sendingServer->mms ? 'Supported' : 'Not supported' }}</dd>
 
                     @if($inboundUrl)
@@ -58,7 +58,7 @@
         </div>
 
         <div class="col-md-6 mb-2">
-            <x-card title="Credentials" :padded="true">
+            <x-card title="Provider credentials (Advanced)" :padded="true">
                 @if($managed)
                     <x-empty-state icon="lock" title="Managed connection"
                                     description="This connection's credentials are managed elsewhere and can't be edited from this Business." />

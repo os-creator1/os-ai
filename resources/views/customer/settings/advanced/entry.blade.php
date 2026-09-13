@@ -11,6 +11,7 @@
     <div class="row mb-2">
         <div class="col-12">
             <h4 class="mb-0">Messaging provider</h4>
+            <p class="text-caption mb-0">Advanced, provider-specific setup — most Businesses never need this page.</p>
         </div>
     </div>
 
