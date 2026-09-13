@@ -462,6 +462,9 @@
     <script>
       $(document).ready(function() {
 
+        // §11.4 — set when the included AI is used up for this period.
+        let aiBudgetExhausted = false;
+
         $(".sender_id").on("click", function() {
           $("#sender_id").prop("disabled", !this.checked);
           $("#phone_number").prop("disabled", this.checked);
@@ -708,6 +711,7 @@
 
           loader.removeClass("d-none");
           generateBtn.prop("disabled", true);
+          aiBudgetExhausted = false;
 
           $.ajax({
             url: "{{ route('customer.openai.generate') }}",
@@ -723,8 +727,22 @@
               if (data.success && data.message) {
                 $("#message").val(data.message);
                 bootstrap.Modal.getInstance(document.getElementById("aiMessageModal")).hide();
+              } else if (data.budget_exhausted) {
+                // §11.4 — the included AI is used up for this period. Say so,
+                // and leave the button disabled: asking again before the
+                // allowance resets cannot succeed, and a retry loop only
+                // makes the customer feel the product is broken. Writing and
+                // sending the campaign by hand is unaffected.
+                aiBudgetExhausted = true;
+                toastr["warning"](data.message, "{{ __('locale.labels.attention') }}", {
+                  closeButton: true,
+                  positionClass: "toast-top-right",
+                  progressBar: true,
+                  newestOnTop: true,
+                  rtl: isRtl
+                });
               } else {
-                toastr["warning"]("{{ __('locale.ai.error') }}", "{{ __('locale.labels.attention') }}", {
+                toastr["warning"](data.message || "{{ __('locale.ai.error') }}", "{{ __('locale.labels.attention') }}", {
                   closeButton: true,
                   positionClass: "toast-top-right",
                   progressBar: true,
@@ -757,7 +775,10 @@
             },
             complete: function() {
               loader.addClass("d-none");
-              generateBtn.prop("disabled", false);
+              // §11.4 — everything except an exhausted allowance may be
+              // tried again; that one stays disabled until the period
+              // resets.
+              generateBtn.prop("disabled", aiBudgetExhausted);
             }
           });
         });

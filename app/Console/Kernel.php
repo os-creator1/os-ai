@@ -20,6 +20,7 @@
     use App\Console\Commands\UpdateImartGroupDLR;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
+    use App\Jobs\Ai\ExpireStaleAiReservations;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Usage\ExpireStaleUsageReservations;
@@ -151,6 +152,13 @@
             // idempotent/row-locked, so cadence affects only latency,
             // never domain semantics.
             $schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();
+
+            // Unified Business Home and COO Decision Engine Contract
+            // §10.1 step 7 (slice AI-1) — releases AI usage reservations
+            // older than config('ai.reservation_expiry_minutes'), never
+            // auto-commits one. Mirrors ExpireStaleUsageReservations
+            // above exactly.
+            $schedule->job(new ExpireStaleAiReservations())->everyFiveMinutes();
 
             // Google Business Profile Slice A (contract §13.2, §24.2).
             //

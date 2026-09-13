@@ -218,6 +218,11 @@
                 \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
                 \App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient::class => \App\Library\AgencyProspecting\OpenAiAgencyProspectingClient::class,
                 \App\Library\AgencyProspecting\Contracts\AgencyProspectingMessageSender::class => \App\Library\AgencyProspecting\ProviderAgencyProspectingMessageSender::class,
+                // Unified Business Home and COO Decision Engine Contract
+                // §13 (slice AI-1). The one provider seam every AiGateway
+                // call resolves; tests swap FakeAiCompletionClient in via
+                // app()->instance(), exactly as the patterns above.
+                \App\Library\Ai\Contracts\AiCompletionClient::class => \App\Library\Ai\Providers\OpenAiCompletionClient::class,
                 // Google Business Profile Slice A (contract §30.14). The
                 // provider seam is bound to the READ-ONLY HTTP client;
                 // tests swap FakeGoogleBusinessProfileReadClient in via

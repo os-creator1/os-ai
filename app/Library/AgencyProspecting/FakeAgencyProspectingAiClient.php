@@ -3,6 +3,7 @@
 namespace App\Library\AgencyProspecting;
 
 use App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient;
+use App\Models\Workspace;
 
 /**
  * Runtime pass — the sole test double for AgencyProspectingAiClient.
@@ -28,9 +29,12 @@ class FakeAgencyProspectingAiClient implements AgencyProspectingAiClient
      */
     public $beforeReturn = null;
 
-    public function complete(array $messages): ?string
+    public array $receivedWorkspaceIds = [];
+
+    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null, ?string $idempotencyKey = null): ?string
     {
         $this->receivedMessages[] = $messages;
+        $this->receivedWorkspaceIds[] = $workspace->id;
 
         if ($this->beforeReturn !== null) {
             ($this->beforeReturn)();

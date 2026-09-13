@@ -95,7 +95,19 @@ class AgencyProspectingRespondJob extends Base
         }
 
         $settings = AgencyProspectingSetting::where('workspace_id', $snapshot['workspace_id'])->first();
-        $raw = $aiClient->complete($this->buildPromptMessages($settings, $snapshot['campaign'], $snapshot['prospect'], $snapshot['member']));
+        $raw = $aiClient->complete(
+            $this->buildPromptMessages($settings, $snapshot['campaign'], $snapshot['prospect'], $snapshot['member']),
+            $member->workspace,
+            null,
+            // Correction 8 — the AI spend for this reply is identified by
+            // the inbound message it answers, which is durable and unique.
+            // A redelivered job, or a second worker racing this one, then
+            // presents the same key: the ledger's unique constraint means
+            // the provider is reached at most once and the budget charged
+            // at most once, alongside the existing at-most-once operation
+            // key that already governs the send itself.
+            'agency_prospect_reply:' . $inbound->id,
+        );
         $decision = AgencyProspectAiDecision::fromRawJson($raw);
 
         if ($decision === null) {

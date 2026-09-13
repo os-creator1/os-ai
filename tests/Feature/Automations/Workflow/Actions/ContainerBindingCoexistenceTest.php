@@ -32,6 +32,11 @@ use Tests\TestCase;
  * So this asserts the thing that matters: ONE booted container hands back both
  * the Opportunity/COO repositories and the fully-populated workflow executor
  * registry.
+ *
+ * Slice AI-1 makes it three families, in a third region of the same method:
+ * the AI provider seam. Merging newest main into the AI-1 branch is the same
+ * hazard again from the other direction, so the gateway's binding is asserted
+ * from the same container here rather than only in the AI suites.
  */
 class ContainerBindingCoexistenceTest extends TestCase
 {
@@ -77,6 +82,38 @@ class ContainerBindingCoexistenceTest extends TestCase
 
         // Still a singleton, and still the same one the advancer would be given.
         $this->assertSame($registry, app(NodeExecutorRegistry::class));
+    }
+
+    /**
+     * All three families, resolved from one booted container: the
+     * Opportunity/COO repositories, the workflow executor registry, and the
+     * AI provider seam every AiGateway call depends on.
+     *
+     * The gateway is deliberately resolved as a whole rather than only its
+     * seam: it takes the policy resolver, the router, the ledger manager, the
+     * completion client, the entitlement manager and the dormancy gate (which
+     * itself composes the analytics and conversation read models), so a
+     * construction failure in any of them — the realistic outcome of a hunk
+     * resolved badly — surfaces here instead of inside a queue worker.
+     */
+    public function test_the_ai_gateway_family_resolves_from_the_same_container_as_the_other_two(): void
+    {
+        $opportunities = app(OpportunityRepository::class);
+        $registry = app(NodeExecutorRegistry::class);
+        $gateway = app(\App\Library\Ai\AiGateway::class);
+        $provider = app(\App\Library\Ai\Contracts\AiCompletionClient::class);
+
+        $this->assertInstanceOf(EloquentOpportunityRepository::class, $opportunities);
+        $this->assertContains('internal_notification', $registry->registeredTypes());
+        $this->assertInstanceOf(\App\Library\Ai\AiGateway::class, $gateway);
+
+        // The seam binds to the real adapter by default; only a test may
+        // swap the fake in, and nothing else in app/ may reach a provider.
+        $this->assertInstanceOf(\App\Library\Ai\Providers\OpenAiCompletionClient::class, $provider);
+
+        // The AI expiry job the Kernel schedules is constructible too: a
+        // scheduled job that cannot be built fails silently until it runs.
+        $this->assertInstanceOf(\App\Jobs\Ai\ExpireStaleAiReservations::class, app(\App\Jobs\Ai\ExpireStaleAiReservations::class));
     }
 
     /**

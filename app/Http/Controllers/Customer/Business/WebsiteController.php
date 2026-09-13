@@ -282,9 +282,16 @@ class WebsiteController extends CustomerBaseController
         $succeeded = $this->aiGenerator->generate($website);
 
         if (! $succeeded) {
+            // Correction 6 / §11.4 — a paused allowance and a provider outage
+            // are different facts and only one of them is worth waiting
+            // for. Editing the website by hand is unaffected either way.
+            $message = $this->aiGenerator->lastRunWasPausedByBudget()
+                ? 'AI drafting is paused until ' . $this->aiGenerator->budgetResetsOnLabel() . '. You can keep editing your website.'
+                : 'AI generation is currently unavailable. Please try again later or add pages manually.';
+
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => 'AI generation is currently unavailable. Please try again later or add pages manually.',
+                'message' => $message,
             ]);
         }
 
