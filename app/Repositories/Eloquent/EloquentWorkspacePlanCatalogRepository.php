@@ -14,9 +14,19 @@ class EloquentWorkspacePlanCatalogRepository extends EloquentBaseRepository impl
         parent::__construct($catalog);
     }
 
+    /**
+     * Shared customer request query-budget optimization (Automations V2
+     * §18) — the catalog is re-read by id both by the controller's own
+     * entitlement check and, independently, by the menu/shell's snapshot;
+     * this memoizes it for the life of the current request only. update()
+     * below invalidates the same key.
+     */
     public function findById(int $id): ?WorkspacePlanCatalog
     {
-        return $this->query()->find($id);
+        return $this->rememberForRequest(
+            "workspace_plan_catalog:find:{$id}",
+            fn () => $this->query()->find($id),
+        );
     }
 
     public function findByTier(WorkspacePlanTier $tier): ?WorkspacePlanCatalog
@@ -47,6 +57,7 @@ class EloquentWorkspacePlanCatalogRepository extends EloquentBaseRepository impl
             'additional_business_slot_price_ratio',
         ]));
         $catalog->save();
+        $this->forgetRequestCache("workspace_plan_catalog:find:{$catalog->id}");
 
         return $catalog;
     }

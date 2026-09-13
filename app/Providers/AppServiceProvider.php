@@ -111,6 +111,15 @@
          */
         public function register()
         {
+            // Shared customer request query-budget optimization (Automations
+            // V2 §18, the V2-E blocker on PR #280) — bound as a singleton so
+            // every resolution within one request/container shares the same
+            // instance. See App\Library\Support\RequestScopedCache's own
+            // docblock for why this is safe: a fresh container per request
+            // (no Octane) and per test (refreshApplication()) means nothing
+            // cached here ever survives past the request/test that wrote it.
+            $this->app->singleton(\App\Library\Support\RequestScopedCache::class);
+
             // Customer Experience Slice 3 §4.13 step 4 — the default
             // messaging-adapter binding, behind the adapter's own
             // fail-closed constructor check.
