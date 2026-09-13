@@ -125,4 +125,15 @@ trait CreatesMessagingFixtures
             'services.telnyx.webhook_public_key' => base64_encode(str_repeat("\0", SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES)),
         ]);
     }
+
+    /**
+     * PR #295 Correction Round 1, item 5 — the separate, default-OFF gate
+     * a test needs in addition to enableManagedMessaging() before the real
+     * TelnyxProvisioningAdapter (never TelnyxMessagingAdapter, which does
+     * not check this) will construct.
+     */
+    protected function enableManagedMessagingProvisioning(): void
+    {
+        config(['messaging.managed_messaging_provisioning_enabled' => true]);
+    }
 }

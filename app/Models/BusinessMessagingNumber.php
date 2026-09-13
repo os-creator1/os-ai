@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\PhoneNumberType;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -17,6 +18,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * active_or_pending_phone_number and active_primary_identity_id are MySQL
  * STORED generated columns — never assignable, deliberately absent from
  * $fillable.
+ *
+ * `number_type` (text messaging setup/compliance hub) decides which
+ * carrier registration regime applies to this number — 10DLC for
+ * `local`, toll-free verification for `toll_free` — never both.
  */
 class BusinessMessagingNumber extends Model
 {
@@ -25,6 +30,7 @@ class BusinessMessagingNumber extends Model
     protected $fillable = [
         'business_messaging_identity_id',
         'phone_number',
+        'number_type',
         'provider_number_reference',
         'status',
         'is_primary',
@@ -34,6 +40,7 @@ class BusinessMessagingNumber extends Model
 
     protected $casts = [
         'business_messaging_identity_id' => 'integer',
+        'number_type' => PhoneNumberType::class,
         'status' => BusinessMessagingNumberStatus::class,
         'is_primary' => 'boolean',
         'activated_at' => 'datetime',

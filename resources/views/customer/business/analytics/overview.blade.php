@@ -9,7 +9,6 @@
 @php
     use App\Enums\Automation\AutomationTriggerType;
 
-    $m = $analytics->messages;
     $c = $analytics->contacts;
     $a = $analytics->automations;
     $n = static fn (int $value): string => number_format($value);
@@ -24,14 +23,17 @@
 
     // Section visibility — a section renders only when it has something to
     // say for this period. Figures are never hidden to flatter the page:
-    // the overview always shows its three figures, zeros included.
-    $hasActivity = $c->newInRange > 0 || $m->inbound > 0 || $m->outbound > 0 || $m->api > 0 || $conversationsStarted > 0;
-    $hasMessages = $m->outbound > 0 || $m->inbound > 0 || $m->api > 0;
+    // the overview always shows its figures, zeros included.
+    //
+    // PR #295 Correction Round 1, item 9 (Results cleanup, stronger than
+    // the prior round) — messaging is operational plumbing, not a Business
+    // outcome, so it no longer counts toward "this period has activity"
+    // either; a Business with only messaging traffic and no contacts or
+    // conversations now correctly sees the empty state here.
+    $hasActivity = $c->newInRange > 0 || $conversationsStarted > 0;
     $hasAutomationRuns = $a !== null && $a->executionsInRange > 0;
     $hasContacts = $c->totalNow > 0;
     $hasCampaigns = $analytics->campaigns->totalNow() > 0;
-
-    $sentNote = 'Accepted by the messaging provider. This does not confirm the message reached the phone.';
     $triggerLabel = static fn (string $trigger): string => AutomationTriggerType::tryFrom($trigger)?->label() ?? 'Other trigger';
 @endphp
 
@@ -102,25 +104,18 @@
             <h2 id="results-overview-heading" class="text-section-heading mb-1">Overview</h2>
 
             <div class="row" data-role="stat-cards">
-                <div class="col-md-4 col-sm-6 mb-2">
+                <div class="col-md-6 col-sm-6 mb-2">
                     <x-card data-role="kpi-new-contacts">
                         <p class="text-label mb-1">New contacts</p>
                         <p class="h2 mb-0" data-role="kpi-new-contacts-value">{{ $n($c->newInRange) }}</p>
                         <p class="text-caption text-muted mb-0">Contacts added during this period.</p>
                     </x-card>
                 </div>
-                <div class="col-md-4 col-sm-6 mb-2">
+                <div class="col-md-6 col-sm-6 mb-2">
                     <x-card data-role="kpi-new-conversations">
                         <p class="text-label mb-1">New conversations</p>
                         <p class="h2 mb-0" data-role="kpi-new-conversations-value">{{ $n($conversationsStarted) }}</p>
                         <p class="text-caption text-muted mb-0">Conversations started during this period.</p>
-                    </x-card>
-                </div>
-                <div class="col-md-4 col-sm-6 mb-2">
-                    <x-card data-role="kpi-messages-received">
-                        <p class="text-label mb-1">Messages received</p>
-                        <p class="h2 mb-0" data-role="kpi-messages-received-value">{{ $n($m->inbound) }}</p>
-                        <p class="text-caption text-muted mb-0">Messages people sent to you.</p>
                     </x-card>
                 </div>
             </div>
@@ -142,55 +137,14 @@
             @endif
         </section>
 
-        {{-- MESSAGES — secondary, operational. "Sent" is the provider-accepted
-             figure (B5 M4) under a customer label; its meaning is stated
-             right next to it and never widened to delivery. --}}
-        @if ($hasMessages)
-            <section aria-labelledby="results-messages-heading" data-role="results-messages" class="mt-1">
-                <h2 id="results-messages-heading" class="text-section-heading mb-1">Messages</h2>
-                <div class="row">
-                    <div class="col-lg-5 mb-2">
-                        <x-card data-role="outcome-breakdown">
-                            <p class="text-label mb-2">Outgoing messages</p>
-                            <dl class="row mb-0">
-                                <dt class="col-7 fw-normal">
-                                    Sent
-                                    <x-tooltip :text="$sentNote" tabindex="0" aria-label="{{ $sentNote }}" data-role="sent-note">
-                                        <x-ds-icon name="info" size="14" class="text-muted align-text-bottom" aria-hidden="true" />
-                                    </x-tooltip>
-                                </dt>
-                                <dd class="col-5 text-end text-numeric mb-1" data-role="outcome-sent">{{ $n($m->accepted) }}</dd>
-
-                                <dt class="col-7 fw-normal">Failed</dt>
-                                <dd class="col-5 text-end text-numeric mb-1" data-role="outcome-failed">{{ $n($m->confirmedFailed) }}</dd>
-
-                                <dt class="col-7 fw-normal">Processing</dt>
-                                <dd class="col-5 text-end text-numeric mb-1" data-role="outcome-processing">{{ $n($m->unresolved()) }}</dd>
-                            </dl>
-                            <p class="text-caption text-muted mt-1 mb-0">Out of {{ $n($m->outbound) }} outgoing message{{ $m->outbound === 1 ? '' : 's' }}.</p>
-                            <p class="text-caption text-muted mb-0">Sent means the messaging provider accepted the message. It doesn't confirm the message reached the phone.</p>
-                            @if ($m->api > 0)
-                                <p class="text-caption text-muted mb-0 mt-1" data-role="api-note">Another {{ $n($m->api) }} message{{ $m->api === 1 ? ' was' : 's were' }} sent through your API and {{ $m->api === 1 ? 'is' : 'are' }} counted separately.</p>
-                            @endif
-                            <details class="mt-1">
-                                <summary class="text-caption">What counts as failed?</summary>
-                                <p class="text-caption text-muted mb-0 mt-1">
-                                    Failed covers messages the provider reported as undelivered, expired, rejected, failed or skipped.
-                                    Skipped means the send was skipped, not that it failed downstream.
-                                    Anything still waiting for a final answer is counted as processing.
-                                </p>
-                            </details>
-                        </x-card>
-                    </div>
-                    <div class="col-lg-7 mb-2">
-                        <x-card title="Messages">
-                            <p class="text-caption text-muted mb-1">Messages received and sent during this period.</p>
-                            <div id="analytics-messages" data-role="chart-message-volume" role="img" aria-label="Chart of messages received and sent during this period"></div>
-                        </x-card>
-                    </div>
-                </div>
-            </section>
-        @endif
+        {{-- MESSAGES — moved to Settings -> Text messaging -> Delivery & usage
+             in full (owner product decision, PR #295 Correction Round 1
+             item 9: Results is for Business outcomes only, not telecom
+             plumbing). Sent/Failed/Processing, Messages received, and the
+             message-volume chart all live only on the Delivery & usage page
+             now — none of it renders here any more. Conversion metrics may
+             be reintroduced later once CRM/Opportunities/Forms make them
+             meaningful as genuine Business outcomes. --}}
 
         {{-- AUTOMATIONS — only when automations actually ran in this period.
              Human outcome labels over the B4 ledger; trigger names come from
@@ -385,13 +339,12 @@
                     return chartOptions('area', contacts, [{ name: 'New contacts', data: contacts.series.new_contacts }], [palette[0]], width);
                 });
 
-                var messages = series.messages;
-                mount(region, '[data-role="chart-message-volume"]', function (width) {
-                    return chartOptions('line', messages, [
-                        { name: 'Received', data: messages.series.incoming },
-                        { name: 'Sent', data: messages.series.accepted }
-                    ], [palette[0], palette[1]], width);
-                });
+                // The message-volume chart moved to Settings -> Text
+                // messaging -> Delivery & usage (Results cleanup); this
+                // page's markup never carries that chart's container element
+                // any more, so it is not mounted here. The /series JSON
+                // endpoint still returns charts.messages unchanged — other
+                // consumers (and the payload-shape guard below) depend on it.
             }
 
             // Mounted on load, and again whenever the range updates this page
