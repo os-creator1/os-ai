@@ -363,12 +363,31 @@ class GenerateCooInsightTest extends TestCase
         [, $business] = $this->tenant(WorkspacePlanTier::Growth);
         $this->materialPeriod($business);
 
-        (new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']))->handle(app(CooInsightGenerator::class));
-        (new GenerateCooInsight((int) $business->id, 'not-a-trigger'))->handle(app(CooInsightGenerator::class));
-        (new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value))->handle(app(CooInsightGenerator::class));
+        app()->call([new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']), 'handle']);
+        app()->call([new GenerateCooInsight((int) $business->id, 'not-a-trigger'), 'handle']);
+        app()->call([new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value), 'handle']);
 
         $this->assertSame(1, CooInsight::query()->count());
         $this->assertSame(1, $this->fakeAi->callCount());
+    }
+
+    public function test_a_queued_job_never_trusts_an_entitlement_read_memoized_before_it_started(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->materialPeriod($business);
+
+        // An earlier job in the same worker process read the plan while it was active.
+        $this->assertTrue(app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::AiCooBasic->value, 0)->allowed);
+
+        // The plan is then suspended by another process, whose cache invalidation never reaches this worker.
+        $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => WorkspacePlanAssignmentStatus::Suspended->value]));
+        $this->assertTrue(app(EntitlementManager::class)->decide($workspace->fresh(), $business->fresh(), PlatformFeature::AiCooBasic->value, 0)->allowed, 'Precondition: the worker-lifetime memo still holds the pre-suspension answer.');
+
+        app()->call([new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']), 'handle']);
+
+        $this->assertNothingSpent();
+        $this->assertSame(CooInsightOutcome::NOT_ENTITLED, app(CooInsightGenerator::class)->generate($business->fresh(), CooInsightTrigger::MultiSignalChange, $this->thisMonth($business))->status, 'The job left the process judging the suspension, not the memo.');
+        $this->assertNothingSpent();
     }
 
     // -----------------------------------------------------------------

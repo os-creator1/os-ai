@@ -6,6 +6,7 @@ use App\Enums\Coo\CooInsightTrigger;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Coo\Insight\CooInsightGenerator;
+use App\Library\Support\RequestScopedCache;
 use App\Models\Business;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -47,8 +48,14 @@ class GenerateCooInsight implements ShouldQueue, ShouldQueueAfterCommit
         $this->onQueue((string) config('coo.insight.queue', 'default'));
     }
 
-    public function handle(CooInsightGenerator $generator): void
+    public function handle(CooInsightGenerator $generator, RequestScopedCache $requestCache): void
     {
+        // A queue worker binds one console request for its whole life, so the
+        // request-scoped memo of plan, override and Business reads would
+        // otherwise carry another job's answers into this one. Entitlement is
+        // judged as of this job, never as of an earlier one.
+        $requestCache->forgetPrefixed('');
+
         $trigger = CooInsightTrigger::tryFrom($this->trigger);
         $business = Business::query()->find($this->businessId);
 
