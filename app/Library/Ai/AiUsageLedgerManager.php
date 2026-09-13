@@ -7,7 +7,6 @@ use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
 
@@ -36,6 +35,13 @@ use Illuminate\Support\Carbon;
  */
 final class AiUsageLedgerManager
 {
+    /**
+     * How many times a period transaction may be retried after a database
+     * concurrency error. Three absorbs a burst of simultaneous calls and
+     * is small enough that a genuine lock problem still surfaces.
+     */
+    private const TRANSACTION_ATTEMPTS = 3;
+
     /**
      * An unlocked read of the Workspace's current reserved+committed
      * total for one period, used only by AiModelRouter's headroom
@@ -86,6 +92,12 @@ final class AiUsageLedgerManager
      */
     public function reserve(AiRequest $request, AiBudgetPolicy $policy, AiUsageCostEstimate $estimate, bool $bypassCapEnforcement): array
     {
+        // Laravel retries the whole closure on a database concurrency
+        // error. Nothing outside the database has happened yet and a
+        // rolled-back attempt leaves nothing behind, so a retry is simply
+        // making the reservation again — and far better than handing a
+        // customer an error because two of their own requests arrived
+        // together.
         return DB::transaction(function () use ($request, $policy, $estimate, $bypassCapEnforcement): array {
             $workspacePeriod = $this->lockOrCreatePeriod(
                 AiUsagePeriod::SCOPE_WORKSPACE,
@@ -187,7 +199,7 @@ final class AiUsageLedgerManager
             ]);
 
             return ['entry' => $entry, 'refused' => false];
-        });
+        }, attempts: self::TRANSACTION_ATTEMPTS);
     }
 
     public function commitActual(AiUsageLedgerEntry $entry, string $providerModel, int $inputTokens, int $cachedInputTokens, int $outputTokens, int $actualCostMicrousd): AiUsageLedgerEntry
@@ -243,6 +255,11 @@ final class AiUsageLedgerManager
      */
     private function settle(AiUsageLedgerEntry $entry, AiUsageEntryStatus $status, int $actualCostMicrousd, array $usage): AiUsageLedgerEntry
     {
+        // Retried for the same reason, and safely: the claim below
+        // re-reads the entry's status under lock, so a retry arriving
+        // after someone else settled the entry changes nothing. Losing a
+        // settlement to a deadlock would be much worse than retrying —
+        // the provider call has already been made and billed.
         return DB::transaction(function () use ($entry, $status, $actualCostMicrousd, $usage): AiUsageLedgerEntry {
             $claimed = AiUsageLedgerEntry::query()->lockForUpdate()->find($entry->id);
 
@@ -264,7 +281,7 @@ final class AiUsageLedgerManager
             ]))->save();
 
             return $claimed;
-        });
+        }, attempts: self::TRANSACTION_ATTEMPTS);
     }
 
     /**
@@ -350,21 +367,41 @@ final class AiUsageLedgerManager
         }
     }
 
+    /**
+     * The period row, locked for this transaction, opening it if this is the
+     * first call of the period.
+     *
+     * WHY THE UNLOCKED PROBE COMES FIRST. InnoDB answers `SELECT ... FOR
+     * UPDATE` for a row that does not exist with a gap lock over the range
+     * where it would be, and gap locks are shared — every concurrent caller
+     * gets one. The insert each of them then needs takes an insert-intention
+     * lock in that same gap, which conflicts with the gap locks the others
+     * hold: they wait on each other and InnoDB breaks the cycle by killing
+     * one with "Deadlock found when trying to get lock". Losing the insert
+     * race is expected and already handled; deadlocking on it is not, and it
+     * would fail the FIRST burst of concurrent calls of a new period — the
+     * one moment when every caller arrives at once.
+     *
+     * So the existence check is an ordinary MVCC read that takes no locks at
+     * all, the insert tolerates losing the race by itself, and the locking
+     * read runs only once the row is certainly there, where it takes a
+     * single record lock and nothing wider.
+     */
     private function lockOrCreatePeriod(string $scopeType, int $scopeId, int $workspaceId, AiBudgetPolicy $policy, int $capMicrousd): AiUsagePeriod
     {
-        $existing = AiUsagePeriod::query()
+        $exists = AiUsagePeriod::query()
             ->where('scope_type', $scopeType)
             ->where('scope_id', $scopeId)
             ->where('period_key', $policy->periodKey)
-            ->lockForUpdate()
-            ->first();
+            ->exists();
 
-        if ($existing !== null) {
-            return $existing;
-        }
+        if (! $exists) {
+            // insertOrIgnore, not create(): whoever loses the race simply
+            // finds the winner's row on the locking read below. The cap is
+            // snapshotted here and never rewritten afterwards (Correction 10).
+            $now = Carbon::now();
 
-        try {
-            return AiUsagePeriod::create([
+            AiUsagePeriod::query()->insertOrIgnore([
                 'scope_type' => $scopeType,
                 'scope_id' => $scopeId,
                 'workspace_id' => $workspaceId,
@@ -372,16 +409,16 @@ final class AiUsageLedgerManager
                 'policy_key' => $policy->policyKey,
                 'policy_version' => $policy->policyVersion,
                 'cap_microusd' => $capMicrousd,
+                'created_at' => $now,
+                'updated_at' => $now,
             ]);
-        } catch (UniqueConstraintViolationException) {
-            // Lost the create race to a concurrent request. The row now
-            // exists; lock and return it (never retry the insert).
-            return AiUsagePeriod::query()
-                ->where('scope_type', $scopeType)
-                ->where('scope_id', $scopeId)
-                ->where('period_key', $policy->periodKey)
-                ->lockForUpdate()
-                ->firstOrFail();
         }
+
+        return AiUsagePeriod::query()
+            ->where('scope_type', $scopeType)
+            ->where('scope_id', $scopeId)
+            ->where('period_key', $policy->periodKey)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 }

@@ -122,16 +122,20 @@ class AiGatewayCorrectionsTest extends TestCase
      * work for Businesses that are plainly in use.
      *
      * The evidence comes from the seams that own those tables — B5 for
-     * contacts, received messages and automation runs, Slice 2B for
-     * conversations, H-2's visit marker for a member being present. This
-     * class adds no query of its own to any of them.
+     * contacts, received messages and automation runs, the canonical
+     * BusinessConversationReadModel for conversations (both a thread opened
+     * in the window and a customer writing in an older one), H-2's visit
+     * marker for a member being present. This class adds no query of its own
+     * to any of them.
      */
     public function test_each_canonical_activity_signal_on_its_own_makes_a_business_active(): void
     {
         $gate = app(AiBusinessActivityGate::class);
         $recent = CarbonImmutable::now()->subDays(3);
 
-        foreach (['contact', 'conversation', 'incoming_message', 'automation_run', 'member_visit'] as $signal) {
+        $signals = ['contact', 'conversation', 'ongoing_conversation', 'incoming_message', 'automation_run', 'member_visit'];
+
+        foreach ($signals as $signal) {
             [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Signal ' . $signal, 'Account ' . $signal);
 
             $this->assertTrue($gate->isDormant($business), "[{$signal}] a Business with no activity at all is dormant.");
@@ -140,6 +144,43 @@ class AiGatewayCorrectionsTest extends TestCase
 
             $this->assertFalse($gate->isDormant($business->fresh()), "[{$signal}] must count as activity.");
         }
+    }
+
+    /**
+     * Correction 2's architectural half. Conversation activity is a question
+     * the conversations seam answers; the AI layer must ask it rather than
+     * learn the tables. A second reader would be a second definition of
+     * "a conversation", and the two would drift.
+     */
+    public function test_the_ai_layer_reads_conversations_only_through_the_canonical_seam(): void
+    {
+        $files = new \Symfony\Component\Finder\Finder();
+        $files->files()->in(app_path('Library/Ai'))->name('*.php');
+
+        $readers = 0;
+
+        foreach ($files as $file) {
+            $source = (string) file_get_contents($file->getPathname());
+            $relative = str_replace(DIRECTORY_SEPARATOR, '/', $file->getRelativePathname());
+
+            $this->assertStringNotContainsString("'chat_boxes'", $source, $relative . ' must not query chat_boxes itself.');
+            $this->assertStringNotContainsString("'chat_box_messages'", $source, $relative . ' must not query chat_box_messages itself.');
+            $this->assertStringNotContainsString('ChatBox::', $source, $relative . ' must not reach the conversation models directly.');
+
+            if (str_contains($source, 'BusinessConversationReadModel')) {
+                $readers++;
+            }
+        }
+
+        $this->assertSame(
+            1,
+            $readers,
+            'Exactly one file in the AI layer — the dormancy gate — talks to the conversation read model.'
+        );
+
+        $gate = (string) file_get_contents(app_path('Library/Ai/AiBusinessActivityGate.php'));
+        $this->assertStringContainsString('$this->conversations->startedCount(', $gate);
+        $this->assertStringContainsString('$this->conversations->incomingCount(', $gate);
     }
 
     /** The threshold is config, and the boundary is exact. */
@@ -353,6 +394,77 @@ class AiGatewayCorrectionsTest extends TestCase
         $this->assertSame(AiUsageEntryStatus::Committed, $entry->fresh()->status);
     }
 
+    /**
+     * The other half of one canonical lock order: opening a period must not
+     * take a lock on a row that is not there yet.
+     *
+     * `SELECT ... FOR UPDATE` for a missing row locks the GAP it would live
+     * in, and gap locks are shared — so every caller in the first burst of a
+     * new period gets one, and the insert each then attempts needs an
+     * insert-intention lock in that same gap. They wait on each other and
+     * InnoDB kills one with a deadlock. The racing-processes test above is
+     * the behavioural proof; this pins the shape so the locking read can
+     * never move back in front of the insert.
+     */
+    public function test_a_period_is_opened_without_locking_a_row_that_does_not_exist_yet(): void
+    {
+        $source = (string) file_get_contents(app_path('Library/Ai/AiUsageLedgerManager.php'));
+
+        $body = (string) preg_replace('/^.*private function lockOrCreatePeriod/s', '', $source);
+        $body = (string) preg_replace('/\n    }\n.*$/s', '', $body);
+
+        $probe = strpos($body, '->exists()');
+        $insert = strpos($body, '->insertOrIgnore([');
+        $lock = strpos($body, '->lockForUpdate()');
+
+        $this->assertNotFalse($probe, 'The existence check must be an ordinary unlocked read.');
+        $this->assertNotFalse($insert, 'The insert must tolerate losing the race on its own.');
+        $this->assertNotFalse($lock, 'The row is still locked for the rest of the transaction.');
+
+        $this->assertLessThan($insert, $probe, 'The unlocked probe comes first.');
+        $this->assertLessThan($lock, $insert, 'The locking read runs only once the row certainly exists.');
+
+        // And a concurrency error is retried rather than handed to a caller.
+        $this->assertStringContainsString('private const TRANSACTION_ATTEMPTS = 3;', $source);
+        $this->assertSame(2, substr_count($source, 'attempts: self::TRANSACTION_ATTEMPTS'), 'Both the reservation and the settlement retry.');
+    }
+
+    /**
+     * Behaviourally, in one process: the second call of a period finds the
+     * row the first one opened, spends against it, and the period is opened
+     * exactly once with the cap it snapshotted.
+     */
+    public function test_the_first_two_calls_of_a_period_open_exactly_one_row(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $this->fakeClient->setDefaultResult(AiCompletionResult::success('ok', 'model', 120, 40));
+
+        $first = app(AiGateway::class)->complete($this->request($workspace, $business, AiUsageCategory::WebsiteGeneration));
+        $second = app(AiGateway::class)->complete($this->request($workspace, $business, AiUsageCategory::WebsiteGeneration));
+
+        $this->assertTrue($first->ok);
+        $this->assertTrue($second->ok);
+
+        $this->assertSame(
+            1,
+            AiUsagePeriod::query()
+                ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
+                ->where('scope_id', $workspace->id)
+                ->count(),
+            'One Workspace period per period key, however many callers opened it.'
+        );
+
+        $period = $this->workspacePeriod($workspace);
+
+        $this->assertSame(
+            (int) $first->ledgerEntry->actual_cost_microusd + (int) $second->ledgerEntry->actual_cost_microusd,
+            (int) $period->committed_microusd,
+            'Both calls were charged to the same row.'
+        );
+        $this->assertSame(0, (int) $period->reserved_microusd, 'And neither left a hold behind.');
+        $this->assertSame((int) config('ai.budgets.growth.workspace_cap_microusd'), (int) $period->cap_microusd);
+    }
     public function test_settlement_and_expiry_take_their_locks_in_the_same_order(): void
     {
         // Both paths funnel through the one private settle(), which claims
@@ -616,6 +728,7 @@ class AiGatewayCorrectionsTest extends TestCase
                 'created_at' => $at,
                 'updated_at' => $at,
             ]),
+            'ongoing_conversation' => $this->recordOngoingConversation($business, $at),
             'incoming_message' => DB::table('reports')->insert([
                 'uid' => uniqid('', true),
                 'user_id' => $business->customer_id,
@@ -641,6 +754,36 @@ class AiGatewayCorrectionsTest extends TestCase
                 'updated_at' => $at,
             ]),
         };
+    }
+
+    /**
+     * A conversation opened long before the window that the customer wrote in
+     * inside it. startedCount cannot see this Business — the thread is years
+     * old — so it proves the gate really does ask the read model for messages
+     * too, which is what H-4's incomingCount exists to answer.
+     */
+    private function recordOngoingConversation(Business $business, CarbonImmutable $at): void
+    {
+        $boxId = DB::table('chat_boxes')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => '18005550100',
+            'to' => '1202555' . random_int(1000, 9999),
+            'notification' => 0,
+            'created_at' => CarbonImmutable::parse('2020-01-01 00:00:00'),
+            'updated_at' => CarbonImmutable::parse('2020-01-01 00:00:00'),
+        ]);
+
+        DB::table('chat_box_messages')->insert([
+            'box_id' => $boxId,
+            'message' => 'Still here, are you?',
+            'sms_type' => 'sms',
+            'send_by' => 'to',
+            'direction' => 'incoming',
+            'created_at' => $at,
+            'updated_at' => $at,
+        ]);
     }
 
     private function recordContact(Business $business, CarbonImmutable $at): void

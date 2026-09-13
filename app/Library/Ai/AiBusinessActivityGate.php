@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\DB;
  *
  * Every figure comes from the seam that already owns that table — B5's
  * BusinessAnalyticsQueries for contacts, received messages and automation
- * runs, Slice 2B's BusinessConversationReadModel for conversations, and
+ * runs, the canonical BusinessConversationReadModel for conversations, and
  * H-2's own `business_home_visits` marker for a member being present. This
  * class adds no query of its own to any of those tables, and in particular
  * never reads chat_boxes directly: that door belongs to 2B, and H-4 owns
@@ -64,8 +64,14 @@ final class AiBusinessActivityGate
             return true;
         }
 
-        // Conversations, through 2B's own seam.
-        if ($this->conversations->startedCount($business, $since, $now) > 0) {
+        // Conversations, through the canonical read model and only through
+        // it. A thread opened inside the window counts (startedCount), and so
+        // does a customer writing again in a thread opened long before it
+        // (incomingCount, which H-4 added to that same class): a running
+        // conversation is the plainest evidence a Business is in use, and the
+        // started-count alone would call such a Business dormant.
+        if ($this->conversations->startedCount($business, $since, $now) > 0
+            || $this->conversations->incomingCount($business, $since, $now) > 0) {
             return true;
         }
 
