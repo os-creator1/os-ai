@@ -393,9 +393,14 @@ class TextMessagingSetupStateTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // PR #295 Correction Round 1, item 1 — authorization: mutating,
-    // cost-incurring actions require buy_numbers / manage_advanced_provider,
-    // never the read-only view_numbers alone.
+    // PR #295 Correction Round 1/2, item 1 — authorization: mutating,
+    // cost-incurring actions require buy_numbers (number acquisition) and,
+    // for legal/compliance registration, ALSO the canonical Workspace
+    // owner-or-active-admin authority — never the read-only view_numbers
+    // alone, and never manage_advanced_provider (reserved for the
+    // separate Agency/BYO provider surface). See
+    // TextMessagingRegistrationAuthorizationTest for the full owner/admin/
+    // member/Agency matrix.
     // -----------------------------------------------------------------
 
     public function test_a_view_numbers_only_user_can_view_the_page_but_not_search_or_order_a_number(): void
@@ -450,7 +455,7 @@ class TextMessagingSetupStateTest extends TestCase
         $this->assertDatabaseMissing('business_messaging_registrations', ['business_id' => $business->id]);
     }
 
-    public function test_a_manage_advanced_provider_user_can_update_and_submit_registration(): void
+    public function test_a_buy_numbers_owner_can_update_and_submit_registration(): void
     {
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
@@ -458,7 +463,7 @@ class TextMessagingSetupStateTest extends TestCase
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->attachNumber($this->attachIdentity($business), '+14155550311');
-        $this->authenticateAs($customer, ['view_numbers', 'manage_advanced_provider']);
+        $this->authenticateAs($customer, ['view_numbers', 'buy_numbers']);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload())
             ->assertSessionHas('status', 'success');
@@ -485,7 +490,7 @@ class TextMessagingSetupStateTest extends TestCase
             'status' => 'approved',
             'approved_at' => now(),
         ]));
-        $this->authenticateAs($customer, ['view_numbers', 'manage_advanced_provider']);
+        $this->authenticateAs($customer, ['view_numbers', 'buy_numbers']);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload([
             'legal_business_name' => 'A Different Name Entirely LLC',

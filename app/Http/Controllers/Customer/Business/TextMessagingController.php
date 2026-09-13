@@ -21,13 +21,16 @@ use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Library\Messaging\ProvisioningAvailability;
+use App\Library\Navigation\CustomerShellComposer;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * Owner product decision — the customer should never need to understand
@@ -72,6 +75,7 @@ class TextMessagingController extends CustomerBaseController
         private readonly BusinessMessagingProvisioningService $provisioning,
         private readonly BusinessMessagingRegistrationService $registrations,
         private readonly BusinessAnalyticsPresenter $analyticsPresenter,
+        private readonly CustomerShellComposer $shell,
     ) {
     }
 
@@ -190,17 +194,25 @@ class TextMessagingController extends CustomerBaseController
     // -----------------------------------------------------------------
 
     /**
-     * PR #295 Correction Round 1, item 1 — legal/compliance submission is a
-     * charge-incurring action; it reuses manage_advanced_provider, the
-     * narrowest existing owner/manage authority in the Messaging category,
-     * rather than the read-only view_numbers or inventing a new
-     * permission.
+     * PR #295 Correction Round 2, item 1 — legal/compliance registration is
+     * a normal managed-messaging setup step for every Core/Growth Business,
+     * not an Agency/BYO configuration action. manage_advanced_provider was
+     * WRONG here (it defaults false and is reserved for the Advanced/BYO
+     * provider surface — see MessagingChannelsController); requiring it
+     * would lock ordinary customers out of finishing their own managed
+     * setup. This now requires buy_numbers (the same normal number-
+     * acquisition capability search/order already use) AND the canonical
+     * Workspace/Account management authority (owner-or-active-admin,
+     * CustomerContext::canManageWorkspace() — the exact rule already
+     * gating Settings -> Team/Billing/Plan), checked by
+     * authorizeRegistrationMutation() below.
      */
     public function updateRegistration(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_advanced_provider');
+        $this->authorize('buy_numbers');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->authorizeRegistrationMutation($business);
         $numberType = $this->numberTypeFor($business);
 
         if ($numberType === null) {
@@ -244,9 +256,10 @@ class TextMessagingController extends CustomerBaseController
 
     public function submitRegistration(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('manage_advanced_provider');
+        $this->authorize('buy_numbers');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->authorizeRegistrationMutation($business);
         $registration = $this->registrationFor($business);
 
         if ($registration === null || $registration->legal_business_name === null) {
@@ -331,6 +344,29 @@ class TextMessagingController extends CustomerBaseController
     private function registrationFor(Business $business): ?BusinessMessagingRegistration
     {
         return BusinessMessagingRegistration::query()->where('business_id', $business->id)->first();
+    }
+
+    /**
+     * PR #295 Correction Round 2, item 1 — legal/compliance registration
+     * is charge-incurring and legally binding, so beyond ordinary
+     * buy_numbers (already checked by the caller) it further requires the
+     * SAME owner-or-active-admin authority Settings -> Team/Billing/Plan
+     * already reuse for exactly this kind of account-level decision — not
+     * merely view_numbers, and never manage_advanced_provider (that
+     * permission is reserved for the separate Agency/BYO provider
+     * surface, MessagingChannelsController, and is not checked here at
+     * all). A Workspace member who is neither the owner nor an active
+     * Admin is refused even if they otherwise hold buy_numbers.
+     */
+    private function authorizeRegistrationMutation(Business $business): void
+    {
+        $context = $this->shell->currentContext(Auth::user());
+
+        if ($context->selectedBusiness === null
+            || $context->selectedBusiness->uid !== $business->uid
+            || ! $context->canManageWorkspace()) {
+            throw new AuthorizationException('Only the Business owner or an authorized account manager may manage messaging registration.');
+        }
     }
 
     private function numberTypeFor(Business $business): ?PhoneNumberType
