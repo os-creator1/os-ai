@@ -174,6 +174,16 @@
                 }
             }
 
+            // Everything a drag changes visually, undone in one place: the card's
+            // dimmed state and any column highlight. Called when the drag ends
+            // (whether or not it dropped anywhere) AND when the server refuses a
+            // move — which answers after dragend has already run, so it cannot
+            // rely on the drag still being tracked.
+            function clearDragState(card) {
+                if (card) { card.classList.remove('opacity-50'); }
+                document.querySelectorAll('[data-drop-stage].border-primary').forEach(function (el) { el.classList.remove('border', 'border-primary'); });
+            }
+
             document.addEventListener('dragstart', function (event) {
                 var card = event.target.closest && event.target.closest('[data-role="crm-card"][data-move-url]');
                 if (!card) { return; }
@@ -183,9 +193,12 @@
                 card.classList.add('opacity-50');
             });
 
-            document.addEventListener('dragend', function () {
-                if (dragged) { dragged.card.classList.remove('opacity-50'); }
-                document.querySelectorAll('[data-drop-stage].border-primary').forEach(function (el) { el.classList.remove('border', 'border-primary'); });
+            document.addEventListener('dragend', function (event) {
+                // The card that was dragged, taken from the event itself: the drop
+                // handler has usually released `dragged` by now.
+                var card = event.target.closest && event.target.closest('[data-role="crm-card"]');
+                clearDragState(card || (dragged && dragged.card));
+                dragged = null;
             });
 
             document.addEventListener('dragover', function (event) {
@@ -208,7 +221,7 @@
 
                 var move = dragged;
                 dragged = null;
-                column.classList.remove('border', 'border-primary');
+                clearDragState(move.card);
 
                 if (move.from.closest('[data-drop-stage]') === column) { return; }
 
@@ -225,7 +238,13 @@
                         if (!response.ok) { throw new Error(body.message || 'That move could not be saved.'); }
                     });
                 }).then(refreshBoard, function (error) {
-                    move.from.insertBefore(move.card, move.next);
+                    // Back exactly where it was, looking exactly as it did.
+                    if (move.next && move.next.parentNode === move.from) {
+                        move.from.insertBefore(move.card, move.next);
+                    } else {
+                        move.from.appendChild(move.card);
+                    }
+                    clearDragState(move.card);
                     if (window.toastr) { window.toastr.error(error.message); }
                 });
             });
