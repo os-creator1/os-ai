@@ -56,9 +56,11 @@
     <section id="usage-billing-dashboard">
         <div class="row">
             <div class="col-12">
-                <a href="{{ route('customer.workspaces.show', $workspaceUid) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
+                {{-- An Agency returns to its client accounts; anyone else came here from
+                     this Business's Settings (walkthrough settings cleanup). --}}
+                <a href="{{ $isAgencyFrame ? route('customer.workspaces.show', $workspaceUid) : route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
                     <x-ds-icon name="arrow-left" size="16" aria-hidden="true" />
-                    {{ $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_account') }}
+                    {{ $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_settings') }}
                 </a>
             </div>
 

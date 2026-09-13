@@ -40,6 +40,15 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
         ])->id;
     }
 
+    /** An active Business in that account — the Settings hub opens only an active one. */
+    private function activeBusiness($customer, Workspace $workspace): \App\Models\Business
+    {
+        $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+        \Illuminate\Support\Facades\DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Active->value]);
+
+        return $business->fresh();
+    }
+
     private function entitledWorkspace($owner, array $overrides = []): Workspace
     {
         $workspace = $this->createWorkspace($owner, $overrides);
@@ -225,9 +234,10 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
-        $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+        $business = $this->activeBusiness($customer, $workspace);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        // A Core Business's switches live on its Settings hub (owner decision).
+        $response = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk();
 
         $response->assertSee('Inbox & Conversations');
         $this->assertSame(3, preg_match_all('/<input [^>]*data-business-feature-switch/', $response->getContent()));
@@ -241,11 +251,11 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
-        $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+        $business = $this->activeBusiness($customer, $workspace);
 
         app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Automations, (int) $customer->user_id);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $response = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk();
 
         $this->assertMatchesRegularExpression('/>Automations<.*?<input [^>]*data-feature="automations"(?![^>]* checked)[^>]*>.*?data-role="business-feature-state">Disabled</s', $response->getContent());
     }

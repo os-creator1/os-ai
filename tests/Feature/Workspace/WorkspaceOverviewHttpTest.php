@@ -247,7 +247,7 @@ class WorkspaceOverviewHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
         ]);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $this->assertNotNull($this->directoryViewData($response));
         $this->assertCount(1, $this->directoryViewData($response));
@@ -263,7 +263,7 @@ class WorkspaceOverviewHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $this->assertNotNull($this->directoryViewData($response));
     }
@@ -286,7 +286,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         // Exact key-shape proof, not merely "these keys happen to be
         // absent" -- a Staff response's view data must be precisely these
         // two keys, in this order, with nothing else ever added.
-        $this->assertSame(['workspace', 'businesses'], array_keys($response->original->getData()));
+        $this->assertSame(['section', 'workspace', 'businesses'], array_keys($response->original->getData()));
         $response->assertDontSee('Ada');
         $response->assertDontSee($admin->user->email);
     }
@@ -304,7 +304,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $member->id, 'business_id' => $businessA->id]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $member->id, 'business_id' => $businessB->id]);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $rows = $this->directoryViewData($response);
         $this->assertCount(1, $rows);
@@ -336,7 +336,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $business = $this->createBusinessForCustomer($member->user->id, $workspace->id);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $member->id, 'business_id' => $business->id]);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $rows = $this->directoryViewData($response);
         $this->assertSame('All Businesses', $rows[0]['scope']);
@@ -355,7 +355,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->createNamedMember($workspace, 'Active', 'Member', ['is_active' => true]);
         $this->createNamedMember($workspace, 'Inactive', 'Member', ['is_active' => false]);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $rows = $this->directoryViewData($response);
         $this->assertCount(2, $rows);
@@ -374,7 +374,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->createNamedMember($workspace, 'Bravo', 'Two');
         $this->createNamedMember($workspace, 'Charlie', 'Three');
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $this->assertSame(
             ['Alpha One', 'Bravo Two', 'Charlie Three'],
@@ -387,7 +387,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $this->assertSame([], $this->directoryViewData($response));
     }
@@ -400,7 +400,8 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $data = $response->original->getData();
-        $this->assertSame(['workspace', 'businesses', 'entitlement', 'directory', 'manageableBusinesses'], array_keys($data));
+        // The membership directory is Settings → Team now, not part of the overview.
+        $this->assertSame(['section', 'workspace', 'businesses', 'entitlement', 'manageableBusinesses'], array_keys($data));
         $this->assertSame(['name', 'is_active', 'role'], array_keys($data['workspace']));
         $response->assertDontSee($customer->user->email);
     }
@@ -459,10 +460,12 @@ class WorkspaceOverviewHttpTest extends TestCase
             1,
         );
 
+        // A Core account is not a customer-managed object (owner decision):
+        // with no Business yet its account page is only the first-Business
+        // form, and the plan is named on Settings → Plan & subscription.
         $account = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
-        $account->assertSee('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', false);
-        $this->assertMatchesRegularExpression('/data-role="account-plan">\s*Core\s/', $account->getContent());
+        $account->assertDontSee('data-role="account-plan"', false);
         foreach (['Plan &amp; Capacity', 'Included slots', 'Effective capacity', 'id="workspace-plan-capacity"', 'data-role="plan-features"'] as $gone) {
             $account->assertDontSee($gone, false);
         }

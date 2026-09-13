@@ -108,13 +108,18 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
             $this->assertStringNotContainsString('Choose a business', $home);
             $this->assertStringNotContainsStringIgnoringCase('workspace', $this->shellText($home), 'Never "Workspace".');
 
-            // The account is still one click away, as settings.
-            $this->assertStringContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $shell);
-            $this->assertStringContainsString('Account settings', $shell);
-            $this->assertContains('team', $this->menuKeys($home), 'Settings → Account.');
-            $this->assertContains('plan', $this->menuKeys($home), 'Settings → Plan & subscription.');
-            $this->assertContains('usage-billing', $this->menuKeys($home), 'Settings → Billing.');
-            $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+            // Superseded by the walkthrough settings decision: the account is
+            // not a customer-managed object. Its billing, plan and team are
+            // modules of the Business's Settings, and the account page opens there.
+            $hub = route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]);
+            $this->assertStringNotContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $shell);
+            $this->assertStringNotContainsString('Account settings', $shell);
+            $this->assertContains($hub, $this->menuLinks($home), 'Settings.');
+            $modules = $this->settingsHubModuleKeys($this->get($hub)->assertOk()->getContent());
+            foreach (['team', 'plan', 'usage-billing'] as $module) {
+                $this->assertContains($module, $modules, "Settings → [{$module}].");
+            }
+            $this->get(route('customer.workspaces.show', $workspace->uid))->assertRedirect($hub);
 
             auth()->logout();
             $this->flushSession();
@@ -214,9 +219,9 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
             $this->assertStringNotContainsString($moved, $text, "[{$moved}] is not a personal menu item.");
         }
 
-        // Each moved destination exists exactly once, in Settings.
-        $this->assertSame(1, substr_count($this->sidebarHtml($html), 'href="' . route('customer.sub_accounts.index') . '"'));
+        // Each moved destination is a Settings module, never a personal menu item.
         $this->assertStringNotContainsString(route('customer.sub_accounts.index'), $dropdown);
+        $this->assertStringNotContainsString('/team', $dropdown);
         $this->assertStringNotContainsString('/plan', $dropdown);
     }
 
@@ -297,24 +302,30 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
     // 5. Team, under Settings
     // =================================================================
 
+    /**
+     * Superseded by the walkthrough settings decision: Settings → Team is the
+     * account's one team — members, roles and Business access. The legacy
+     * delegated-access pages are no longer offered anywhere, though their
+     * routes and wording ("Team members") are untouched.
+     */
     public function test_team_is_a_settings_entry_for_the_account_holder_only(): void
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
-        $this->assertContains('team-members', $this->menuKeys($html));
-        $this->assertMatchesRegularExpression('/data-nav-key="team-members">.*?Team\s*</s', $this->sidebarHtml($html));
-        $this->assertStringNotContainsStringIgnoringCase('sub-account', $this->shellText($html));
-        $this->assertStringNotContainsStringIgnoringCase('sub account', $this->shellText($html));
+        $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
-        $team = $this->get(route('customer.sub_accounts.index'))->assertOk();
-        $team->assertSee('Team members');
-        $this->assertContains('team-members', $this->activeMenuKeys($team->getContent()), 'Its pages keep Settings → Team open.');
+        $this->assertContains('team', $this->settingsHubModules($hub)['billing-team'] ?? []);
+        $this->assertStringContainsString('href="' . route('customer.workspaces.team.show', $workspace->uid) . '"', $hub);
+        foreach ([$this->shellText($html), html_entity_decode(strip_tags($hub))] as $text) {
+            $this->assertStringNotContainsStringIgnoringCase('sub-account', $text);
+            $this->assertStringNotContainsStringIgnoringCase('sub account', $text);
+        }
+        $this->assertStringNotContainsString(route('customer.sub_accounts.index'), $html . $hub);
 
-        // Switched off by the platform: no entry.
-        config(['account.create_subaccount' => false]);
-        $this->assertNotContains('team-members', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertContains('settings', $this->activeMenuKeys($this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk()->getContent()), 'Team keeps Settings active.');
+        $this->get(route('customer.sub_accounts.index'))->assertOk()->assertSee('Team members');
     }
 
     public function test_a_team_member_never_manages_the_team(): void
@@ -330,15 +341,20 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
         $teamMember = Customer::create(['user_id' => $teamMemberUser->id]);
         $this->member(\App\Models\Workspace::query()->where('owner_user_id', $owner->user_id)->firstOrFail(), $teamMemberUser, WorkspaceMembershipRole::Staff);
 
+        $workspace = \App\Models\Workspace::query()->where('owner_user_id', $owner->user_id)->firstOrFail();
+        $business = $workspace->businesses()->firstOrFail();
+        $hub = fn () => $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+
         $this->authenticateAs($teamMember);
-        $this->assertNotContains('team-members', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertNotContains('team', $hub());
+        $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.sub_accounts.index'))->assertRedirect(route('user.home'));
 
         // Nor while signed in as the account holder on their behalf.
         auth()->logout();
         $this->authenticateAs($owner);
         $this->withSession(['parent_user_id' => $teamMemberUser->id, 'temp_user_id' => $owner->user_id]);
-        $this->assertNotContains('team-members', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertNotContains('team', $hub());
     }
 
     // =================================================================

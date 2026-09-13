@@ -1335,11 +1335,11 @@ class ChatBoxSecurityTest extends TestCase
         $box = $this->box($business, '15550501001', '15550509001');
 
         $this->authenticateAs($customer);
-        $this->assertContains('inbox', $this->menuKeys($this->home()->assertOk()->getContent()), 'Precondition: entitled.');
+        $this->assertContains('conversations', $this->menuKeys($this->home()->assertOk()->getContent()), 'Precondition: entitled.');
 
         app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Conversations, (int) $customer->user_id, 'Slice 2B test.');
 
-        $this->assertNotContains('inbox', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertNotContains('conversations', $this->menuKeys($this->home()->assertOk()->getContent()));
         $this->get($this->conversationUrl('index', $workspace, $business))->assertNotFound();
         $this->postJson($this->conversationUrl('messages', $workspace, $business, $box->uid))->assertNotFound();
     }

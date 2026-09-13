@@ -273,9 +273,12 @@ class BusinessLocationHttpTest extends TestCase
 
         $html = $this->get($this->url($workspace, $business))->assertOk()->getContent();
 
-        $this->assertContains('locations', $this->menuKeys($html));
-        $this->assertContains('locations', $this->activeMenuKeys($html), 'The Locations entry is active on its own page.');
-        $this->assertStringContainsString($this->url($workspace, $business), implode(' ', $this->menuLinks($html)));
+        // Settings is one sidebar entry, active on its Locations screen; the
+        // Locations module itself is on the Settings hub (owner decision).
+        $this->assertContains('settings', $this->activeMenuKeys($html), 'Settings is active on the Locations page.');
+        $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+        $this->assertContains('locations', $this->settingsHubModules($hub)['business-setup'] ?? []);
+        $this->assertStringContainsString($this->url($workspace, $business), $hub);
     }
 
     public function test_view_as_client_reaches_only_the_viewed_business_locations(): void
@@ -285,8 +288,9 @@ class BusinessLocationHttpTest extends TestCase
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
-        $html = $this->get($this->url($workspace, $viewed))->assertOk()->getContent();
-        $this->assertContains('locations', $this->menuKeys($html), 'The existing view-as classification keeps the entry for the viewed Business.');
+        $this->get($this->url($workspace, $viewed))->assertOk();
+        $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $viewed->uid]))->assertOk()->getContent();
+        $this->assertContains('locations', $this->settingsHubModuleKeys($hub), 'The existing view-as classification keeps the module for the viewed Business.');
         $this->get($this->url($workspace, $sibling))->assertNotFound();
     }
 

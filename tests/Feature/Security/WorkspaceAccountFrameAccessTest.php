@@ -103,15 +103,17 @@ class WorkspaceAccountFrameAccessTest extends TestCase
             [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Owner Account');
             $this->authenticateAs($owner);
 
+            // A Core or Growth account page opens the Business's Settings
+            // (owner decision); what the customer reads there never says Workspace.
             $url = route('customer.workspaces.show', $workspace->uid);
-            $page = $this->get($url)->assertOk();
+            $page = $this->followingRedirects()->get($url)->assertOk();
             // Rendered text only: script/style bodies and attributes are
             // not what the reader sees.
             $rendered = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1>/is', '', $page->getContent()) ?? '';
             $text = html_entity_decode(strip_tags(preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $rendered) ?? ''));
             $this->assertStringNotContainsStringIgnoringCase('workspace', $text, $tier->value . ': ' . $url . ' must not say Workspace.');
 
-            $page->assertSee('Account overview')->assertSee('Rename account')->assertDontSee('Create account');
+            $page->assertSee('Settings')->assertDontSee('Rename account')->assertDontSee('Create account');
             // One account: the account list is never shown, the page opens directly.
             $this->get(route('customer.workspaces.index'))->assertRedirect($url);
         }
