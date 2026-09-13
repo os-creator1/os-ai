@@ -70,9 +70,14 @@
 
                     <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.order', [$workspaceUid, $businessUid]) }}">
                         @csrf
-                        <input type="hidden" name="phone_number" value="{{ $candidate->phoneNumber }}">
-                        <input type="hidden" name="provider_candidate_reference" value="{{ $candidate->providerCandidateReference }}">
-                        <input type="hidden" name="number_type" value="{{ $candidate->numberType->value }}">
+                        {{-- PR #295 Correction Round 1, item 2 — the browser
+                             never gets the raw phone_number/provider_candidate_reference/
+                             number_type back as independently-editable
+                             fields; it only carries this one opaque,
+                             short-lived, Business-bound token, so an order
+                             can never be bound to a provider resource this
+                             platform did not itself just verify. --}}
+                        <input type="hidden" name="candidate_token" value="{{ $candidateToken }}">
                         <x-button type="submit" variant="primary" :disabled="! $available">Get this number</x-button>
                     </form>
                 </div>

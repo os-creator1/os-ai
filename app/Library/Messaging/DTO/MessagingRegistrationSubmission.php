@@ -16,6 +16,7 @@ use App\Models\BusinessMessagingRegistration;
 final readonly class MessagingRegistrationSubmission
 {
     public function __construct(
+        public int $businessId,
         public PhoneNumberType $numberType,
         public string $legalBusinessName,
         public MessagingEntityType $entityType,
@@ -41,6 +42,7 @@ final readonly class MessagingRegistrationSubmission
     public static function fromModel(BusinessMessagingRegistration $registration): self
     {
         return new self(
+            businessId: (int) $registration->business_id,
             numberType: $registration->number_type,
             legalBusinessName: (string) $registration->legal_business_name,
             entityType: $registration->entity_type,

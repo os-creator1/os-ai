@@ -26,6 +26,13 @@ final class ProvisioningAvailability
             return false;
         }
 
+        // PR #295 Correction Round 1, item 5 — a separate, default-OFF
+        // production gate for live number purchase/registration
+        // specifically; normal managed SMS sending does not depend on it.
+        if (! config('messaging.managed_messaging_provisioning_enabled')) {
+            return false;
+        }
+
         $apiKey = (string) (config('services.telnyx.api_key') ?? '');
 
         return $apiKey !== '';

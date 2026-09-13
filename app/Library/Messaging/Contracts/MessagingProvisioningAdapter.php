@@ -7,6 +7,7 @@ use App\Library\Messaging\DTO\AvailableNumberCandidate;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
+use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Models\Business;
 
@@ -60,6 +61,13 @@ interface MessagingProvisioningAdapter
     /**
      * Polls the provider for this registration's current state. Never
      * guesses Approved without an explicit provider answer saying so.
+     *
+     * PR #295 Correction Round 1, item 7 — takes the whole, type-aware
+     * $query rather than a bare (brand, campaign) pair: a toll-free
+     * verification has no brand/campaign concept at all, and this is the
+     * seam that lets an implementation route 10DLC and toll-free to their
+     * own real status endpoints instead of one shared (and, for toll-free,
+     * fictitious) "/campaign/{id}" call.
      */
-    public function refreshRegistrationStatus(string $providerBrandId, string $providerCampaignId): MessagingRegistrationStatus;
+    public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus;
 }

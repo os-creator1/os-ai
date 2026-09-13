@@ -47,6 +47,7 @@ class BusinessMessagingRegistration extends Model
         'terms_url',
         'provider_brand_id',
         'provider_campaign_id',
+        'provider_registration_id',
         'rejection_reason',
         'submitted_at',
         'approved_at',

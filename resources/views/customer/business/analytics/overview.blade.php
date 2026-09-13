@@ -9,7 +9,6 @@
 @php
     use App\Enums\Automation\AutomationTriggerType;
 
-    $m = $analytics->messages;
     $c = $analytics->contacts;
     $a = $analytics->automations;
     $n = static fn (int $value): string => number_format($value);
@@ -24,8 +23,14 @@
 
     // Section visibility — a section renders only when it has something to
     // say for this period. Figures are never hidden to flatter the page:
-    // the overview always shows its three figures, zeros included.
-    $hasActivity = $c->newInRange > 0 || $m->inbound > 0 || $m->outbound > 0 || $m->api > 0 || $conversationsStarted > 0;
+    // the overview always shows its figures, zeros included.
+    //
+    // PR #295 Correction Round 1, item 9 (Results cleanup, stronger than
+    // the prior round) — messaging is operational plumbing, not a Business
+    // outcome, so it no longer counts toward "this period has activity"
+    // either; a Business with only messaging traffic and no contacts or
+    // conversations now correctly sees the empty state here.
+    $hasActivity = $c->newInRange > 0 || $conversationsStarted > 0;
     $hasAutomationRuns = $a !== null && $a->executionsInRange > 0;
     $hasContacts = $c->totalNow > 0;
     $hasCampaigns = $analytics->campaigns->totalNow() > 0;
@@ -99,25 +104,18 @@
             <h2 id="results-overview-heading" class="text-section-heading mb-1">Overview</h2>
 
             <div class="row" data-role="stat-cards">
-                <div class="col-md-4 col-sm-6 mb-2">
+                <div class="col-md-6 col-sm-6 mb-2">
                     <x-card data-role="kpi-new-contacts">
                         <p class="text-label mb-1">New contacts</p>
                         <p class="h2 mb-0" data-role="kpi-new-contacts-value">{{ $n($c->newInRange) }}</p>
                         <p class="text-caption text-muted mb-0">Contacts added during this period.</p>
                     </x-card>
                 </div>
-                <div class="col-md-4 col-sm-6 mb-2">
+                <div class="col-md-6 col-sm-6 mb-2">
                     <x-card data-role="kpi-new-conversations">
                         <p class="text-label mb-1">New conversations</p>
                         <p class="h2 mb-0" data-role="kpi-new-conversations-value">{{ $n($conversationsStarted) }}</p>
                         <p class="text-caption text-muted mb-0">Conversations started during this period.</p>
-                    </x-card>
-                </div>
-                <div class="col-md-4 col-sm-6 mb-2">
-                    <x-card data-role="kpi-messages-received">
-                        <p class="text-label mb-1">Messages received</p>
-                        <p class="h2 mb-0" data-role="kpi-messages-received-value">{{ $n($m->inbound) }}</p>
-                        <p class="text-caption text-muted mb-0">Messages people sent to you.</p>
                     </x-card>
                 </div>
             </div>
@@ -140,11 +138,13 @@
         </section>
 
         {{-- MESSAGES — moved to Settings -> Text messaging -> Delivery & usage
-             (owner product decision: Results is for Business outcomes, not
-             telecom plumbing). "Messages received" above stays here as a
-             genuine outcome signal; the sent/failed/processing breakdown and
-             the message-volume chart live only on the Delivery & usage page
-             now. --}}
+             in full (owner product decision, PR #295 Correction Round 1
+             item 9: Results is for Business outcomes only, not telecom
+             plumbing). Sent/Failed/Processing, Messages received, and the
+             message-volume chart all live only on the Delivery & usage page
+             now — none of it renders here any more. Conversion metrics may
+             be reintroduced later once CRM/Opportunities/Forms make them
+             meaningful as genuine Business outcomes. --}}
 
         {{-- AUTOMATIONS — only when automations actually ran in this period.
              Human outcome labels over the B4 ledger; trigger names come from

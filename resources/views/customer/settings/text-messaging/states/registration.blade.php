@@ -55,7 +55,22 @@
         @endswitch
     </x-card>
 
-    @if($status !== 'pending')
+    {{-- PR #295 Correction Round 1, item 8 — once a carrier has approved
+         this registration, the normal customer edit form is never shown
+         again; the record is read-only through this surface. --}}
+    @if($status === 'approved')
+        <x-card title="Business details" :padded="true">
+            <p class="text-caption text-muted mb-2">This registration has been approved and its details can no longer be edited here.</p>
+            <dl class="row mb-0">
+                <dt class="col-sm-4">Legal business name</dt>
+                <dd class="col-sm-8">{{ $registration->legal_business_name }}</dd>
+                <dt class="col-sm-4">Website</dt>
+                <dd class="col-sm-8">{{ $registration->website_url }}</dd>
+                <dt class="col-sm-4">Contact email</dt>
+                <dd class="col-sm-8">{{ $registration->contact_email }}</dd>
+            </dl>
+        </x-card>
+    @elseif($status !== 'pending')
         <x-card title="Business details" :padded="true">
             <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.update', [$workspaceUid, $businessUid]) }}">
                 @csrf

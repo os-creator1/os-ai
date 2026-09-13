@@ -12,10 +12,14 @@ use App\Library\Analytics\BusinessAnalyticsPresenter;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\BusinessMessagingProvisioningService;
 use App\Library\Messaging\BusinessMessagingRegistrationService;
-use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\CandidateToken;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
+use App\Library\Messaging\Exceptions\InvalidCandidateTokenException;
+use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
+use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Library\Messaging\ProvisioningAvailability;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
@@ -90,9 +94,15 @@ class TextMessagingController extends CustomerBaseController
     // STATE 1 — no number.
     // -----------------------------------------------------------------
 
+    /**
+     * PR #295 Correction Round 1, item 1 — searching/ordering a number is
+     * a cost-incurring number-acquisition action, so it reuses the
+     * canonical buy_numbers permission rather than the read-only
+     * view_numbers used by show()/deliveryUsage().
+     */
     public function searchNumber(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application
     {
-        $this->authorize('view_numbers');
+        $this->authorize('buy_numbers');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
@@ -109,6 +119,7 @@ class TextMessagingController extends CustomerBaseController
         );
 
         $candidates = $this->provisioning->searchNumbers($criteria);
+        $candidate = $candidates[0] ?? null;
 
         return view('customer.settings.text-messaging.states.no-number', [
             'workspaceUid' => $workspaceUid,
@@ -116,13 +127,30 @@ class TextMessagingController extends CustomerBaseController
             'available' => $this->provisioning->isAvailable(),
             'searched' => true,
             'criteria' => $validated,
-            'candidate' => $candidates[0] ?? null,
+            'candidate' => $candidate,
+            // PR #295 Correction Round 1, item 2 — the browser never gets
+            // the raw phone_number/provider_candidate_reference/number_type
+            // fields back as independently-editable form inputs; it only
+            // ever gets this one opaque, short-lived, Business-bound token.
+            'candidateToken' => $candidate !== null ? CandidateToken::encode($business, $candidate) : null,
         ]);
     }
 
+    /**
+     * PR #295 Correction Round 1, items 1, 2, 3, 4:
+     *  - buy_numbers, not view_numbers (item 1).
+     *  - the order is bound to a candidate this platform itself verified a
+     *    moment earlier via CandidateToken, never to raw posted fields
+     *    (item 2).
+     *  - BusinessMessagingProvisioningService now reserves the identity
+     *    slot before any provider call (item 3) and the real adapter
+     *    refuses an unfunded cost-incurring call before it ever reaches
+     *    Telnyx (item 4) — both surface here as ordinary, user-facing
+     *    refusals, never a purchase.
+     */
     public function orderNumber(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('view_numbers');
+        $this->authorize('buy_numbers');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $this->guardNoExistingNumber($business);
@@ -132,16 +160,14 @@ class TextMessagingController extends CustomerBaseController
         }
 
         $validated = $request->validate([
-            'phone_number' => ['required', 'string'],
-            'provider_candidate_reference' => ['required', 'string'],
-            'number_type' => ['required', 'in:local,toll_free'],
+            'candidate_token' => ['required', 'string'],
         ]);
 
-        $candidate = new AvailableNumberCandidate(
-            phoneNumber: $validated['phone_number'],
-            numberType: PhoneNumberType::from($validated['number_type']),
-            providerCandidateReference: $validated['provider_candidate_reference'],
-        );
+        try {
+            $candidate = CandidateToken::decode($validated['candidate_token'], $business);
+        } catch (InvalidCandidateTokenException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'This number is no longer available. Please search again.');
+        }
 
         try {
             $this->provisioning->provisionNumber($business, $candidate);
@@ -149,6 +175,8 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
+        } catch (MessagingFundingUnavailableException|MessagingInsufficientFundsException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
@@ -161,9 +189,16 @@ class TextMessagingController extends CustomerBaseController
     // STATE 2 — registration required.
     // -----------------------------------------------------------------
 
+    /**
+     * PR #295 Correction Round 1, item 1 — legal/compliance submission is a
+     * charge-incurring action; it reuses manage_advanced_provider, the
+     * narrowest existing owner/manage authority in the Messaging category,
+     * rather than the read-only view_numbers or inventing a new
+     * permission.
+     */
     public function updateRegistration(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('view_numbers');
+        $this->authorize('manage_advanced_provider');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $numberType = $this->numberTypeFor($business);
@@ -195,7 +230,11 @@ class TextMessagingController extends CustomerBaseController
         $validated['number_type'] = $numberType->value;
         $validated['country_code'] = 'US';
 
-        $this->registrations->captureDetails($business, $validated);
+        try {
+            $this->registrations->captureDetails($business, $validated);
+        } catch (MessagingRegistrationImmutableException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been approved and can no longer be edited.');
+        }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -205,7 +244,7 @@ class TextMessagingController extends CustomerBaseController
 
     public function submitRegistration(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        $this->authorize('view_numbers');
+        $this->authorize('manage_advanced_provider');
 
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
         $registration = $this->registrationFor($business);
@@ -331,6 +370,7 @@ class TextMessagingController extends CustomerBaseController
             'searched' => false,
             'criteria' => [],
             'candidate' => null,
+            'candidateToken' => null,
         ]);
     }
 

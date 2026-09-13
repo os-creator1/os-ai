@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Messaging;
 
+use App\Enums\Messaging\BusinessMessagingIdentityStatus;
+use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\BusinessMessagingProvisioningService;
@@ -12,6 +14,7 @@ use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\FakeProvisioningAdapter;
 use App\Models\BusinessMessagingNumber;
+use App\Models\BusinessMessagingProvisioningIncident;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
@@ -31,14 +34,18 @@ class BusinessMessagingProvisioningServiceTest extends TestCase
     {
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
-        config(['messaging.managed_messaging_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        config([
+            'messaging.managed_messaging_enabled' => true,
+            'messaging.managed_messaging_provisioning_enabled' => true,
+            'services.telnyx.api_key' => 'fixture_key',
+        ]);
 
         return $fake;
     }
 
     private function service(): BusinessMessagingProvisioningService
     {
-        return new BusinessMessagingProvisioningService(app(BusinessMessagingIdentityResolver::class));
+        return app(BusinessMessagingProvisioningService::class);
     }
 
     // -----------------------------------------------------------------
@@ -161,5 +168,102 @@ class BusinessMessagingProvisioningServiceTest extends TestCase
 
         $this->assertDatabaseHas('business_messaging_identities', ['business_id' => $business->id]);
         $this->assertDatabaseHas('business_messaging_numbers', ['id' => $number->id, 'business_messaging_identity_id' => $number->business_messaging_identity_id]);
+    }
+
+    // -----------------------------------------------------------------
+    // PR #295 Correction Round 1, item 3 — the identity slot is reserved
+    // BEFORE any provider call, so a concurrent/stale second attempt can
+    // never reach the adapter and can never cause a second paid
+    // commitment.
+    // -----------------------------------------------------------------
+
+    public function test_a_pending_reservation_from_a_concurrent_attempt_blocks_a_second_attempt_before_any_provider_call(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+
+        // Simulates a first, still-in-flight request having already won
+        // the reservation (the exact row provisionNumber() itself would
+        // create before calling the adapter).
+        app(BusinessMessagingIdentityResolver::class)->create(
+            $business,
+            'reserved:concurrent-attempt',
+            null,
+            MessagingProvider::Telnyx,
+            BusinessMessagingIdentityStatus::Pending,
+        );
+
+        $this->expectException(MessagingIdentityConflictException::class);
+
+        try {
+            $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550110', PhoneNumberType::Local, 'candidate-ref-7'));
+        } finally {
+            $this->assertSame([], $fake->provisionedOrders, 'The second, conflicting attempt must never reach the provider.');
+        }
+    }
+
+    public function test_a_provider_failure_frees_the_reservation_for_another_attempt(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+
+        $this->app->bind(MessagingProvisioningAdapter::class, fn () => new class extends FakeProvisioningAdapter {
+            public function provisionNumber(\App\Models\Business $business, AvailableNumberCandidate $candidate): \App\Library\Messaging\DTO\ProvisionedNumberResult
+            {
+                throw new \RuntimeException('Simulated provider failure.');
+            }
+        });
+
+        try {
+            $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550111', PhoneNumberType::Local, 'candidate-ref-8'));
+            $this->fail('Expected the simulated provider failure to propagate.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Simulated provider failure.', $e->getMessage());
+        }
+
+        // The failed reservation must not leave the Business permanently
+        // stuck — a fresh attempt is possible.
+        $this->assertNull(app(BusinessMessagingIdentityResolver::class)->resolveForBusiness($business));
+        $this->assertDatabaseCount('business_messaging_identities', 0);
+
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550112', PhoneNumberType::Local, 'candidate-ref-9'));
+        $this->assertInstanceOf(BusinessMessagingNumber::class, $number);
+    }
+
+    public function test_a_local_finalization_failure_after_provider_success_is_recorded_never_lost(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+
+        // A phone number already claimed by another active mapping makes
+        // attachNumber() throw AFTER the (fake) provider has already
+        // "succeeded" — exactly the partial-failure window item 3 requires
+        // reconciliation state for.
+        [$otherBusiness] = $this->managedBusiness('+14155550113');
+
+        $number = new AvailableNumberCandidate('+14155550113', PhoneNumberType::Local, 'candidate-ref-10');
+
+        try {
+            $this->service()->provisionNumber($business, $number);
+            $this->fail('Expected a MessagingIdentityConflictException from the claimed number.');
+        } catch (MessagingIdentityConflictException) {
+            // expected
+        }
+
+        // The reservation identity itself survives with the real provider
+        // profile id — it is not lost.
+        $identity = \App\Models\BusinessMessagingIdentity::query()->where('business_id', $business->id)->first();
+        $this->assertNotNull($identity);
+        $this->assertStringStartsNotWith('reserved:', $identity->messaging_profile_id);
+
+        // And an incident row exists recording exactly what the provider
+        // returned, so the phone number itself is never invisible either.
+        $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
+            'business_id' => $business->id,
+            'stage' => 'number_attach_failed_after_provider_success',
+            'phone_number' => '+14155550113',
+        ]);
+        $this->assertSame(1, BusinessMessagingProvisioningIncident::where('business_id', $business->id)->count());
     }
 }

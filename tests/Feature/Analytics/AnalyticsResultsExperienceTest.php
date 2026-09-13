@@ -125,16 +125,19 @@ class AnalyticsResultsExperienceTest extends TestCase
         $this->assertStringContainsString('New contacts', $overview);
         $this->assertStringContainsString('Contacts added during this period.', $overview);
         $this->assertStringContainsString('New conversations', $overview);
-        $this->assertStringContainsString('Messages received', $overview);
 
         // Outgoing volume is operational health, not a local-Business win.
         foreach (['Messages sent', 'Outbound', 'Outgoing', '>Sent<', 'Failed'] as $outgoing) {
             $this->assertStringNotContainsString($outgoing, $overview, "The overview must not headline {$outgoing}.");
         }
 
-        // The secondary Messages breakdown moved off Results entirely
-        // (owner product decision, Results cleanup) — Settings -> Text
-        // messaging -> Delivery & usage owns it now.
+        // PR #295 Correction Round 1, item 9 (Results cleanup, stronger than
+        // the prior round) — ALL messaging metrics, "Messages received"
+        // included, moved off Results entirely. Settings -> Text messaging
+        // -> Delivery & usage owns every messaging figure now; Results
+        // contains Business outcomes only.
+        $this->assertStringNotContainsString('Messages received', $overview);
+        $this->assertStringNotContainsString('data-role="kpi-messages-received"', $html);
         $this->assertStringNotContainsString('data-role="results-messages"', $html);
     }
 
@@ -174,7 +177,11 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $this->assertSame((string) $b5->contacts->newInRange, $this->figure($html, 'kpi-new-contacts-value'));
         $this->assertSame((string) $conversations, $this->figure($html, 'kpi-new-conversations-value'));
-        $this->assertSame((string) $b5->messages->inbound, $this->figure($html, 'kpi-messages-received-value'));
+
+        // Item 9 — "Messages received" (b5->messages->inbound) no longer
+        // renders on Results at all; TextMessagingDeliveryUsageTest proves
+        // it on Delivery & usage instead.
+        $this->assertStringNotContainsString('data-role="kpi-messages-received-value"', $html);
     }
 
     public function test_message_outcomes_are_plain_words_over_the_unchanged_b5_figures(): void
@@ -428,7 +435,6 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $this->assertSame('0', $this->figure($html, 'kpi-new-contacts-value'));
         $this->assertSame('0', $this->figure($html, 'kpi-new-conversations-value'));
-        $this->assertSame('0', $this->figure($html, 'kpi-messages-received-value'));
 
         $charts = $this->series($workspace, $business)->assertOk()->json('charts');
         $this->assertSame(0, array_sum($charts['messages']['series']['accepted']));

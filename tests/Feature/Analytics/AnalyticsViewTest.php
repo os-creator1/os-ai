@@ -28,10 +28,12 @@ class AnalyticsViewTest extends TestCase
         // where executions exist; Results shows it only when automations ran.
         //
         // Owner product decision ("remove Messaging channel from normal UX",
-        // Results cleanup): the sent/failed/processing breakdown and its
-        // chart moved to Settings -> Text messaging -> Delivery & usage —
+        // Results cleanup — PR #295 Correction Round 1 item 9, stronger
+        // than the prior round): ALL messaging metrics (Sent, Failed,
+        // Processing, Messages received, and the message-volume chart)
+        // moved to Settings -> Text messaging -> Delivery & usage —
         // TextMessagingDeliveryUsageTest owns proving those markers there
-        // now. Results keeps only "Messages received" as a genuine outcome.
+        // now. Results contains Business outcomes only.
         foreach (['ds-card', 'ds-table', 'rounded-pill', 'data-role="stat-cards"', 'data-role="chart-contact-growth"', 'data-role="campaigns-panel"', 'window.PlatformTheme', 'apexcharts.min.js'] as $marker) {
             $response->assertSee($marker, false);
         }
@@ -39,6 +41,8 @@ class AnalyticsViewTest extends TestCase
         $response->assertDontSee('data-role="results-messages"', false);
         $response->assertDontSee('data-role="outcome-breakdown"', false);
         $response->assertDontSee('data-role="chart-message-volume"', false);
+        $response->assertDontSee('data-role="kpi-messages-received"', false);
+        $response->assertDontSee('Messages received');
         $response->assertDontSee('Provider-accepted rate');
         $response->assertDontSee('handset');
         $response->assertDontSee('7367F0', false);

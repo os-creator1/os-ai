@@ -6,6 +6,7 @@ use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Library\Messaging\BusinessMessagingRegistrationService;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
+use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Library\Messaging\FakeProvisioningAdapter;
 use App\Models\BusinessMessagingRegistration;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -27,7 +28,11 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
     {
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
-        config(['messaging.managed_messaging_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
+        config([
+            'messaging.managed_messaging_enabled' => true,
+            'messaging.managed_messaging_provisioning_enabled' => true,
+            'services.telnyx.api_key' => 'fixture_key',
+        ]);
 
         return $fake;
     }
@@ -130,7 +135,12 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertNotNull($submitted->submitted_at);
     }
 
-    public function test_submitting_a_toll_free_registration_still_produces_both_opaque_references(): void
+    /**
+     * PR #295 Correction Round 1, item 7 — a toll-free submission has no
+     * brand/campaign concept at all; it must never reuse those two 10DLC
+     * fields to smuggle through one opaque id (the prior round's bug).
+     */
+    public function test_submitting_a_toll_free_registration_produces_a_registration_id_never_a_brand_or_campaign(): void
     {
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
@@ -138,8 +148,22 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
         $submitted = $this->service()->submit($registration);
 
+        $this->assertNull($submitted->provider_brand_id);
+        $this->assertNull($submitted->provider_campaign_id);
+        $this->assertNotNull($submitted->provider_registration_id);
+    }
+
+    public function test_submitting_a_local_registration_produces_a_brand_and_campaign_never_a_bare_registration_id(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload(['number_type' => 'local']));
+
+        $submitted = $this->service()->submit($registration);
+
         $this->assertNotNull($submitted->provider_brand_id);
         $this->assertNotNull($submitted->provider_campaign_id);
+        $this->assertNull($submitted->provider_registration_id);
     }
 
     public function test_submitting_when_not_configured_throws_and_does_not_change_status(): void
@@ -167,7 +191,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
         $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
-        $fake->scriptRegistrationStatus($registration->provider_brand_id, $registration->provider_campaign_id, MessagingRegistrationStatus::Approved);
+        $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
 
         $refreshed = $this->service()->refreshStatus($registration);
 
@@ -181,7 +205,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $fake = $this->bindFakeProvisioningAdapter();
         $business = $this->makeBusiness();
         $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
-        $fake->scriptRegistrationStatus($registration->provider_brand_id, $registration->provider_campaign_id, MessagingRegistrationStatus::Rejected);
+        $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected);
 
         $refreshed = $this->service()->refreshStatus($registration);
 
@@ -209,5 +233,81 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $refreshed = $this->service()->refreshStatus($registration);
 
         $this->assertSame(MessagingRegistrationStatus::Pending, $refreshed->status);
+    }
+
+    public function test_refresh_routes_a_toll_free_registration_through_its_own_registration_id(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free'])));
+        $this->assertNotNull($registration->provider_registration_id);
+        $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
+
+        $refreshed = $this->service()->refreshStatus($registration);
+
+        $this->assertSame(MessagingRegistrationStatus::Approved, $refreshed->status);
+    }
+
+    // -----------------------------------------------------------------
+    // PR #295 Correction Round 1, item 6 — the one canonical mechanism
+    // that actually advances a submitted registration.
+    // -----------------------------------------------------------------
+
+    public function test_refresh_all_pending_advances_every_pending_registration_in_one_sweep(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $businessA = $this->makeBusiness();
+        $businessB = $this->makeBusiness();
+        $registrationA = $this->service()->submit($this->service()->captureDetails($businessA, $this->payload()));
+        $registrationB = $this->service()->submit($this->service()->captureDetails($businessB, $this->payload(['number_type' => 'toll_free'])));
+        $fake->scriptRegistrationStatus($registrationA, MessagingRegistrationStatus::Approved);
+        $fake->scriptRegistrationStatus($registrationB, MessagingRegistrationStatus::Rejected);
+
+        $this->service()->refreshAllPending();
+
+        $this->assertSame(MessagingRegistrationStatus::Approved, $registrationA->fresh()->status);
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $registrationB->fresh()->status);
+    }
+
+    public function test_refresh_all_pending_never_touches_a_not_started_registration(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $notStarted = $this->service()->captureDetails($business, $this->payload());
+
+        $this->service()->refreshAllPending();
+
+        $this->assertSame(MessagingRegistrationStatus::NotStarted, $notStarted->fresh()->status);
+    }
+
+    // -----------------------------------------------------------------
+    // PR #295 Correction Round 1, item 8 — once Approved, immutable
+    // through the normal customer edit route.
+    // -----------------------------------------------------------------
+
+    public function test_capturing_details_on_an_approved_registration_is_refused(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['status' => MessagingRegistrationStatus::Approved->value, 'approved_at' => now()]);
+
+        $this->expectException(MessagingRegistrationImmutableException::class);
+
+        $this->service()->captureDetails($business, $this->payload(['legal_business_name' => 'A Different Name LLC']));
+    }
+
+    public function test_an_approved_registrations_data_is_unchanged_after_a_refused_capture_attempt(): void
+    {
+        $business = $this->makeBusiness();
+        $registration = $this->service()->captureDetails($business, $this->payload());
+        $registration->update(['status' => MessagingRegistrationStatus::Approved->value, 'approved_at' => now()]);
+
+        try {
+            $this->service()->captureDetails($business, $this->payload(['legal_business_name' => 'A Different Name LLC']));
+        } catch (MessagingRegistrationImmutableException) {
+            // expected
+        }
+
+        $this->assertSame('Harbor Lane Studios LLC', $registration->fresh()->legal_business_name);
     }
 }
