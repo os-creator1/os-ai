@@ -166,6 +166,31 @@ class WorkflowAdvancer
             return false;
         }
 
+        // A WAIT ARRIVES ATOMICALLY (§12). The step run becoming `waiting` and
+        // the enrollment becoming `waiting` with its `resume_at` are one fact,
+        // so they are one transaction. Split across two statements there is a
+        // window in which the step says "waiting" while the enrollment is still
+        // `active` — long enough for the recovery sweep to read it as a stalled
+        // active journey, or for a second advance to claim past it. Neither can
+        // observe a half-parked journey now, and no second `resume_at` can be
+        // written because the enrollment update is conditional on the cursor and
+        // status it was read at.
+        if ($outcome->status === StepRunStatus::Waiting && $outcome->resumeAt !== null) {
+            return DB::transaction(function () use ($enrollment, $node, $stepRun, $outcome): bool {
+                $this->closeStep(
+                    $stepRun,
+                    $outcome->status,
+                    $outcome->branchTaken,
+                    $outcome->safeErrorSummary,
+                    $outcome->safeResultSummary,
+                );
+
+                $this->park($enrollment, $node, $outcome->resumeAt);
+
+                return false;
+            });
+        }
+
         $this->closeStep(
             $stepRun,
             $outcome->status,
@@ -173,15 +198,6 @@ class WorkflowAdvancer
             $outcome->safeErrorSummary,
             $outcome->safeResultSummary,
         );
-
-        // A wait parks the journey. The executor that returns this arrives with
-        // the wait slice; the runtime already knows what to do with it, so that
-        // slice adds no state machine of its own.
-        if ($outcome->status === StepRunStatus::Waiting && $outcome->resumeAt !== null) {
-            $this->park($enrollment, $outcome->resumeAt);
-
-            return false;
-        }
 
         if ($outcome->status === StepRunStatus::Failed) {
             // Failure policy is versioned and pinned, so a journey fails the way
@@ -258,10 +274,19 @@ class WorkflowAdvancer
         return $edge === null ? null : (int) $edge->to_node_id;
     }
 
-    private function park(AutomationEnrollment $enrollment, Carbon $resumeAt): void
+    /**
+     * Park the journey on the wait node until `$resumeAt`.
+     *
+     * Conditional on the cursor as well as the status, for the same reason
+     * moveOn() is: if another worker has already advanced or ended this journey
+     * while this one was evaluating, its decision stands and this update affects
+     * nothing rather than overwriting a newer `resume_at` with a stale one.
+     */
+    private function park(AutomationEnrollment $enrollment, AutomationWorkflowNode $node, Carbon $resumeAt): void
     {
         AutomationEnrollment::query()
             ->whereKey($enrollment->getKey())
+            ->where('current_node_id', $node->getKey())
             ->where('status', EnrollmentStatus::Active->value)
             ->update([
                 'status' => EnrollmentStatus::Waiting->value,
@@ -269,6 +294,18 @@ class WorkflowAdvancer
                 'last_advanced_at' => Carbon::now(),
                 'updated_at' => Carbon::now(),
             ]);
+    }
+
+    /**
+     * The node a given branch leaves this node for, or null when the path ends.
+     *
+     * Public because the wake sweep (WorkflowWakeService) must move a woken
+     * journey to the wait node's successor, and duplicating the edge lookup
+     * there would mean two places deciding what "the next step" is.
+     */
+    public function successorOf(AutomationWorkflowNode $node, ?WorkflowEdgeKind $branch = null): ?int
+    {
+        return $this->successorId($node, $branch);
     }
 
     /** Close a journey durably, clearing the cursor so nothing can resume it. */

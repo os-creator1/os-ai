@@ -28,7 +28,7 @@ class ExecutorRegistryTest extends TestCase
         return app(NodeExecutorRegistry::class);
     }
 
-    /** 17. Trigger and End survive, and the three action types are added. */
+    /** 17. Trigger and End survive, and the action and logic types are added. */
     public function test_the_registry_holds_the_structural_and_action_executors(): void
     {
         $expected = [
@@ -37,6 +37,9 @@ class ExecutorRegistryTest extends TestCase
             WorkflowNodeType::SendSms->value => SendSmsNodeExecutor::class,
             WorkflowNodeType::UpdateContactField->value => UpdateContactFieldNodeExecutor::class,
             WorkflowNodeType::InternalNotification->value => InternalNotificationNodeExecutor::class,
+            // Added by the V2 logic runtime slice.
+            WorkflowNodeType::Wait->value => \App\Library\Automation\Workflow\Executors\WaitNodeExecutor::class,
+            WorkflowNodeType::IfElse->value => \App\Library\Automation\Workflow\Executors\IfElseNodeExecutor::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -54,20 +57,30 @@ class ExecutorRegistryTest extends TestCase
     }
 
     /**
-     * The types this slice does NOT own must still have no executor, because the
-     * advancer's "hold, do not skip" behaviour for a missing one is what keeps a
-     * journey intact until its slice ships. Registering a placeholder here would
-     * silently drop those steps out of customers' workflows.
+     * The registry is now COMPLETE: every declared node type can run.
+     *
+     * This test previously asserted the opposite for `wait` and `if_else` —
+     * that they were deliberately unregistered so the advancer would hold those
+     * steps rather than skip them. The logic runtime slice ships both executors,
+     * so the assertion is inverted rather than deleted: the useful invariant is
+     * that the registry and the node-type enum agree, in whichever direction.
+     * A type declared in the enum with no executor is now a shipping gap, and a
+     * registered executor for a type the enum does not declare is a stray.
      */
-    public function test_wait_and_if_else_are_still_deliberately_unregistered(): void
+    public function test_every_declared_node_type_has_an_executor(): void
     {
-        foreach ([WorkflowNodeType::Wait, WorkflowNodeType::IfElse] as $type) {
-            $this->assertNull(
-                $this->registry()->for($type),
-                "'{$type->value}' belongs to a later slice and must have no executor yet.",
+        foreach (WorkflowNodeType::cases() as $type) {
+            $this->assertTrue(
+                $this->registry()->has($type),
+                "'{$type->value}' is declared but has no executor.",
             );
-            $this->assertFalse($this->registry()->has($type));
         }
+
+        $this->assertCount(
+            count(WorkflowNodeType::cases()),
+            $this->registry()->registeredTypes(),
+            'The registry must hold exactly the declared types — no strays.',
+        );
     }
 
     /** Every registered executor honours the contract the advancer relies on. */

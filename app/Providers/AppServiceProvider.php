@@ -264,6 +264,14 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\UpdateContactFieldNodeExecutor::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\InternalNotificationNodeExecutor::class));
 
+                    // V2 logic runtime. With these two the registry is complete:
+                    // every node type WorkflowNodeType declares now has an
+                    // executor, so the advancer's "hold a step with no executor"
+                    // path stops being reachable in normal operation — it stays
+                    // as the guard it always was, not as a shipping gap.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\WaitNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\IfElseNodeExecutor::class));
+
                     return $registry;
                 },
             );

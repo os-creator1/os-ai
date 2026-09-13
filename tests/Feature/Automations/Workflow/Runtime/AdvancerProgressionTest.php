@@ -191,13 +191,26 @@ class AdvancerProgressionTest extends TestCase
     public function test_a_step_with_no_executor_holds_the_journey_untouched(): void
     {
         [, $business] = $this->entitledTenant();
-        // `update_contact_field` has no executor in this slice.
         [$workflow] = $this->publishWorkflow($business, [
             ['key' => (string) \Illuminate\Support\Str::uuid(), 'type' => 'wait',
              'config' => ['mode' => 'duration', 'amount' => 1, 'unit' => 'hours']],
             $this->endStep(),
         ]);
         $contact = $this->contactFor($business);
+
+        // Every node type now HAS an executor, so the gap has to be made rather
+        // than found: this registry deliberately omits the one for `wait`.
+        //
+        // The invariant is still worth proving, and is arguably worth more now
+        // than when it was incidental. It is what a partially-deployed release
+        // relies on — new definitions reaching workers that do not yet have the
+        // matching executor — and the wrong behaviours (silently skipping the
+        // step, or ending the journey) would both be invisible in production
+        // until somebody's customer never received the rest of their sequence.
+        $registry = new \App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry();
+        $registry->register(app(\App\Library\Automation\Workflow\Executors\TriggerNodeExecutor::class));
+        $registry->register(app(\App\Library\Automation\Workflow\Executors\EndNodeExecutor::class));
+        $this->app->instance(\App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry::class, $registry);
         $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
 
         $this->advancer()->advance($enrollment);

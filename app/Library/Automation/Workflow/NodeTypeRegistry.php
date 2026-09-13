@@ -10,6 +10,7 @@ use App\Enums\Automation\Workflow\FailurePolicy;
 use App\Enums\Automation\Workflow\NodeSideEffectClass;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
+use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
 
 /**
  * Automations V2 §5.2 — the single authority on what step types exist and what
@@ -309,6 +310,12 @@ class NodeTypeRegistry
 
             if (! is_string($subject) || trim($subject) === '') {
                 $errors[] = sprintf('Condition %d needs something to check.', $position);
+            } elseif (! ConditionSubjectRegistry::isKnownSubjectKey($subject)) {
+                // V2 logic runtime — the subject must be one the code knows.
+                // Refusing here is what makes "no expression language" true at
+                // the door rather than only at execution: an unknown key cannot
+                // be published, so nothing downstream has to guess what it meant.
+                $errors[] = sprintf('Condition %d checks something this product cannot read.', $position);
             }
 
             $operator = ConditionOperator::tryFrom((string) ($condition['operator'] ?? ''));
@@ -317,6 +324,21 @@ class NodeTypeRegistry
                 $errors[] = sprintf('Condition %d needs a comparison.', $position);
 
                 continue;
+            }
+
+            // Operator legality, for every subject whose family is knowable
+            // without a query. A custom field's family depends on the field's
+            // own type, so WorkflowCompiler decides that one against real rows —
+            // this class stays pure.
+            if (is_string($subject)) {
+                $allowed = ConditionSubjectRegistry::staticOperatorsFor($subject);
+
+                if ($allowed !== null && ! in_array($operator, $allowed, true)) {
+                    $errors[] = sprintf(
+                        'Condition %d uses a comparison that does not apply to what it checks.',
+                        $position,
+                    );
+                }
             }
 
             $hasOperand = array_key_exists('operand', $condition)
