@@ -30,6 +30,7 @@ trait CallsWorkflowRoutes
     {
         return [
             ['GET', 'index', false, false],
+            ['GET', 'create', false, false],
             ['POST', 'store', false, false],
             ['GET', 'show', true, false],
             ['GET', 'settings', true, false],

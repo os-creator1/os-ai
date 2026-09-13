@@ -56,10 +56,23 @@ trait ResolvesAutomationWorkflows
     /**
      * Run one endpoint behind the gate, and answer with the status it deserves.
      *
-     * @param Closure(): JsonResponse $action
+     * NEGOTIATED. A JSON client — the builder's fetch calls — has every expected
+     * failure converted here, because the application Handler would turn it into
+     * a 200. A browser navigating to a page (the list, the builder shell, "New
+     * workflow") is left to the Handler, which renders the app's own HTML error
+     * pages with correct statuses for non-JSON requests; catching those here
+     * would hand a person a JSON 404 instead of a page.
+     *
+     * @param Closure(): (JsonResponse|\Illuminate\Contracts\View\View|\Symfony\Component\HttpFoundation\Response) $action
      */
-    protected function respond(Closure $action): JsonResponse
+    protected function respond(Closure $action): mixed
     {
+        if (! request()->wantsJson()) {
+            $this->authorize('automations');
+
+            return $action();
+        }
+
         try {
             $this->authorize('automations');
 

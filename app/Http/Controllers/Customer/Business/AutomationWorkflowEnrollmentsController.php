@@ -60,7 +60,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ->paginate(self::PAGE_SIZE);
 
             return response()->json([
-                'data' => $page->getCollection()->map(fn (AutomationEnrollment $e): array => [
+                'enrollments' => $page->getCollection()->map(fn (AutomationEnrollment $e): array => [
                     'uid' => $e->uid,
                     'contact_uid' => $e->contact?->uid,
                     'status' => $e->status->value,
@@ -106,7 +106,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ->orderBy('id')
                 ->get();
 
-            return response()->json(['data' => [
+            return response()->json([
                 'enrollment_uid' => $enrollment->uid,
                 'status' => $enrollment->status->value,
                 'steps' => $steps->map(fn (AutomationStepRun $s): array => [
@@ -123,7 +123,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                     'started_at' => $s->started_at?->toIso8601String(),
                     'completed_at' => $s->completed_at?->toIso8601String(),
                 ])->values(),
-            ]]);
+            ]);
         });
     }
 
@@ -185,10 +185,10 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ));
             }
 
-            return response()->json(['data' => [
+            return response()->json([
                 'request_uid' => $requestUid,
                 'queued' => $contacts->count(),
-            ]], 202);
+            ], 202);
         });
     }
 
@@ -200,10 +200,10 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
 
             $cancelled = $this->lifecycle->stopAllActive($workflow, self::STOP_ALL_REASON);
 
-            return response()->json(['data' => [
+            return response()->json([
                 'workflow_uid' => $workflow->uid,
                 'cancelled' => $cancelled,
-            ]]);
+            ]);
         });
     }
 }

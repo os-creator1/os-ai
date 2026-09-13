@@ -63,7 +63,7 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $response = $this->callJson('GET', $this->url($t, 'index'))->assertOk();
 
-        $uids = array_column($response->json('data'), 'uid');
+        $uids = array_column($response->json('workflows'), 'uid');
         $this->assertContains($t['workflow']->uid, $uids);
         $this->assertNotContains($other['workflow']->uid, $uids, 'Another Business\'s workflow must never be listed.');
     }
@@ -77,11 +77,11 @@ class WorkflowHttpBehaviourTest extends TestCase
             'trigger_type' => 'contact_date_reached',
         ])->assertCreated();
 
-        $response->assertJsonPath('data.name', 'Birthday wishes')
-            ->assertJsonPath('data.status', WorkflowStatus::Draft->value)
-            ->assertJsonPath('data.has_draft', true);
+        $response->assertJsonPath('workflow.name', 'Birthday wishes')
+            ->assertJsonPath('workflow.status', WorkflowStatus::Draft->value)
+            ->assertJsonPath('workflow.has_draft', true);
 
-        $workflow = AutomationWorkflow::query()->where('uid', $response->json('data.uid'))->firstOrFail();
+        $workflow = AutomationWorkflow::query()->where('uid', $response->json('workflow.uid'))->firstOrFail();
         $this->assertSame((int) $t['business']->id, (int) $workflow->business_id, 'Created inside the resolved Business.');
     }
 
@@ -105,9 +105,9 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $this->callJson('GET', $this->url($t, 'settings', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.workflow.uid', $t['workflow']->uid)
-            ->assertJsonPath('data.published.state', 'published')
-            ->assertJsonPath('data.draft', null);
+            ->assertJsonPath('workflow.uid', $t['workflow']->uid)
+            ->assertJsonPath('published.state', 'published')
+            ->assertJsonPath('draft', null);
     }
 
     // ---------------------------------------------------------------
@@ -120,9 +120,9 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $response = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->assertOk();
 
-        $this->assertIsArray($response->json('data.definition'));
-        $this->assertIsInt($response->json('data.revision'));
-        $this->assertIsArray($response->json('data.errors'));
+        $this->assertIsArray($response->json('definition'));
+        $this->assertIsInt($response->json('revision'));
+        $this->assertIsArray($response->json('errors'));
 
         // Cloned from the published document, so a live workflow's editor always
         // has a real revision to save against.
@@ -132,7 +132,7 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_autosave_saves_and_reports_errors_even_for_an_invalid_document(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $definition = $draft['definition'];
         $invalidKey = (string) Str::uuid();
@@ -144,8 +144,8 @@ class WorkflowHttpBehaviourTest extends TestCase
             'definition_revision' => $draft['revision'],
         ])->assertOk();
 
-        $this->assertSame($draft['revision'] + 1, $response->json('data.revision'), 'The save moved the revision.');
-        $this->assertArrayHasKey($invalidKey, $response->json('data.errors'), 'Its errors are reported, keyed by node.');
+        $this->assertSame($draft['revision'] + 1, $response->json('revision'), 'The save moved the revision.');
+        $this->assertArrayHasKey($invalidKey, $response->json('errors'), 'Its errors are reported, keyed by node.');
 
         $saved = $t['workflow']->fresh()->draftVersion()->definition['root']['next'][0];
 
@@ -163,7 +163,7 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_a_stale_autosave_is_a_conflict_and_changes_nothing(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $first = $draft['definition'];
         $first['root']['next'] = [$this->endStep()];
@@ -191,7 +191,7 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_an_oversized_document_is_refused(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $definition = $draft['definition'];
         $definition['padding'] = str_repeat('x', WorkflowLimits::MAX_DEFINITION_BYTES + 10);
@@ -214,12 +214,12 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_publishing_a_valid_draft_succeeds(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $response = $this->callJson('POST', $this->url($t, 'publish', $t['workflow']))->assertOk();
 
-        $response->assertJsonPath('data.workflow_uid', $t['workflow']->uid)
-            ->assertJsonPath('data.status', WorkflowStatus::Published->value);
+        $response->assertJsonPath('workflow_uid', $t['workflow']->uid)
+            ->assertJsonPath('status', WorkflowStatus::Published->value);
         $this->assertNotSame($draft['uid'], null);
         $this->assertNull($t['workflow']->fresh()->draftVersion(), 'The draft became the live version.');
     }
@@ -228,7 +228,7 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_publishing_an_invalid_draft_is_refused_with_errors_by_node(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $badKey = (string) Str::uuid();
         $definition = $draft['definition'];
@@ -258,7 +258,7 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $this->callJson('POST', $this->url($t, 'discard-draft', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.has_draft', false);
+            ->assertJsonPath('has_draft', false);
 
         $this->assertSame(WorkflowStatus::Published, $t['workflow']->fresh()->status, 'The live version is untouched.');
     }
@@ -288,8 +288,8 @@ class WorkflowHttpBehaviourTest extends TestCase
         $response = $this->callJson('POST', $this->url($t, 'simulate', $workflow), ['contact_uid' => $contact->uid])
             ->assertOk();
 
-        $this->assertNull($response->json('data.refused'));
-        $this->assertNotEmpty($response->json('data.steps'), 'The path is reported.');
+        $this->assertNull($response->json('refused'));
+        $this->assertNotEmpty($response->json('steps'), 'The path is reported.');
 
         $this->assertSame($before, [
             'enrollments' => DB::table('automation_enrollments')->count(),
@@ -317,12 +317,12 @@ class WorkflowHttpBehaviourTest extends TestCase
     public function test_simulating_uses_the_draft_when_one_exists(): void
     {
         $t = $this->signedInTenant();
-        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json('data');
+        $draft = $this->callJson('GET', $this->url($t, 'draft.show', $t['workflow']))->json();
 
         $response = $this->callJson('POST', $this->url($t, 'simulate', $t['workflow']), ['contact_uid' => $t['contact']->uid])
             ->assertOk();
 
-        $this->assertSame('draft', $response->json('data.version_state'));
+        $this->assertSame('draft', $response->json('version_state'));
         $this->assertNotNull($draft);
     }
 
@@ -336,20 +336,20 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $this->callJson('POST', $this->url($t, 'pause', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.workflow.status', WorkflowStatus::Paused->value)
-            ->assertJsonPath('data.changed', true);
+            ->assertJsonPath('workflow.status', WorkflowStatus::Paused->value)
+            ->assertJsonPath('changed', true);
 
         // Pausing again is a harmless no-op, reported honestly as unchanged.
         $this->callJson('POST', $this->url($t, 'pause', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.changed', false);
+            ->assertJsonPath('changed', false);
 
         Bus::fake([RedispatchHeldEnrollments::class, AdvanceWorkflowEnrollment::class]);
 
         $this->callJson('POST', $this->url($t, 'resume', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.workflow.status', WorkflowStatus::Published->value)
-            ->assertJsonPath('data.changed', true);
+            ->assertJsonPath('workflow.status', WorkflowStatus::Published->value)
+            ->assertJsonPath('changed', true);
 
         // Resume's re-dispatch comes from the lifecycle service, not from here.
         Bus::assertDispatched(RedispatchHeldEnrollments::class);
@@ -359,12 +359,12 @@ class WorkflowHttpBehaviourTest extends TestCase
     {
         $t = $this->signedInTenant();
         $created = $this->callJson('POST', $this->url($t, 'store'), ['name' => 'Unpublished', 'trigger_type' => 'contact_created'])
-            ->json('data.uid');
+            ->json('workflow.uid');
 
         $this->callJson('POST', $this->url($t, 'pause', $created))
             ->assertOk()
-            ->assertJsonPath('data.workflow.status', WorkflowStatus::Draft->value)
-            ->assertJsonPath('data.changed', false);
+            ->assertJsonPath('workflow.status', WorkflowStatus::Draft->value)
+            ->assertJsonPath('changed', false);
     }
 
     public function test_archive_cancels_journeys_in_flight(): void
@@ -373,7 +373,7 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $this->callJson('POST', $this->url($t, 'archive', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.workflow.status', WorkflowStatus::Archived->value);
+            ->assertJsonPath('workflow.status', WorkflowStatus::Archived->value);
 
         $this->assertSame(EnrollmentStatus::Cancelled, $t['enrollment']->fresh()->status);
     }
@@ -384,7 +384,7 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $this->callJson('POST', $this->url($t, 'stop-all', $t['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.cancelled', 1);
+            ->assertJsonPath('cancelled', 1);
 
         $enrollment = $t['enrollment']->fresh();
         $this->assertSame(EnrollmentStatus::Cancelled, $enrollment->status);
@@ -405,8 +405,8 @@ class WorkflowHttpBehaviourTest extends TestCase
 
         $response = $this->callJson('GET', $this->url($t, 'enrollments.index', $t['workflow']))->assertOk();
 
-        $this->assertSame([$t['enrollment']->uid], array_column($response->json('data'), 'uid'));
-        $this->assertSame($t['contact']->uid, $response->json('data.0.contact_uid'));
+        $this->assertSame([$t['enrollment']->uid], array_column($response->json('enrollments'), 'uid'));
+        $this->assertSame($t['contact']->uid, $response->json('enrollments.0.contact_uid'));
     }
 
     public function test_the_log_shows_each_step_of_a_journey(): void
@@ -417,9 +417,9 @@ class WorkflowHttpBehaviourTest extends TestCase
         $response = $this->callJson('GET', $this->url($t, 'enrollments.logs', $t['workflow'], $t['enrollment']))
             ->assertOk();
 
-        $types = array_column($response->json('data.steps'), 'node_type');
+        $types = array_column($response->json('steps'), 'node_type');
         $this->assertSame(['trigger', 'end'], $types);
-        $this->assertSame('completed', $response->json('data.status'));
+        $this->assertSame('completed', $response->json('status'));
     }
 
     // ---------------------------------------------------------------
@@ -450,8 +450,8 @@ class WorkflowHttpBehaviourTest extends TestCase
             'confirmed' => true,
         ])->assertStatus(202);
 
-        $this->assertSame(3, $response->json('data.queued'));
-        $this->assertNotEmpty($response->json('data.request_uid'));
+        $this->assertSame(3, $response->json('queued'));
+        $this->assertNotEmpty($response->json('request_uid'));
         Bus::assertDispatchedTimes(EnrollWorkflowContact::class, 3);
     }
 
@@ -525,7 +525,7 @@ class WorkflowHttpBehaviourTest extends TestCase
         $this->callJson('POST', $this->url($t, 'enrollments.manual', $t['workflow']), [
             'contact_uids' => $uids,
             'confirmed' => true,
-        ])->assertStatus(202)->assertJsonPath('data.queued', $limit);
+        ])->assertStatus(202)->assertJsonPath('queued', $limit);
 
         Bus::assertDispatchedTimes(EnrollWorkflowContact::class, $limit);
     }

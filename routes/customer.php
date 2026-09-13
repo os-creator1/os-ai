@@ -860,6 +860,9 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/automations/workflows')->name('businesses.automations.workflows.')->group(function () {
             Route::get('/', 'Business\AutomationWorkflowsController@listing')->name('index');
             Route::post('/', 'Business\AutomationWorkflowsController@store')->name('store');
+            // "New workflow" — V2-D's list links here. Not in §20.2's table; it
+            // MUST precede /{workflowUid}, or "new" is read as a workflow uid.
+            Route::get('/new', 'Business\AutomationWorkflowsController@create')->name('create');
             Route::get('/{workflowUid}', 'Business\AutomationWorkflowsController@show')->name('show');
             Route::get('/{workflowUid}/settings', 'Business\AutomationWorkflowsController@settings')->name('settings');
             Route::post('/{workflowUid}/pause', 'Business\AutomationWorkflowsController@pause')->name('pause');

@@ -117,8 +117,8 @@ class WorkflowHttpAuthorizationTest extends TestCase
 
         $this->callJson('GET', $this->routeUrl('index', $tenant['workspace'], $tenant['business']))
             ->assertOk()
-            ->assertJsonStructure(['data', 'meta' => ['current_page', 'last_page', 'total']])
-            ->assertJsonPath('data.0.uid', $tenant['workflow']->uid);
+            ->assertJsonStructure(['workflows', 'meta' => ['current_page', 'last_page', 'total']])
+            ->assertJsonPath('workflows.0.uid', $tenant['workflow']->uid);
     }
 
     public function test_the_owner_is_allowed(): void
@@ -128,7 +128,7 @@ class WorkflowHttpAuthorizationTest extends TestCase
 
         $this->callJson('GET', $this->routeUrl('show', $tenant['workspace'], $tenant['business'], $tenant['workflow']))
             ->assertOk()
-            ->assertJsonPath('data.uid', $tenant['workflow']->uid);
+            ->assertJsonPath('workflow.uid', $tenant['workflow']->uid);
     }
 
     public function test_an_active_admin_member_is_allowed(): void

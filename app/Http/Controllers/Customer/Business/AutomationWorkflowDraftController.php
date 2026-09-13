@@ -60,7 +60,7 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $draft = $this->drafts->ensureDraft($workflow);
 
-            return response()->json(['data' => $this->draftPayload($draft)]);
+            return response()->json($this->draftPayload($draft));
         });
     }
 
@@ -85,10 +85,12 @@ class AutomationWorkflowDraftController extends CustomerBaseController
                 (int) $request->validated('definition_revision'),
             );
 
-            return response()->json(['data' => [
+            // Flat, exactly as §20.2 fixes it and as V2-D's autosave reads it:
+            // `body.revision` and `body.errors` at the top level.
+            return response()->json([
                 'revision' => (int) $saved->definition_revision,
                 'errors' => $this->compiler->validate($saved),
-            ]]);
+            ]);
         });
     }
 
@@ -101,12 +103,12 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $version = $this->publisher->publish($workflow, (int) Auth::id());
 
-            return response()->json(['data' => [
+            return response()->json([
                 'workflow_uid' => $workflow->uid,
                 'status' => $workflow->fresh()->status->value,
                 'version_uid' => $version->uid,
                 'version_number' => (int) $version->version_number,
-            ]]);
+            ]);
         });
     }
 
@@ -118,10 +120,10 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $this->drafts->discardDraft($workflow);
 
-            return response()->json(['data' => [
+            return response()->json([
                 'workflow_uid' => $workflow->uid,
                 'has_draft' => $workflow->fresh()->draftVersion() !== null,
-            ]]);
+            ]);
         });
     }
 
@@ -160,7 +162,12 @@ class AutomationWorkflowDraftController extends CustomerBaseController
                 return response()->json(['message' => 'This workflow has nothing to test yet.'], 422);
             }
 
-            return response()->json(['data' => $this->simulator->simulate($version, $contact)]);
+            $result = $this->simulator->simulate($version, $contact);
+
+            // The simulator's own result, flat, plus `path`: V2-D's Test button
+            // reads `body.path`. It is the same list as `steps`, named the way
+            // the builder already consumes it, rather than a second shape.
+            return response()->json($result + ['path' => $result['steps']]);
         });
     }
 
