@@ -157,7 +157,63 @@ class ManagedSendStateMachineTest extends TestCase
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
     }
 
-    public function test_sending_plus_attempted_operation_projects_ambiguous(): void
+    /**
+     * Correction round 6, item 1 — a FRESH claim's operation being
+     * Attempted is NOT evidence anything went wrong: it is written before
+     * the provider HTTP call even starts (ManagedMessageDispatcher::recordAttempt()),
+     * so it is that request's normal state for its entire live duration.
+     * Reconciling this early to 'ambiguous' would be a real regression —
+     * see test B below for exactly why.
+     */
+    public function test_sending_with_a_fresh_claim_and_attempted_operation_remains_sending(): void
+    {
+        [$business, $identity, $box] = $this->fixture();
+        $sendUid = (string) Str::uuid();
+        $message = $this->sendingRow($box, $sendUid, now());
+        $this->insertOperation($business, $identity, $box, $sendUid, MessagingOperationStatus::Attempted);
+
+        $reconciled = ManagedSendStateMachine::reconcileSendingRow($message, (int) $business->id);
+
+        $this->assertSame(ManagedSendStateMachine::SENDING, $reconciled->send_status, 'The provider call may still genuinely be executing.');
+        $this->assertNull($reconciled->business_messaging_operation_id, 'Untouched — never attached prematurely.');
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
+    /**
+     * The exact bug this closes: if a fresh Attempted claim were reconciled
+     * to 'ambiguous' immediately, the CONCLUSIVE result the original
+     * request eventually produces (here, a terminal rejection) would try
+     * to record onto an already-protected 'ambiguous' bubble and be
+     * refused by canApplyLocalRefusal() — stranding a message that is
+     * actually KNOWN to have failed behind a state that claims "we don't
+     * know". Left as 'sending' instead, the conclusive projection applies
+     * normally the next time reconciliation runs.
+     */
+    public function test_sending_with_a_fresh_claim_later_resolves_normally_once_the_operation_is_conclusive(): void
+    {
+        [$business, $identity, $box] = $this->fixture();
+        $sendUid = (string) Str::uuid();
+        $message = $this->sendingRow($box, $sendUid, now());
+        $operationId = $this->insertOperation($business, $identity, $box, $sendUid, MessagingOperationStatus::Attempted);
+
+        $stillSending = ManagedSendStateMachine::reconcileSendingRow($message->fresh(), (int) $business->id);
+        $this->assertSame(ManagedSendStateMachine::SENDING, $stillSending->send_status);
+
+        // The original provider call now returns a conclusive rejection.
+        DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->update([
+            'status' => MessagingOperationStatus::Rejected->value,
+            'error_category' => ProviderErrorCategory::Terminal->value,
+        ]);
+
+        $reconciled = ManagedSendStateMachine::reconcileSendingRow($stillSending, (int) $business->id);
+
+        $this->assertSame(ManagedSendStateMachine::FAILED, $reconciled->send_status);
+        $this->assertSame($operationId, (int) $reconciled->business_messaging_operation_id);
+        $this->assertTrue(ManagedSendStateMachine::isRetryEligible($reconciled->send_status), 'Retry becomes available.');
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
+    public function test_sending_with_a_stale_claim_and_attempted_operation_becomes_ambiguous(): void
     {
         [$business, $identity, $box] = $this->fixture();
         $sendUid = (string) Str::uuid();

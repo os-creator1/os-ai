@@ -1190,6 +1190,142 @@ class ManagedSendRetryTest extends TestCase
         $this->assertStringContainsString(__('locale.conversations.sending_label'), $timeline);
     }
 
+    // =================================================================
+    // Correction round 6, item 2 — a successful retry must update the
+    // ORIGINAL conversation, never one re-derived from the Business's
+    // CURRENT primary managed number
+    // =================================================================
+
+    public function test_a_successful_retry_updates_the_original_conversation_after_the_managed_number_changes(): void
+    {
+        [, $business, $workspace, $identity] = $this->managedTenant('+14155550199');
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($workspace, $business, $box, 'Still there?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('box_id', $box->id)->sole();
+        $this->assertSame('failed', $message->send_status);
+        $this->fakeAdapter->rejections = [];
+
+        // The Business's primary managed number changes — the SAME
+        // identity, a different number, exactly as the bug report
+        // describes.
+        $number = DB::table('business_messaging_numbers')
+            ->where('business_messaging_identity_id', $identity->id)
+            ->where('is_primary', true)
+            ->sole();
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['phone_number' => '+14155550288']);
+
+        $boxesBefore = DB::table('chat_boxes')->where('business_id', $business->id)->count();
+        $sentBeforeRetry = count($this->fakeAdapter->sentRequests);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)->assertJson(['status' => 'success']);
+
+        $this->assertCount($sentBeforeRetry + 1, $this->fakeAdapter->sentRequests, 'Exactly one new provider attempt — the retry.');
+        $this->assertSame('+14155550288', $this->fakeAdapter->sentRequests[$sentBeforeRetry]->fromNumber, 'Sent from the NEW number.');
+
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sent', $updated->send_status, 'The ORIGINAL bubble becomes sent.');
+        $this->assertNotNull($updated->business_messaging_operation_id, 'The accepted operation is attached to the ORIGINAL bubble.');
+        $this->assertNotSame((int) $message->business_messaging_operation_id ?: null, (int) $updated->business_messaging_operation_id);
+
+        $this->assertSame($boxesBefore, DB::table('chat_boxes')->where('business_id', $business->id)->count(), 'No new logical bubble in another box — the same conversation count as before.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one message in the original box.');
+        $this->assertSame(0, DB::table('chat_box_messages')->where('send_uid', $message->send_uid)->where('box_id', '!=', $box->id)->count(), 'No stray bubble in another conversation.');
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->assertOk()->json('timeline');
+        $this->assertStringContainsString('Still there?', $timeline, 'Visible in the ORIGINAL conversation.');
+        $this->assertStringNotContainsString(__('locale.conversations.sending_label'), $timeline, 'No stuck sending row anywhere.');
+    }
+
+    // =================================================================
+    // Correction round 6, item 3 — a managed retry must be managed-only
+    // at the actual dispatch seam, never merely at the controller's own
+    // precheck
+    // =================================================================
+
+    public function test_a_managed_retry_fails_closed_with_zero_transport_calls_when_the_identity_vanishes_at_the_dispatch_seam(): void
+    {
+        // managedTenant() wires BOTH a managed identity AND a perfectly
+        // usable legacy/BYO sending server — the exact configuration that
+        // makes a silent fallback dangerous.
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($workspace, $business, $box, 'Still there?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('box_id', $box->id)->sole();
+        $this->fakeAdapter->rejections = [];
+
+        $reportsBefore = DB::table('reports')->count();
+        $sentBeforeRetry = count($this->fakeAdapter->sentRequests);
+
+        // The identity is STILL ACTIVE for the first three real-resolution
+        // calls this request makes before ever reaching the dispatch seam
+        // ManagedDispatchDelegate::attempt() protects — retry()'s own
+        // isManaged() precheck (call #1), buildManualSendInput()'s own
+        // sender-id-verification guard (call #2, default settings), and
+        // EloquentCampaignRepository::quickSend()'s own $managedTransport
+        // determination (call #3, used only to decide whether a missing
+        // legacy sending server is fatal). All three must see it exists,
+        // so this test exercises the DISPATCH SEAM's own protection
+        // specifically, not merely an earlier controller/repository-level
+        // check. Only from the FOURTH call onward — attempt()'s own
+        // resolution — does the identity appear to have vanished,
+        // simulating it being archived in the exact gap between every
+        // earlier check and the actual dispatch.
+        $resolver = new class extends \App\Library\Messaging\BusinessMessagingIdentityResolver {
+            public int $calls = 0;
+
+            public function resolveForBusiness(\App\Models\Business $business): ?\App\Models\BusinessMessagingIdentity
+            {
+                $this->calls++;
+
+                return $this->calls <= 3 ? parent::resolveForBusiness($business) : null;
+            }
+        };
+        $this->app->instance(\App\Library\Messaging\BusinessMessagingIdentityResolver::class, $resolver);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.messaging_not_ready')]);
+
+        $this->assertGreaterThanOrEqual(4, $resolver->calls, 'The dispatch seam really was reached and really did re-resolve.');
+        $this->assertCount($sentBeforeRetry, $this->fakeAdapter->sentRequests, 'Zero ADDITIONAL provider calls of any kind — managed or legacy.');
+        $this->assertSame($reportsBefore, DB::table('reports')->count(), 'Zero LEGACY sends either — never silently fell back.');
+
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('failed', $updated->send_status);
+        $this->assertSame('messaging_not_ready', $updated->send_failure_reason);
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble — the same one.');
+    }
+
+    /**
+     * $requireManaged is retry()'s OWN flag, threaded all the way down to
+     * ManagedDispatchDelegate::attempt() — every other caller (reply(),
+     * Outreach quick send, an automation, a campaign) leaves it at its
+     * default, false, and must keep the exact prior behaviour: no
+     * resolvable identity still means "fall through to legacy", not a
+     * thrown exception.
+     */
+    public function test_normal_legacy_byo_send_still_falls_through_when_managed_is_not_required(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        $result = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
+            (int) $business->id,
+            '+14155552671',
+            'hello',
+            'some-operation-key',
+            [],
+            '1',
+            'plain',
+        );
+
+        $this->assertNull($result, 'Falls through to legacy — unchanged behaviour for a Business with no managed identity.');
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
     // -----------------------------------------------------------------
 
     /**

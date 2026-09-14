@@ -572,6 +572,18 @@
                 // ChatBoxController's manual-send paths; every other caller
                 // leaves 'send_uid' unset and gets today's unchanged behaviour.
                 $conversationContext ? ($input['send_uid'] ?? null) : null,
+                // Correction round 6, item 2 — the ORIGINAL ChatBox a tracked
+                // retry belongs to, so history attaches to that exact
+                // conversation rather than one re-derived from the
+                // Business's CURRENT primary managed number. Only ever set
+                // by retry(); reply()/every other caller leaves this unset
+                // and keeps today's number-derived resolution.
+                $conversationContext ? ($input['conversation_box_id'] ?? null) : null,
+                // Correction round 6, item 3 — retry()'s own mandatory-
+                // managed flag: this send must reach managed transport or
+                // fail closed, never silently fall through to whatever
+                // legacy/BYO server this Business also happens to have.
+                (bool) ($input['require_managed'] ?? false),
             );
 
             if ($managedResult !== null) {

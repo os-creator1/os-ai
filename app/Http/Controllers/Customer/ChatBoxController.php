@@ -877,6 +877,19 @@
             $input['send_uid'] = $sendUid;
             $input['managed_operation_key'] = 'conversation:' . $box->id . ':' . $sendUid . ':retry:' . $claimed->retry_count;
 
+            // Correction round 6, item 2 — history must attach to THIS
+            // exact conversation, never one re-derived from the Business's
+            // current primary managed number (which may have changed since
+            // this bubble was first created).
+            $input['conversation_box_id'] = $box->id;
+
+            // Correction round 6, item 3 — this send must reach managed
+            // transport or fail closed; ManagedDispatchDelegate::attempt()
+            // enforces it at the actual dispatch seam, never relying solely
+            // on the isManaged() precheck above (a race can archive the
+            // identity in between).
+            $input['require_managed'] = true;
+
             $campaign = new Campaigns();
             $campaign->business_id = $business->id;
 

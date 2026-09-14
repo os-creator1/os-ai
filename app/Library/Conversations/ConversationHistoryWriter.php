@@ -7,6 +7,7 @@ use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\Business;
+use App\Models\BusinessMessagingNumber;
 use App\Models\ChatBox;
 use App\Models\ChatBoxMessage;
 use App\Models\Reports;
@@ -154,6 +155,19 @@ final class ConversationHistoryWriter
      * a successful retry can never produce a duplicate bubble. A caller that
      * never passes $sendUid always creates fresh, exactly as before.
      *
+     * $conversationBoxId (correction round 6, item 2) is the ORIGINAL
+     * ChatBox id a tracked retry belongs to. Without it, the conversation
+     * was always re-derived from the Business's CURRENT primary managed
+     * number — correct for a first send, but unsafe for a retry: if the
+     * Business's number changed between the original failed attempt and
+     * this retry succeeding, that re-derivation resolves (or creates) a
+     * DIFFERENT ChatBox, leaving the original bubble stranded 'sending'
+     * forever and attaching the accepted operation to the wrong thread.
+     * When given, this method updates THAT exact ChatBox — verified to
+     * still belong to $business — instead of re-deriving one. Null for
+     * every caller that is not retrying an already-tracked bubble
+     * (unchanged behaviour).
+     *
      * @param  list<string>  $mediaUrls
      */
     public function recordManagedOutbound(
@@ -165,6 +179,7 @@ final class ConversationHistoryWriter
         string $operationKey,
         ?string $source,
         ?string $sendUid = null,
+        ?int $conversationBoxId = null,
     ): ?ChatBoxMessage {
         $operationId = DB::table(ManagedMessageDispatcher::TABLE)
             ->where('business_id', (int) $business->id)
@@ -194,8 +209,8 @@ final class ConversationHistoryWriter
         $stepRunId = $this->sendContext->currentStepRunId();
 
         try {
-            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid): ?ChatBoxMessage {
-                $conversation = $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
+            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid, $conversationBoxId): ?ChatBoxMessage {
+                $conversation = $this->resolveConversationForWrite($business, $number, $contactNumber, $conversationBoxId);
 
                 if ($conversation === null) {
                     return null;
@@ -293,7 +308,7 @@ final class ConversationHistoryWriter
                 return null;
             }
 
-            $conversation = $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
+            $conversation = $this->resolveConversationForWrite($business, $number, $contactNumber, $conversationBoxId);
 
             if ($conversation === null) {
                 return null;
@@ -465,6 +480,32 @@ final class ConversationHistoryWriter
                 'send_status' => ManagedSendStateMachine::DELIVERY_FAILED,
                 'send_failure_reason' => ConversationSendFailureReason::DeliveryFailed->value,
             ]);
+    }
+
+    /**
+     * Correction round 6, item 2 — the conversation a managed outbound
+     * write actually belongs to. For a tracked retry ($conversationBoxId
+     * given), this is the ORIGINAL logical bubble's own ChatBox, verified
+     * to still belong to $business — never re-derived from the Business's
+     * CURRENT primary managed number, which may have changed since the
+     * bubble was first created. Every other caller (no $conversationBoxId)
+     * keeps the exact prior behaviour: resolved/created from the number
+     * that actually sent this message.
+     */
+    private function resolveConversationForWrite(
+        Business $business,
+        BusinessMessagingNumber $number,
+        string $contactNumber,
+        ?int $conversationBoxId,
+    ): ?ChatBox {
+        if ($conversationBoxId !== null) {
+            return ChatBox::query()
+                ->where('id', $conversationBoxId)
+                ->where('business_id', (int) $business->id)
+                ->first();
+        }
+
+        return $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
     }
 
     private function recordedFor(int $operationId): ?ChatBoxMessage

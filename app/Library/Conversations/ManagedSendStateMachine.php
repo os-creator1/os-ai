@@ -32,12 +32,16 @@ use Illuminate\Support\Facades\DB;
  *      send — every caller here is DB-only (invariant 8); nothing in this
  *      class ever calls a provider or mints a new operation key.
  *   5. an Attempted (unresolved) operation is never guessed at: projectOperation()
- *      returns null for it, and reconcileSendingRow() leaves the row
- *      untouched rather than resolving it to a state it cannot yet prove.
- *      (Reconciling a stale SENDING row whose provider outcome IS
- *      Attempted moves it to the honest 'ambiguous' bubble state — see
- *      reconcileSendingRow()'s own docblock; that is not a guess about
- *      the outcome, it is labelling the outcome as unconfirmed.)
+ *      returns null for it, and reconcileSendingRow() never resolves it to
+ *      a state it cannot yet prove. A FRESH claim (correction round 6,
+ *      item 1) is left exactly as 'sending' — the provider call may
+ *      genuinely still be executing, and Attempted is that request's
+ *      NORMAL state throughout its own duration, not evidence anything
+ *      went wrong. Only once the claim is STALE does an unresolved
+ *      operation get represented on the bubble at all, moved to the
+ *      honest 'ambiguous' state — see reconcileSendingRow()'s own
+ *      docblock; that is not a guess about the outcome, it is labelling
+ *      the outcome as unconfirmed.
  *   6. failed/delivery_failed are the only bubble states a deliberate
  *      Retry may ever start from (isRetryEligible()).
  *   7. sending is transient; reconcileSendingRow() is its one recovery
@@ -202,14 +206,38 @@ final class ManagedSendStateMachine
                 // Attempted, or an unrecognised status — genuinely
                 // unresolved AT THE OPERATION LEVEL: the provider call may
                 // or may not have gone out, and this is never guessed at
-                // (invariant 5). Reconciliation itself still decides how to
-                // REPRESENT that on the transient 'sending' bubble: moved
-                // to the honest 'ambiguous' state, exactly what a live
-                // ambiguous send already shows — never a guess about the
-                // eventual outcome, just an honest label that it is
-                // currently unconfirmed. The alternative (leaving it at
-                // 'sending' forever) is exactly the stranded-bubble problem
-                // this correction exists to close.
+                // (invariant 5).
+                //
+                // Correction round 6, item 1 — a FRESH claim is left
+                // exactly as 'sending': the provider HTTP call this claim
+                // started may still genuinely be executing right now (an
+                // Attempted row is written BEFORE the adapter call — see
+                // ManagedMessageDispatcher::recordAttempt() — so "Attempted"
+                // is the row's NORMAL state for the entire duration of a
+                // live request, not evidence of anything having gone
+                // wrong). Reconciling it to 'ambiguous' this early would be
+                // a genuine regression: a conclusive result that arrives a
+                // moment later (the provider call returning, however it
+                // resolves) would then try to record onto an
+                // already-protected 'ambiguous' bubble and be refused by
+                // canApplyLocalRefusal() — stranding a message that is
+                // actually KNOWN to have failed behind a state that claims
+                // "we don't know".
+                //
+                // Only once the claim is STALE (comfortably longer than any
+                // real synchronous request takes to either finish or
+                // crash) does an unresolved operation get represented on
+                // the bubble at all — moved to the honest 'ambiguous'
+                // state, exactly what a live ambiguous send already shows:
+                // never a guess about the eventual outcome, just an honest
+                // label that it is currently unconfirmed. The alternative
+                // (leaving a STALE claim at 'sending' forever) is exactly
+                // the stranded-bubble problem this correction exists to
+                // close.
+                if (! self::isClaimStale($locked)) {
+                    return $locked;
+                }
+
                 $locked->update([
                     'business_messaging_operation_id' => (int) $operation->id,
                     'send_status' => self::AMBIGUOUS,
@@ -229,13 +257,8 @@ final class ManagedSendStateMachine
         }
 
         // No operation row at all — a bounded LIVENESS check, never a
-        // resolution of an ambiguous provider outcome. Two minutes is
-        // comfortably longer than any real synchronous request/provider-
-        // HTTP-call takes to either finish or crash.
-        $claimedAt = $locked->send_claimed_at;
-        $stale = $claimedAt === null || $claimedAt->lt(now()->subMinutes(2));
-
-        if (! $stale) {
+        // resolution of an ambiguous provider outcome.
+        if (! self::isClaimStale($locked)) {
             return $locked;
         }
 
@@ -245,5 +268,20 @@ final class ManagedSendStateMachine
         ]);
 
         return $locked->fresh();
+    }
+
+    /**
+     * Two minutes is comfortably longer than any real synchronous request/
+     * provider-HTTP-call takes to either finish or crash — a bounded
+     * LIVENESS check on the CLAIM itself, never a resolution of an
+     * ambiguous provider outcome (invariant 5). Shared by both branches of
+     * reconcileSendingRow() that need to distinguish "this could still be a
+     * live request" from "this claim is definitely dead".
+     */
+    private static function isClaimStale(ChatBoxMessage $locked): bool
+    {
+        $claimedAt = $locked->send_claimed_at;
+
+        return $claimedAt === null || $claimedAt->lt(now()->subMinutes(2));
     }
 }
