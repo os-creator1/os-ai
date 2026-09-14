@@ -713,18 +713,33 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->assertCapacityDenialResponse($workspace, $onboarding);
     }
 
+    /**
+     * Chat F (Customer Account Access Gate): an Inactive Workspace plan is
+     * now blocked one request boundary earlier, by CustomerAccountAccessGate
+     * itself -- the onboarding controller's own capacity-denial catch below
+     * can no longer be reached for this specific denial reason at all. The
+     * safe-message assertion this test used to make (Design System M2 A1
+     * Blocker 2) now belongs to the three denial reasons still reachable:
+     * see test_capacity_denial_workspace_plan_unassigned_redirects_with_the_safe_message()
+     * and the two business-slot tests below.
+     */
     public function test_capacity_denial_inactive_workspace_plan_redirects_with_the_safe_message(): void
     {
         [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('plan_inactive');
 
-        $this->assertCapacityDenialResponse($workspace, $onboarding);
+        $this->assertAccountAccessGateBlocksOnboarding($workspace, $onboarding);
     }
 
+    /**
+     * Same reasoning as the Inactive case immediately above -- Suspended is
+     * the other CustomerAccountAccessGate-locked status, so it is
+     * intercepted before the onboarding controller's own capacity check.
+     */
     public function test_capacity_denial_suspended_workspace_plan_redirects_with_the_safe_message(): void
     {
         [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('plan_suspended');
 
-        $this->assertCapacityDenialResponse($workspace, $onboarding);
+        $this->assertAccountAccessGateBlocksOnboarding($workspace, $onboarding);
     }
 
     public function test_capacity_denial_business_slot_allocation_required_redirects_with_the_safe_message(): void
@@ -941,6 +956,34 @@ class BusinessOnboardingHttpTest extends TestCase
         ] as $exceptionClassName) {
             $this->assertStringNotContainsString($exceptionClassName, $sessionErrorText);
         }
+    }
+
+    /**
+     * Chat F: the Inactive/Suspended-specific counterpart to
+     * assertCapacityDenialResponse() above -- these two denial reasons are
+     * now caught by CustomerAccountAccessGate before the request ever
+     * reaches BusinessOnboardingController, so the assertion is the gate's
+     * own redirect rather than the onboarding-local safe-message flash.
+     * Net effect for the customer is the same as the original Blocker 2
+     * intent: no generic 500, no Business persisted, no step advancement,
+     * no completion mutation.
+     */
+    private function assertAccountAccessGateBlocksOnboarding(Workspace $workspace, CustomerOnboarding $onboarding): void
+    {
+        $businessCountBefore = Business::where('workspace_id', $workspace->id)->count();
+
+        $response = $this->post(
+            route('customer.onboarding.business.store'),
+            $this->businessAttributes(['name' => 'Denied Attempt'])
+        );
+
+        $response->assertRedirect(route('customer.account-locked.show'));
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
+        $this->assertNotSame(OnboardingStatus::Completed, $onboarding->status);
+        $this->assertNull($onboarding->business_id);
+        $this->assertSame($businessCountBefore, Business::where('workspace_id', $workspace->id)->count());
     }
 
     /**
