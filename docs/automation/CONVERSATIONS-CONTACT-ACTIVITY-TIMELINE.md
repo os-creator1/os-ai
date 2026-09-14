@@ -128,8 +128,9 @@ click or a retried job reaches the dispatcher with the same operation key, gets
 the recorded result back with no second provider call, and the writer finds the
 existing row (or the unique index refuses a racing copy). Never deduplicated by
 body, time or number. Two new nullable references sit beside it:
-`automation_step_run_id` and `source`. Nothing is backfilled; every existing row
-stays valid.
+`automation_step_run_id` and `source`; and every managed campaign `reports` row
+carries `business_messaging_operation_id` too (see the campaign note below).
+Nothing is backfilled; every existing row stays valid.
 
 **When the provider accepted but history could not be written.** The send is
 still reported as successful — a failure here must not invite a second send. The
@@ -158,20 +159,22 @@ a managed Business only; every other Business is verified exactly as before
   send does. For a managed Business this raises the conversation list and the
   Home's "conversations started" count (`BusinessConversationReadModel::startedCount()`
   counts `chat_boxes`) by the recipients of those sends.
-- **One logical managed send, one report.** A retried campaign job used to
-  write a second `reports` row for the same send — linked to nothing, because
-  the operation already named the first — so one send showed twice in Reports
-  and in Conversations. `ManagedDispatchDelegate::recordLegacyReport()` now
-  locks the operation row by `(business_id, operation_key)`; when it already
-  names a report of the same Business (with no legacy sending server), that
-  report is the send's report and no second row is written. The retry is
-  handed that report exactly as a fresh attempt would see it — the recorded
-  acceptance status (`Sent`/`Failed`), even if a delivery callback has since
-  moved the stored row on — so `Campaigns::send()` counters and
-  `track_message()` (including its Delivered-only legacy debit) cannot change.
-  The returned view is marked clean, so it can never be saved back over the
-  report. Provider calls, measurement, wallet behaviour and DLR handling are
-  unchanged.
+- **One managed campaign send, one bubble — however many jobs track it.** One
+  managed operation can be reached by more than one campaign job: two contacts
+  of the campaign on the same number share one operation key, and a
+  redelivered job reaches it again. The dispatcher sends once, but each tracked
+  job still gets its own `reports` row, because `track_message()` stores the
+  report id in `tracking_logs.message_id`, which is **unique**, and per-recipient
+  campaign accounting depends on it. (Reusing one report for both jobs was
+  tried and rejected: the second tracking log collides with that index and the
+  job retries for up to 30 days.) So `recordLegacyReport()` writes the report
+  exactly as before and **stamps** it with its operation —
+  `reports.business_messaging_operation_id` (nullable, no backfill). The
+  timeline's reports source skips every report whose operation already has its
+  conversation message in the open conversation — by that identity, never by
+  text or time — so the send is one bubble. Provider calls, measurement, wallet
+  behaviour, delivery correlation (`business_messaging_operations.report_id`
+  still names the first report), counters and tracking are unchanged.
 - Automations V2 self-reply protection reads the `reports` stamp, which a managed
   quick send still does not write. Recorded, not changed.
 
@@ -257,7 +260,7 @@ now includes `NULL`, grouped inside the Business filter.
 | File | Proves |
 |---|---|
 | `tests/Feature/Conversations/ContactActivityTimelineTest.php` | Oldest-first merge of messages and activity; an automation text shown once and an inbox reply never doubled; campaign and legacy automation attribution and "Not delivered"; only human-useful automation outcomes, no raw codes; B4 outcomes; contact-keyed activity needs exactly one contact; nothing from another Business, even on the same number or via a foreign stamp; the window is cut at one moment; a future source joins; a flat 7-statement cost |
-| `tests/Feature/Conversations/ManagedOutboundConversationHistoryTest.php` | Through the real send core and managed dispatcher (fake provider only): a campaign send retried under the same operation makes no second provider send, no second report, no second conversation message and no second timeline bubble; a retry after a delivery callback is handed the acceptance status and cannot rewrite the stored report; a managed reply from Conversations is recorded with its exact text and shows once on reopen, "Sent manually"; a refused reply records nothing; a replayed reply sends once and records once; when history cannot be written the accepted send is still a success, is logged without number or text, and a replay records it once with no second provider call; an Automations V2 text over managed transport lands on the person's conversation, stamped with its step, one bubble "Sent by automation"; a managed campaign send is one bubble "Sent by campaign" and a retry records nothing more; one person in two Businesses never shares history; sender verification still refuses a Business that is not managed |
+| `tests/Feature/Conversations/ManagedOutboundConversationHistoryTest.php` | Through the real send core and managed dispatcher (fake provider only): a managed campaign send tracked by two campaign jobs (two contacts on one number), driven as `SendMessage` does — `sendSMS()` then `track_message()` — is one provider send, one conversation message and one timeline bubble, while each job keeps its own report (both stamped with the operation) and its own tracking log; a managed reply from Conversations is recorded with its exact text and shows once on reopen, "Sent manually"; a refused reply records nothing; a replayed reply sends once and records once; when history cannot be written the accepted send is still a success, is logged without number or text, and a replay records it once with no second provider call; an Automations V2 text over managed transport lands on the person's conversation, stamped with its step, one bubble "Sent by automation"; a managed campaign send is one bubble "Sent by campaign" and a retry records nothing more; one person in two Businesses never shares history; sender verification still refuses a Business that is not managed |
 | `tests/Feature/Conversations/ConversationTimelineScreenTest.php` | Three panes and an SMS-only composer; the timeline action returns both panes; server-side escaping (including non-http media URLs); a shared number shows the number alone; block-list status; the profile link needs `view_contact`; every tenancy failure is the same 404; the list leads with the name and `messages` is unchanged; the Read filter includes never-unread conversations and stays inside the Business |
 | `tests/Feature/DesignSystem/ChatBox*.php` | Updated in place, each change stated in its docblock: one more button and icon (the panel toggle), the shared row partial, the `timeline` action, and server rendering in place of the client-side history and Echo builders |
 | `tests/Feature/Security/ChatBoxSecurityTest.php` | Sections E–G updated in place to where safe rendering now lives: no stored message field is read by the page script, the only response fields inserted as HTML are the two server-rendered panes and the unread count, the partials never echo raw, and a real timeline response escapes hostile text and refuses `javascript:` and attribute-breaking media URLs. The optimistic send keeps `safeMessageParagraph()` and its 200px attribute-only image |

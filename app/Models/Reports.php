@@ -50,6 +50,9 @@
             'sms_count',
             'sender_id',
             'automation_step_run_id',
+            // The managed operation a managed campaign report belongs to
+            // (ManagedDispatchDelegate::recordLegacyReport()); NULL otherwise.
+            'business_messaging_operation_id',
         ];
 
         /**

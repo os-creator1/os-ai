@@ -32,11 +32,13 @@ use Illuminate\Support\Facades\DB;
  *                            unsaved Campaigns instance and records no id.
  *
  * A managed campaign send ALSO gets a conversation message now
- * (ConversationHistoryWriter), linked to this report through its managed
- * operation. When that message is in the open conversation it `represents`
- * this report's key (ConversationMessagesSource), so the timeline shows the
- * one bubble and drops this copy — by the operation link, never by comparing
- * text or times.
+ * (ConversationHistoryWriter). One managed operation can be tracked by more
+ * than one campaign job — each with its own report — and every one of those
+ * reports carries `business_messaging_operation_id`. When the conversation
+ * message for that operation is in the open conversation, those reports are
+ * skipped here, in SQL, by that identity — never by comparing text or times —
+ * so the send is one bubble. (The message also `represents` the one report its
+ * operation names, which stays harmless.)
  *
  * Every join is pinned to the same Business, so a stamp that no longer resolves
  * inside it names nothing (the message still shows, attributed generically).
@@ -65,6 +67,7 @@ final class AttributedOutboundMessagesSource implements TimelineSource
         }
 
         $businessId = (int) $subject->business->id;
+        $conversationId = $subject->conversation?->id;
 
         return DB::table('reports as r')
             ->leftJoin('automation_step_runs as asr', function (JoinClause $join) use ($businessId): void {
@@ -89,6 +92,18 @@ final class AttributedOutboundMessagesSource implements TimelineSource
                 $marked->whereNotNull('r.automation_step_run_id')
                     ->orWhereNotNull('r.automation_id')
                     ->orWhereNotNull('r.campaign_id');
+            })
+            // A managed campaign send is also a conversation message. Every
+            // report of that send carries its operation, and when the message
+            // for that operation is in this conversation, the message is the
+            // one bubble — however many campaign jobs tracked the send.
+            ->when($conversationId !== null, function ($query) use ($conversationId): void {
+                $query->whereNotExists(function ($carried) use ($conversationId): void {
+                    $carried->selectRaw('1')
+                        ->from('chat_box_messages as m')
+                        ->whereColumn('m.business_messaging_operation_id', 'r.business_messaging_operation_id')
+                        ->where('m.box_id', $conversationId);
+                });
             })
             ->orderByDesc('r.created_at')
             ->orderByDesc('r.id')
