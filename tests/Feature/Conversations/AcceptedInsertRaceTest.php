@@ -101,11 +101,103 @@ class AcceptedInsertRaceTest extends TestCase
         parent::tearDown();
     }
 
+    private bool $injected = false;
+
     public function test_an_accepted_insert_that_loses_a_race_to_a_failure_write_still_reconciles_to_sent(): void
     {
         Http::fake();
         $this->bindFakeAdapter();
 
+        [$business, $identity, $box] = $this->raceFixture();
+
+        $sendUid = (string) Str::uuid();
+        $operationKey = 'conversation:' . $box->id . ':' . $sendUid . ':initial';
+
+        // The ACCEPTED operation this send belongs to — exactly what
+        // ManagedMessageDispatcher::finalize() would already have written
+        // before ManagedDispatchDelegate::attempt() ever calls the history
+        // writer.
+        $operationId = $this->insertOperation($business, $identity, $operationKey, MessagingOperationStatus::Accepted);
+
+        $this->registerRacingFailureInjector($box, $sendUid);
+
+        $result = app(ConversationHistoryWriter::class)->recordManagedOutbound(
+            $business,
+            '14155552671',
+            'Are you open?',
+            [],
+            'plain',
+            $operationKey,
+            ConversationHistoryWriter::SOURCE_CONVERSATIONS,
+            $sendUid,
+        );
+
+        $this->assertTrue($this->injected, 'The race was actually reproduced — the racing failure row was injected between the read and the write.');
+
+        $this->assertNotNull($result, 'The failure row is found and promoted — never silently dropped.');
+        $this->assertSame('sent', $result->send_status, 'The provider DID accept this send, regardless of which write landed first.');
+        $this->assertSame($operationId, (int) $result->business_messaging_operation_id);
+        $this->assertNull($result->send_failure_reason);
+        $this->assertSame(
+            1,
+            DB::table('chat_box_messages')->where('box_id', $box->id)->count(),
+            'One bubble — never a second row for the same logical message.',
+        );
+    }
+
+    /**
+     * State-machine correction, item 2 — the SAME insert-race promotion
+     * path must ALSO never blindly write 'sent': if the durable operation
+     * this promotion is attaching has, by the time of promotion, already
+     * moved on to Failed (a DLR that raced ahead of BOTH the accepted
+     * writer's insert attempt AND the failure writer that won the race),
+     * the bubble must land on 'delivery_failed', not 'sent'.
+     */
+    public function test_an_insert_race_promotion_projects_a_failed_operation_as_delivery_failed_not_sent(): void
+    {
+        Http::fake();
+        $this->bindFakeAdapter();
+
+        [$business, $identity, $box] = $this->raceFixture();
+
+        $sendUid = (string) Str::uuid();
+        $operationKey = 'conversation:' . $box->id . ':' . $sendUid . ':initial';
+
+        $operationId = $this->insertOperation($business, $identity, $operationKey, MessagingOperationStatus::Accepted);
+
+        // The DLR finalizes the operation to Failed before the promotion
+        // write below ever runs.
+        DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->update(['status' => MessagingOperationStatus::Failed->value]);
+
+        $this->registerRacingFailureInjector($box, $sendUid);
+
+        $result = app(ConversationHistoryWriter::class)->recordManagedOutbound(
+            $business,
+            '14155552671',
+            'Are you open?',
+            [],
+            'plain',
+            $operationKey,
+            ConversationHistoryWriter::SOURCE_CONVERSATIONS,
+            $sendUid,
+        );
+
+        $this->assertTrue($this->injected, 'The race was actually reproduced.');
+
+        $this->assertNotNull($result);
+        $this->assertSame('delivery_failed', $result->send_status, 'The durable operation IS Failed — the race-promotion path must project it truthfully, never as sent.');
+        $this->assertSame('delivery_failed', $result->send_failure_reason);
+        $this->assertSame($operationId, (int) $result->business_messaging_operation_id);
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+
+    /**
+     * @return array{0: \App\Models\Business, 1: \App\Models\BusinessMessagingIdentity, 2: object}
+     */
+    private function raceFixture(): array
+    {
         $customer = $this->createCustomer();
         $this->createdUserIds[] = $customer->user_id;
 
@@ -116,18 +208,15 @@ class AcceptedInsertRaceTest extends TestCase
         $identity = $this->attachIdentity($business);
         $this->attachNumber($identity, '+14155550199', true);
 
-        $writer = app(ConversationHistoryWriter::class);
-        $box = $writer->conversationFor($business, '14155550199', '14155552671');
+        $box = app(ConversationHistoryWriter::class)->conversationFor($business, '14155550199', '14155552671');
         $box->save();
 
-        $sendUid = (string) Str::uuid();
-        $operationKey = 'conversation:' . $box->id . ':' . $sendUid . ':initial';
+        return [$business, $identity, $box];
+    }
 
-        // The ACCEPTED operation this send belongs to — exactly what
-        // ManagedMessageDispatcher::finalize() would already have written
-        // before ManagedDispatchDelegate::attempt() ever calls the history
-        // writer.
-        $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
+    private function insertOperation(object $business, object $identity, string $operationKey, MessagingOperationStatus $status): int
+    {
+        return DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
             'business_id' => $business->id,
             'business_messaging_identity_id' => $identity->id,
             'transport_mode' => 'managed',
@@ -135,19 +224,29 @@ class AcceptedInsertRaceTest extends TestCase
             'direction' => 'outbound',
             'message_type' => 'sms',
             'operation_key' => $operationKey,
-            'status' => MessagingOperationStatus::Accepted->value,
-            'provider_message_id' => 'fake_msg_race',
+            'status' => $status->value,
+            'provider_message_id' => 'fake_msg_race_' . uniqid(),
             'occurred_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
 
+    /**
+     * Registers the DB::listen() hook that reproduces the exact race: the
+     * racing failure row is committed, through a genuinely SEPARATE
+     * database connection, the instant recordManagedOutbound()'s own read
+     * of (box_id, send_uid) executes — see the class docblock for why this
+     * is deterministic and why it needs its own connection.
+     */
+    private function registerRacingFailureInjector(object $box, string $sendUid): void
+    {
         config(['database.connections.' . self::RACE_CONNECTION => config('database.connections.' . config('database.default'))]);
 
-        $injected = false;
+        $this->injected = false;
 
-        $listener = function ($query) use (&$injected, $box, $sendUid): void {
-            if ($injected) {
+        DB::listen(function ($query) use ($box, $sendUid): void {
+            if ($this->injected) {
                 return;
             }
 
@@ -159,12 +258,8 @@ class AcceptedInsertRaceTest extends TestCase
                 return;
             }
 
-            $injected = true;
+            $this->injected = true;
 
-            // Committed on a genuinely SEPARATE connection — durable the
-            // instant this returns, unaffected by whatever
-            // recordManagedOutbound()'s own transaction (on the default
-            // connection) does afterward.
             // recordManagedOutbound()'s own transaction has, by this point,
             // already updated the SAME chat_boxes row this insert's FK
             // references (reply_by_customer, set moments earlier in the
@@ -192,31 +287,6 @@ class AcceptedInsertRaceTest extends TestCase
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
-        };
-
-        DB::listen($listener);
-
-        $result = $writer->recordManagedOutbound(
-            $business,
-            '14155552671',
-            'Are you open?',
-            [],
-            'plain',
-            $operationKey,
-            ConversationHistoryWriter::SOURCE_CONVERSATIONS,
-            $sendUid,
-        );
-
-        $this->assertTrue($injected, 'The race was actually reproduced — the racing failure row was injected between the read and the write.');
-
-        $this->assertNotNull($result, 'The failure row is found and promoted — never silently dropped.');
-        $this->assertSame('sent', $result->send_status, 'The provider DID accept this send, regardless of which write landed first.');
-        $this->assertSame($operationId, (int) $result->business_messaging_operation_id);
-        $this->assertNull($result->send_failure_reason);
-        $this->assertSame(
-            1,
-            DB::table('chat_box_messages')->where('box_id', $box->id)->count(),
-            'One bubble — never a second row for the same logical message.',
-        );
+        });
     }
 }

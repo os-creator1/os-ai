@@ -8,6 +8,7 @@ use App\Enums\Timeline\TimelineItemKind;
 use App\Enums\Timeline\TimelineTone;
 use App\Library\Conversations\ConversationHistoryWriter;
 use App\Library\Conversations\ConversationSendFailureReason;
+use App\Library\Conversations\ManagedSendStateMachine;
 use App\Library\Timeline\Contracts\TimelineSource;
 use App\Library\Timeline\TimelineItem;
 use App\Library\Timeline\TimelineSubject;
@@ -137,9 +138,16 @@ final class ConversationMessagesSource implements TimelineSource
         }
 
         if ($row->send_status !== null) {
-            return match ($row->send_status) {
-                'sending' => [__('locale.conversations.sending_label'), TimelineTone::Neutral, null, false],
-                'failed', 'delivery_failed' => [
+            $status = (string) $row->send_status;
+
+            // Correction round 5 (state machine) — retry-eligibility (which
+            // states get a retrySendUid at all) is read from
+            // ManagedSendStateMachine::isRetryEligible(), the SAME
+            // authority retry()'s own claim transaction uses, rather than
+            // this source re-listing the states independently.
+            return match (true) {
+                $status === ManagedSendStateMachine::SENDING => [__('locale.conversations.sending_label'), TimelineTone::Neutral, null, false],
+                ManagedSendStateMachine::isRetryEligible($status) => [
                     $this->failureDetail($row),
                     TimelineTone::Warning,
                     $row->send_uid,
@@ -150,7 +158,7 @@ final class ConversationMessagesSource implements TimelineSource
                 // acceptance was never conclusively disproven, so offering
                 // Retry here could mint a second, genuinely new send for a
                 // message that may already have gone out.
-                'ambiguous' => [
+                $status === ManagedSendStateMachine::AMBIGUOUS => [
                     __('locale.conversations.ambiguous_label') . ' — ' . ConversationSendFailureReason::Ambiguous->customerMessage(),
                     TimelineTone::Warning,
                     null,

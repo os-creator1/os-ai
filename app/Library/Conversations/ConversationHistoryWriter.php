@@ -208,17 +208,44 @@ final class ConversationHistoryWriter
 
                 $existing = $sendUid !== null ? $this->recordedForSendUid((int) $conversation->id, $sendUid) : null;
 
+                // Correction round 5 (state machine), item 2 — the CURRENT
+                // durable operation status, re-read and locked inside THIS
+                // transaction, never assumed to still be the Accepted result
+                // ManagedDispatchDelegate::attempt() saw moments ago: a DLR
+                // can finalize Accepted -> Delivered/Failed in the gap
+                // between dispatch() returning and this write landing
+                // (InboundWebhookAttributionResolver's own transition
+                // transaction takes the SAME lock on this row before it
+                // moves the operation, so these two transactions correctly
+                // serialize against each other rather than racing).
+                $operationRow = $sendUid !== null
+                    ? DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->lockForUpdate()->first()
+                    : null;
+
+                // Unresolved (null) is unreachable in practice at this call
+                // site — dispatch() only finalizes an operation to Accepted
+                // or Rejected before this method is ever reached, and
+                // Rejected is projected too — but the fallback stays the
+                // conservative 'sent' rather than crashing, matching what
+                // this code path always did before this projection existed.
+                $projection = $operationRow !== null
+                    ? (ManagedSendStateMachine::projectOperation($operationRow) ?? new ManagedSendProjection(ManagedSendStateMachine::SENT, null))
+                    : null;
+
                 if ($existing !== null) {
                     // A retry just succeeded: the SAME bubble now points at
                     // the operation that actually got accepted, and carries
-                    // no failure reason any more. The operation this row
-                    // used to name is left exactly as it was — the durable
-                    // audit trail of every attempt lives there, in
-                    // business_messaging_operations, not in this pointer.
+                    // no failure reason any more (or, per the projection
+                    // above, whatever the operation's CURRENT durable state
+                    // actually authorizes — never blindly 'sent').  The
+                    // operation this row used to name is left exactly as it
+                    // was — the durable audit trail of every attempt lives
+                    // there, in business_messaging_operations, not in this
+                    // pointer.
                     $existing->update([
                         'business_messaging_operation_id' => (int) $operationId,
-                        'send_status' => 'sent',
-                        'send_failure_reason' => null,
+                        'send_status' => $projection->sendStatus,
+                        'send_failure_reason' => $projection->failureReason,
                     ]);
 
                     return $existing->fresh();
@@ -235,7 +262,8 @@ final class ConversationHistoryWriter
                     'automation_step_run_id' => $stepRunId,
                     'source' => $source,
                     'send_uid' => $sendUid,
-                    'send_status' => $sendUid !== null ? 'sent' : null,
+                    'send_status' => $projection?->sendStatus,
+                    'send_failure_reason' => $projection?->failureReason,
                     'retry_count' => $sendUid !== null ? 1 : null,
                 ]);
             });
@@ -286,10 +314,18 @@ final class ConversationHistoryWriter
                     return null;
                 }
 
+                // Correction round 5 (state machine), item 2 — the SAME
+                // fresh, locked re-read of the durable operation applies to
+                // this promotion path too: the insert-race winner is never
+                // blindly written as 'sent'.
+                $operationRow = DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->lockForUpdate()->first();
+                $projection = ManagedSendStateMachine::projectOperation($operationRow)
+                    ?? new ManagedSendProjection(ManagedSendStateMachine::SENT, null);
+
                 $existing->update([
                     'business_messaging_operation_id' => (int) $operationId,
-                    'send_status' => 'sent',
-                    'send_failure_reason' => null,
+                    'send_status' => $projection->sendStatus,
+                    'send_failure_reason' => $projection->failureReason,
                 ]);
 
                 return $existing->fresh();
@@ -371,12 +407,15 @@ final class ConversationHistoryWriter
                 ->first();
 
             if ($existing !== null) {
-                if (in_array($existing->send_status, ['sent', 'delivered'], true)) {
-                    // A racing acceptance already won — this failure result
-                    // is stale. Reported to the caller as it was reported to
-                    // them (accepted sends already ignore a later history
-                    // write failure), but customer-visible state stays the
-                    // truthful success it already is.
+                // Correction round 5 (state machine), item 1 — sent/delivered
+                // AND ambiguous are all protected from a local, pre-provider
+                // refusal (invariants 1 & 2): a stale replay of an old local
+                // failure result must never downgrade any of them, however
+                // it got re-triggered (a changed kill-switch setting, a
+                // repeated request). Only durable operation evidence —
+                // reconciliation, via ManagedSendStateMachine::projectOperation() —
+                // may resolve ambiguous further.
+                if (! ManagedSendStateMachine::canApplyLocalRefusal($existing->send_status)) {
                     return $existing;
                 }
 
@@ -421,10 +460,10 @@ final class ConversationHistoryWriter
     {
         ChatBoxMessage::query()
             ->where('business_messaging_operation_id', $operationId)
-            ->where('send_status', 'sent')
+            ->where('send_status', ManagedSendStateMachine::SENT)
             ->update([
-                'send_status' => 'delivery_failed',
-                'send_failure_reason' => 'delivery_failed',
+                'send_status' => ManagedSendStateMachine::DELIVERY_FAILED,
+                'send_failure_reason' => ConversationSendFailureReason::DeliveryFailed->value,
             ]);
     }
 

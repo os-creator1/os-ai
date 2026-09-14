@@ -473,6 +473,17 @@
 
             $business = $box->business;
 
+            // Correction round 5 (state machine), item 3 — a tracked bubble
+            // stuck 'sending' (a retry whose request died before finishing)
+            // must recover WITHOUT the customer needing to press Retry, and
+            // without opening this screen ever calling a provider itself
+            // (invariant 8 — this is a DB-only reconciliation pass, exactly
+            // ManagedSendStateMachine::reconcileSendingRow() retry() itself
+            // uses, under the same per-row lock). Runs BEFORE the timeline
+            // is built, so a just-reconciled row renders its resolved state
+            // on this very load rather than the stale 'Sending…' label.
+            $this->reconcileSendingRowsBeforeTimeline($box, $business);
+
             // Slice 2B §10: a Contact only when exactly one of this Business's
             // contacts has the number. Everything contact-keyed hangs off it.
             $contact = $box->resolveDisplayContact($business);
@@ -492,6 +503,36 @@
                         : null,
                 ])->render(),
             ]);
+        }
+
+        /**
+         * Correction round 5 (state machine), item 3 — reconciles every
+         * tracked row of THIS conversation currently 'sending', one row per
+         * short transaction under its own row lock (mirroring retry()'s own
+         * claim locking exactly, so this can never race a concurrent
+         * retry() claim). DB-only: never calls a provider, never mints a
+         * new operation key (invariant 8) — it can only ever resolve a row
+         * from durable local evidence that already exists, or leave a
+         * genuinely fresh/unresolved claim untouched.
+         */
+        private function reconcileSendingRowsBeforeTimeline(ChatBox $box, Business $business): void
+        {
+            $sendingIds = ChatBoxMessage::query()
+                ->where('box_id', $box->id)
+                ->where('send_status', \App\Library\Conversations\ManagedSendStateMachine::SENDING)
+                ->pluck('id');
+
+            foreach ($sendingIds as $id) {
+                DB::transaction(function () use ($id, $business): void {
+                    $locked = ChatBoxMessage::whereKey($id)->lockForUpdate()->first();
+
+                    if ($locked === null) {
+                        return;
+                    }
+
+                    \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow($locked, (int) $business->id);
+                });
+            }
         }
 
         /**
@@ -687,32 +728,34 @@
             // 'delivery_failed') and is refused: it can never also pass the
             // claim and start a second provider attempt.
             //
-            // Correction round 3, item 4 — a row already 'sending' is not
-            // simply refused any more: reconcileStuckSendingClaim() first
-            // asks the durable operation audit what actually happened to
-            // the attempt that claimed it, so a request that died between
-            // the claim and the provider call (or between provider
-            // acceptance and the history write) does not leave the bubble
-            // stuck offering neither Retry nor a truthful state forever.
-            $claim = DB::transaction(function () use ($message, $sendUid, $business) {
+            // Correction round 3, item 4; round 5 (state machine), item 3 —
+            // a row already 'sending' is not simply refused any more:
+            // ManagedSendStateMachine::reconcileSendingRow() first asks the
+            // durable operation audit what actually happened to the attempt
+            // that claimed it, so a request that died between the claim and
+            // the provider call (or between provider acceptance and the
+            // history write) does not leave the bubble stuck offering
+            // neither Retry nor a truthful state forever. The SAME
+            // reconciliation also runs from the conversation read path
+            // (timeline()) so a stuck row recovers without the customer
+            // needing to press Retry at all — see that method.
+            $claim = DB::transaction(function () use ($message, $business) {
                 $locked = ChatBoxMessage::whereKey($message->id)->lockForUpdate()->first();
 
                 if ($locked === null) {
                     return ['claimed' => null, 'current' => null];
                 }
 
-                if ($locked->send_status === 'sending') {
-                    $locked = $this->reconcileStuckSendingClaim($locked, (int) $business->id, $sendUid);
-                }
+                $locked = \App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow($locked, (int) $business->id);
 
-                if (! in_array($locked->send_status, ['failed', 'delivery_failed'], true)) {
+                if (! \App\Library\Conversations\ManagedSendStateMachine::isRetryEligible($locked->send_status)) {
                     return ['claimed' => null, 'current' => $locked];
                 }
 
                 $locked->update([
-                    'send_status' => 'sending',
+                    'send_status' => \App\Library\Conversations\ManagedSendStateMachine::SENDING,
                     'retry_count' => (int) $locked->retry_count + 1,
-                    // The claim liveness stamp reconcileStuckSendingClaim()
+                    // The claim liveness stamp ManagedSendStateMachine::reconcileSendingRow()
                     // reads back (item 4) — never elapsed time on an
                     // AMBIGUOUS provider outcome, only on "is this claim's
                     // own request plausibly still running at all".
@@ -727,7 +770,7 @@
             if ($claimed === null) {
                 $current = $claim['current'];
 
-                if ($current !== null && in_array($current->send_status, ['sent', 'delivered'], true)) {
+                if ($current !== null && \App\Library\Conversations\ManagedSendStateMachine::isTerminalSuccess($current->send_status)) {
                     // Reconciliation found the provider HAD accepted it —
                     // never resent, and reported as the success it is.
                     return response()->json([
@@ -737,15 +780,14 @@
                 }
 
                 // Correction round 4, item 1 — an 'ambiguous' bubble is
-                // never claimable (it is not in the ['failed',
-                // 'delivery_failed'] set the claim transaction above
-                // accepts), so it always lands here. Reported with its own
-                // truthful, distinct refusal — never "already in progress",
-                // which would wrongly suggest a later click could succeed —
-                // whether this request found it already 'ambiguous' or
-                // reconciliation just now turned a stuck 'sending' claim
-                // into one.
-                if ($current !== null && $current->send_status === 'ambiguous') {
+                // never claim-eligible (ManagedSendStateMachine::isRetryEligible()
+                // is false for it), so it always lands here. Reported with
+                // its own truthful, distinct refusal — never "already in
+                // progress", which would wrongly suggest a later click
+                // could succeed — whether this request found it already
+                // 'ambiguous' or reconciliation just now turned a stuck
+                // 'sending' claim into one.
+                if ($current !== null && $current->send_status === \App\Library\Conversations\ManagedSendStateMachine::AMBIGUOUS) {
                     return response()->json([
                         'status'  => 'error',
                         'message' => __('locale.conversations.retry_refused_ambiguous'),
@@ -856,130 +898,13 @@
             }
         }
 
-        /**
-         * Correction round 3, item 4 — a bubble found 'sending' is not
-         * necessarily stuck (a first request could still be moments from
-         * finishing), but if it IS the leftover of an attempt that never
-         * completed, this decides what actually happened from the durable
-         * business_messaging_operations audit rather than the wall clock.
-         *
-         * The operation key an in-flight attempt would have used is
-         * DERIVABLE, not stored separately: retry() always mints
-         * 'retry:{send_uid}:{retry_count}', and $locked->retry_count is the
-         * count that specific claim already incremented to before starting.
-         * Looked up under the SAME row lock the caller already holds, so
-         * this cannot itself race a concurrent claim.
-         *
-         *   operation Accepted/Delivered → the provider DID take it. Only
-         *     ConversationHistoryWriter's own write could have failed to
-         *     land (a case it already guarantees never becomes a reported
-         *     failure) or the request died after acceptance — either way,
-         *     reconciled forward to 'sent', never resent.
-         *   operation Rejected/Failed → the provider refused, or a DLR
-         *     later reported delivery failure. Reconciled to the matching
-         *     terminal failure state; retry() then claims a FRESH attempt
-         *     with a new operation key in the same request.
-         *   no operation row at all, and the claim is STALE → nothing ever
-         *     reached the provider (died between the claim and the dispatch
-         *     call, or before ManagedMessageDispatcher's own recordAttempt()).
-         *     Safe to release back to 'failed'.
-         *   no operation row, and the claim is NOT yet stale → a real gap
-         *     exists between the claim committing and recordAttempt()
-         *     inserting its row (the provider call happens outside any open
-         *     transaction, on purpose — §4.9). A claim this fresh may still
-         *     be a live request seconds from creating that row. Untouched,
-         *     so a genuinely concurrent second click (item 8 C) cannot land
-         *     in that exact window and start a second provider send.
-         *   operation still 'attempted' → genuinely ambiguous: the provider
-         *     call may or may not have gone out. NEVER guessed, at ANY
-         *     age — this is the one case elapsed time is explicitly not
-         *     used to resolve. The row is returned completely unchanged, so
-         *     this request reports the same "already in progress" outcome
-         *     instead of risking a duplicate send. A later click reconciles
-         *     the moment the operation itself resolves.
-         */
-        private function reconcileStuckSendingClaim(ChatBoxMessage $locked, int $businessId, string $sendUid): ChatBoxMessage
-        {
-            // Correction round 4, item 3 — derives the EXACT SAME
-            // conversation-scoped key retry() itself would have minted for
-            // this claim's attempt (box_id from the locked row itself, not
-            // a separately threaded parameter).
-            $operationKey = 'conversation:' . $locked->box_id . ':' . $sendUid . ':retry:' . $locked->retry_count;
-
-            $operation = DB::table(\App\Library\Messaging\ManagedMessageDispatcher::TABLE)
-                ->where('business_id', $businessId)
-                ->where('operation_key', $operationKey)
-                ->first();
-
-            if ($operation === null) {
-                // A narrow, bounded LIVENESS check — never a resolution of
-                // an ambiguous provider outcome (see the class docblock).
-                // Two minutes is comfortably longer than any real
-                // synchronous request/provider-HTTP-call takes to either
-                // finish or crash.
-                $claimedAt = $locked->send_claimed_at;
-                $stale = $claimedAt === null || $claimedAt->lt(now()->subMinutes(2));
-
-                if (! $stale) {
-                    return $locked;
-                }
-
-                $locked->update([
-                    'send_status' => 'failed',
-                    'send_failure_reason' => ConversationSendFailureReason::SendFailed->value,
-                ]);
-
-                return $locked->fresh();
-            }
-
-            $status = \App\Enums\Messaging\MessagingOperationStatus::tryFrom((string) $operation->status);
-
-            if (in_array($status, [\App\Enums\Messaging\MessagingOperationStatus::Accepted, \App\Enums\Messaging\MessagingOperationStatus::Delivered], true)) {
-                $locked->update([
-                    'business_messaging_operation_id' => (int) $operation->id,
-                    'send_status' => 'sent',
-                    'send_failure_reason' => null,
-                ]);
-
-                return $locked->fresh();
-            }
-
-            if ($status === \App\Enums\Messaging\MessagingOperationStatus::Failed) {
-                $locked->update([
-                    'business_messaging_operation_id' => (int) $operation->id,
-                    'send_status' => 'delivery_failed',
-                    'send_failure_reason' => 'delivery_failed',
-                ]);
-
-                return $locked->fresh();
-            }
-
-            if ($status === \App\Enums\Messaging\MessagingOperationStatus::Rejected) {
-                $reason = $operation->error_category !== null
-                    ? ConversationSendFailureReason::fromProviderErrorCategory(\App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $operation->error_category))
-                    : ConversationSendFailureReason::SendFailed;
-
-                // Correction round 4, item 1 — a Rejected operation whose
-                // error_category was itself never conclusive (Retryable,
-                // Unknown) reconciles to the 'ambiguous' bubble state, not
-                // 'failed': $reason->bubbleStatus() carries that distinction
-                // through, exactly as attemptManagedSend()'s own write does.
-                $locked->update([
-                    'business_messaging_operation_id' => (int) $operation->id,
-                    'send_status' => $reason->bubbleStatus(),
-                    'send_failure_reason' => $reason->value,
-                ]);
-
-                return $locked->fresh();
-            }
-
-            // Attempted, or an unrecognised status — the CLAIM's own
-            // outcome is still unknown (never guessed, at any age — see the
-            // class docblock). Distinct from ConversationSendFailureReason::Ambiguous
-            // above, which is a FINALIZED Rejected operation whose provider
-            // outcome was itself never conclusively disproven. Untouched.
-            return $locked;
-        }
+        // Correction round 3, item 4; round 5 (state machine) — the "is a
+        // 'sending' row actually stuck, and what really happened to it"
+        // decision now lives in ONE place,
+        // App\Library\Conversations\ManagedSendStateMachine::reconcileSendingRow(),
+        // used both by retry()'s own claim transaction above (under its own
+        // row lock) and by timeline()'s read-path reconciliation below —
+        // see that class's docblock for the full transition table.
 
         /**
          * Everything reply() and retry() share to build quickSend()'s
