@@ -82,18 +82,20 @@ class CustomerShellNavigationTest extends TestCase
         $home->assertSee('role="navigation" aria-label="Business navigation"', false);
         $this->assertSame(1, substr_count($this->sidebarHtml($home->getContent()), 'aria-current="page"'));
         $this->assertSame(['home'], $this->activeMenuKeys($home->getContent()));
-        $home->assertSee('aria-expanded="false"', false);
 
         $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk();
         $this->assertSame(['analytics'], $this->activeMenuKeys($analytics->getContent()));
 
+        // Billing is a Settings screen: the one Settings entry is the current
+        // page's place in the menu, and nothing expands.
         $billing = $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))->assertOk();
-        $this->assertSame(['usage-billing'], $this->activeMenuKeys($billing->getContent()));
+        $this->assertSame(['settings'], $this->activeMenuKeys($billing->getContent()));
         $this->assertMatchesRegularExpression(
-            '/<li class="nav-item has-sub open sidebar-group-active" data-nav-key="settings">\s*<a[^>]*aria-expanded="true"/',
+            '/<li class="nav-item active" data-nav-key="settings">\s*<a href="[^"]+" class="[^"]*"\s+aria-current="page"/',
             $this->sidebarHtml($billing->getContent()),
-            'The Settings group opens and exposes its expanded state for a nested active page.'
+            'Settings is a direct, current entry.'
         );
+        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($billing->getContent()));
     }
 
     public function test_the_switcher_is_keyboard_operable_and_labelled(): void
@@ -146,21 +148,20 @@ class CustomerShellNavigationTest extends TestCase
         return substr($shell, $start, $end - $start);
     }
 
-    public function test_a_single_business_owner_gets_a_simple_but_real_switcher(): void
+    public function test_a_single_business_owner_gets_a_labelled_identity_not_a_one_row_menu(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Solo Business');
         $this->authenticateAs($customer);
         $shell = $this->shellHtml($this->home()->assertOk()->getContent());
 
-        // Lane E: the block is the control, and it is labelled and operable
-        // even with one Business, because the account is also a destination.
-        $this->assertStringContainsString('id="customer-context-switcher-toggle"', $shell);
-        $this->assertStringContainsString('aria-label="Current business: Solo Business. Switch business"', $shell);
+        // One Business and no account to manage (owner decision): the block
+        // names the Business, and there is nothing to operate.
+        $this->assertStringContainsString('data-role="context-identity"', $shell);
+        $this->assertStringContainsString('aria-label="Current business"', $shell);
         $this->assertStringContainsString('Solo Business', $shell);
 
-        // Simple, though: one Business row, one account row, no search box.
-        $this->assertSame(1, substr_count($shell, 'data-role="context-option-business"'));
-        $this->assertSame(1, substr_count($shell, 'data-role="context-option-account"'));
+        $this->assertStringNotContainsString('id="customer-context-switcher-toggle"', $shell);
+        $this->assertSame(0, substr_count($shell, 'data-role="context-option-account"'));
         $this->assertStringNotContainsString('data-role="context-switcher-filter"', $shell);
     }
 

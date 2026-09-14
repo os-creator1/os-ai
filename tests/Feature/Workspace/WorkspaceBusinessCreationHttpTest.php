@@ -433,11 +433,13 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
             $this->businessAttributes(['name' => 'Listed Co'])
         )->assertRedirect();
 
-        $showResponse = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
-
-        $this->assertTrue(
-            collect($showResponse->original->getData()['businesses'])->contains(fn ($business) => $business['name'] === 'Listed Co')
-        );
+        // A Core account has no account page listing its Business (owner
+        // decision): the new Business is reachable for its owner, and the
+        // account page no longer offers to create another one.
+        $created = \App\Models\Business::query()->where('name', 'Listed Co')->firstOrFail();
+        $this->assertSame((int) $workspace->id, (int) $created->workspace_id);
+        $this->assertTrue(app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $customer->user_id, $created));
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertRedirect();
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

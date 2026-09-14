@@ -8,6 +8,10 @@ use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
 use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Conversation\InboundMessageReceived;
+use App\Events\Crm\CrmOpportunityCreated;
+use App\Events\Crm\CrmOpportunityLost;
+use App\Events\Crm\CrmOpportunityStageChanged;
+use App\Events\Crm\CrmOpportunityWon;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnected;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnectionRevoked;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileDisconnected;
@@ -17,6 +21,7 @@ use App\Events\Opportunity\OpportunityExecutionFailed;
 use App\Events\Opportunity\OpportunityExecutionSucceeded;
 use App\Events\Website\WebsitePublished;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
@@ -70,6 +75,21 @@ class EventServiceProvider extends ServiceProvider
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
             EnrollFromInboundMessage::class,
+        ],
+        // Automations V2 — CRM sales opportunity facts (App\Events\Crm, never the
+        // Advisor's App\Events\Opportunity). The CRM emits after commit; this
+        // queued listener hands each to its trigger source.
+        CrmOpportunityCreated::class => [
+            EnrollFromCrmOpportunityEvent::class,
+        ],
+        CrmOpportunityStageChanged::class => [
+            EnrollFromCrmOpportunityEvent::class,
+        ],
+        CrmOpportunityWon::class => [
+            EnrollFromCrmOpportunityEvent::class,
+        ],
+        CrmOpportunityLost::class => [
+            EnrollFromCrmOpportunityEvent::class,
         ],
         // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
         // shown when their facts stop holding. Invalidation queues nothing;

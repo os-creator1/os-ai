@@ -682,6 +682,10 @@
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
         // The account's AI Business OS plan (Settings → Plan & subscription).
         Route::get('{workspaceUid}/plan', 'Workspace\WorkspaceController@plan')->name('plan.show');
+        // The account's members, roles and Business access (Settings → Team).
+        Route::get('{workspaceUid}/team', 'Workspace\WorkspaceController@team')->name('team.show');
+        // The account's own Settings hub (the Agency account's settings).
+        Route::get('{workspaceUid}/settings', 'Workspace\WorkspaceController@settings')->name('settings.show');
         Route::post('{workspaceUid}/rename', 'Workspace\WorkspaceController@rename')->name('rename');
         Route::post('{workspaceUid}/deactivate', 'Workspace\WorkspaceController@deactivate')->name('deactivate');
         Route::post('{workspaceUid}/reactivate', 'Workspace\WorkspaceController@reactivate')->name('reactivate');
@@ -882,6 +886,9 @@
             Route::post('/{workflowUid}/publish', 'Business\AutomationWorkflowDraftController@publish')->name('publish');
             Route::post('/{workflowUid}/discard-draft', 'Business\AutomationWorkflowDraftController@discard')->name('discard-draft');
             Route::post('/{workflowUid}/simulate', 'Business\AutomationWorkflowDraftController@simulate')->middleware('throttle:30,1')->name('simulate');
+            // Test workflow's contact picker — a read-only search, so the person
+            // chooses who to test with instead of typing an identifier.
+            Route::get('/{workflowUid}/test-contacts', 'Business\AutomationWorkflowDraftController@testContacts')->middleware('throttle:60,1')->name('test-contacts');
 
             Route::post('/{workflowUid}/stop-all', 'Business\AutomationWorkflowEnrollmentsController@stopAll')->name('stop-all');
             Route::get('/{workflowUid}/enrollments', 'Business\AutomationWorkflowEnrollmentsController@history')->name('enrollments.index');
@@ -1044,6 +1051,42 @@
 
         /*
         |----------------------------------------------------------------
+        | CRM Opportunities — the Business's sales pipelines
+        |----------------------------------------------------------------
+        |
+        | A distinct CRM sales domain (crm_* tables, `crm.` route names).
+        | NOT the AI COO / Business Advisor recommendations, which keep
+        | customer.opportunities.* untouched. Business-scoped like every
+        | route in this group, so view-as treats them as BusinessScoped.
+        | Static segments are registered before {opportunityUid}.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/opportunities')->name('businesses.crm.')->group(function () {
+            Route::get('/', 'Business\CrmOpportunitiesController@board')->name('board');
+            Route::post('/setup', 'Business\CrmPipelinesController@setup')->name('setup');
+            Route::get('/new', 'Business\CrmOpportunitiesController@create')->name('opportunities.create');
+            Route::post('/', 'Business\CrmOpportunitiesController@store')->name('opportunities.store');
+            Route::get('/contacts', 'Business\CrmOpportunitiesController@contactSearch')->name('contacts.search');
+
+            Route::post('/pipelines', 'Business\CrmPipelinesController@store')->name('pipelines.store');
+            Route::get('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@settings')->name('pipelines.settings');
+            Route::post('/pipelines/{pipelineUid}', 'Business\CrmPipelinesController@update')->name('pipelines.update');
+            Route::post('/pipelines/{pipelineUid}/stages', 'Business\CrmPipelinesController@storeStage')->name('stages.store');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}', 'Business\CrmPipelinesController@updateStage')->name('stages.update');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}/position', 'Business\CrmPipelinesController@moveStage')->name('stages.move');
+            Route::post('/pipelines/{pipelineUid}/stages/{stageUid}/archive', 'Business\CrmPipelinesController@archiveStage')->name('stages.archive');
+
+            Route::get('/{opportunityUid}', 'Business\CrmOpportunitiesController@show')->name('opportunities.show');
+            Route::post('/{opportunityUid}', 'Business\CrmOpportunitiesController@update')->name('opportunities.update');
+            Route::post('/{opportunityUid}/stage', 'Business\CrmOpportunitiesController@move')->name('opportunities.move');
+            Route::post('/{opportunityUid}/won', 'Business\CrmOpportunitiesController@won')->name('opportunities.won');
+            Route::post('/{opportunityUid}/lost', 'Business\CrmOpportunitiesController@lost')->name('opportunities.lost');
+            Route::post('/{opportunityUid}/reopen', 'Business\CrmOpportunitiesController@reopen')->name('opportunities.reopen');
+            Route::post('/{opportunityUid}/contact-status', 'Business\CrmOpportunitiesController@contactStatus')->name('opportunities.contact-status');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)
         |----------------------------------------------------------------
         |
@@ -1150,22 +1193,39 @@
 
         /*
         |----------------------------------------------------------------
-        | Text messaging — plain-language, read-only Business status
+        | Text messaging — the entire messaging setup/health hub
         |----------------------------------------------------------------
         |
         | Owner product decision: the customer should never need to
         | understand or configure a "messaging channel". This is the ONE
         | customer-facing Settings surface every tier (Core, Growth, and an
-        | Agency Business using managed transport) sees — number, Ready/
-        | Setup needed/Issue status, texting/picture-message availability,
-        | a link to usage & billing. No provider name, no credential field,
-        | no MMS-channel chooser: those stay confined to the Agency-only
-        | Advanced (BYO) surface above, which this route does not touch,
-        | replace, or gate access to.
+        | Agency Business using managed transport) sees — get a number,
+        | complete messaging registration, then number/Ready status,
+        | texting/picture-message availability, Delivery & usage, and a
+        | link to usage & billing. No provider name, no credential field,
+        | no "10DLC": those stay confined to the Agency-only Advanced
+        | (BYO) surface above, which these routes do not touch, replace,
+        | or gate access to.
         |
         */
+        // A Business's Settings hub — the sidebar's one Settings destination.
+        Route::get('{workspaceUid}/businesses/{businessUid}/settings', 'Business\BusinessSettingsController@show')->name('businesses.settings.show');
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/text-messaging')->name('businesses.text-messaging.')->group(function () {
             Route::get('/', 'Business\TextMessagingController@show')->name('show');
+
+            // STATE 1 — no number yet.
+            Route::post('/number/search', 'Business\TextMessagingController@searchNumber')->name('number.search');
+            Route::post('/number/order', 'Business\TextMessagingController@orderNumber')->name('number.order');
+
+            // STATE 2 — number acquired, messaging registration required.
+            Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
+            Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');
+
+            // STATE 3 — Delivery & usage (relocated out of Business Results,
+            // see AnalyticsController's own overview: operational messaging
+            // metrics live here now, never on the Results page).
+            Route::get('/delivery-usage', 'Business\TextMessagingController@deliveryUsage')->name('delivery-usage');
         });
 
         /*

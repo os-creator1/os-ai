@@ -13,26 +13,74 @@ export const NODE_TYPES = {
     END: 'end',
 }
 
+// Customer wording for each step. Outcome-first: what the step does for the
+// business, never how the engine names it.
 export const NODE_LABELS = {
     [NODE_TYPES.TRIGGER]: 'Trigger',
-    [NODE_TYPES.SEND_SMS]: 'Send a text message',
-    [NODE_TYPES.UPDATE_CONTACT_FIELD]: 'Update a contact field',
-    [NODE_TYPES.INTERNAL_NOTIFICATION]: 'Notify the team',
+    [NODE_TYPES.SEND_SMS]: 'Send text message',
+    [NODE_TYPES.UPDATE_CONTACT_FIELD]: 'Update contact field',
+    [NODE_TYPES.INTERNAL_NOTIFICATION]: 'Notify your team',
     [NODE_TYPES.WAIT]: 'Wait',
     [NODE_TYPES.IF_ELSE]: 'If / Else',
-    [NODE_TYPES.END]: 'End',
+    [NODE_TYPES.END]: 'End workflow',
+}
+
+// The step picker's catalogue. Every entry is a registered node type; the
+// keywords are only there so a search for "delay", "sms" or "branch" finds
+// the step a person means.
+export const STEP_CATALOG = [
+    {
+        type: NODE_TYPES.SEND_SMS,
+        group: 'Messages',
+        description: 'Text the contact. Personalise it with their name.',
+        keywords: ['sms', 'text', 'message', 'send', 'follow up', 'reminder'],
+        icon: 'message-square-text',
+    },
+    {
+        type: NODE_TYPES.INTERNAL_NOTIFICATION,
+        group: 'Messages',
+        description: 'Let your team know something needs their attention.',
+        keywords: ['notify', 'alert', 'team', 'staff', 'owner', 'tell'],
+        icon: 'bell',
+    },
+    {
+        type: NODE_TYPES.UPDATE_CONTACT_FIELD,
+        group: 'Contact',
+        description: 'Save a value on the contact, such as a status or a note.',
+        keywords: ['update', 'field', 'contact', 'save', 'set', 'status', 'note'],
+        icon: 'user-pen',
+    },
+    {
+        type: NODE_TYPES.WAIT,
+        group: 'Timing',
+        description: 'Pause for a while, or until a set date and time.',
+        keywords: ['wait', 'delay', 'pause', 'later', 'timer', 'days', 'hours', 'minutes'],
+        icon: 'clock',
+    },
+    {
+        type: NODE_TYPES.IF_ELSE,
+        group: 'Logic',
+        description: 'Split the path: one set of steps if something is true, another if not.',
+        keywords: ['if', 'else', 'branch', 'condition', 'split', 'check', 'replied', 'decide'],
+        icon: 'split',
+    },
+    {
+        type: NODE_TYPES.END,
+        group: 'Logic',
+        description: 'Stop the workflow for this contact here.',
+        keywords: ['end', 'stop', 'finish', 'exit', 'done'],
+        icon: 'circle-stop',
+    },
+]
+
+export const NODE_ICONS = {
+    [NODE_TYPES.TRIGGER]: 'zap',
+    ...Object.fromEntries(STEP_CATALOG.map((entry) => [entry.type, entry.icon])),
 }
 
 // Types a customer may insert anywhere in the body (never the trigger,
 // which is always the one root the document validator requires).
-export const INSERTABLE_TYPES = [
-    NODE_TYPES.SEND_SMS,
-    NODE_TYPES.UPDATE_CONTACT_FIELD,
-    NODE_TYPES.INTERNAL_NOTIFICATION,
-    NODE_TYPES.WAIT,
-    NODE_TYPES.IF_ELSE,
-    NODE_TYPES.END,
-]
+export const INSERTABLE_TYPES = STEP_CATALOG.map((entry) => entry.type)
 
 export function isBranching(type) {
     return type === NODE_TYPES.IF_ELSE
@@ -40,6 +88,11 @@ export function isBranching(type) {
 
 export function isTerminal(type) {
     return type === NODE_TYPES.END
+}
+
+/** A step that must be the last in its path (§5.3): If / Else and End. */
+export function closesSequence(type) {
+    return isBranching(type) || isTerminal(type)
 }
 
 // Default config for a freshly inserted node of each type — deliberately
@@ -63,4 +116,91 @@ export function defaultConfigFor(type) {
         default:
             return {}
     }
+}
+
+// Triggers with a real producer today (WorkflowTriggerType::isIngestableInThisSlice()).
+// Forms, calendars, payments and tags have none, so none is offered.
+export const TRIGGER_TYPES = [
+    {
+        value: 'contact_created',
+        title: 'Contact is created',
+        description: 'Starts when a new contact is added.',
+        icon: 'user-plus',
+        defaultPolicy: 'once_ever',
+    },
+    {
+        value: 'message_received',
+        title: 'Customer sends a text',
+        description: 'Starts when a contact texts your business.',
+        icon: 'message-square-reply',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'contact_date_reached',
+        title: 'Contact date arrives',
+        description: 'Starts on a date saved on the contact, such as a birthday.',
+        icon: 'calendar-clock',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'manual_enrollment',
+        title: 'Added by hand',
+        description: 'Starts only when you add a contact to it yourself.',
+        icon: 'hand',
+        defaultPolicy: 'once_ever',
+    },
+    // CRM sales opportunities. Each defaults to "every time it happens": one
+    // contact can have many deals, and a deal many moves.
+    {
+        value: 'opportunity_created',
+        title: 'Opportunity created',
+        description: 'Starts when a new opportunity is added for a contact.',
+        icon: 'briefcase-business',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_stage_changed',
+        title: 'Opportunity moves stage',
+        description: 'Starts when an opportunity moves to another stage.',
+        icon: 'arrow-right-left',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_won',
+        title: 'Opportunity marked won',
+        description: 'Starts when an opportunity is marked won.',
+        icon: 'trophy',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'opportunity_lost',
+        title: 'Opportunity marked lost',
+        description: 'Starts when an opportunity is marked lost.',
+        icon: 'circle-x',
+        defaultPolicy: 'once_per_occurrence',
+    },
+]
+
+export function triggerTypeInfo(value) {
+    return TRIGGER_TYPES.find((entry) => entry.value === value) || null
+}
+
+export const CONTACT_SOURCE_LABELS = {
+    any: 'From anywhere',
+    opt_in_form: 'From an opt-in form',
+    in_app: 'Added in the app',
+}
+
+export const ENROLLMENT_POLICY_LABELS = {
+    once_ever: 'Only once per contact',
+    once_per_occurrence: 'Every time it happens',
+}
+
+/** '0 day' → 'On the date'; '1 week' → '1 week before'. */
+export function offsetLabel(offset) {
+    if (!offset || offset === '0 day') {
+        return 'On the date'
+    }
+
+    return `${offset} before`
 }

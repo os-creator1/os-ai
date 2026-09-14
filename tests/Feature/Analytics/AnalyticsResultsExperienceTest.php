@@ -125,15 +125,20 @@ class AnalyticsResultsExperienceTest extends TestCase
         $this->assertStringContainsString('New contacts', $overview);
         $this->assertStringContainsString('Contacts added during this period.', $overview);
         $this->assertStringContainsString('New conversations', $overview);
-        $this->assertStringContainsString('Messages received', $overview);
 
         // Outgoing volume is operational health, not a local-Business win.
         foreach (['Messages sent', 'Outbound', 'Outgoing', '>Sent<', 'Failed'] as $outgoing) {
             $this->assertStringNotContainsString($outgoing, $overview, "The overview must not headline {$outgoing}.");
         }
 
-        // It lives in the secondary Messages section, after the overview.
-        $this->assertLessThan(strpos($html, 'data-role="results-messages"'), strpos($html, 'data-role="results-overview"'));
+        // PR #295 Correction Round 1, item 9 (Results cleanup, stronger than
+        // the prior round) — ALL messaging metrics, "Messages received"
+        // included, moved off Results entirely. Settings -> Text messaging
+        // -> Delivery & usage owns every messaging figure now; Results
+        // contains Business outcomes only.
+        $this->assertStringNotContainsString('Messages received', $overview);
+        $this->assertStringNotContainsString('data-role="kpi-messages-received"', $html);
+        $this->assertStringNotContainsString('data-role="results-messages"', $html);
     }
 
     public function test_the_retired_telemetry_headings_are_gone(): void
@@ -172,7 +177,11 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $this->assertSame((string) $b5->contacts->newInRange, $this->figure($html, 'kpi-new-contacts-value'));
         $this->assertSame((string) $conversations, $this->figure($html, 'kpi-new-conversations-value'));
-        $this->assertSame((string) $b5->messages->inbound, $this->figure($html, 'kpi-messages-received-value'));
+
+        // Item 9 — "Messages received" (b5->messages->inbound) no longer
+        // renders on Results at all; TextMessagingDeliveryUsageTest proves
+        // it on Delivery & usage instead.
+        $this->assertStringNotContainsString('data-role="kpi-messages-received-value"', $html);
     }
 
     public function test_message_outcomes_are_plain_words_over_the_unchanged_b5_figures(): void
@@ -191,39 +200,27 @@ class AnalyticsResultsExperienceTest extends TestCase
         $this->assertSame(1, $m->unresolved());
         $this->assertSame($m->outbound, $m->accepted + $m->confirmedFailed + $m->unresolved());
 
+        // The outcome-sent/outcome-failed/outcome-processing breakdown and
+        // its plain-language framing moved to Settings -> Text messaging ->
+        // Delivery & usage (owner product decision, Results cleanup) —
+        // TextMessagingDeliveryUsageTest proves the rendering there now;
+        // this test's job is only the underlying B5 arithmetic above, and
+        // that Results itself no longer renders the breakdown at all.
         $html = $this->overview($workspace, $business)->assertOk()->getContent();
-
-        $this->assertSame((string) $m->accepted, $this->figure($html, 'outcome-sent'), '"Sent" is M4.');
-        $this->assertSame((string) $m->confirmedFailed, $this->figure($html, 'outcome-failed'), '"Failed" is M5.');
-        $this->assertSame((string) $m->unresolved(), $this->figure($html, 'outcome-processing'), '"Processing" is M6.');
-        $this->assertStringContainsString('Out of 4 outgoing messages.', $html);
+        $this->assertStringNotContainsString('data-role="outcome-breakdown"', $html);
     }
 
-    public function test_sent_states_its_meaning_and_never_claims_the_phone_received_it(): void
-    {
-        [$customer, $business, $workspace] = $this->tenant();
-        $this->seedActivity($business);
-        $this->authenticateAsCustomer($customer);
-
-        $response = $this->overview($workspace, $business)->assertOk();
-        $messages = $this->section($response->getContent(), 'results-messages');
-
-        $this->assertStringContainsString('Accepted by the messaging provider.', $messages, 'The helper beside "Sent".');
-        $this->assertStringContainsString('data-role="sent-note"', $messages);
-        $this->assertStringContainsString("It doesn't confirm the message reached the phone.", $messages);
-        $this->assertStringNotContainsString('Delivered', $messages, '"Sent" is never presented as delivery.');
-    }
-
-    public function test_api_messages_appear_only_as_a_separate_note_and_never_in_the_headline_chart(): void
+    public function test_api_messages_are_counted_separately_and_never_in_the_headline_chart(): void
     {
         [$customer, $business, $workspace] = $this->tenant();
         $this->report($business, $business->customer_id, ['direction' => 'api']);
         $this->report($business, $business->customer_id, ['direction' => 'api']);
         $this->authenticateAsCustomer($customer);
 
+        // The API note itself moved beside the (relocated) outcome
+        // breakdown; Results no longer mentions it.
         $this->overview($workspace, $business)->assertOk()
-            ->assertSee('data-role="api-note"', false)
-            ->assertSee('Another 2 messages were sent through your API and are counted separately.');
+            ->assertDontSee('data-role="api-note"', false);
 
         $charts = $this->series($workspace, $business)->assertOk()->json('charts.messages.series');
         $this->assertSame(['incoming', 'accepted'], array_keys($charts), 'The Messages chart carries Received and Sent only.');
@@ -438,7 +435,6 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $this->assertSame('0', $this->figure($html, 'kpi-new-contacts-value'));
         $this->assertSame('0', $this->figure($html, 'kpi-new-conversations-value'));
-        $this->assertSame('0', $this->figure($html, 'kpi-messages-received-value'));
 
         $charts = $this->series($workspace, $business)->assertOk()->json('charts');
         $this->assertSame(0, array_sum($charts['messages']['series']['accepted']));
@@ -569,12 +565,11 @@ class AnalyticsResultsExperienceTest extends TestCase
 
         $html = $this->overview($workspace, $business)->assertOk()->getContent();
 
-        foreach (['results-overview-heading', 'results-messages-heading'] as $heading) {
-            $this->assertStringContainsString('aria-labelledby="' . $heading . '"', $html);
-            $this->assertStringContainsString('<h2 id="' . $heading . '"', $html);
-        }
+        // results-messages-heading moved with the rest of the breakdown to
+        // Delivery & usage (owner product decision, Results cleanup).
+        $this->assertStringContainsString('aria-labelledby="results-overview-heading"', $html);
+        $this->assertStringContainsString('<h2 id="results-overview-heading"', $html);
 
-        $this->assertMatchesRegularExpression('/data-role="sent-note"[^>]*tabindex="0"|tabindex="0"[^>]*data-role="sent-note"/', $html, 'The "Sent" helper is focusable.');
         $this->assertMatchesRegularExpression('/data-role="timezone-note"[^>]*tabindex="0"|tabindex="0"[^>]*data-role="timezone-note"/', $html, 'The timezone helper is focusable.');
     }
 

@@ -40,7 +40,9 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Lane Studios', 'Harbor Lane');
         $this->authenticateAs($owner);
 
-        $page = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        // A Growth account page sends its customer to their Business's Settings
+        // (owner decision); wherever it lands, no account can be created.
+        $page = $this->followingRedirects()->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
         foreach (['Create account', 'New account name', 'Back to accounts'] as $text) {
             $page->assertDontSee($text);
@@ -118,8 +120,13 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
         $chooser->assertDontSee('Create account');
         $chooser->assertDontSee('action="' . route('customer.workspaces.store') . '"', false);
 
-        $this->get(route('customer.workspaces.show', $ownWorkspace->uid))->assertOk()->assertSee('Back to accounts');
-        $this->get(route('customer.workspaces.show', $invitingWorkspace->uid))->assertOk()->assertSee('Inviting Account');
+        // Each Growth account opens as its own Business's Settings.
+        foreach ([[$ownWorkspace, 'Own Business'], [$invitingWorkspace, 'Their Business']] as [$account, $businessName]) {
+            $business = $account->businesses()->firstOrFail();
+            $this->get(route('customer.workspaces.show', $account->uid))
+                ->assertRedirect(route('customer.workspaces.businesses.settings.show', [$account->uid, $business->uid]));
+            $this->get(route('customer.workspaces.businesses.settings.show', [$account->uid, $business->uid]))->assertOk()->assertSee($businessName);
+        }
     }
 
     public function test_an_invited_member_without_an_own_account_still_reaches_the_account_they_joined(): void
@@ -130,7 +137,7 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
         $this->authenticateAs($member);
 
         $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
-        $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Joined Account');
+        $this->followingRedirects()->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Their Business');
     }
 
     /**
@@ -186,7 +193,9 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
 
     public function test_renaming_confirms_with_a_compact_saved_toast_never_workspace_renamed(): void
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Lane Studios', 'Harbor Lane');
+        // Renaming is an Agency account detail: a Core or Growth account is not
+        // a customer-managed object and has no rename control (owner decision).
+        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Harbor Lane Studios', 'Harbor Lane');
         $this->authenticateAs($owner);
 
         $this->post(route('customer.workspaces.rename', $workspace->uid), ['name' => 'Harbor Lane Co'])
@@ -213,18 +222,30 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
 
     public function test_settings_account_opens_the_current_account_directly(): void
     {
+        // An Agency account frame links its own account page directly.
+        [$agency, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($agency, $agencyWorkspace, 'Client Two');
+        $this->authenticateAs($agency);
+
+        $links = $this->menuLinks($this->home()->assertOk()->getContent());
+
+        $this->assertContains(route('customer.workspaces.show', $agencyWorkspace->uid), $links);
+        $this->assertNotContains(route('customer.workspaces.index'), $links);
+
+        // A Growth account has no account destination at all.
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($owner);
 
         $links = $this->menuLinks($this->home()->assertOk()->getContent());
 
-        $this->assertContains(route('customer.workspaces.show', $workspace->uid), $links);
+        $this->assertNotContains(route('customer.workspaces.show', $workspace->uid), $links);
         $this->assertNotContains(route('customer.workspaces.index'), $links);
     }
 
     public function test_the_account_page_no_longer_offers_moving_a_business_into_another_workspace(): void
     {
-        [$owner, , $ownWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Own Business', 'Own Account');
+        // The Agency account page is the one that still lists Businesses.
+        [$owner, , $ownWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Own Business', 'Own Account');
         [, , $otherWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Their Business', 'Other Account');
         $this->member($otherWorkspace, $owner->user, WorkspaceMembershipRole::Admin);
         $this->authenticateAs($owner);

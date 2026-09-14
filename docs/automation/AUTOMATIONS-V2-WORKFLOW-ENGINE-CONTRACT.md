@@ -213,7 +213,7 @@ and any design relying on a long-lived worker is invalid here. Queue driver:
 | Calendar / appointments | **No** | No model, table or migration |
 | Business→client payments | **No** | Payment tables are platform billing and wallet funding (Lane F §3.4) |
 | Tags | **No real entity** | `Contacts::getTags()` decodes a JSON string; CX §28.8 defers tags |
-| Sales pipeline / deals | **No** | `Opportunity` is the AI-COO recommendation engine (`worker_key`, `fingerprint`, `impact`, `urgency`, `confidence`, `priority_score`) — not a CRM |
+| Sales pipeline / deals | **No** at the time of this audit — **since shipped** as the CRM Opportunities domain (`CrmOpportunity`, `crm_*`), whose events are V2 triggers (§9.2) | `Opportunity` is the AI-COO recommendation engine (`worker_key`, `fingerprint`, `impact`, `urgency`, `confidence`, `priority_score`) — not a CRM, and still never a workflow source |
 | Contact assignee | **No** | No owner/assignee column on `contacts` |
 | Business→contact email | **No** | Every `Mail`/`notify()` use is platform→user (receipts, low balance) |
 | Outbox / event envelope | **No** | Lane F Slice 1 was never built |
@@ -853,6 +853,7 @@ contact's life.
 | `manual_enrollment` | `once_ever` | the manual-request uid | Re-enrolling by hand should be a deliberate choice, not an accident of clicking twice |
 | `contact_date_reached` | **`once_per_occurrence`** | the four-digit year of the offset-adjusted local occurrence date (B4 rule, unchanged) | A birthday recurs every year |
 | `message_received` | **`once_per_occurrence`**, plus the 24-hour cooldown (§9.1) | the inbound message id | Each message is its own occurrence; the cooldown stops auto-responder ping-pong |
+| `opportunity_created`, `opportunity_stage_changed`, `opportunity_won`, `opportunity_lost` | **`once_per_occurrence`** | `crm_opportunity_history:{id}` — the CRM's own key for the change (§9.2) | One contact can have many deals and a deal many moves; each change is its own occurrence, and a replayed event composes the same key |
 
 Under **every** policy the `active_contact_guard` (§4.5) also applies, so
 overlapping enrollments are impossible. Keys are composed only from
@@ -996,9 +997,11 @@ Classifications reuse Lane F's vocabulary and are re-verified on `f6cfd88`.
 | Form submitted | **No forms domain**, and its absence is test-enforced | Needs a Forms contract first | — | High | **No** — hard-blocked |
 | Appointment booked / cancelled | **No calendar domain** | Needs a Calendar contract first | — | High | **No** — hard-blocked |
 | Payment received | **No Business→client payments.** Existing payment tables are platform billing and the Business funding its own wallet | Needs a Business invoicing contract first | — | High | **No** — hard-blocked |
+| **Opportunity created / moves stage / marked won / marked lost** (CRM sales deals) | **Yes** — `App\Events\Crm\CrmOpportunity{Created,StageChanged,Won,Lost}`, after-commit, ids-only, emitted by `CrmOpportunityService` | No — reuse the CRM's events | `crm_opportunities.business_id`; the change re-read from `crm_opportunity_history` inside that Business | Low | **Yes** — §9.2 |
 
 **Launch set: four triggers** (contact created, with an opt-in source filter;
-date reached; manual enrollment), with message received following in V2-F.
+date reached; manual enrollment), with message received following in V2-F and
+the four CRM opportunity triggers after the CRM Opportunities domain shipped.
 Nothing is claimed that has no source.
 
 ### 9.1 Default enrollment policy by trigger, and message-received rules (D3, D6 locked)
@@ -1026,6 +1029,57 @@ Nothing is claimed that has no source.
   carrying that tag as a trigger source.
 * **Only authoritative attribution enrolls.** The event is emitted only after
   Slice 3's fail-closed, dual-signal attribution has resolved the Business.
+
+### 9.2 CRM sales opportunity triggers
+
+Four triggers, named exactly as the CRM names its events
+(`App\Events\Crm\CrmOpportunityEvent::NAME`): `opportunity_created`,
+`opportunity_stage_changed`, `opportunity_won`, `opportunity_lost` — shown in the
+Builder as **Opportunity created**, **Opportunity moves stage**, **Opportunity
+marked won** and **Opportunity marked lost**.
+
+**Two Opportunity domains, never mixed.** These are CRM sales deals
+(`App\Models\CrmOpportunity`, `crm_*` tables). The AI COO / Business Advisor
+recommendations (`App\Models\Opportunity`, `opportunities`,
+`App\Events\Opportunity\*`) are a different domain and never start a workflow.
+
+**The CRM does not call Automations.** `CrmOpportunityService` emits its own
+after-commit, Business-scoped, ids-only events. `EnrollFromCrmOpportunityEvent`
+(queued on `automation`, one try) hands each to `CrmOpportunityTriggerSource`,
+found through the trigger-source registry by the event's name; one source class
+is registered once per trigger type, so registry and enum still agree exactly.
+
+**Rules, locked:**
+
+* **The change is re-read, not trusted.** The source reads the
+  `crm_opportunity_history` row the event names, joined to its deal, filtered on
+  the event's Business, and requires it to be the kind of change the event names
+  (a reopen that lands the deal in another stage counts as a stage change, as the
+  CRM announces it). A row of another Business, or a mismatch, enrolls nobody.
+* **The deal's own contact enrolls**, and must still be a contact of that
+  Business. A deal whose contact is gone enrolls nobody.
+* **Idempotent.** The occurrence key is `crm_opportunity_history:{id}`, so a
+  replayed event or retried job composes the same enrollment key and
+  EnrollmentService refuses it.
+* **Only published workflows listen**; paused and archived ones never do, and
+  EnrollmentService re-checks at the door.
+* **Trigger facts are identifiers only** (`CrmOpportunityTriggerContext`):
+  Business, history row, opportunity, contact, pipeline; the stage created in;
+  the stage left and entered for a move; `won`/`lost` for an outcome. They are
+  read from the immutable history row — at enrollment and again, from the
+  enrollment's occurrence key, whenever a journey asks
+  (`CrmOpportunityTriggerSource::contextForEnrollment()`). No stage or pipeline
+  name is carried.
+
+**Configuration.** *Opportunity moves stage* may narrow to a `pipeline_id`, a
+`from_stage_id` and a `to_stage_id`, each optional (absent or null = any). The
+validator refuses a malformed id and a move from a stage to itself; the compiler
+refuses a pipeline or stage that is not this Business's (a foreign id reads
+exactly like a missing one), one that is archived, a stage outside the chosen
+pipeline, and from/to stages of different pipelines (§14.2). The other three
+triggers take no configuration in v1. Test workflow validates and shows these
+configurations and, like every simulation, writes nothing — no deal, history,
+stage, enrollment or CRM event.
 
 ---
 
@@ -1137,17 +1191,18 @@ repository's committed-asset discipline.
 
 | Need | How |
 |---|---|
-| Node rendering | Nested `<ol>`; each step a card from the design system's `card` styles |
-| Branches | If / Else renders a two-column flex row labelled **Yes** / **No** |
-| Add step | A **+** button between every pair and at the end of each lane, opening a step-type menu (`menu` component) |
-| Configure a step | **Bootstrap 5.1 `offcanvas`** drawer, already in the stack; one server-rendered form partial per node type |
+| Node rendering | Nested `<ol>`; the trigger is the fixed top card, then one connected column. Each card shows the step's icon, its customer name and a plain-language summary of what it does ("Wait 2 days", "If customer has not replied yet") — never an identifier |
+| Branches | If / Else opens two equal lanes labelled **Yes** / **No**. Lanes never rejoin (the schema has no merge, §5.3): every path is capped with an explicit end marker — "End of path" under a lane, "Workflow ends" under the main column |
+| Add step | A **+** on every link and at the end of each open path, opening a **searchable step picker** grouped by outcome (Messages, Contact, Timing, Logic). It offers only types valid at that spot: End only where nothing follows, If / Else only below the nesting limit. An If / Else inserted above existing steps takes those steps into its Yes path, and the picker says so first |
+| Configure a step | A **step inspector docked to the right of the canvas**, so the flow and the selected card stay visible; one server-rendered form partial per node type, in customer words (trigger choices as cards, merge-tag chips, a Wait mode switch, conditions with plain comparisons) |
 | Zoom / pan | CSS `transform: scale()` + `translate()` on the canvas container; wheel/pinch zoom, drag or scrollbar pan; **zoom-to-fit** and **reset** buttons |
 | Reorder | **Move up / Move down** in each step's menu — keyboard-accessible and valid by construction. Drag-to-reorder is deferred (§13.3) |
 | Autosave | Debounced 1.5 s `PUT` of the whole document with `definition_revision`; 409 on a stale revision (§14.4) |
 | Undo / redo | A client-side snapshot stack of the document (bounded to 50), restored then autosaved |
 | Validation | The server returns errors keyed by `node_key`; the canvas marks those steps and the drawer shows the message |
 | Saved state | "Saving…", "Saved", "Offline — changes kept locally" |
-| Test workflow | Opens a contact picker and renders the simulated path (§16, V2-A) — **no side effects** |
+| Test workflow | A docked panel: search this Business's contacts by name or number (`GET /{workflowUid}/test-contacts`, §20.2), pick one, and see the simulated path (§16, V2-A) as a step-by-step story and as a highlighted path on the canvas — **no side effects** |
+| Lifecycle | The header shows the status (Draft, Published, Paused, Archived) and only the actions it allows: Publish (or Publish changes), Pause when live, Resume when paused. An archived workflow opens read-only |
 | Keyboard | Arrow keys move between steps; Enter opens the drawer; Escape closes it; Delete removes a step after confirmation |
 | Viewport | Designed for 1280 px and up; usable at 1024 px; below that a read-only list with a "use a larger screen to edit" notice |
 
@@ -1174,8 +1229,20 @@ reviewed change.
 become **workflow templates** — a pre-filled draft document) or *Start from
 scratch* — reconciling CX §14.1's "What would you like to automate?" entry
 with a canvas → **Builder** with tabs **Builder · Settings · Enrollment
-history · Execution logs** (`tabs` component); top bar: back, name, saved
-state, undo/redo, Test workflow, Draft/Publish.
+history · Execution logs** (`tabs` component); top bar: back, name, status,
+saved state, undo/redo, Test, Pause / Resume, Publish.
+
+**Builder vocabulary for V2-F.** Now that V2-F's producer has shipped, the builder
+offers `message_received` as the trigger **"Customer sends a text"** and
+`contact.replied_since_enrollment` as the condition **"Customer replied"**
+(has replied / has not replied yet). Both are exactly the registered trigger and
+subject; the builder adds no semantics of its own. The four CRM opportunity
+triggers (§9.2) are grouped under **Opportunities**; *Opportunity moves stage*
+offers Pipeline, Moves from and Moves to pickers filled only from this
+Business's CRM catalog, with archived pipelines and stages hidden unless the
+trigger already names one. Creating a workflow sends the
+§20.2 body — a name and a trigger type — and a recipe's document is then saved into
+the new draft through the ordinary autosave.
 
 ---
 
@@ -1192,8 +1259,8 @@ a nonexistent one (404). Routes:
 ### 14.2 Reference integrity
 
 Every reference in a node config — contact group, custom field, sender or
-channel, notification recipient, and (in V2-C) a manually enrolled contact —
-must satisfy `business_id == workflow.business_id`:
+channel, notification recipient, CRM pipeline and stage (§9.2), and (in V2-C) a
+manually enrolled contact — must satisfy `business_id == workflow.business_id`:
 
 1. at **save**, for immediate feedback;
 2. at **compile**, authoritatively; and
@@ -1420,7 +1487,7 @@ the repository's deterministic second-session lock pattern
 | Operation | Budget | How |
 |---|---|---|
 | Workflow list | **≤ 2 V2-E feature-owned queries** for any page size (§18.1) | One query with an `exists` draft subselect, paginated (count + page) |
-| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one joined groups/fields catalog, read once and used for both the pickers and `WorkflowCompiler::validate()` |
+| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one catalog statement — contact groups joined to fields, `UNION ALL` CRM pipelines joined to stages — read once and used for both the pickers and `WorkflowCompiler::validate()` |
 | Autosave | 2 queries | One conditional `UPDATE` plus the revision read |
 | Publish, 50 nodes | ≤ 20 queries | In-memory compile; two bulk inserts; one transaction |
 | Trigger ingestion | 1 lookup per event | `(business_id, trigger_type, state)` index |
@@ -1512,8 +1579,10 @@ wait until business hours; recurring schedules beyond date-reached;
 cross-workflow triggers ("added to another workflow"); bulk-import fan-out;
 Workspace- or Agency-level workflows; real-time collaborative editing; a mobile
 editor; real sends from **Test workflow** (it is a simulation only);
-drag-to-reorder; forms, appointments, customer payments, sales pipelines,
-contact assignment and webhooks (§9, §10); **tags**, which are authorized as a
+drag-to-reorder; forms, appointments, customer payments, **sales pipeline
+actions** (creating, moving or closing a deal from a workflow — the CRM's
+opportunity *events* are triggers since §9.2), contact assignment and webhooks
+(§9, §10); **tags**, which are authorized as a
 separate domain contract (D7); **email to contacts**, which needs its own
 transport contract (D10); and **any AI node**.
 
@@ -1662,6 +1731,7 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | POST | `/{workflowUid}/publish` | Publish → 200, or 422 with errors keyed by `node_key` |
 | POST | `/{workflowUid}/discard-draft` | Discard draft |
 | POST | `/{workflowUid}/simulate` | Test workflow `{contact_uid}` → simulated path (JSON), no side effects |
+| GET | `/{workflowUid}/test-contacts?q=` | Test workflow's contact picker → 200 `{contacts: [{uid, name, phone}]}`, at most 8, this Business only. Read-only; needs `view_contact` as well as `automations` (401 without it, checked after tenancy) |
 | POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes via `WorkflowLifecycle`. `/resume` flips status in one short transaction and dispatches `RedispatchHeldEnrollments` after commit; it executes no step itself (§6.3) |
 | GET | `/{workflowUid}/settings`, `/enrollments`, `/enrollments/{enrollmentUid}/logs` | Tabs |
 | POST | `/{workflowUid}/enrollments/manual` | Manual enrollment `{contact_uids[], confirmed}` (≤ 500, confirmed) → 202 `{request_uid, queued}`. **All or nothing.** A malformed body (not a list, empty, over 500, unconfirmed) is **422**. Any uid that names no contact of this Business — whether it exists nowhere or belongs to another Business — is **404**, byte-identical to every other V2-E not-found answer, naming no uid, with **no contact enqueued**, including the valid ones in the same batch (T-WF-21). A workflow that is not live is 409 |
@@ -1669,6 +1739,15 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 **`GET /new` — owner-approved (V2-E, PR #280).** V2-D's merged workflow list links
 "New workflow" to `{basePath}/new`. The chooser page is a legitimate part of the
 V2-E route set, recorded here rather than as an undocumented exception.
+
+**`GET /{workflowUid}/test-contacts` — added by the builder redesign; needs owner
+approval.** §13.1 has always required Test workflow to "open a contact picker",
+but `simulate` takes a contact uid and nothing gave the builder a way to find one,
+so the V2-D builder asked a person to type the uid into a browser prompt. This
+read-only route is the missing picker: `ContactDirectory::page()` — the Contacts
+page's own Business-scoped search by name, email or phone — trimmed to the uid,
+name and phone the picker shows. It writes nothing, reaches no other Business,
+and is covered by the V2-E authorization matrix through the route inventory.
 
 **Manual enrollment path — owner-approved revision (V2-E, PR #280).** Earlier
 revisions of this table fixed manual enrollment at `POST /{workflowUid}/enrollments`.

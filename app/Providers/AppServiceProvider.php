@@ -142,6 +142,14 @@
                 \App\Library\Messaging\TelnyxMessagingAdapter::class,
             );
 
+            // Text messaging setup/number/compliance hub — the same
+            // fail-closed-constructor discipline, for the separate
+            // number-provisioning/registration boundary.
+            $this->app->bind(
+                \App\Library\Messaging\Contracts\MessagingProvisioningAdapter::class,
+                \App\Library\Messaging\TelnyxProvisioningAdapter::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,
@@ -306,6 +314,20 @@
                     // Automations V2-F — the one line the note above anticipated.
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class));
 
+                    // CRM sales opportunities — one source instance per trigger
+                    // type, so registry and enum still agree one-to-one.
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityCreated,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityStageChanged,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityWon,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::OpportunityLost,
+                    ] as $crmTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+                            ['triggerType' => $crmTrigger],
+                        ));
+                    }
+
                     return $registry;
                 },
             );
@@ -345,6 +367,11 @@
                 $app->make(\App\Library\Contacts\ContactDirectory::class),
                 $app->tagged(\App\Library\Conversations\ConversationContextReader::SECTIONS_TAG),
             ));
+
+            // CRM Opportunities — one registry of internal Business Templates per
+            // container, so a template registered once is the one every applier
+            // and controller sees.
+            $this->app->singleton(\App\Library\Crm\Templates\BusinessTemplateRegistry::class);
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }

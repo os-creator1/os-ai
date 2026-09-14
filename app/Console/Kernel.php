@@ -23,6 +23,7 @@
     use App\Jobs\Ai\ExpireStaleAiReservations;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
+    use App\Jobs\Messaging\RefreshPendingMessagingRegistrations;
     use App\Jobs\Usage\ExpireStaleUsageReservations;
     use App\Jobs\Usage\FinalizeSlotAgreementCancellation;
     use App\Jobs\Usage\InitiateSlotAgreementRenewal;
@@ -181,6 +182,15 @@
             // distribution". Manual refresh remains the primary mechanism.
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
+
+            // PR #295 Correction Round 1, item 6 — the one canonical
+            // mechanism that advances a submitted carrier registration.
+            // Never on a page render; 15 minutes is far more responsive
+            // than the multi-day real review cadence needs, without
+            // hammering the provider. withoutOverlapping() so a slow
+            // provider round trip on one run can never stack with the
+            // next tick.
+            $schedule->job(new RefreshPendingMessagingRegistrations())->everyFifteenMinutes()->withoutOverlapping();
         }
 
         /**

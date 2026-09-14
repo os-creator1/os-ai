@@ -2,6 +2,7 @@
 
 namespace App\Library\Navigation;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -172,9 +173,11 @@ final class ContextSwitcherPresenter
     /**
      * The account's own page, named the way the rest of the shell names it: an
      * Agency reads its client list there ("All client accounts", the Slice 1B
-     * label), a Core or Growth customer reads their account settings. Same
-     * page, same authorization - only the word the customer already knows
-     * differs.
+     * label); an account with no plan assigned reads its account settings.
+     *
+     * A Core or Growth account gets no link (owner decision): it is not a
+     * customer-managed object, everything its customer configures is in their
+     * Business's Settings, and its account page sends them there.
      *
      * @return array<int, ContextSwitcherLink>
      */
@@ -183,6 +186,7 @@ final class ContextSwitcherPresenter
         $workspace = $context->frameWorkspace();
 
         if ($workspace === null || ! $workspace->isActive || ! $workspace->seesAccountFrame()
+            || in_array($workspace->tier, [WorkspacePlanTier::Core, WorkspacePlanTier::Growth], true)
             || ! Route::has('customer.workspaces.show')) {
             return [];
         }

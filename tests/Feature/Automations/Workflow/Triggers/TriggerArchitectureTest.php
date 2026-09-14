@@ -33,6 +33,8 @@ class TriggerArchitectureTest extends TestCase
         'app/Library/Automation/Workflow/Triggers/ManualEnrollmentTriggerSource.php',
         // V2-F — held to exactly the same architectural rules.
         'app/Library/Automation/Workflow/Triggers/MessageReceivedTriggerSource.php',
+        // CRM sales opportunity triggers — the same rules again.
+        'app/Library/Automation/Workflow/Triggers/CrmOpportunityTriggerSource.php',
     ];
 
     // 22 — every source enrolls through the canonical service
@@ -43,6 +45,7 @@ class TriggerArchitectureTest extends TestCase
             DateReachedTriggerSource::class,
             ManualEnrollmentTriggerSource::class,
             \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
+            \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
         ] as $class) {
             $constructor = (new \ReflectionClass($class))->getConstructor();
             $this->assertNotNull($constructor, $class . ' must take its dependencies explicitly.');
@@ -157,6 +160,11 @@ class TriggerArchitectureTest extends TestCase
             WorkflowTriggerType::ContactDateReached->value => DateReachedTriggerSource::class,
             WorkflowTriggerType::ManualEnrollment->value => ManualEnrollmentTriggerSource::class,
             WorkflowTriggerType::MessageReceived->value => \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
+            // CRM sales opportunities — one source class, registered per trigger type.
+            WorkflowTriggerType::OpportunityCreated->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityStageChanged->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityWon->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityLost->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {

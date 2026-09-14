@@ -43,10 +43,8 @@ class CustomerNavigationTreeTest extends TestCase
 
     /** Entries that may only ever exist while a Business is selected. */
     private const BUSINESS_ONLY_KEYS = [
-        'messages', 'inbox', 'send', 'campaigns', 'contacts',
-        'automations', 'website', 'gbp', 'analytics', 'business', 'blocked-numbers',
-        // Customer Experience Slice 1A — a Business's physical locations.
-        'locations',
+        'conversations', 'messages', 'inbox', 'send', 'campaigns', 'contacts',
+        'opportunities', 'automations', 'website', 'gbp', 'analytics',
     ];
 
     // =================================================================
@@ -60,12 +58,12 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'analytics', 'settings', 'business', 'locations'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
-        foreach (['send', 'campaigns'] as $legacyOutbound) {
-            $this->assertNotContains($legacyOutbound, $keys, "Messages is Inbox only: no [{$legacyOutbound}].");
+        foreach (['send', 'campaigns', 'messages', 'inbox'] as $gone) {
+            $this->assertNotContains($gone, $keys, "Conversations is the one messaging entry: no [{$gone}].");
         }
 
         // The D-20 exemplar: Core's catalog excludes the GBP module.
@@ -73,27 +71,22 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
-     * Customer Experience Slice 1A — Settings → Business → Locations: the
-     * selected Business's physical locations, nested under Business and
-     * pointing at that Business's own scoped route. No entitlement key and
-     * no entitlement query are involved.
+     * Customer Experience Slice 1A, re-homed by the Settings hub — Locations is
+     * a Business setup module of the selected Business's Settings, pointing at
+     * that Business's own scoped route. No entitlement key and no entitlement
+     * query are involved.
      */
-    public function test_locations_sits_under_settings_business_for_the_selected_business(): void
+    public function test_locations_sits_under_settings_business_setup_for_the_selected_business(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
-        $html = $this->home()->assertOk()->getContent();
-        $keys = $this->menuKeys($html);
+        $this->assertNotContains('locations', $this->menuKeys($this->home()->assertOk()->getContent()), 'Not a sidebar entry any more.');
 
-        $settings = array_search('settings', $keys, true);
-        $businessGroup = array_search('business', $keys, true);
-        $locations = array_search('locations', $keys, true);
+        $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
 
-        $this->assertNotFalse($locations);
-        $this->assertGreaterThan($settings, $businessGroup, 'Business sits inside Settings.');
-        $this->assertGreaterThan($businessGroup, $locations, 'Locations sits inside Settings → Business.');
-        $this->assertContains(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]), $this->menuLinks($html));
+        $this->assertContains('locations', $this->settingsHubModules($hub)['business-setup'] ?? [], 'Settings → Business setup → Locations.');
+        $this->assertStringContainsString('href="' . route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]) . '"', $hub);
     }
 
     public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void
@@ -104,12 +97,12 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 
-        foreach (['send', 'campaigns'] as $legacyOutbound) {
-            $this->assertNotContains($legacyOutbound, $keys, "Messages is Inbox only: no [{$legacyOutbound}].");
+        foreach (['send', 'campaigns', 'messages', 'inbox'] as $gone) {
+            $this->assertNotContains($gone, $keys, "Conversations is the one messaging entry: no [{$gone}].");
         }
 
         $this->assertStringContainsString('Get found', $this->shellText($html));
@@ -124,33 +117,117 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_core_and_growth_offer_text_messaging_but_never_the_advanced_byo_surface(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
-            [$customer] = $this->tenant($tier);
+            [$customer, $business, $workspace] = $this->tenant($tier, 'Business ' . $tier->value, 'Account ' . $tier->value);
             $this->authenticateAs($customer);
 
-            $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+            $keys = array_merge(
+                $this->menuKeys($this->home()->assertOk()->getContent()),
+                $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent()),
+            );
 
             $this->assertContains('text-messaging', $keys, "[{$tier->value}] must offer Text messaging.");
             $this->assertNotContains('advanced', $keys, "[{$tier->value}] must never offer the Agency-only Advanced surface.");
             $this->assertNotContains('messaging-provider', $keys, "[{$tier->value}] must never offer Messaging provider.");
+
+            auth()->logout();
+            $this->flushSession();
         }
     }
 
     /**
-     * Messages is Inbox only: the legacy outbound Send and Campaigns pages
-     * are no longer customer destinations (their routes stay registered).
+     * Owner decision — Conversations is one direct destination, not a
+     * "Messages → Inbox" group; the legacy outbound Send and Campaigns pages
+     * are not customer destinations (their routes stay registered).
      */
-    public function test_the_messages_group_carries_inbox_only(): void
+    public function test_conversations_is_one_direct_entry_with_nothing_under_it(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
+        $html = $this->home()->assertOk()->getContent();
+        $keys = $this->menuKeys($html);
+
+        $conversations = array_search('conversations', $keys, true);
+
+        $this->assertNotFalse($conversations);
+        $this->assertSame('contacts', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations.');
+        $this->assertDoesNotMatchRegularExpression('/<li class="[^"]*has-sub[^"]*" data-nav-key="conversations"/', $this->sidebarHtml($html));
+    }
+
+    // =================================================================
+    // Opportunities — the CRM sales board (PR #296)
+    // =================================================================
+
+    /**
+     * Opportunities sits directly after Contacts and before Automations, and
+     * opens the SELECTED Business's CRM board. Advisor stays absent even with
+     * the Opportunity (AI COO) engine switched on.
+     */
+    public function test_opportunities_follows_contacts_and_opens_the_selected_business_crm_board(): void
+    {
+        config(['opportunity.enabled' => true]);
+
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$customer, $business, $workspace] = $this->tenant($tier, 'Harbor Lane ' . $tier->value, 'Harbor ' . $tier->value);
+            $this->authenticateAs($customer);
+
+            $html = $this->home()->assertOk()->getContent();
+            $keys = $this->menuKeys($html);
+            $position = array_search('opportunities', $keys, true);
+
+            $this->assertNotFalse($position, "[{$tier->value}] offers Opportunities.");
+            $this->assertSame('contacts', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Contacts.");
+            $this->assertSame('automations', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Automations.");
+            $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]), $this->menuLinks($html));
+            $this->assertNotContains('advisor', $keys, "[{$tier->value}] Advisor stays out of the Business sidebar.");
+
+            // Active on the CRM screens, not on Contacts.
+            $active = $this->activeMenuKeys($this->get(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+            $this->assertSame(['opportunities'], $active);
+
+            auth()->logout();
+            $this->flushSession();
+        }
+    }
+
+    /**
+     * The same read permission the CRM board enforces. Without it the entry is
+     * gone, while Contacts — reachable through its other permissions — stays.
+     */
+    public function test_opportunities_requires_the_crm_board_read_permission(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $withoutRead = array_values(array_filter(
+            $this->allCustomerPermissions(),
+            static fn (string $permission): bool => $permission !== \App\Http\Controllers\Customer\Business\CrmOpportunitiesController::VIEW_PERMISSION,
+        ));
+
+        $this->authenticateAs($customer, $withoutRead);
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        $messages = array_search('messages', $keys, true);
-        $contacts = array_search('contacts', $keys, true);
+        $this->assertNotContains('opportunities', $keys);
+        $this->assertContains('contacts', $keys);
+    }
 
-        $this->assertNotFalse($messages);
-        $this->assertSame(['inbox'], array_slice($keys, $messages + 1, $contacts - $messages - 1), 'Messages holds Inbox and nothing else.');
+    /**
+     * Never in the Agency account frame; offered once the Agency is inside an
+     * authorized client Business, pointing at that client's own board.
+     */
+    public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
+    {
+        [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Client Two');
+        $this->authenticateAs($agency);
+
+        $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
+
+        $this->switchTo($workspace, $clientOne);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertContains('opportunities', $this->menuKeys($html));
+        $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $clientOne->uid]), $this->menuLinks($html));
+        $this->assertNotContains('advisor', $this->menuKeys($html));
     }
 
     // =================================================================
@@ -163,9 +240,12 @@ class CustomerNavigationTreeTest extends TestCase
         $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $keys = array_merge(
+            $this->menuKeys($this->home()->assertOk()->getContent()),
+            $this->settingsHubModuleKeys($this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent()),
+        );
 
-        foreach (['home', 'accounts', 'prospecting', 'settings', 'plan', 'advanced', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $expected) {
+        foreach (['home', 'accounts', 'prospecting', 'settings', 'plan', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $expected) {
             $this->assertContains($expected, $keys, "An Agency owner must offer [{$expected}].");
         }
     }
@@ -187,21 +267,24 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->authenticateAs($adminCustomer);
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $hub = fn () => $this->settingsHubModules($this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent());
+        $modules = $hub();
 
-        foreach (['advanced', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $forbidden) {
-            $this->assertNotContains($forbidden, $keys, "An agency-wide Admin is not the owner and must not see [{$forbidden}].");
+        $this->assertArrayNotHasKey('advanced', $modules, 'An agency-wide Admin is not the owner and gets no Advanced section.');
+
+        foreach (['messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $forbidden) {
+            $this->assertNotContains($forbidden, array_merge(...array_values($modules)), "An agency-wide Admin is not the owner and must not see [{$forbidden}].");
         }
 
         // The owner of the same Workspace still does — the rule narrows by
         // ownership, it does not switch the surface off.
         $this->authenticateAs($owner);
-        $this->assertContains('advanced', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertContains('messaging-provider', $hub()['advanced'] ?? []);
     }
 
     public function test_the_advanced_group_also_requires_the_manage_advanced_provider_permission(): void
     {
-        [$agency] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
 
         // Ownership alone is never sufficient — the permission is stacked.
         $withoutPermission = array_values(array_filter(
@@ -211,7 +294,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->authenticateAs($agency, $withoutPermission);
 
-        $this->assertNotContains('advanced', $this->menuKeys($this->home()->assertOk()->getContent()));
+        $this->assertArrayNotHasKey('advanced', $this->settingsHubModules($this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent()));
     }
 
     // =================================================================
@@ -304,6 +387,7 @@ class CustomerNavigationTreeTest extends TestCase
             'automations' => ['automations', 'automations'],
             'website' => ['website_generation', 'website'],
             'get found' => ['google_business_profile_module', 'gbp'],
+            'opportunities' => ['crm', 'opportunities'],
         ];
     }
 
@@ -480,31 +564,24 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
-     * §13 #11 — Advanced now sits three levels deep in the Account frame
-     * (Settings → Advanced → leaf). An active leaf must open BOTH ancestors,
-     * or the customer lands on a page whose menu looks collapsed.
+     * §13 #11, re-homed by the Settings hub — an Advanced screen (Settings →
+     * Advanced → Keywords) is reached from the hub, not a nested menu, so the
+     * one Settings entry is what stays active: the customer never lands on a
+     * page whose menu shows nowhere.
      */
-    public function test_a_third_level_active_leaf_opens_both_of_its_ancestors(): void
+    public function test_a_settings_screen_keeps_the_single_settings_entry_active(): void
     {
-        [$agency] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        // Two client accounts, so the Agency stands in its own account frame,
+        // where Advanced belongs.
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
         $html = $this->get(route('customer.keywords.index'))->assertOk()->getContent();
-        $active = $this->activeMenuKeys($html);
 
-        $this->assertContains('keywords', $active, 'The leaf itself is active.');
-
-        // The two ancestors are open — MenuItem::hasActiveChild() recurses,
-        // and the component uses it to expand.
-        $sidebar = $this->sidebarHtml($html);
-
-        foreach (['settings', 'advanced'] as $ancestor) {
-            $this->assertMatchesRegularExpression(
-                '/<li class="[^"]*(open|active)[^"]*" data-nav-key="' . $ancestor . '"/',
-                $sidebar,
-                "[{$ancestor}] must be expanded when a descendant is active.",
-            );
-        }
+        $this->assertContains('settings', $this->activeMenuKeys($html), 'Settings is active on its screens.');
+        $this->assertNotContains('keywords', $this->menuKeys($html), 'The screen itself is a hub module, not a sidebar leaf.');
+        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($html));
     }
 
     // =================================================================
@@ -585,10 +662,12 @@ class CustomerNavigationTreeTest extends TestCase
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
         // Scoped to exactly one Business, so the Business frame.
-        $this->assertContains('messages', $keys);
+        $this->assertContains('conversations', $keys);
 
-        foreach (['accounts', 'prospecting', 'team', 'plan', 'advanced'] as $accountLevel) {
-            $this->assertNotContains($accountLevel, $keys, "Scoped staff must not see [{$accountLevel}].");
+        $hub = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+
+        foreach (['accounts', 'prospecting', 'team', 'plan', 'account-details', 'messaging-provider'] as $accountLevel) {
+            $this->assertNotContains($accountLevel, array_merge($keys, $hub), "Scoped staff must not see [{$accountLevel}].");
         }
     }
 
@@ -606,15 +685,17 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->authenticateAs($staff);
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $this->assertContains('contacts', $this->menuKeys($this->home()->assertOk()->getContent()), 'The product surface stays.');
 
-        $this->assertContains('contacts', $keys, 'The product surface stays.');
-        $this->assertNotContains('team', $keys, 'A non-manager gets no Account entry.');
+        $hub = fn () => $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent());
+        $keys = $hub();
+
+        $this->assertNotContains('team', $keys, 'A non-manager gets no Team.');
         $this->assertNotContains('plan', $keys, 'Nor Plan & subscription.');
 
         // The owner of the same Business does get both.
         $this->authenticateAs($owner);
-        $ownerKeys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $ownerKeys = $hub();
         $this->assertContains('team', $ownerKeys);
         $this->assertContains('plan', $ownerKeys);
     }
@@ -645,9 +726,12 @@ class CustomerNavigationTreeTest extends TestCase
         $viewing = $this->startViewAs($workspace, $business, 'Slice 2A navigation check.');
         $viewing->assertRedirect();
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $keys = array_merge(
+            $this->menuKeys($this->home()->assertOk()->getContent()),
+            $this->settingsHubModuleKeys($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent()),
+        );
 
-        foreach (['plan', 'team', 'advanced', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $sensitive) {
+        foreach (['plan', 'team', 'account-details', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'] as $sensitive) {
             $this->assertNotContains($sensitive, $keys, "[{$sensitive}] must be absent while viewing as a client.");
         }
 
@@ -708,7 +792,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
 
         // The vertical sidebar.
-        foreach (['messages', 'inbox'] as $key) {
+        foreach (['conversations', 'settings'] as $key) {
             $this->assertContains($key, $this->menuKeys($html));
         }
 
@@ -716,9 +800,11 @@ class CustomerNavigationTreeTest extends TestCase
         // keys appear in the document outside the sidebar region too.
         $horizontal = view('panels.horizontalMenu')->render();
 
-        foreach (['Messages', 'Inbox'] as $label) {
+        foreach (['Conversations', 'Settings'] as $label) {
             $this->assertStringContainsString($label, $horizontal, "The horizontal shell must render [{$label}].");
         }
+
+        $this->assertStringNotContainsString('>Inbox<', $horizontal);
 
         foreach (['Send', 'Campaigns'] as $legacyOutbound) {
             $this->assertStringNotContainsString('>' . $legacyOutbound . '<', $horizontal, "The horizontal shell must not render [{$legacyOutbound}].");

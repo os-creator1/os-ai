@@ -182,6 +182,9 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'contactGroups' => $catalog->groups(),
                 'dateFields' => $catalog->dateFields(),
                 'writableFields' => $catalog->writableFields(),
+                // "Opportunity moves stage" pickers — the same read, CRM half.
+                'crmPipelines' => $catalog->pipelines(),
+                'crmStages' => $catalog->stages(),
             ]);
         });
     }

@@ -24,6 +24,17 @@ enum WorkflowTriggerType: string
     case ManualEnrollment = 'manual_enrollment';
     case MessageReceived = 'message_received';
 
+    /*
+     * CRM sales opportunities (crm_opportunities) — never the AI COO / Advisor
+     * `opportunities` domain. Each value is the CRM event's own canonical name
+     * (App\Events\Crm\CrmOpportunityEvent::NAME), so the event that happened and
+     * the trigger that listens for it are one word, not a mapping to keep in step.
+     */
+    case OpportunityCreated = 'opportunity_created';
+    case OpportunityStageChanged = 'opportunity_stage_changed';
+    case OpportunityWon = 'opportunity_won';
+    case OpportunityLost = 'opportunity_lost';
+
     /**
      * THE TRIGGER-AWARE DEFAULT (§9.1, owner decision D3).
      *
@@ -36,7 +47,24 @@ enum WorkflowTriggerType: string
         return match ($this) {
             self::ContactCreated, self::ManualEnrollment => EnrollmentPolicy::OnceEver,
             self::ContactDateReached, self::MessageReceived => EnrollmentPolicy::OncePerOccurrence,
+            // One contact can have many deals, and one deal many moves: each is its
+            // own occurrence, so a second deal must not be refused as a repeat.
+            self::OpportunityCreated,
+            self::OpportunityStageChanged,
+            self::OpportunityWon,
+            self::OpportunityLost => EnrollmentPolicy::OncePerOccurrence,
         };
+    }
+
+    /** The four triggers fed by CRM sales opportunity events. */
+    public function isCrmOpportunity(): bool
+    {
+        return in_array($this, [
+            self::OpportunityCreated,
+            self::OpportunityStageChanged,
+            self::OpportunityWon,
+            self::OpportunityLost,
+        ], true);
     }
 
     /**
@@ -58,6 +86,10 @@ enum WorkflowTriggerType: string
             self::ContactDateReached => 'A contact date arrives',
             self::ManualEnrollment => 'I enroll someone by hand',
             self::MessageReceived => 'A message is received',
+            self::OpportunityCreated => 'Opportunity created',
+            self::OpportunityStageChanged => 'Opportunity moves stage',
+            self::OpportunityWon => 'Opportunity marked won',
+            self::OpportunityLost => 'Opportunity marked lost',
         };
     }
 }

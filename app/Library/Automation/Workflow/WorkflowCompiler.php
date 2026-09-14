@@ -305,6 +305,12 @@ class WorkflowCompiler
                         $errors[$entry['key']][] = 'That date field does not belong to the contact group this workflow watches.';
                     }
                 }
+
+                if ($triggerType === WorkflowTriggerType::OpportunityStageChanged) {
+                    foreach ($this->crmStageFilterErrors($entry['config'] ?? [], $references) as $error) {
+                        $errors[$entry['key']][] = $error;
+                    }
+                }
             }
         }
 
@@ -411,6 +417,79 @@ class WorkflowCompiler
             if (! in_array($operator, $allowed, true)) {
                 $errors[] = sprintf('Condition %d uses a comparison that does not apply to that field.', $position);
             }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * "Opportunity moves stage" filters, against this Business's CRM sales
+     * pipelines and stages (crm_* only — never the Advisor's opportunities).
+     *
+     * Each filter is optional. A present one must name a pipeline or stage of
+     * THIS Business — a foreign id and a nonexistent one are refused with the same
+     * words — that is still active, and the stages must sit in the chosen pipeline
+     * and in the same pipeline as each other, because a deal only ever moves
+     * within its own pipeline. The catalog is only read when a filter is set.
+     *
+     * @param array<string, mixed> $config the trigger node's config
+     * @param \Closure(): WorkflowReferenceCatalog $references
+     *
+     * @return list<string>
+     */
+    private function crmStageFilterErrors(array $config, \Closure $references): array
+    {
+        $id = static fn (mixed $value): ?int => (is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value > 0 ? (int) $value : null;
+
+        $pipelineId = $id($config['pipeline_id'] ?? null);
+        $stageIds = ['from' => $id($config['from_stage_id'] ?? null), 'to' => $id($config['to_stage_id'] ?? null)];
+
+        if ($pipelineId === null && $stageIds['from'] === null && $stageIds['to'] === null) {
+            return [];
+        }
+
+        $errors = [];
+
+        if ($pipelineId !== null) {
+            $pipeline = $references()->pipeline($pipelineId);
+
+            if ($pipeline === null) {
+                $errors[] = 'That pipeline does not belong to this business.';
+                $pipelineId = null;
+            } elseif ($pipeline['archived']) {
+                $errors[] = 'That pipeline is archived. Choose an active pipeline, or any pipeline.';
+            }
+        }
+
+        $stagePipelines = [];
+
+        foreach ($stageIds as $side => $stageId) {
+            if ($stageId === null) {
+                continue;
+            }
+
+            $label = $side === 'from' ? 'The stage it moves from' : 'The stage it moves to';
+            $stage = $references()->stage($stageId);
+
+            if ($stage === null) {
+                $errors[] = $label . ' does not belong to this business.';
+
+                continue;
+            }
+
+            if ($stage['archived']) {
+                $errors[] = $label . ' is archived. Choose an active stage, or any stage.';
+            }
+
+            if ($pipelineId !== null && $stage['pipeline_id'] !== $pipelineId) {
+                $errors[] = $label . ' is not in the chosen pipeline.';
+            }
+
+            $stagePipelines[] = $stage['pipeline_id'];
+        }
+
+        if (count($stagePipelines) === 2 && $stagePipelines[0] !== $stagePipelines[1]) {
+            $errors[] = 'A deal only moves between stages of one pipeline. Choose two stages of the same pipeline.';
         }
 
         return $errors;

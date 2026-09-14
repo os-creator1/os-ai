@@ -160,6 +160,29 @@ class NodeTypeRegistry
             }
         }
 
+        // "Opportunity moves stage" may narrow to one pipeline, the stage a deal
+        // leaves and/or the stage it enters. Each is optional ("any"), and must be
+        // an id when present. Whether the ids belong to this Business is the
+        // compiler's question, answered against the Business's CRM catalog.
+        if ($triggerType === WorkflowTriggerType::OpportunityStageChanged) {
+            $messages = [
+                'pipeline_id' => 'Choose a valid pipeline, or leave it as any pipeline.',
+                'from_stage_id' => 'Choose a valid stage to move from, or leave it as any stage.',
+                'to_stage_id' => 'Choose a valid stage to move to, or leave it as any stage.',
+            ];
+
+            foreach ($messages as $key => $message) {
+                if (array_key_exists($key, $config) && $config[$key] !== null && ! $this->isPositiveInt($config[$key])) {
+                    $errors[] = $message;
+                }
+            }
+
+            if ($this->isPositiveInt($config['from_stage_id'] ?? null) && $this->isPositiveInt($config['to_stage_id'] ?? null)
+                && (int) $config['from_stage_id'] === (int) $config['to_stage_id']) {
+                $errors[] = 'A deal cannot move from a stage to the same stage. Choose two different stages.';
+            }
+        }
+
         if ($triggerType === WorkflowTriggerType::ContactDateReached) {
             if (! $this->isPositiveInt($config['contact_group_id'] ?? null)) {
                 $errors[] = 'A date trigger needs one contact group to watch.';
