@@ -209,6 +209,64 @@ class ManagedSendRetryTest extends TestCase
         $this->assertSame(0, DB::table('chat_box_messages')->where('box_id', $bravoBox->id)->count(), "Bravo's conversation gained nothing.");
     }
 
+    /**
+     * PR #301 correction item 1 — send_uid is CLIENT-chosen, untrusted
+     * input, so it is never trusted as globally unique. Two independent
+     * Businesses using the IDENTICAL uid produce two completely independent
+     * bubbles, in their own conversations, each correctly reflecting its
+     * OWN outcome — never one overwriting or being confused with the other.
+     */
+    public function test_the_same_send_uid_in_two_businesses_produces_two_independent_bubbles(): void
+    {
+        [, $alpha, $alphaWorkspace] = $this->managedTenant('+14155550199');
+        [, $bravo, $bravoWorkspace] = $this->managedTenant('+14155550288');
+
+        $alphaBox = $this->inboundConversation($alpha, self::PERSON, '14155550199');
+        $bravoBox = $this->inboundConversation($bravo, self::PERSON, '14155550288');
+
+        $sharedUid = (string) Str::uuid();
+
+        // Alpha's send is refused; Bravo's send, using the SAME uid, is accepted.
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($alphaWorkspace, $alpha, $alphaBox, 'Alpha message', $sharedUid)->assertJson(['status' => 'error']);
+        $this->fakeAdapter->rejections = [];
+        $this->reply($bravoWorkspace, $bravo, $bravoBox, 'Bravo message', $sharedUid)->assertJson(['status' => 'success']);
+
+        $this->assertSame(2, DB::table('chat_box_messages')->where('send_uid', $sharedUid)->count(), 'Two rows share the uid — one per Business.');
+
+        $alphaMessage = DB::table('chat_box_messages')->where('box_id', $alphaBox->id)->sole();
+        $bravoMessage = DB::table('chat_box_messages')->where('box_id', $bravoBox->id)->sole();
+
+        $this->assertSame($sharedUid, $alphaMessage->send_uid);
+        $this->assertSame($sharedUid, $bravoMessage->send_uid);
+        $this->assertNotSame((int) $alphaMessage->id, (int) $bravoMessage->id, 'Two distinct rows, not one shared row.');
+
+        $this->assertSame('Alpha message', $alphaMessage->message);
+        $this->assertSame('failed', $alphaMessage->send_status, "Alpha's own outcome, unaffected by Bravo's.");
+
+        $this->assertSame('Bravo message', $bravoMessage->message);
+        $this->assertSame('sent', $bravoMessage->send_status, "Bravo's own outcome, unaffected by Alpha's.");
+    }
+
+    /**
+     * PR #301 correction item 1 — the SAME box using the SAME send_uid
+     * twice (a replayed request, or a retry that reused rather than
+     * minted a fresh key) is the idempotent case the composite
+     * (box_id, send_uid) key exists to collapse to one row.
+     */
+    public function test_the_same_send_uid_in_the_same_box_stays_one_idempotent_row(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sharedUid = (string) Str::uuid();
+
+        $this->reply($workspace, $business, $box, 'Once', $sharedUid)->assertJson(['status' => 'success']);
+        $this->reply($workspace, $business, $box, 'Once', $sharedUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'The dispatcher\'s own operation-key idempotency: one provider call.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->where('send_uid', $sharedUid)->count());
+    }
+
     // -----------------------------------------------------------------
 
     /**

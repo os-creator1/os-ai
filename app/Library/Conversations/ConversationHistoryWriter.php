@@ -206,7 +206,7 @@ final class ConversationHistoryWriter
                 $conversation->reply_by_customer = false;
                 $conversation->save();
 
-                $existing = $sendUid !== null ? $this->recordedForSendUid($sendUid) : null;
+                $existing = $sendUid !== null ? $this->recordedForSendUid((int) $conversation->id, $sendUid) : null;
 
                 if ($existing !== null) {
                     // A retry just succeeded: the SAME bubble now points at
@@ -254,12 +254,23 @@ final class ConversationHistoryWriter
      * as it already was — an accepted send whose history write later fails is
      * never turned into a reported failure by this or any other writer).
      *
-     * IDENTITY: $sendUid, always — the same stable id recordManagedOutbound()
-     * uses. A first attempt with no prior row creates one; a retry that
-     * failed again updates the SAME row in place, exactly as a successful
-     * retry does, so a repeatedly-failing message still shows as ONE bubble.
+     * IDENTITY: (box_id, $sendUid), always — the same composite key
+     * recordManagedOutbound() looks up by. $sendUid is CLIENT-chosen,
+     * untrusted input; a first attempt with no prior row IN THIS
+     * conversation creates one, and a retry that failed again updates the
+     * SAME row in place, exactly as a successful retry does, so a
+     * repeatedly-failing message still shows as ONE bubble — but a uid
+     * another Business's (or another thread's) conversation already used is
+     * never found here at all, and never rewrites that stranger's row.
+     *
+     * FAILS CLOSED if the supplied conversation does not genuinely belong
+     * to the supplied Business — defense in depth beyond the caller's own
+     * tenancy resolution, since this is the seam that would otherwise let a
+     * mismatched pair silently write into the wrong Business's history.
      *
      * @param  list<string>  $mediaUrls
+     *
+     * @throws \InvalidArgumentException when $conversation does not belong to $business
      */
     public function recordManualSendFailure(
         Business $business,
@@ -270,8 +281,14 @@ final class ConversationHistoryWriter
         string $sendUid,
         string $failureReasonCode,
     ): ChatBoxMessage {
+        if ((int) $conversation->business_id !== (int) $business->id) {
+            throw new \InvalidArgumentException(
+                'recordManualSendFailure() refuses a conversation that does not belong to the supplied Business.',
+            );
+        }
+
         return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode): ChatBoxMessage {
-            $existing = $this->recordedForSendUid($sendUid);
+            $existing = $this->recordedForSendUid((int) $conversation->id, $sendUid);
 
             if ($existing !== null) {
                 $existing->update([
@@ -327,8 +344,14 @@ final class ConversationHistoryWriter
         return ChatBoxMessage::query()->where('business_messaging_operation_id', $operationId)->first();
     }
 
-    private function recordedForSendUid(string $sendUid): ?ChatBoxMessage
+    /**
+     * NEVER by send_uid alone (item 1) — it is client-chosen, untrusted
+     * input, and two different conversations (any two Businesses, or two
+     * threads of the same Business) may legitimately carry the identical
+     * value with no relationship to each other at all.
+     */
+    private function recordedForSendUid(int $boxId, string $sendUid): ?ChatBoxMessage
     {
-        return ChatBoxMessage::query()->where('send_uid', $sendUid)->first();
+        return ChatBoxMessage::query()->where('box_id', $boxId)->where('send_uid', $sendUid)->first();
     }
 }
