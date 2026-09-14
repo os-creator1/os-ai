@@ -141,33 +141,51 @@ class ContactActivityTimelineTest extends TestCase
         $campaign = $this->campaignNamed($business, 'Spring promo');
         $at = Carbon::parse('2026-09-05 12:00:00');
 
+        // Three jobs tracked the send. The earliest report reads "Sent"; the
+        // other two read "Failed", so which one is shown is visible.
         $operation = $this->managedOperation($business, $at);
-        $earlier = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, ['campaign_id' => $campaign->id, 'business_messaging_operation_id' => $operation, 'status' => 'Sent', 'customer_status' => 'Sent']);
-        $named = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, ['campaign_id' => $campaign->id, 'business_messaging_operation_id' => $operation, 'status' => 'Failed', 'customer_status' => 'Failed']);
+        $stamp = ['campaign_id' => $campaign->id, 'business_messaging_operation_id' => $operation];
+        $earliest = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, $stamp + ['status' => 'Sent', 'customer_status' => 'Sent']);
+        $named = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, $stamp + ['status' => 'Failed', 'customer_status' => 'Failed']);
+        $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, $stamp + ['status' => 'Failed', 'customer_status' => 'Failed']);
 
-        // The two jobs interleaved: the operation names the LATER report, which
-        // is the one a failed delivery callback updated.
+        // Unrelated legacy reports (no operation) are never collapsed.
+        $legacy = $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
+        $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
+
+        $legacyBubbles = [
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+        ];
+
+        // 1. The jobs interleaved: the operation names a LATER report — the one
+        //    a failed delivery callback updated. That one is the bubble.
         DB::table('business_messaging_operations')->where('id', $operation)->update(['report_id' => $named]);
-
-        // An unrelated legacy report (no operation) is never collapsed.
-        $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
-        $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
 
         $this->assertSame([
             'out: Spring sessions are open [Sent by campaign: Spring promo] — Not delivered',
-            'out: Autumn promo [Sent by campaign: Spring promo]',
-            'out: Autumn promo [Sent by campaign: Spring promo]',
+            ...$legacyBubbles,
         ], $this->describe($this->timeline($business, $box)));
 
-        // If the named report is gone, the send's earliest report stands for it.
-        DB::table('reports')->where('id', $named)->delete();
+        // 2. The operation names a report that is not this send's: it does not
+        //    count, and the send's EARLIEST report stands for it.
+        DB::table('business_messaging_operations')->where('id', $operation)->update(['report_id' => $legacy]);
 
         $this->assertSame([
             'out: Spring sessions are open [Sent by campaign: Spring promo]',
-            'out: Autumn promo [Sent by campaign: Spring promo]',
-            'out: Autumn promo [Sent by campaign: Spring promo]',
+            ...$legacyBubbles,
         ], $this->describe($this->timeline($business, $box)));
-        $this->assertNotNull(DB::table('reports')->where('id', $earlier)->value('id'));
+
+        // 3. The named report is gone (the foreign key nulls report_id) and two
+        //    reports remain: still one bubble, the earliest.
+        DB::table('reports')->where('id', $named)->delete();
+        DB::table('business_messaging_operations')->where('id', $operation)->update(['report_id' => null]);
+
+        $this->assertSame([
+            'out: Spring sessions are open [Sent by campaign: Spring promo]',
+            ...$legacyBubbles,
+        ], $this->describe($this->timeline($business, $box)));
+        $this->assertNotNull(DB::table('reports')->where('id', $earliest)->value('id'));
     }
 
     public function test_only_automation_outcomes_a_person_cares_about_appear_and_raw_codes_never_do(): void

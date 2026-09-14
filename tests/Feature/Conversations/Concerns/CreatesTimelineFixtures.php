@@ -117,12 +117,6 @@ trait CreatesTimelineFixtures
         ], $marks));
     }
 
-    /**
-     * A managed outbound message as ConversationHistoryWriter records it: the
-     * managed operation row it is the history of (linked to a campaign report
-     * when there is one), and the message carrying that operation, the sending
-     * automation step and its source.
-     */
     /** A managed outbound operation row, optionally naming its report. */
     protected function managedOperation(Business $business, Carbon $at, ?int $reportId = null): int
     {
@@ -141,6 +135,12 @@ trait CreatesTimelineFixtures
         ]);
     }
 
+    /**
+     * A managed outbound message as ConversationHistoryWriter records it: the
+     * managed operation row it is the history of (linked to a campaign report
+     * when there is one), and the message carrying that operation, the sending
+     * automation step and its source.
+     */
     protected function managedMessage(Business $business, ChatBox $box, string $text, Carbon $at, ?int $reportId = null, ?int $stepRunId = null, ?string $source = null): int
     {
         $operationId = $this->managedOperation($business, $at, $reportId);
