@@ -123,9 +123,10 @@ trait CreatesTimelineFixtures
      * when there is one), and the message carrying that operation, the sending
      * automation step and its source.
      */
-    protected function managedMessage(Business $business, ChatBox $box, string $text, Carbon $at, ?int $reportId = null, ?int $stepRunId = null, ?string $source = null): int
+    /** A managed outbound operation row, optionally naming its report. */
+    protected function managedOperation(Business $business, Carbon $at, ?int $reportId = null): int
     {
-        $operationId = DB::table('business_messaging_operations')->insertGetId([
+        return DB::table('business_messaging_operations')->insertGetId([
             'business_id' => $business->id,
             'transport_mode' => 'managed',
             'provider' => 'telnyx',
@@ -138,6 +139,11 @@ trait CreatesTimelineFixtures
             'created_at' => $at,
             'updated_at' => $at,
         ]);
+    }
+
+    protected function managedMessage(Business $business, ChatBox $box, string $text, Carbon $at, ?int $reportId = null, ?int $stepRunId = null, ?string $source = null): int
+    {
+        $operationId = $this->managedOperation($business, $at, $reportId);
 
         return DB::table('chat_box_messages')->insertGetId([
             'box_id' => $box->id,

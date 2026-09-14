@@ -35,11 +35,11 @@ use Illuminate\Support\Facades\DB;
  * (ConversationHistoryWriter). One managed operation can be tracked by more
  * than one campaign job — each with its own report — and every one of those
  * reports carries `business_messaging_operation_id`. Here, in SQL and by that
- * identity — never by comparing text or times — only the first report of an
- * operation is read, and not even that one when the operation's conversation
- * message is in the open conversation. So the send is one bubble in every
- * conversation. (The message also `represents` the one report its operation
- * names, which stays harmless.)
+ * identity — never by comparing text or times — only one report of an
+ * operation is read (the one the operation names, else the earliest), and not
+ * even that one when the operation's conversation message is in the open
+ * conversation. So the send is one bubble in every conversation. (The message
+ * also `represents` the one report its operation names, which stays harmless.)
  *
  * Every join is pinned to the same Business, so a stamp that no longer resolves
  * inside it names nothing (the message still shows, attributed generically).
@@ -86,6 +86,9 @@ final class AttributedOutboundMessagesSource implements TimelineSource
             ->leftJoin('campaigns as c', function (JoinClause $join) use ($businessId): void {
                 $join->on('c.id', '=', 'r.campaign_id')->where('c.business_id', $businessId);
             })
+            ->leftJoin('business_messaging_operations as bmo', function (JoinClause $join) use ($businessId): void {
+                $join->on('bmo.id', '=', 'r.business_messaging_operation_id')->where('bmo.business_id', $businessId);
+            })
             ->where('r.business_id', $businessId)
             ->whereIn('r.to', $variants)
             ->where('r.direction', Reports::DIRECTION_OUTGOING)
@@ -95,17 +98,38 @@ final class AttributedOutboundMessagesSource implements TimelineSource
                     ->orWhereNotNull('r.campaign_id');
             })
             // One managed send can have several reports (one per campaign job
-            // that tracked it), all carrying its operation. Only the first of
-            // them ever stands for the send here, by that identity — so the
-            // send is one bubble in every conversation, including one that does
-            // not hold its message. A report with no operation (every legacy
-            // and non-managed report) compares NULL and is always kept.
-            ->whereNotExists(function ($earlier) use ($businessId): void {
-                $earlier->selectRaw('1')
-                    ->from('reports as r2')
-                    ->whereColumn('r2.business_messaging_operation_id', 'r.business_messaging_operation_id')
-                    ->whereColumn('r2.id', '<', 'r.id')
-                    ->where('r2.business_id', $businessId);
+            // that tracked it), all carrying its operation. Exactly one of them
+            // stands for the send here, by identity — so the send is one bubble
+            // in every conversation, including one that does not hold its
+            // message:
+            //   - the report the operation names (`report_id`), because it is
+            //     the only one delivery callbacks update, so its "Not
+            //     delivered" is the truth;
+            //   - failing that (the named report is gone, or not this send's),
+            //     the earliest report of the send.
+            // A report with no operation — every legacy and non-managed report —
+            // is always kept.
+            ->where(function ($oneReportPerSend) use ($businessId): void {
+                $oneReportPerSend
+                    ->whereNull('r.business_messaging_operation_id')
+                    ->orWhereColumn('bmo.report_id', 'r.id')
+                    ->orWhere(function ($fallback) use ($businessId): void {
+                        $fallback
+                            ->whereNotExists(function ($named) use ($businessId): void {
+                                $named->selectRaw('1')
+                                    ->from('reports as rn')
+                                    ->whereColumn('rn.id', 'bmo.report_id')
+                                    ->whereColumn('rn.business_messaging_operation_id', 'r.business_messaging_operation_id')
+                                    ->where('rn.business_id', $businessId);
+                            })
+                            ->whereNotExists(function ($earlier) use ($businessId): void {
+                                $earlier->selectRaw('1')
+                                    ->from('reports as r2')
+                                    ->whereColumn('r2.business_messaging_operation_id', 'r.business_messaging_operation_id')
+                                    ->whereColumn('r2.id', '<', 'r.id')
+                                    ->where('r2.business_id', $businessId);
+                            });
+                    });
             })
             // And where the send's conversation message IS in this
             // conversation, the message is the one bubble.

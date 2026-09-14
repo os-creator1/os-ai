@@ -127,6 +127,49 @@ class ContactActivityTimelineTest extends TestCase
         ], $this->describe($page));
     }
 
+    /**
+     * One managed campaign send tracked by two campaign jobs has two reports,
+     * both stamped with its operation. In a conversation that does not hold its
+     * message, it is still ONE bubble — and that bubble is the report the
+     * operation names, the only one delivery callbacks update, even when job
+     * interleaving made that the later report.
+     */
+    public function test_a_managed_send_with_several_reports_is_one_bubble_showing_the_report_its_operation_names(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $box = $this->conversationWith($business, self::PHONE);
+        $campaign = $this->campaignNamed($business, 'Spring promo');
+        $at = Carbon::parse('2026-09-05 12:00:00');
+
+        $operation = $this->managedOperation($business, $at);
+        $earlier = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, ['campaign_id' => $campaign->id, 'business_messaging_operation_id' => $operation, 'status' => 'Sent', 'customer_status' => 'Sent']);
+        $named = $this->sentReport($business, self::PHONE, 'Spring sessions are open', $at, ['campaign_id' => $campaign->id, 'business_messaging_operation_id' => $operation, 'status' => 'Failed', 'customer_status' => 'Failed']);
+
+        // The two jobs interleaved: the operation names the LATER report, which
+        // is the one a failed delivery callback updated.
+        DB::table('business_messaging_operations')->where('id', $operation)->update(['report_id' => $named]);
+
+        // An unrelated legacy report (no operation) is never collapsed.
+        $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
+        $this->sentReport($business, self::PHONE, 'Autumn promo', $at->copy()->addDay(), ['campaign_id' => $campaign->id]);
+
+        $this->assertSame([
+            'out: Spring sessions are open [Sent by campaign: Spring promo] — Not delivered',
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+        ], $this->describe($this->timeline($business, $box)));
+
+        // If the named report is gone, the send's earliest report stands for it.
+        DB::table('reports')->where('id', $named)->delete();
+
+        $this->assertSame([
+            'out: Spring sessions are open [Sent by campaign: Spring promo]',
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+            'out: Autumn promo [Sent by campaign: Spring promo]',
+        ], $this->describe($this->timeline($business, $box)));
+        $this->assertNotNull(DB::table('reports')->where('id', $earlier)->value('id'));
+    }
+
     public function test_only_automation_outcomes_a_person_cares_about_appear_and_raw_codes_never_do(): void
     {
         [, $business] = $this->entitledTenant();

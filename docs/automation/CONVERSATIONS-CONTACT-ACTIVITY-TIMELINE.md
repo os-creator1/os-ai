@@ -171,8 +171,11 @@ a managed Business only; every other Business is verified exactly as before
   exactly as before and **stamps** it with its operation —
   `reports.business_messaging_operation_id` (nullable, indexed, no backfill).
   By that identity — never by text or time — the timeline's reports source
-  reads only the **first** report of an operation, and not even that one when
-  the operation's conversation message is in the open conversation. So the send
+  reads only **one** report of an operation — the one the operation names
+  (`report_id`, the only report delivery callbacks update, so its "Not
+  delivered" is the truth), or, if that one is gone, the earliest — and not
+  even that one when the operation's conversation message is in the open
+  conversation. So the send
   is one bubble in every conversation with the person, including an older
   thread that does not hold its message. Provider calls, measurement, wallet
   behaviour, delivery correlation (`business_messaging_operations.report_id`
