@@ -31,6 +31,16 @@ enum ConversationSendFailureReason: string
     /** Every other refusal before provider commitment (coverage, blacklist, malformed destination, spam filter, …) — generic on purpose: nothing more specific is known. */
     case SendFailed = 'send_failed';
 
+    /**
+     * Correction round 4, item 1 — the provider's own outcome is genuinely
+     * UNCONFIRMED: a transport exception/timeout (ProviderErrorCategory::Retryable)
+     * or a 2xx response this platform could not correlate to a provider
+     * message id (ProviderErrorCategory::Unknown). The provider MAY already
+     * have accepted the message, so this is never treated as an ordinary
+     * failure — see isRetryable() and bubbleStatus().
+     */
+    case Ambiguous = 'ambiguous';
+
     public function customerMessage(): string
     {
         return match ($this) {
@@ -39,32 +49,59 @@ enum ConversationSendFailureReason: string
             self::MessagingUnavailable => __('locale.conversations.send_failure.messaging_unavailable'),
             self::DeliveryFailed => __('locale.conversations.send_failure.delivery_failed'),
             self::SendFailed => __('locale.conversations.send_failure.send_failed'),
+            self::Ambiguous => __('locale.conversations.send_failure.ambiguous'),
         };
     }
 
     /**
-     * Every reason this enum can carry only ever reaches a bubble in a state
-     * (`failed` or `delivery_failed`) that by construction means the send
-     * either never reached the provider or is a later delivery-status
-     * outcome — both are always safe to offer a deliberate new attempt for.
-     * There is deliberately no per-reason exception: a reason this enum
-     * cannot express (a local bookkeeping failure after acceptance) never
-     * produces a failed bubble at all, so Retry is never offered for it.
+     * Every reason but one reaches a bubble in a state that by construction
+     * means the send either never reached the provider or is a later
+     * delivery-status outcome — both always safe to offer a deliberate new
+     * attempt for. Ambiguous is the deliberate exception (correction round
+     * 4, item 1): the provider's own acceptance was never conclusively
+     * disproven, so a Retry could mint a second, genuinely new send for a
+     * message that already went out — silently risking a duplicate, and for
+     * a paid send, a double charge. A reason this enum cannot express (a
+     * local bookkeeping failure after acceptance) never produces a failed
+     * bubble at all, so Retry is never offered for it either.
      */
     public function isRetryable(): bool
     {
-        return true;
+        return $this !== self::Ambiguous;
+    }
+
+    /**
+     * The `chat_box_messages.send_status` a failure recorded under this
+     * reason belongs in. Ambiguous is its own bubble state — never 'failed'
+     * — precisely so a Retry control is never rendered for it (see
+     * isRetryable()) and the retry endpoint's own claim transaction, which
+     * only accepts a row already in 'failed'/'delivery_failed', refuses it
+     * structurally even if posted to directly.
+     */
+    public function bubbleStatus(): string
+    {
+        return $this === self::Ambiguous ? 'ambiguous' : 'failed';
     }
 
     /**
      * From the dispatcher's own coarse provider-failure classification
      * (Slice 3 §4.3) — never from a provider-specific string.
+     *
+     * Configuration (the kill switch, missing credentials, or an
+     * authentication rejection — never reaching the provider, or
+     * conclusively refused by it) and Terminal (the provider's own explicit
+     * rejection) are both CONCLUSIVE: the message definitely did not go
+     * out, so a Retry is always safe. Retryable and Unknown are NOT
+     * conclusive (correction round 4, item 1) — the provider may already
+     * have accepted the message — and map to Ambiguous instead, which is
+     * never retryable.
      */
     public static function fromProviderErrorCategory(?ProviderErrorCategory $category): self
     {
         return match ($category) {
-            ProviderErrorCategory::Configuration, ProviderErrorCategory::Retryable => self::MessagingUnavailable,
-            ProviderErrorCategory::Terminal, ProviderErrorCategory::Unknown, null => self::SendFailed,
+            ProviderErrorCategory::Configuration => self::MessagingUnavailable,
+            ProviderErrorCategory::Retryable, ProviderErrorCategory::Unknown => self::Ambiguous,
+            ProviderErrorCategory::Terminal, null => self::SendFailed,
         };
     }
 }

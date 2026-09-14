@@ -145,6 +145,17 @@ final class ConversationMessagesSource implements TimelineSource
                     $row->send_uid,
                     true,
                 ],
+                // Correction round 4, item 1 — visible, truthfully labelled,
+                // and deliberately NEVER retryable: the provider's own
+                // acceptance was never conclusively disproven, so offering
+                // Retry here could mint a second, genuinely new send for a
+                // message that may already have gone out.
+                'ambiguous' => [
+                    __('locale.conversations.ambiguous_label') . ' — ' . ConversationSendFailureReason::Ambiguous->customerMessage(),
+                    TimelineTone::Warning,
+                    null,
+                    false,
+                ],
                 default => [null, TimelineTone::Neutral, null, false],
             };
         }

@@ -240,8 +240,60 @@ final class ConversationHistoryWriter
                 ]);
             });
         } catch (UniqueConstraintViolationException) {
-            // A concurrent copy of the same send recorded it first.
-            return $this->recordedFor((int) $operationId);
+            // A concurrent copy of the same send recorded it first — found,
+            // as always, by the operation id THIS accepted result itself
+            // belongs to.
+            $recorded = $this->recordedFor((int) $operationId);
+
+            if ($recorded !== null) {
+                return $recorded;
+            }
+
+            // Correction round 4, item 4 — the row that now exists for this
+            // exact (box_id, send_uid) is not one recordedFor() above can
+            // find (it carries no business_messaging_operation_id, or a
+            // different one): the insert above lost the unique-key race to
+            // a CONCURRENT FAILURE WRITE instead, one whose own read of
+            // "does a row already exist" happened a moment before this
+            // writer's own insert — recordManualSendFailure() has no way to
+            // see a row this transaction had not committed yet. The
+            // provider ACCEPTED this send regardless of which write landed
+            // in the table first, so whichever row is sitting there now
+            // must be promoted to the truthful 'sent' state — never a
+            // second bubble for the same logical message.
+            if ($sendUid === null) {
+                return null;
+            }
+
+            $conversation = $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
+
+            if ($conversation === null) {
+                return null;
+            }
+
+            return DB::transaction(function () use ($conversation, $sendUid, $operationId): ?ChatBoxMessage {
+                $existing = ChatBoxMessage::query()
+                    ->where('box_id', $conversation->id)
+                    ->where('send_uid', $sendUid)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($existing === null) {
+                    // Lost the unique-key race to something this writer
+                    // cannot identify at all (never observed in practice —
+                    // the composite key is scoped to exactly the writers
+                    // this class documents). Nothing safe to promote.
+                    return null;
+                }
+
+                $existing->update([
+                    'business_messaging_operation_id' => (int) $operationId,
+                    'send_status' => 'sent',
+                    'send_failure_reason' => null,
+                ]);
+
+                return $existing->fresh();
+            });
         }
     }
 
@@ -304,7 +356,14 @@ final class ConversationHistoryWriter
             );
         }
 
-        return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode): ChatBoxMessage {
+        // Correction round 4, item 1 — the bubble state a failure lands in
+        // is DERIVED from the reason, not always 'failed': an Ambiguous
+        // outcome (see ConversationSendFailureReason) gets its own
+        // 'ambiguous' state, which is deliberately never offered a Retry.
+        $reason = ConversationSendFailureReason::tryFrom($failureReasonCode);
+        $sendStatus = $reason?->bubbleStatus() ?? 'failed';
+
+        return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode, $sendStatus): ChatBoxMessage {
             $existing = ChatBoxMessage::query()
                 ->where('box_id', $conversation->id)
                 ->where('send_uid', $sendUid)
@@ -322,7 +381,7 @@ final class ConversationHistoryWriter
                 }
 
                 $existing->update([
-                    'send_status' => 'failed',
+                    'send_status' => $sendStatus,
                     'send_failure_reason' => $failureReasonCode,
                 ]);
 
@@ -337,7 +396,7 @@ final class ConversationHistoryWriter
                 'direction' => Reports::DIRECTION_OUTGOING,
                 'send_by' => 'from',
                 'send_uid' => $sendUid,
-                'send_status' => 'failed',
+                'send_status' => $sendStatus,
                 'send_failure_reason' => $failureReasonCode,
                 'retry_count' => 1,
             ]);

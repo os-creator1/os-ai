@@ -522,13 +522,13 @@ class ManagedSendRetryTest extends TestCase
         [, $business, $workspace, $identity] = $this->managedTenant();
         $box = $this->inboundConversation($business, self::PERSON);
 
-        // Sender-id verification (a legacy per-number check, unrelated to
-        // managed messaging) defaults to 'yes' and would otherwise apply
-        // the MOMENT isManaged() reads false below, masking the outcome
-        // this test is actually about with an unrelated refusal.
-        $subscription = \App\Models\Subscription::query()->where('user_id', $business->customer_id)->where('status', \App\Models\Subscription::STATUS_ACTIVE)->firstOrFail();
-        \App\Models\Plan::query()->where('id', $subscription->plan_id)->update(['options' => json_encode(['sender_id_verification' => 'no'])]);
-
+        // Sender-id verification is left at the Plan's own DEFAULT ('yes')
+        // deliberately (correction round 4, item 5) — round 3's workaround
+        // of disabling it to make this test pass is no longer needed, and
+        // masked exactly the bug round 4 item 5 closes: with the round 4
+        // item 2 fix, retry() refuses a missing managed identity BEFORE
+        // buildManualSendInput() ever runs, so this legacy-specific check
+        // never has a chance to interfere regardless of its setting.
         $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
         $this->reply($workspace, $business, $box, 'Still there?', (string) Str::uuid())->assertJson(['status' => 'error']);
         $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
@@ -536,25 +536,25 @@ class ManagedSendRetryTest extends TestCase
         $this->assertCount(1, $this->fakeAdapter->sentRequests);
 
         // The identity is archived — the Business is not "managed" right
-        // now. With no identity to resolve, ManagedDispatchDelegate::attempt()
-        // returns null (its OWN documented behaviour for "not this
-        // Business's transport") and quickSend() falls through to its
-        // legacy path, which this fixture never wired a real gateway for —
-        // so the truthful reason here is "no sending server available",
-        // not the narrower MessagingIdentityConflictException case (a
-        // resolvable identity with an unusable number). Either way the
-        // guarantee this test is actually about holds: found, not 404;
-        // safely refused; zero provider calls; the SAME bubble updated.
+        // now. Correction round 4, item 2 — retry() now refuses a
+        // historical managed bubble outright the moment its Business has no
+        // CURRENT usable managed identity, with zero provider calls of any
+        // kind (managed OR legacy — this fixture's managedTenant() also
+        // wires a perfectly usable legacy/BYO sending server, and the old
+        // behaviour of falling through to it is exactly what this
+        // correction closes). The reason is the same,
+        // precise 'messaging_not_ready' every other zero-identity refusal
+        // in this suite already reports.
         DB::table('business_messaging_identities')->where('id', $identity->id)->update(['status' => BusinessMessagingIdentityStatus::Archived->value]);
 
         $this->retry($workspace, $business, $box, $message->send_uid)
             ->assertOk()
-            ->assertJson(['status' => 'error']);
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.messaging_not_ready')]);
 
-        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'No provider call while the identity is gone — the bubble is found, not 404.');
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'No provider call while the identity is gone — the bubble is found, not 404, and never falls back to legacy.');
         $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
         $this->assertSame('failed', $updated->send_status);
-        $this->assertNotNull($updated->send_failure_reason, 'A truthful, customer-safe reason is recorded, not silence.');
+        $this->assertSame('messaging_not_ready', $updated->send_failure_reason);
         $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble — the same one, updated.');
 
         // Restored.
@@ -635,7 +635,7 @@ class ManagedSendRetryTest extends TestCase
             'business_messaging_identity_id' => $identity->id,
             'transport_mode' => 'managed', 'provider' => 'telnyx',
             'direction' => 'outbound', 'message_type' => 'sms',
-            'operation_key' => 'retry:' . $sendUid . ':1',
+            'operation_key' => 'conversation:' . $box->id . ':' . $sendUid . ':retry:1',
             'status' => MessagingOperationStatus::Accepted->value,
             'provider_message_id' => 'fake_msg_stuck',
             'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
@@ -672,7 +672,7 @@ class ManagedSendRetryTest extends TestCase
             'business_messaging_identity_id' => $identity->id,
             'transport_mode' => 'managed', 'provider' => 'telnyx',
             'direction' => 'outbound', 'message_type' => 'sms',
-            'operation_key' => 'retry:' . $sendUid . ':1',
+            'operation_key' => 'conversation:' . $box->id . ':' . $sendUid . ':retry:1',
             'status' => MessagingOperationStatus::Rejected->value,
             'error_category' => ProviderErrorCategory::Terminal->value,
             'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
@@ -707,7 +707,7 @@ class ManagedSendRetryTest extends TestCase
             'business_messaging_identity_id' => $identity->id,
             'transport_mode' => 'managed', 'provider' => 'telnyx',
             'direction' => 'outbound', 'message_type' => 'sms',
-            'operation_key' => 'retry:' . $sendUid . ':1',
+            'operation_key' => 'conversation:' . $box->id . ':' . $sendUid . ':retry:1',
             'status' => MessagingOperationStatus::Attempted->value,
             'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -721,6 +721,254 @@ class ManagedSendRetryTest extends TestCase
         $this->assertSame('sending', $updated->send_status, 'Left exactly as found.');
         $this->assertSame(1, $updated->retry_count);
     }
+
+    // =================================================================
+    // Correction round 4, item 1 — an ambiguous provider outcome must
+    // never offer Retry
+    // =================================================================
+
+    public function test_a_transport_timeout_produces_one_attempt_and_an_ambiguous_bubble_with_no_retry(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        // TelnyxMessagingAdapter's own transport-exception/timeout branch —
+        // the provider may already have accepted the message.
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Retryable;
+
+        $this->reply($workspace, $business, $box, 'Are you open?', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.ambiguous')]);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Exactly one provider attempt — the outcome is unconfirmed, never assumed either way.');
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('ambiguous', $message->send_status);
+        $this->assertSame('ambiguous', $message->send_failure_reason);
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->json('timeline');
+        $this->assertStringContainsString(__('locale.conversations.ambiguous_label'), $timeline, 'Still visible, and truthfully labelled.');
+        $this->assertStringNotContainsString(__('locale.conversations.retry'), $timeline, 'No Retry control for an unconfirmed outcome — a second click could double-send.');
+    }
+
+    public function test_a_direct_retry_post_against_an_ambiguous_bubble_is_refused_with_zero_additional_provider_calls(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Retryable;
+        $this->reply($workspace, $business, $box, 'Are you open?', (string) Str::uuid());
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('ambiguous', $message->send_status);
+        $this->fakeAdapter->rejections = [];
+
+        // The server-side claim transaction refuses it structurally — never
+        // merely a hidden Blade button — even posted to directly with the
+        // bubble's own send_uid.
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'error']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Zero additional provider calls.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('ambiguous', $updated->send_status, 'Untouched — never silently resolved into a retryable state either.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+    }
+
+    public function test_an_unconfirmed_two_hundred_response_gets_the_same_conservative_ambiguous_treatment(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        // TelnyxMessagingAdapter's own "2xx we cannot correlate" branch.
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Unknown;
+
+        $this->reply($workspace, $business, $box, 'Are you open?', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.ambiguous')]);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('ambiguous', $message->send_status);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)->assertJson(['status' => 'error']);
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Still refused — Unknown gets the identical conservative treatment as Retryable.');
+    }
+
+    public function test_a_conclusive_terminal_rejection_remains_deliberately_retryable(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+
+        $this->reply($workspace, $business, $box, 'Are you open?', (string) Str::uuid())->assertJson(['status' => 'error']);
+
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('failed', $message->send_status, 'A conclusive provider rejection stays plainly failed — never ambiguous.');
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->json('timeline');
+        $this->assertStringContainsString(__('locale.conversations.retry'), $timeline, 'Terminal/Configuration failures stay retryable.');
+
+        $this->fakeAdapter->rejections = [];
+        $this->retry($workspace, $business, $box, $message->send_uid)->assertJson(['status' => 'success']);
+        $this->assertCount(2, $this->fakeAdapter->sentRequests);
+    }
+
+    // =================================================================
+    // Correction round 4, item 2 — a historical managed retry bubble must
+    // never fall back to legacy/BYO transport
+    // =================================================================
+
+    public function test_a_historical_managed_retry_never_falls_back_to_a_usable_legacy_sending_server(): void
+    {
+        // managedTenant() wires BOTH a managed identity AND a perfectly
+        // usable legacy/BYO sending server (via sendableChannel()) — the
+        // exact configuration item 2's bug required to actually matter.
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($workspace, $business, $box, 'Still there?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('failed', $message->send_status);
+        $this->fakeAdapter->rejections = [];
+
+        // A legacy send — success OR failure — always writes a Reports row
+        // (EloquentCampaignRepository::quickSend()'s legacy path). Counting
+        // it before/after is how this proves the legacy provider was never
+        // reached at all, not merely that it didn't "succeed".
+        $reportsBefore = DB::table('reports')->count();
+
+        DB::table('business_messaging_identities')->where('id', $identity->id)->update(['status' => BusinessMessagingIdentityStatus::Archived->value]);
+
+        $sentBeforeRetryAttempt = count($this->fakeAdapter->sentRequests);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.messaging_not_ready')]);
+
+        $this->assertCount($sentBeforeRetryAttempt, $this->fakeAdapter->sentRequests, 'Zero ADDITIONAL provider calls of any kind — managed or legacy.');
+        $this->assertSame($reportsBefore, DB::table('reports')->count(), 'Zero LEGACY sends either — never silently fell back.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('failed', $updated->send_status);
+        $this->assertSame('messaging_not_ready', $updated->send_failure_reason);
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble — the same one.');
+
+        // Restored — exactly one MANAGED attempt, still never a legacy one.
+        DB::table('business_messaging_identities')->where('id', $identity->id)->update(['status' => BusinessMessagingIdentityStatus::Active->value]);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)->assertJson(['status' => 'success']);
+
+        $this->assertCount($sentBeforeRetryAttempt + 1, $this->fakeAdapter->sentRequests, 'Exactly one new managed attempt, once restored.');
+        $this->assertSame($reportsBefore, DB::table('reports')->count(), 'Still zero Reports rows — managed transport writes no Report.');
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('id', $message->id)->value('send_status'));
+    }
+
+    public function test_normal_legacy_byo_conversations_replies_are_unaffected_by_the_managed_retry_guard(): void
+    {
+        // A genuinely NON-managed Business. Item 2's guard lives entirely
+        // inside retry(), gated on finding a bubble by its persisted
+        // send_uid; a legacy conversation never carries one at all (see
+        // test_a_legacy_row_still_cannot_use_the_retry_endpoint), so
+        // reply()'s ordinary legacy refusal must be provably UNCHANGED —
+        // still the exact same refusal this fixture always produced
+        // (mirrors ManagedOutboundConversationHistoryTest's own
+        // sender-verification-refuses-non-managed test), never the new
+        // 'messaging_not_ready' reason a managed-only Business gets.
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->sendableChannel($business);
+        $customer->user->sms_unit = 1000;
+        $customer->user->save();
+
+        $box = app(ConversationHistoryWriter::class)->conversationFor($business, '14155550199', self::PERSON);
+        $box->save();
+
+        $this->reply($workspace, $business, $box->fresh(), 'A normal legacy reply', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => '14155550199'])]);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Never reaches managed transport — this Business has no managed identity at all.');
+        $this->assertSame(0, DB::table('chat_box_messages')->count(), 'Non-managed behaviour is unchanged (item 8 H): no bubble at all, exactly like every other non-managed preparation refusal in this suite.');
+    }
+
+    // =================================================================
+    // Correction round 4, item 3 — operation keys must also be scoped to
+    // the conversation, not only to the Business
+    // =================================================================
+
+    public function test_the_same_send_uid_in_two_conversations_of_one_business_produces_two_independent_sends(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $alphaBox = $this->inboundConversation($business, '14155552671');
+        $bravoBox = $this->inboundConversation($business, '14155553333');
+        $sharedUid = (string) Str::uuid();
+
+        $this->reply($workspace, $business, $alphaBox, 'For Alpha', $sharedUid)->assertJson(['status' => 'success']);
+        $this->reply($workspace, $business, $bravoBox, 'For Bravo', $sharedUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(2, $this->fakeAdapter->sentRequests, 'Two independent provider sends — the shared client token never collapsed them into one.');
+        $this->assertSame('+14155552671', $this->fakeAdapter->sentRequests[0]->toNumber);
+        $this->assertSame('+14155553333', $this->fakeAdapter->sentRequests[1]->toNumber);
+        $this->assertNotSame(
+            $this->fakeAdapter->sentRequests[0]->operationKey,
+            $this->fakeAdapter->sentRequests[1]->operationKey,
+            'Two distinct, conversation-scoped operation keys.',
+        );
+
+        $this->assertSame(2, DB::table('business_messaging_operations')->where('business_id', $business->id)->count(), 'Two independent operation rows.');
+
+        $alphaMessage = DB::table('chat_box_messages')->where('box_id', $alphaBox->id)->sole();
+        $bravoMessage = DB::table('chat_box_messages')->where('box_id', $bravoBox->id)->sole();
+        $this->assertSame($sharedUid, $alphaMessage->send_uid);
+        $this->assertSame($sharedUid, $bravoMessage->send_uid);
+        $this->assertSame('For Alpha', $alphaMessage->message);
+        $this->assertSame('For Bravo', $bravoMessage->message);
+        $this->assertNotSame((int) $alphaMessage->business_messaging_operation_id, (int) $bravoMessage->business_messaging_operation_id);
+    }
+
+    public function test_the_same_box_and_send_uid_replayed_still_causes_only_one_provider_attempt(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sharedUid = (string) Str::uuid();
+
+        $this->reply($workspace, $business, $box, 'Once', $sharedUid)->assertJson(['status' => 'success']);
+        $this->reply($workspace, $business, $box, 'Once', $sharedUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'The SAME conversation-scoped key both requests resolve to keeps the dispatcher\'s own idempotency intact.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->where('send_uid', $sharedUid)->count());
+    }
+
+    public function test_retries_in_two_conversations_with_the_same_send_uid_cannot_collide(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $alphaBox = $this->inboundConversation($business, '14155552671');
+        $bravoBox = $this->inboundConversation($business, '14155553333');
+        $sharedUid = (string) Str::uuid();
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($workspace, $business, $alphaBox, 'Alpha, first try', $sharedUid)->assertJson(['status' => 'error']);
+        $this->reply($workspace, $business, $bravoBox, 'Bravo, first try', $sharedUid)->assertJson(['status' => 'error']);
+        $this->fakeAdapter->rejections = [];
+
+        $this->retry($workspace, $business, $alphaBox, $sharedUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(3, $this->fakeAdapter->sentRequests, "Alpha's own retry — never resolved against Bravo's still-failed row of the same send_uid.");
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('box_id', $alphaBox->id)->value('send_status'));
+        $this->assertSame('failed', DB::table('chat_box_messages')->where('box_id', $bravoBox->id)->value('send_status'), "Bravo's row is completely untouched by Alpha's retry.");
+
+        $this->retry($workspace, $business, $bravoBox, $sharedUid)->assertJson(['status' => 'success']);
+        $this->assertCount(4, $this->fakeAdapter->sentRequests);
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('box_id', $bravoBox->id)->value('send_status'));
+    }
+
+    // Correction round 4, item 4 — an accepted insert that loses a race to
+    // a concurrent failure write must still reconcile to sent, never a
+    // second bubble. Covered in its own file,
+    // tests/Feature/Conversations/AcceptedInsertRaceTest.php — it cannot
+    // use RefreshDatabase (see that file's own docblock for why a genuine
+    // cross-connection race needs committed rows, not a transaction this
+    // suite never commits).
 
     // -----------------------------------------------------------------
 

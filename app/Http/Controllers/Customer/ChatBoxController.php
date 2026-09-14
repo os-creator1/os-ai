@@ -580,8 +580,10 @@
                 $request->hasFile('media_image') ? $request->file('media_image') : null,
             );
 
+            $isManaged = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
+
             if ($refusal !== null) {
-                $this->recordPreparationFailureIfManaged($box, $business, $refusal, $sendUid, $input);
+                $this->recordPreparationFailureIfManaged($box, $refusal, $sendUid, $input, $isManaged);
 
                 return $refusal;
             }
@@ -589,9 +591,20 @@
             $input['idempotency_token'] = $sendUid;
             $input['send_uid'] = $sendUid;
 
+            // Correction round 4, item 3 — the managed dispatch operation
+            // key is scoped to THIS conversation, distinct from the raw
+            // client 'idempotency_token' above (which two different
+            // conversations of the same Business may legitimately share):
+            // without box_id in the key, ManagedMessageDispatcher's own
+            // idempotency (business_id, operation_key) could resolve a
+            // SECOND conversation's send to the FIRST conversation's
+            // already-accepted operation and report success without ever
+            // sending to the second conversation's recipient.
+            $input['managed_operation_key'] = 'conversation:' . $box->id . ':' . $sendUid . ':initial';
+
             $campaign->business_id = $business->id;
 
-            return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid, \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id));
+            return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid, $isManaged);
         }
 
         /**
@@ -723,6 +736,22 @@
                     ]);
                 }
 
+                // Correction round 4, item 1 — an 'ambiguous' bubble is
+                // never claimable (it is not in the ['failed',
+                // 'delivery_failed'] set the claim transaction above
+                // accepts), so it always lands here. Reported with its own
+                // truthful, distinct refusal — never "already in progress",
+                // which would wrongly suggest a later click could succeed —
+                // whether this request found it already 'ambiguous' or
+                // reconciliation just now turned a stuck 'sending' claim
+                // into one.
+                if ($current !== null && $current->send_status === 'ambiguous') {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => __('locale.conversations.retry_refused_ambiguous'),
+                    ]);
+                }
+
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.conversations.retry_in_progress'),
@@ -730,14 +759,38 @@
             }
 
             // Retry is a manual-send, managed-transport feature in this
-            // slice (item 6): a Business with no CURRENT managed identity —
-            // never managed at all, or a historical bubble whose identity
-            // was since archived (item 3) — cannot reach the provider, and
-            // buildManualSendInput()/quickSend() below fail closed for
-            // exactly that below (MessagingIdentityConflictException,
-            // caught in attemptManagedSend()), recording a truthful
-            // "not ready" bubble rather than a bare 404. The claim already
-            // made above is released back to 'failed' by that same catch.
+            // slice (item 6). A PR-301 retry bubble is PERMANENTLY a
+            // MANAGED-TRANSPORT message (correction round 4, item 2): once
+            // created, it must never silently fall through to whatever
+            // legacy/BYO sending server the Business happens to also have
+            // just because the managed identity that created it was later
+            // archived — quickSend() below would otherwise do exactly that,
+            // since ManagedDispatchDelegate::attempt() returns null (not a
+            // thrown exception) for "no managed identity at all" and every
+            // legacy caller treats that null as "fall through to legacy".
+            // Checked BEFORE buildManualSendInput() so a legacy-specific
+            // preparation check (sender-id verification, in particular)
+            // never even runs for this case either (item 5) — zero provider
+            // calls of ANY kind, managed or legacy, and the claim already
+            // made above is released back to a truthful 'failed' by the
+            // same write reply()'s own MessagingIdentityConflictException
+            // catch already makes for the narrower case where the identity
+            // resolves but no usable number/destination does (still checked
+            // fresh below, once this coarser gate passes).
+            if (! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
+                $this->recordManagedSendFailure(
+                    $box,
+                    ['message' => $claimed->message, 'media_url' => $claimed->media_url, 'sms_type' => $claimed->sms_type ?? 'plain'],
+                    $sendUid,
+                    ConversationSendFailureReason::MessagingNotReady,
+                );
+
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
+                ]);
+            }
+
             $owner = $this->owner($business);
 
             [$input, $refusal] = $this->buildManualSendInput(
@@ -756,7 +809,15 @@
                 // media is re-validated on retry, so the client-input-error
                 // branch can never actually apply here — recordPreparationFailureIfManaged()
                 // is still used for consistency with reply()'s own path.)
-                $this->recordPreparationFailureIfManaged($box, $business, $refusal, $sendUid, $input);
+                //
+                // $trackHistory is TRUE, unconditionally (correction round
+                // 4, item 5) — exactly like attemptManagedSend()'s own
+                // $trackHistory, never re-derived from a fresh isManaged()
+                // here either: this call only runs once the check above has
+                // already proven the identity current and usable, but
+                // stating it explicitly closes the same bug class
+                // structurally rather than relying solely on that ordering.
+                $this->recordPreparationFailureIfManaged($box, $refusal, $sendUid, $input, true);
 
                 return $refusal;
             }
@@ -765,9 +826,14 @@
             // genuinely new provider send is never silently short-circuited
             // by the dispatcher's own same-key idempotency (§4.9) — while
             // 'send_uid' keeps this the SAME logical, customer-visible
-            // bubble no matter how many attempts it takes.
+            // bubble no matter how many attempts it takes. Conversation-
+            // scoped exactly as reply()'s own initial key is (item 3):
+            // 'idempotency_token' stays the M5-reservation-compatible
+            // 'retry:{send_uid}:{n}' value it always was; the managed
+            // dispatch key is the separate, box-scoped one.
             $input['idempotency_token'] = 'retry:' . $sendUid . ':' . $claimed->retry_count;
             $input['send_uid'] = $sendUid;
+            $input['managed_operation_key'] = 'conversation:' . $box->id . ':' . $sendUid . ':retry:' . $claimed->retry_count;
 
             $campaign = new Campaigns();
             $campaign->business_id = $business->id;
@@ -834,7 +900,11 @@
          */
         private function reconcileStuckSendingClaim(ChatBoxMessage $locked, int $businessId, string $sendUid): ChatBoxMessage
         {
-            $operationKey = 'retry:' . $sendUid . ':' . $locked->retry_count;
+            // Correction round 4, item 3 — derives the EXACT SAME
+            // conversation-scoped key retry() itself would have minted for
+            // this claim's attempt (box_id from the locked row itself, not
+            // a separately threaded parameter).
+            $operationKey = 'conversation:' . $locked->box_id . ':' . $sendUid . ':retry:' . $locked->retry_count;
 
             $operation = DB::table(\App\Library\Messaging\ManagedMessageDispatcher::TABLE)
                 ->where('business_id', $businessId)
@@ -889,16 +959,25 @@
                     ? ConversationSendFailureReason::fromProviderErrorCategory(\App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $operation->error_category))
                     : ConversationSendFailureReason::SendFailed;
 
+                // Correction round 4, item 1 — a Rejected operation whose
+                // error_category was itself never conclusive (Retryable,
+                // Unknown) reconciles to the 'ambiguous' bubble state, not
+                // 'failed': $reason->bubbleStatus() carries that distinction
+                // through, exactly as attemptManagedSend()'s own write does.
                 $locked->update([
                     'business_messaging_operation_id' => (int) $operation->id,
-                    'send_status' => 'failed',
+                    'send_status' => $reason->bubbleStatus(),
                     'send_failure_reason' => $reason->value,
                 ]);
 
                 return $locked->fresh();
             }
 
-            // Attempted, or an unrecognised status — ambiguous. Untouched.
+            // Attempted, or an unrecognised status — the CLAIM's own
+            // outcome is still unknown (never guessed, at any age — see the
+            // class docblock). Distinct from ConversationSendFailureReason::Ambiguous
+            // above, which is a FINALIZED Rejected operation whose provider
+            // outcome was itself never conclusively disproven. Untouched.
             return $locked;
         }
 
@@ -1148,13 +1227,32 @@
                 // (coverage, blacklist, the legacy balance check, spam, an
                 // unparsable destination), so only the generic classifier
                 // has anything to go on.
-                $reason = ($payload->managed ?? false) === true
+                $dispatcherRejected = ($payload->managed ?? false) === true;
+
+                $reason = $dispatcherRejected
                     ? ConversationSendFailureReason::fromProviderErrorCategory(
                         isset($payload->error_category) ? \App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $payload->error_category) : null,
                     )
                     : $this->classifyEarlyRefusal((string) $payload->message);
 
                 $this->recordManagedSendFailure($box, $input, $sendUid, $reason);
+
+                if ($dispatcherRejected) {
+                    // Correction round 4, item 1 — the reason's OWN customer
+                    // message, not the dispatcher's flatly generic
+                    // 'campaign_sending_failed' text (identical for every
+                    // category today): an Ambiguous outcome in particular
+                    // must never read as a plain, retryable failure. An
+                    // EARLY refusal (below) already carries its own
+                    // specific, customer-safe text — coverage, blacklist,
+                    // balance — and classifyEarlyRefusal() exists only to
+                    // pick a bubble reason CODE for it, never to replace
+                    // that text.
+                    return response()->json([
+                        'status'  => $payload->status,
+                        'message' => $reason->customerMessage(),
+                    ]);
+                }
             }
 
             return response()->json([
@@ -1192,21 +1290,33 @@
          * silently disappearing instead, exactly like the bug item 1
          * originally fixed for the provider-reached case.
          *
-         * SKIPPED for a non-managed Business (untouched, item 8 H) and for
+         * SKIPPED when $trackHistory is false (untouched, item 8 H) and for
          * $refusal's own 'client_input_error' marker — the media-upload
          * validation branch is a pure client-input problem (a malformed or
          * oversized file), not a fact about whether the message could be
          * sent, exactly like the empty-message/missing-token checks that
          * have never created a bubble either.
+         *
+         * $trackHistory is EXPLICIT, not re-derived from
+         * ManagedDispatchDelegate::isManaged() here (correction round 4,
+         * item 5 — the exact same bug class attemptManagedSend()'s own
+         * $trackHistory closed in round 3). reply() passes a freshly
+         * computed isManaged() result; retry() always passes true, since by
+         * the time it reaches this call it has already passed its own
+         * upfront isManaged() gate (item 2) — re-deriving it here a second
+         * time, after buildManualSendInput() may have run with a
+         * Business's managed identity that was archived MID-REQUEST, is
+         * exactly the stale-recheck pattern that previously left a claimed
+         * 'sending' bubble stranded forever.
          */
         private function recordPreparationFailureIfManaged(
             ChatBox $box,
-            Business $business,
             JsonResponse $refusal,
             string $sendUid,
             array $attempted,
+            bool $trackHistory,
         ): void {
-            if (! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
+            if (! $trackHistory) {
                 return;
             }
 

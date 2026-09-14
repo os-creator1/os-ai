@@ -538,7 +538,14 @@
             // recipient collapse to one operation. The alternative — a fresh
             // random key per call — is what produced the double-billing this
             // replaces.
-            $quickSendKey = $input['idempotency_token'] ?? null;
+            // Correction round 4, item 3 — a Conversations manual send
+            // (reply()/retry()) supplies its own conversation-scoped key
+            // here, distinct from 'idempotency_token' (which stays the
+            // client's raw token — the RFC-005 M5 reservation lookup above
+            // is keyed on that unchanged). Every other caller — Outreach
+            // quick send, an automation, a campaign — never sets this, and
+            // gets today's unchanged behaviour.
+            $quickSendKey = $input['managed_operation_key'] ?? ($input['idempotency_token'] ?? null);
 
             if (! is_string($quickSendKey) || $quickSendKey === '') {
                 $quickSendKey = 'managed:quicksend:' . ($input['business_id'] ?? '0')
