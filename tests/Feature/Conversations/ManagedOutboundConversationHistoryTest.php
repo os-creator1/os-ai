@@ -233,28 +233,68 @@ class ManagedOutboundConversationHistoryTest extends TestCase
             'sms_count' => 1,
         ];
 
-        $campaign->sendSMS($payload);
+        // THE INITIAL SEND.
+        $first = $campaign->sendSMS($payload);
 
-        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'One provider send.');
         $this->assertSame(1, DB::table('reports')->where('campaign_id', $campaign->id)->count(), 'The campaign report is written as it always was.');
+        $this->assertSame('Sent', $first->status);
 
         $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
         $this->assertSame('Spring sessions are open', $message->message);
         $this->assertSame(ConversationHistoryWriter::SOURCE_CAMPAIGN, $message->source);
 
         $box = ChatBox::query()->findOrFail($message->box_id);
-        $bubbles = array_values(array_filter($this->timelineFor($business, $box), fn (TimelineItem $item): bool => $item->isMessage()));
+        $this->assertSame(['Spring sessions are open'], $this->bubbleBodies($business, $box), 'One timeline bubble.');
+        $this->assertSame(['Sent by campaign: Spring promo'], array_map(fn (TimelineItem $item) => $item->via, $this->bubbles($business, $box)));
 
-        $this->assertCount(1, $bubbles, 'The campaign report and its conversation message are one bubble.');
-        $this->assertSame('Spring sessions are open', $bubbles[0]->body);
-        $this->assertSame('Sent by campaign: Spring promo', $bubbles[0]->via);
+        // THE SAME LOGICAL SEND, RETRIED — as a retried campaign job reaches it.
+        $retry = $campaign->sendSMS($payload);
 
-        // A retried campaign job reaches the same send again: no second provider
-        // call, and no second history row.
-        $campaign->sendSMS($payload);
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Zero second provider sends.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('direction', 'outgoing')->count(), 'Still one canonical conversation message.');
+        $this->assertSame(1, DB::table('reports')->where('campaign_id', $campaign->id)->count(), 'No second, unlinked report for the same managed operation.');
+        $this->assertSame((int) $first->id, (int) $retry->id, 'The retry is handed the send\'s one report.');
+        $this->assertSame('Sent', $retry->status, 'Exactly what a fresh attempt returns, so counters and debits cannot change.');
+        $this->assertSame(['Spring sessions are open'], $this->bubbleBodies($business, $box), 'Still ONE timeline bubble.');
+    }
 
-        $this->assertCount(1, $this->fakeAdapter->sentRequests);
-        $this->assertSame(1, DB::table('chat_box_messages')->where('direction', 'outgoing')->count());
+    public function test_a_retry_after_delivery_neither_rewrites_the_report_nor_feeds_the_delivered_status_to_its_caller(): void
+    {
+        [, $business] = $this->managedTenant();
+        $campaign = Campaigns::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Late retry',
+            'message' => 'Hello again',
+            'sms_type' => 'plain',
+            'status' => Campaigns::STATUS_NEW,
+        ]);
+
+        $payload = [
+            'user_id' => $business->customer_id,
+            'campaign_id' => $campaign->id,
+            'phone' => self::PERSON,
+            'sender_id' => 'AUTOSENDER',
+            'message' => 'Hello again',
+            'sms_type' => 'plain',
+            'cost' => 0,
+            'sms_count' => 1,
+        ];
+
+        $first = $campaign->sendSMS($payload);
+
+        // A delivery callback has moved the report on before the job retried.
+        DB::table('reports')->where('id', $first->id)->update(['status' => 'Delivered', 'customer_status' => 'Delivered']);
+
+        $retry = $campaign->sendSMS($payload);
+
+        $this->assertSame((int) $first->id, (int) $retry->id);
+        $this->assertSame('Sent', $retry->status, 'track_message() and the delivered counter see what a fresh attempt would have.');
+        $this->assertFalse($retry->isDirty(), 'The returned view cannot be saved back over the real report.');
+        $retry->save();
+        $this->assertSame('Delivered', DB::table('reports')->where('id', $first->id)->value('status'), 'The stored report keeps its real status.');
+        $this->assertSame(1, DB::table('reports')->where('campaign_id', $campaign->id)->count());
     }
 
     public function test_sender_verification_still_refuses_a_business_that_is_not_managed(): void
@@ -345,6 +385,18 @@ class ManagedOutboundConversationHistoryTest extends TestCase
     private function openTimeline(Workspace $workspace, Business $business, ChatBox $box): TestResponse
     {
         return $this->postJson(route('customer.workspaces.businesses.conversations.timeline', [$workspace->uid, $business->uid, $box->uid]));
+    }
+
+    /** @return list<TimelineItem> the message bubbles only */
+    private function bubbles(Business $business, ChatBox $box): array
+    {
+        return array_values(array_filter($this->timelineFor($business, $box), fn (TimelineItem $item): bool => $item->isMessage()));
+    }
+
+    /** @return list<?string> */
+    private function bubbleBodies(Business $business, ChatBox $box): array
+    {
+        return array_map(fn (TimelineItem $item): ?string => $item->body, $this->bubbles($business, $box));
     }
 
     /** @return list<TimelineItem> */

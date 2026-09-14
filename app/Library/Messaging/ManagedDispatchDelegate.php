@@ -276,21 +276,96 @@ class ManagedDispatchDelegate
             $attributes['media_url'] = $preparedData['media_url'];
         }
 
-        $report = Reports::create($attributes);
+        if ($operationKey === null || $campaign->business_id === null) {
+            return Reports::create($attributes);
+        }
 
-        // The durable correlation. Without it a delivery callback has no way
-        // to find the customer-visible record except by guessing from
-        // (Business, phone, roughly when) — ambiguous the moment a Business
-        // messages the same recipient twice.
-        if ($operationKey !== null && $campaign->business_id !== null) {
-            DB::table(ManagedMessageDispatcher::TABLE)
+        // ONE LOGICAL MANAGED SEND, ONE REPORT.
+        //
+        // A retried campaign job reaches the same send again under the same
+        // operation key. The dispatcher already returns the recorded result
+        // without a second provider call; this used to write a second Reports
+        // row anyway — linked to nothing, because the operation already named
+        // the first — so one send showed twice in Reports and in Conversations.
+        //
+        // The operation row is the identity: it is locked, and when it already
+        // names a report of this same Business, that report IS this send's
+        // report and no second one is written. The lock also stops two
+        // concurrent copies of the send from both writing one.
+        return DB::transaction(function () use ($campaign, $attributes, $operationKey, $status): Reports {
+            $operation = DB::table(ManagedMessageDispatcher::TABLE)
                 ->where('business_id', (int) $campaign->business_id)
                 ->where('operation_key', $operationKey)
-                ->whereNull('report_id')
-                ->update(['report_id' => (int) $report->id, 'updated_at' => Carbon::now()]);
+                ->lockForUpdate()
+                ->first(['id', 'business_id', 'report_id']);
+
+            $recorded = $operation !== null ? self::correlatedReport($operation) : null;
+
+            if ($recorded !== null) {
+                return self::asReturnedForThisAttempt($recorded, $status);
+            }
+
+            $report = Reports::create($attributes);
+
+            // The durable correlation. Without it a delivery callback has no
+            // way to find the customer-visible record except by guessing from
+            // (Business, phone, roughly when) — ambiguous the moment a Business
+            // messages the same recipient twice.
+            if ($operation !== null) {
+                DB::table(ManagedMessageDispatcher::TABLE)
+                    ->where('id', (int) $operation->id)
+                    ->whereNull('report_id')
+                    ->update(['report_id' => (int) $report->id, 'updated_at' => Carbon::now()]);
+            }
+
+            return $report;
+        });
+    }
+
+    /**
+     * The report an operation already names, only when it provably belongs to
+     * the same Business and is a managed report (no legacy sending server) —
+     * the same integrity the delivery-status seam applies before touching it.
+     */
+    private static function correlatedReport(object $operation): ?Reports
+    {
+        if ($operation->report_id === null) {
+            return null;
+        }
+
+        $report = Reports::query()->find((int) $operation->report_id);
+
+        if ($report === null
+            || $report->business_id === null
+            || (int) $report->business_id !== (int) $operation->business_id
+            || $report->sending_server_id !== null) {
+            return null;
         }
 
         return $report;
+    }
+
+    /**
+     * The recorded report, as THIS attempt hands it to its caller.
+     *
+     * `Campaigns::send()` counts the status and `track_message()` records it
+     * and debits legacy credit only for a status containing "Delivered". A
+     * replay must feed them exactly what a fresh attempt would have — the
+     * acceptance status of the recorded result — even if a delivery callback
+     * has since moved the stored report on; otherwise retrying would change
+     * counters and debits. The persisted row is not touched, and the returned
+     * copy's attributes are marked clean, so nothing can save that view back
+     * over the report's real status.
+     */
+    private static function asReturnedForThisAttempt(Reports $recorded, string $status): Reports
+    {
+        $view = clone $recorded;
+        $view->setRawAttributes(array_merge($recorded->getAttributes(), [
+            'status' => $status,
+            'customer_status' => $status,
+        ]), true);
+
+        return $view;
     }
 
     /**

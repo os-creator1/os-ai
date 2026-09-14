@@ -589,6 +589,7 @@ class ManagedCampaignDelegationTest extends TestCase
         $this->assertCount(1, $this->fakeAdapter->sentRequests, 'One provider call.');
         $this->assertSame(1, $this->operationCount(), 'One operation row.');
         $this->assertSame(1, DB::table('business_usage_measurements')->count(), 'One measurement.');
+        $this->assertSame(1, Reports::query()->where('campaign_id', $campaign->id)->count(), 'One report — the operation already names it, so a retry writes no second, unlinked one.');
         $this->assertOperationBelongsTo($identity, $number);
 
         // The recorded result is returned to every retry, so the caller's
