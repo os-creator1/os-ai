@@ -268,6 +268,23 @@ final class ConversationHistoryWriter
      * tenancy resolution, since this is the seam that would otherwise let a
      * mismatched pair silently write into the wrong Business's history.
      *
+     * MONOTONIC WITH RESPECT TO SUCCESS (correction round 3, item 1). A
+     * failure write NEVER downgrades a bubble that already proves the
+     * provider accepted this logical message ('sent' or 'delivered'). This
+     * closes a genuine race: reply() has no claim/lock of its own (unlike
+     * retry()), so a double-submitted first send reaches
+     * ManagedMessageDispatcher::dispatch() twice with the SAME operation
+     * key. The loser finds the winner's operation row still 'attempted'
+     * (not yet finalized), and dispatch()'s own resultFromRecordedOperation()
+     * reads an in-flight 'attempted' row as not-accepted — so the loser's
+     * copy of attemptManagedSend() can reach this method with a failure
+     * result for a send the winner's copy is, at the same moment, recording
+     * as accepted. Whichever write lands second must never win if it is the
+     * failure. The row is locked for the comparison and the update
+     * together, so this is race-free against a concurrent success write
+     * too. business_messaging_operations is never touched here — the
+     * durable per-attempt audit trail is exactly as full either way.
+     *
      * @param  list<string>  $mediaUrls
      *
      * @throws \InvalidArgumentException when $conversation does not belong to $business
@@ -288,9 +305,22 @@ final class ConversationHistoryWriter
         }
 
         return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode): ChatBoxMessage {
-            $existing = $this->recordedForSendUid((int) $conversation->id, $sendUid);
+            $existing = ChatBoxMessage::query()
+                ->where('box_id', $conversation->id)
+                ->where('send_uid', $sendUid)
+                ->lockForUpdate()
+                ->first();
 
             if ($existing !== null) {
+                if (in_array($existing->send_status, ['sent', 'delivered'], true)) {
+                    // A racing acceptance already won — this failure result
+                    // is stale. Reported to the caller as it was reported to
+                    // them (accepted sends already ignore a later history
+                    // write failure), but customer-visible state stays the
+                    // truthful success it already is.
+                    return $existing;
+                }
+
                 $existing->update([
                     'send_status' => 'failed',
                     'send_failure_reason' => $failureReasonCode,

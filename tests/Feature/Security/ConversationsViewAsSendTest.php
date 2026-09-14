@@ -115,8 +115,10 @@ class ConversationsViewAsSendTest extends TestCase
 
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
-        // The claim a first, still-in-flight retry click already made.
-        DB::table('chat_box_messages')->where('id', $message->id)->update(['send_status' => 'sending']);
+        // The claim a first, still-in-flight retry click already made —
+        // freshly stamped, so reconciliation correctly treats it as a live
+        // claim rather than a dead one and leaves it untouched.
+        DB::table('chat_box_messages')->where('id', $message->id)->update(['send_status' => 'sending', 'send_claimed_at' => now()]);
 
         $this->postJson(route('customer.workspaces.businesses.conversations.retry', [$workspace->uid, $viewed->uid, $box->uid]), [
             'send_uid' => $message->send_uid,

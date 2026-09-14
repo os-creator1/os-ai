@@ -572,7 +572,7 @@
 
             $owner = $this->owner($business);
 
-            $input = $this->buildManualSendInput(
+            [$input, $refusal] = $this->buildManualSendInput(
                 $box,
                 $business,
                 $owner,
@@ -580,13 +580,10 @@
                 $request->hasFile('media_image') ? $request->file('media_image') : null,
             );
 
-            if ($input instanceof JsonResponse) {
-                $this->recordPreparationFailureIfManaged($box, $business, $input, $sendUid, [
-                    'message' => (string) $request->message,
-                    'sms_type' => 'plain',
-                ]);
+            if ($refusal !== null) {
+                $this->recordPreparationFailureIfManaged($box, $business, $refusal, $sendUid, $input);
 
-                return $input;
+                return $refusal;
             }
 
             $input['idempotency_token'] = $sendUid;
@@ -594,7 +591,7 @@
 
             $campaign->business_id = $business->id;
 
-            return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid);
+            return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid, \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id));
         }
 
         /**
@@ -628,14 +625,6 @@
 
             $business = $box->business;
 
-            // Retry is a manual-send, managed-transport feature in this
-            // slice (item 6): a legacy/BYO conversation has no retryable
-            // bubble to find, so this is the same 404 every other tenancy
-            // failure on this controller is.
-            if (! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
-                return $this->notFound();
-            }
-
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -657,6 +646,18 @@
             // send_uid belonging to another Business's, another
             // conversation's, or another contact's message is simply not
             // found here — never a foreign bubble retried by guessing a uid.
+            //
+            // Correction round 3, item 3 — this is ALSO what decides
+            // whether retry() applies at all, instead of an early
+            // ManagedDispatchDelegate::isManaged() check. A legacy/BYO
+            // message never carries a send_uid at all (recordManualSendFailure()
+            // / recordManagedOutbound() are the only writers of that
+            // column, and neither is ever reached for a non-managed send),
+            // so it is structurally unreachable here regardless of the
+            // Business's CURRENT managed status. A historical PR-301 bubble
+            // stays reachable even if the Business's managed identity is
+            // later archived — whether a fresh attempt can actually be MADE
+            // is re-checked below, fresh, not assumed from history.
             $message = ChatBoxMessage::where('box_id', $box->id)->where('send_uid', $sendUid)->first();
 
             if ($message === null) {
@@ -672,31 +673,74 @@
             // blocks on the lock, then sees 'sending' (not 'failed' or
             // 'delivery_failed') and is refused: it can never also pass the
             // claim and start a second provider attempt.
-            $claimed = DB::transaction(function () use ($message) {
+            //
+            // Correction round 3, item 4 — a row already 'sending' is not
+            // simply refused any more: reconcileStuckSendingClaim() first
+            // asks the durable operation audit what actually happened to
+            // the attempt that claimed it, so a request that died between
+            // the claim and the provider call (or between provider
+            // acceptance and the history write) does not leave the bubble
+            // stuck offering neither Retry nor a truthful state forever.
+            $claim = DB::transaction(function () use ($message, $sendUid, $business) {
                 $locked = ChatBoxMessage::whereKey($message->id)->lockForUpdate()->first();
 
-                if ($locked === null || ! in_array($locked->send_status, ['failed', 'delivery_failed'], true)) {
-                    return null;
+                if ($locked === null) {
+                    return ['claimed' => null, 'current' => null];
+                }
+
+                if ($locked->send_status === 'sending') {
+                    $locked = $this->reconcileStuckSendingClaim($locked, (int) $business->id, $sendUid);
+                }
+
+                if (! in_array($locked->send_status, ['failed', 'delivery_failed'], true)) {
+                    return ['claimed' => null, 'current' => $locked];
                 }
 
                 $locked->update([
                     'send_status' => 'sending',
                     'retry_count' => (int) $locked->retry_count + 1,
+                    // The claim liveness stamp reconcileStuckSendingClaim()
+                    // reads back (item 4) — never elapsed time on an
+                    // AMBIGUOUS provider outcome, only on "is this claim's
+                    // own request plausibly still running at all".
+                    'send_claimed_at' => now(),
                 ]);
 
-                return $locked->fresh();
+                return ['claimed' => $locked->fresh(), 'current' => null];
             });
 
+            $claimed = $claim['claimed'];
+
             if ($claimed === null) {
+                $current = $claim['current'];
+
+                if ($current !== null && in_array($current->send_status, ['sent', 'delivered'], true)) {
+                    // Reconciliation found the provider HAD accepted it —
+                    // never resent, and reported as the success it is.
+                    return response()->json([
+                        'status'  => 'success',
+                        'message' => __('locale.campaigns.message_successfully_delivered'),
+                    ]);
+                }
+
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.conversations.retry_in_progress'),
                 ]);
             }
 
+            // Retry is a manual-send, managed-transport feature in this
+            // slice (item 6): a Business with no CURRENT managed identity —
+            // never managed at all, or a historical bubble whose identity
+            // was since archived (item 3) — cannot reach the provider, and
+            // buildManualSendInput()/quickSend() below fail closed for
+            // exactly that below (MessagingIdentityConflictException,
+            // caught in attemptManagedSend()), recording a truthful
+            // "not ready" bubble rather than a bare 404. The claim already
+            // made above is released back to 'failed' by that same catch.
             $owner = $this->owner($business);
 
-            $input = $this->buildManualSendInput(
+            [$input, $refusal] = $this->buildManualSendInput(
                 $box,
                 $business,
                 $owner,
@@ -705,20 +749,16 @@
                 $claimed->media_url !== null && $claimed->media_url !== '' ? $claimed->media_url : null,
             );
 
-            if ($input instanceof JsonResponse) {
+            if ($refusal !== null) {
                 // Re-checking readiness itself refused (item 4) before any
                 // provider call — the claimed 'sending' state goes straight
                 // back to a truthful 'failed', under the same bubble. (No
                 // media is re-validated on retry, so the client-input-error
                 // branch can never actually apply here — recordPreparationFailureIfManaged()
                 // is still used for consistency with reply()'s own path.)
-                $this->recordPreparationFailureIfManaged($box, $business, $input, $sendUid, [
-                    'message' => $claimed->message,
-                    'media_url' => $claimed->media_url,
-                    'sms_type' => $claimed->sms_type ?? 'plain',
-                ]);
+                $this->recordPreparationFailureIfManaged($box, $business, $refusal, $sendUid, $input);
 
-                return $input;
+                return $refusal;
             }
 
             // A FRESH, deterministic operation key every attempt — a
@@ -733,7 +773,11 @@
             $campaign->business_id = $business->id;
 
             try {
-                return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid);
+                // retry() only ever operates on an already-tracked bubble
+                // (found by its persisted send_uid), so history must be
+                // recorded regardless of the Business's CURRENT live managed
+                // status — unlike reply(), this is never re-derived here.
+                return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid, true);
             } catch (Throwable $exception) {
                 $this->recordManagedSendFailure(
                     $box,
@@ -747,17 +791,139 @@
         }
 
         /**
+         * Correction round 3, item 4 — a bubble found 'sending' is not
+         * necessarily stuck (a first request could still be moments from
+         * finishing), but if it IS the leftover of an attempt that never
+         * completed, this decides what actually happened from the durable
+         * business_messaging_operations audit rather than the wall clock.
+         *
+         * The operation key an in-flight attempt would have used is
+         * DERIVABLE, not stored separately: retry() always mints
+         * 'retry:{send_uid}:{retry_count}', and $locked->retry_count is the
+         * count that specific claim already incremented to before starting.
+         * Looked up under the SAME row lock the caller already holds, so
+         * this cannot itself race a concurrent claim.
+         *
+         *   operation Accepted/Delivered → the provider DID take it. Only
+         *     ConversationHistoryWriter's own write could have failed to
+         *     land (a case it already guarantees never becomes a reported
+         *     failure) or the request died after acceptance — either way,
+         *     reconciled forward to 'sent', never resent.
+         *   operation Rejected/Failed → the provider refused, or a DLR
+         *     later reported delivery failure. Reconciled to the matching
+         *     terminal failure state; retry() then claims a FRESH attempt
+         *     with a new operation key in the same request.
+         *   no operation row at all, and the claim is STALE → nothing ever
+         *     reached the provider (died between the claim and the dispatch
+         *     call, or before ManagedMessageDispatcher's own recordAttempt()).
+         *     Safe to release back to 'failed'.
+         *   no operation row, and the claim is NOT yet stale → a real gap
+         *     exists between the claim committing and recordAttempt()
+         *     inserting its row (the provider call happens outside any open
+         *     transaction, on purpose — §4.9). A claim this fresh may still
+         *     be a live request seconds from creating that row. Untouched,
+         *     so a genuinely concurrent second click (item 8 C) cannot land
+         *     in that exact window and start a second provider send.
+         *   operation still 'attempted' → genuinely ambiguous: the provider
+         *     call may or may not have gone out. NEVER guessed, at ANY
+         *     age — this is the one case elapsed time is explicitly not
+         *     used to resolve. The row is returned completely unchanged, so
+         *     this request reports the same "already in progress" outcome
+         *     instead of risking a duplicate send. A later click reconciles
+         *     the moment the operation itself resolves.
+         */
+        private function reconcileStuckSendingClaim(ChatBoxMessage $locked, int $businessId, string $sendUid): ChatBoxMessage
+        {
+            $operationKey = 'retry:' . $sendUid . ':' . $locked->retry_count;
+
+            $operation = DB::table(\App\Library\Messaging\ManagedMessageDispatcher::TABLE)
+                ->where('business_id', $businessId)
+                ->where('operation_key', $operationKey)
+                ->first();
+
+            if ($operation === null) {
+                // A narrow, bounded LIVENESS check — never a resolution of
+                // an ambiguous provider outcome (see the class docblock).
+                // Two minutes is comfortably longer than any real
+                // synchronous request/provider-HTTP-call takes to either
+                // finish or crash.
+                $claimedAt = $locked->send_claimed_at;
+                $stale = $claimedAt === null || $claimedAt->lt(now()->subMinutes(2));
+
+                if (! $stale) {
+                    return $locked;
+                }
+
+                $locked->update([
+                    'send_status' => 'failed',
+                    'send_failure_reason' => ConversationSendFailureReason::SendFailed->value,
+                ]);
+
+                return $locked->fresh();
+            }
+
+            $status = \App\Enums\Messaging\MessagingOperationStatus::tryFrom((string) $operation->status);
+
+            if (in_array($status, [\App\Enums\Messaging\MessagingOperationStatus::Accepted, \App\Enums\Messaging\MessagingOperationStatus::Delivered], true)) {
+                $locked->update([
+                    'business_messaging_operation_id' => (int) $operation->id,
+                    'send_status' => 'sent',
+                    'send_failure_reason' => null,
+                ]);
+
+                return $locked->fresh();
+            }
+
+            if ($status === \App\Enums\Messaging\MessagingOperationStatus::Failed) {
+                $locked->update([
+                    'business_messaging_operation_id' => (int) $operation->id,
+                    'send_status' => 'delivery_failed',
+                    'send_failure_reason' => 'delivery_failed',
+                ]);
+
+                return $locked->fresh();
+            }
+
+            if ($status === \App\Enums\Messaging\MessagingOperationStatus::Rejected) {
+                $reason = $operation->error_category !== null
+                    ? ConversationSendFailureReason::fromProviderErrorCategory(\App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $operation->error_category))
+                    : ConversationSendFailureReason::SendFailed;
+
+                $locked->update([
+                    'business_messaging_operation_id' => (int) $operation->id,
+                    'send_status' => 'failed',
+                    'send_failure_reason' => $reason->value,
+                ]);
+
+                return $locked->fresh();
+            }
+
+            // Attempted, or an unrecognised status — ambiguous. Untouched.
+            return $locked;
+        }
+
+        /**
          * Everything reply() and retry() share to build quickSend()'s
          * $input: the spam filter, sender-id/sending-server rules, and the
-         * destination's country/region. Returns the built array, or the
-         * exact refusal reply() has always returned for each check, unchanged.
+         * destination's country/region.
          *
          * $mediaFile is a freshly uploaded file (reply()'s own upload,
          * validated and stored here exactly as before). $existingMediaUrl is
          * a retry's ALREADY-uploaded media, reused verbatim — never
          * re-validated or re-uploaded, since it was the first time.
          *
-         * @return array<string, mixed>|JsonResponse
+         * ALWAYS RETURNS THE BEST-KNOWN PARTIAL INPUT (correction round 3,
+         * item 2), alongside a refusal when one of the checks below fails.
+         * Media is validated and uploaded BEFORE the sender-id and
+         * destination checks that follow it, so a LATER refusal — an
+         * unparseable destination, a sender-id problem — must not lose an
+         * attachment that already, genuinely, succeeded: the caller records
+         * the failed bubble from this same partial input, media_url and
+         * sms_type=mms included, so the customer sees what they actually
+         * tried to send and a retry reuses that exact attachment rather
+         * than silently downgrading to text-only.
+         *
+         * @return array{0: array<string, mixed>, 1: ?JsonResponse}
          */
         private function buildManualSendInput(
             ChatBox $box,
@@ -766,21 +932,11 @@
             string $message,
             ?UploadedFile $mediaFile,
             ?string $existingMediaUrl = null,
-        ): array|JsonResponse {
+        ): array {
             // The reply goes out from the conversation's own Business-side
             // number — `from` — to its external party, `to`. Never the other
             // way round.
             $sender_id = $box->from;
-
-            if ($owner->customer->getOption('send_spam_message') == 'no') {
-                $spamWords = SpamWord::whereRaw("LOWER(?) LIKE CONCAT('%', LOWER(word), '%')", [$message])->get();
-                if ($spamWords->isNotEmpty()) {
-                    return response()->json([
-                        'status'  => 'error',
-                        'message' => 'Your message contains spam words.',
-                    ]);
-                }
-            }
 
             $input = [
                 'sender_id'    => $sender_id,
@@ -792,6 +948,16 @@
                 'user_id'      => $owner->id,
                 'business_id'  => $business->id,
             ];
+
+            if ($owner->customer->getOption('send_spam_message') == 'no') {
+                $spamWords = SpamWord::whereRaw("LOWER(?) LIKE CONCAT('%', LOWER(word), '%')", [$message])->get();
+                if ($spamWords->isNotEmpty()) {
+                    return [$input, response()->json([
+                        'status'  => 'error',
+                        'message' => 'Your message contains spam words.',
+                    ])];
+                }
+            }
 
             if ($mediaFile !== null) {
                 $v = Validator::make(['media_image' => $mediaFile], [
@@ -806,12 +972,13 @@
                     // It is not a fact about whether the MESSAGE could be
                     // sent, so it is marked for the caller to skip recording
                     // a failed bubble for, preserving existing validation
-                    // semantics exactly.
-                    return response()->json([
+                    // semantics exactly. Nothing was uploaded, so the
+                    // partial input carries no media of its own.
+                    return [$input, response()->json([
                         'status'  => 'error',
                         'message' => $v->errors()->first(),
                         'client_input_error' => true,
-                    ]);
+                    ])];
                 }
 
                 $input['media_url'] = Tool::uploadImage($mediaFile);
@@ -853,17 +1020,17 @@
                     ->first();
 
                 if (! $number) {
-                    return response()->json([
+                    return [$input, response()->json([
                         'status'  => 'error',
                         'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => $sender_id]),
-                    ]);
+                    ])];
                 }
 
                 if (! str_contains((string) $number->capabilities, 'sms')) {
-                    return response()->json([
+                    return [$input, response()->json([
                         'status'  => 'error',
                         'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $sender_id, 'type' => 'sms']),
-                    ]);
+                    ])];
                 }
 
                 $input['phone_number'] = $sender_id;
@@ -876,36 +1043,49 @@
                 $regionCode        = $phoneUtil->getRegionCodeForNumber($phoneNumberObject);
 
                 if (! $phoneUtil->isPossibleNumber($phoneNumberObject) || empty($countryCode) || empty($regionCode)) {
-                    return response()->json([
+                    return [$input, response()->json([
                         'status'  => 'error',
                         'message' => __('locale.customer.invalid_phone_number', ['phone' => $box->to]),
-                    ]);
+                    ])];
                 }
             } catch (NumberParseException) {
-                return response()->json([
+                return [$input, response()->json([
                     'status'  => 'error',
                     'message' => 'Invalid phone number parse',
-                ]);
+                ])];
             }
 
             $input['country_code'] = $countryCode;
             $input['recipient']    = $phoneNumberObject->getNationalNumber();
             $input['region_code']  = $regionCode;
 
-            return $input;
+            return [$input, null];
         }
 
         /**
          * Runs quickSend() and shapes its JSON response exactly as reply()
-         * always has, with one addition (item 1): a MANAGED Business's
-         * failed attempt records a truthful, customer-safe bubble instead of
-         * letting the message disappear. A non-managed Business's response
-         * is untouched — no history write is ever attempted for it here
-         * (item 8 H).
+         * always has, with one addition (item 1): recording a truthful,
+         * customer-safe failed bubble instead of letting the message
+         * disappear, whenever $trackHistory says this send should be
+         * tracked at all — no history write is ever attempted when it is
+         * false (item 8 H).
+         *
+         * $trackHistory is EXPLICIT, not re-derived from
+         * ManagedDispatchDelegate::isManaged() here (correction round 3,
+         * item 3). A first send (reply()) asks isManaged() fresh, exactly
+         * as before — a genuinely non-managed Business gets no tracking at
+         * all. A retry() is always tracking an ALREADY-tracked bubble by
+         * construction (retry() only ever finds one by its persisted
+         * send_uid), so it always passes true: a Business whose managed
+         * identity was archived AFTER that bubble was created must still
+         * have this attempt's outcome recorded onto it, or the bubble is
+         * left stranded in the transient 'sending' state retry() just
+         * claimed it into, offering neither Retry nor a truthful failure
+         * ever again.
          */
-        private function attemptManagedSend(ChatBox $box, Business $business, Campaigns $campaign, array $input, string $sendUid): JsonResponse
+        private function attemptManagedSend(ChatBox $box, Business $business, Campaigns $campaign, array $input, string $sendUid, bool $trackHistory): JsonResponse
         {
-            $managed = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
+            $managed = $trackHistory;
 
             try {
                 $data = $this->campaigns->quickSend($campaign, $input, true);

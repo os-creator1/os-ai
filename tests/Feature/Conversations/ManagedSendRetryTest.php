@@ -2,12 +2,17 @@
 
 namespace Tests\Feature\Conversations;
 
+use App\Enums\Messaging\BusinessMessagingIdentityStatus;
 use App\Enums\Messaging\InboundWebhookEventKind;
+use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\ProviderErrorCategory;
 use App\Library\Conversations\ConversationHistoryWriter;
+use App\Library\Conversations\ConversationSendFailureReason;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
+use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\Business;
 use App\Models\ChatBox;
+use App\Models\ChatBoxMessage;
 use App\Models\Customer;
 use App\Models\Workspace;
 use Carbon\CarbonImmutable;
@@ -106,8 +111,10 @@ class ManagedSendRetryTest extends TestCase
         $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
         $this->assertCount(1, $this->fakeAdapter->sentRequests);
 
-        // The claim a first, still-in-flight retry click already made.
-        DB::table('chat_box_messages')->where('id', $message->id)->update(['send_status' => 'sending']);
+        // The claim a first, still-in-flight retry click already made —
+        // freshly stamped, so reconciliation (item 4) correctly treats it
+        // as a live claim rather than a dead one and leaves it untouched.
+        DB::table('chat_box_messages')->where('id', $message->id)->update(['send_status' => 'sending', 'send_claimed_at' => now()]);
 
         $this->retry($workspace, $business, $box, $message->send_uid)
             ->assertOk()
@@ -418,6 +425,301 @@ class ManagedSendRetryTest extends TestCase
         $response->assertOk()->assertJson(['status' => 'error']);
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
         $this->assertSame(0, DB::table('chat_box_messages')->count(), 'A pure client-input validation error creates no bubble, exactly as before.');
+    }
+
+    // =================================================================
+    // Correction round 3, item 1 — a racing failure never downgrades success
+    // =================================================================
+
+    /**
+     * The exact race: reply() has no claim/lock of its own, so a
+     * double-submitted first send reaches ManagedMessageDispatcher::dispatch()
+     * twice with the SAME operation key. The loser finds the winner's
+     * operation row still 'attempted' and is told "not accepted" —
+     * simulated here directly against the writer, the seam
+     * attemptManagedSend() itself calls into for exactly this outcome.
+     */
+    public function test_a_racing_failure_write_never_downgrades_an_already_accepted_send(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sendUid = (string) Str::uuid();
+
+        // The winning copy — a real, successful send.
+        $this->reply($workspace, $business, $box, 'Race condition test', $sendUid)->assertJson(['status' => 'success']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('sent', $message->send_status);
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+
+        // The losing copy's stale failure result, landing afterward.
+        app(ConversationHistoryWriter::class)->recordManualSendFailure(
+            $business,
+            $box->fresh(),
+            'Race condition test',
+            [],
+            'plain',
+            $sendUid,
+            ConversationSendFailureReason::MessagingNotReady->value,
+        );
+
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('id', $message->id)->value('send_status'), 'The racing failure write must never downgrade an already-accepted send.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'One bubble.');
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'No second provider call was ever made.');
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->json('timeline');
+        $this->assertStringNotContainsString(__('locale.conversations.retry'), $timeline, 'A sent message offers no Retry.');
+    }
+
+    // =================================================================
+    // Correction round 3, item 2 — an MMS attachment survives a later
+    // preparation failure, and retry reuses it verbatim
+    // =================================================================
+
+    public function test_an_mms_attachment_survives_a_later_preparation_failure_and_retry_reuses_it(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        DB::table('chat_boxes')->where('id', $box->id)->update(['to' => 'not-a-number']);
+        $this->authenticateAsCustomer(Customer::query()->where('user_id', $business->customer_id)->firstOrFail(), ['chat_box']);
+        $sendUid = (string) Str::uuid();
+
+        $response = $this->post(route('customer.workspaces.businesses.conversations.reply', [$workspace->uid, $business->uid, $box->fresh()->uid]), [
+            'message' => 'Here is the flyer',
+            'idempotency_token' => $sendUid,
+            'media_image' => \Illuminate\Http\UploadedFile::fake()->image('flyer.jpg'),
+        ]);
+
+        $response->assertOk()->assertJson(['status' => 'error']);
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('failed', $message->send_status);
+        $this->assertSame('Here is the flyer', $message->message);
+        $this->assertNotNull($message->media_url, 'The already-uploaded attachment must survive a later preparation failure.');
+        $this->assertSame('mms', $message->sms_type);
+        $originalMediaUrl = $message->media_url;
+
+        // The destination is fixed.
+        DB::table('chat_boxes')->where('id', $box->id)->update(['to' => self::PERSON]);
+
+        $this->retry($workspace, $business, $box->fresh(), $sendUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Exactly one provider call — the retry.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'One logical bubble.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sent', $updated->send_status);
+        $this->assertSame($originalMediaUrl, $updated->media_url, 'Retry used the ORIGINAL attachment, never re-uploaded.');
+        $this->assertSame('mms', $updated->sms_type);
+    }
+
+    // =================================================================
+    // Correction round 3, item 3 — a historical bubble still reaches
+    // retry checks even once the managed identity is no longer active
+    // =================================================================
+
+    public function test_a_historical_bubble_reaches_retry_checks_after_the_identity_is_deactivated_and_recovers_once_restored(): void
+    {
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        // Sender-id verification (a legacy per-number check, unrelated to
+        // managed messaging) defaults to 'yes' and would otherwise apply
+        // the MOMENT isManaged() reads false below, masking the outcome
+        // this test is actually about with an unrelated refusal.
+        $subscription = \App\Models\Subscription::query()->where('user_id', $business->customer_id)->where('status', \App\Models\Subscription::STATUS_ACTIVE)->firstOrFail();
+        \App\Models\Plan::query()->where('id', $subscription->plan_id)->update(['options' => json_encode(['sender_id_verification' => 'no'])]);
+
+        $this->fakeAdapter->rejections['*'] = ProviderErrorCategory::Terminal;
+        $this->reply($workspace, $business, $box, 'Still there?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->fakeAdapter->rejections = [];
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+
+        // The identity is archived — the Business is not "managed" right
+        // now. With no identity to resolve, ManagedDispatchDelegate::attempt()
+        // returns null (its OWN documented behaviour for "not this
+        // Business's transport") and quickSend() falls through to its
+        // legacy path, which this fixture never wired a real gateway for —
+        // so the truthful reason here is "no sending server available",
+        // not the narrower MessagingIdentityConflictException case (a
+        // resolvable identity with an unusable number). Either way the
+        // guarantee this test is actually about holds: found, not 404;
+        // safely refused; zero provider calls; the SAME bubble updated.
+        DB::table('business_messaging_identities')->where('id', $identity->id)->update(['status' => BusinessMessagingIdentityStatus::Archived->value]);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'error']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'No provider call while the identity is gone — the bubble is found, not 404.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('failed', $updated->send_status);
+        $this->assertNotNull($updated->send_failure_reason, 'A truthful, customer-safe reason is recorded, not silence.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble — the same one, updated.');
+
+        // Restored.
+        DB::table('business_messaging_identities')->where('id', $identity->id)->update(['status' => BusinessMessagingIdentityStatus::Active->value]);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(2, $this->fakeAdapter->sentRequests, 'Exactly one new attempt, once restored.');
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('id', $message->id)->value('send_status'));
+    }
+
+    public function test_a_legacy_row_still_cannot_use_the_retry_endpoint(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        // A legacy-shaped row: no send_uid at all — exactly what every
+        // non-Conversations-manual writer has always produced.
+        ChatBoxMessage::create([
+            'box_id' => $box->id,
+            'message' => 'Legacy outbound',
+            'sms_type' => 'plain',
+            'direction' => 'outgoing',
+            'send_by' => 'from',
+        ]);
+
+        $this->authenticateAsCustomer(Customer::query()->where('user_id', $business->customer_id)->firstOrFail(), ['chat_box']);
+        $this->postJson(route('customer.workspaces.businesses.conversations.retry', [$workspace->uid, $business->uid, $box->uid]), [
+            'send_uid' => (string) Str::uuid(),
+        ])->assertNotFound();
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+    }
+
+    // =================================================================
+    // Correction round 3, item 4 — a retry must not stay "sending…" forever
+    // =================================================================
+
+    public function test_a_stale_sending_claim_with_no_operation_is_safely_recovered_and_completes_a_fresh_attempt(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sendUid = (string) Str::uuid();
+
+        // A claim that died before ManagedMessageDispatcher ever recorded
+        // an attempt for it — no operation row exists at all — old enough
+        // that it cannot plausibly still be a live request.
+        $message = ChatBoxMessage::create([
+            'box_id' => $box->id, 'message' => 'Stuck, no operation', 'sms_type' => 'plain',
+            'direction' => 'outgoing', 'send_by' => 'from',
+            'send_uid' => $sendUid, 'send_status' => 'sending', 'retry_count' => 1,
+            'send_claimed_at' => now()->subMinutes(10),
+        ]);
+
+        $this->retry($workspace, $business, $box, $sendUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Exactly one provider call — the fresh attempt reconciliation released it into.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sent', $updated->send_status);
+        $this->assertSame(2, $updated->retry_count, 'The fresh attempt claimed and incremented once more.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble.');
+    }
+
+    public function test_reconciliation_of_an_accepted_operation_reconciles_to_sent_without_resending(): void
+    {
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sendUid = (string) Str::uuid();
+
+        $message = ChatBoxMessage::create([
+            'box_id' => $box->id, 'message' => 'Accepted but the request died after', 'sms_type' => 'plain',
+            'direction' => 'outgoing', 'send_by' => 'from',
+            'send_uid' => $sendUid, 'send_status' => 'sending', 'retry_count' => 1,
+            'send_claimed_at' => now(),
+        ]);
+        $operationId = DB::table(ManagedMessageDispatcher::TABLE)->insertGetId([
+            'business_id' => $business->id,
+            'business_messaging_identity_id' => $identity->id,
+            'transport_mode' => 'managed', 'provider' => 'telnyx',
+            'direction' => 'outbound', 'message_type' => 'sms',
+            'operation_key' => 'retry:' . $sendUid . ':1',
+            'status' => MessagingOperationStatus::Accepted->value,
+            'provider_message_id' => 'fake_msg_stuck',
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->retry($workspace, $business, $box, $sendUid)
+            ->assertOk()
+            ->assertJson(['status' => 'success']);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Reconciliation only — never resent for an operation the provider already accepted.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sent', $updated->send_status);
+        $this->assertSame($operationId, (int) $updated->business_messaging_operation_id);
+        $this->assertSame(1, $updated->retry_count, 'No new attempt was claimed — reconciliation to an accepted operation is terminal.');
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->json('timeline');
+        $this->assertStringNotContainsString(__('locale.conversations.retry'), $timeline);
+    }
+
+    public function test_reconciliation_of_a_rejected_operation_lets_the_same_click_complete_a_fresh_attempt(): void
+    {
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sendUid = (string) Str::uuid();
+
+        $message = ChatBoxMessage::create([
+            'box_id' => $box->id, 'message' => 'Rejected, request died before reconciling', 'sms_type' => 'plain',
+            'direction' => 'outgoing', 'send_by' => 'from',
+            'send_uid' => $sendUid, 'send_status' => 'sending', 'retry_count' => 1,
+            'send_claimed_at' => now(),
+        ]);
+        DB::table(ManagedMessageDispatcher::TABLE)->insert([
+            'business_id' => $business->id,
+            'business_messaging_identity_id' => $identity->id,
+            'transport_mode' => 'managed', 'provider' => 'telnyx',
+            'direction' => 'outbound', 'message_type' => 'sms',
+            'operation_key' => 'retry:' . $sendUid . ':1',
+            'status' => MessagingOperationStatus::Rejected->value,
+            'error_category' => ProviderErrorCategory::Terminal->value,
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->retry($workspace, $business, $box, $sendUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Reconciliation made zero provider calls; this is the one FRESH attempt.');
+        $this->assertSame(2, DB::table(ManagedMessageDispatcher::TABLE)->where('business_id', $business->id)->count(), 'The old rejected operation, plus one new attempt — never resent under the old key.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sent', $updated->send_status);
+        $this->assertSame(2, $updated->retry_count, 'The fresh attempt incremented it again.');
+    }
+
+    public function test_reconciliation_of_a_genuinely_ambiguous_attempted_operation_never_resends(): void
+    {
+        [, $business, $workspace, $identity] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $sendUid = (string) Str::uuid();
+
+        $message = ChatBoxMessage::create([
+            'box_id' => $box->id, 'message' => 'Ambiguous', 'sms_type' => 'plain',
+            'direction' => 'outgoing', 'send_by' => 'from',
+            'send_uid' => $sendUid, 'send_status' => 'sending', 'retry_count' => 1,
+            // Old enough that a NO-operation claim would be treated as
+            // stale — proving the ambiguous-Attempted case is never
+            // resolved by elapsed time, unlike the no-operation case.
+            'send_claimed_at' => now()->subMinutes(10),
+        ]);
+        DB::table(ManagedMessageDispatcher::TABLE)->insert([
+            'business_id' => $business->id,
+            'business_messaging_identity_id' => $identity->id,
+            'transport_mode' => 'managed', 'provider' => 'telnyx',
+            'direction' => 'outbound', 'message_type' => 'sms',
+            'operation_key' => 'retry:' . $sendUid . ':1',
+            'status' => MessagingOperationStatus::Attempted->value,
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->retry($workspace, $business, $box, $sendUid)
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.retry_in_progress')]);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Never guesses — no resend for a genuinely ambiguous outcome, however old the claim.');
+        $updated = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('sending', $updated->send_status, 'Left exactly as found.');
+        $this->assertSame(1, $updated->retry_count);
     }
 
     // -----------------------------------------------------------------

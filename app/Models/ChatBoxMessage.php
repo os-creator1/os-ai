@@ -27,6 +27,11 @@ class ChatBoxMessage extends Model
         'send_status',
         'send_failure_reason',
         'retry_count',
+        'send_claimed_at',
+    ];
+
+    protected $casts = [
+        'send_claimed_at' => 'datetime',
     ];
 
     protected static function booted()
