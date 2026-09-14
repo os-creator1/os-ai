@@ -8,8 +8,10 @@
     use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
     use App\Http\Controllers\Controller;
     use App\Http\Requests\ChatBox\SentRequest;
+    use App\Library\Conversations\ConversationContextReader;
     use App\Library\Entitlement\EntitlementManager;
     use App\Library\Navigation\CustomerContext;
+    use App\Library\Timeline\ContactActivityTimeline;
     use App\Library\Tool;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
@@ -39,6 +41,7 @@
     use Illuminate\Http\RedirectResponse;
     use Illuminate\Http\Request;
     use Illuminate\Support\Facades\Auth;
+    use Illuminate\Support\Facades\Gate;
     use Illuminate\Support\Facades\Validator;
     use Illuminate\Support\Str;
     use libphonenumber\NumberParseException;
@@ -427,18 +430,62 @@
                 return $this->notFound();
             }
 
-            // The same query shape as before, so the thread's JSON — including
-            // how `created_at` serialises for the client — is unchanged. Only
-            // the box it is scoped to changed: resolved Business-first above.
+            // The same rows, order and fields as before, so the thread's JSON —
+            // including how `created_at` serialises for the client — is
+            // unchanged. Only the box it is scoped to changed: resolved
+            // Business-first above. The columns are named so the send-provenance
+            // references later added for conversation history stay out of it.
             $messages = \DB::table('chat_box_messages')
                 ->where('box_id', $box->id)
                 ->orderBy('created_at', 'asc')
-                ->get();
+                ->get(['id', 'box_id', 'message', 'media_url', 'sms_type', 'send_by', 'sending_server_id', 'created_at', 'updated_at', 'direction']);
 
             return response()->json([
                 'status' => 'success',
                 'data'   => $messages,
                 'pinned' => $box->pinned ?? 0,
+            ]);
+        }
+
+        /**
+         * The open conversation as ONE timeline for the person — messages,
+         * automation outcomes, opt-outs — and the contact panel beside it.
+         *
+         * Both are rendered here, on the server, so no message text is ever
+         * assembled into markup in the browser. The same §9 chain as every
+         * other action resolves the conversation first; `messages` keeps
+         * serving the raw thread unchanged.
+         *
+         * @throws AuthorizationException
+         */
+        public function timeline(ContactActivityTimeline $timeline, ConversationContextReader $contextReader, string $workspaceUid, string $businessUid, string $uid): JsonResponse
+        {
+            $box = $this->resolveConversation($workspaceUid, $businessUid, $uid);
+
+            if ($box === null) {
+                return $this->notFound();
+            }
+
+            $business = $box->business;
+
+            // Slice 2B §10: a Contact only when exactly one of this Business's
+            // contacts has the number. Everything contact-keyed hangs off it.
+            $contact = $box->resolveDisplayContact($business);
+            $context = $contextReader->read($business, $box, $contact);
+
+            return response()->json([
+                'status'   => 'success',
+                'pinned'   => $box->pinned ?? 0,
+                'title'    => $context->title(),
+                'timeline' => view('customer.ChatBox.partials._timeline', [
+                    'page' => $timeline->forConversation($business, $box, $contact),
+                ])->render(),
+                'context'  => view('customer.ChatBox.partials._context', [
+                    'context'    => $context,
+                    'profileUrl' => $context->hasContact() && Gate::allows('view_contact')
+                        ? route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $context->contactUid])
+                        : null,
+                ])->render(),
             ]);
         }
 
@@ -568,7 +615,16 @@
                 }
             }
 
-            if ($owner->customer->getOption('sender_id_verification') == 'yes') {
+            // Sender verification proves the customer owns the number THEY chose
+            // to send from, in `phone_numbers`. A managed Business chooses no
+            // number: the managed dispatcher resolves the Business's own single
+            // active primary number from the tenancy-verified Business itself
+            // (Slice 3 §4.5), and a managed number is never a `phone_numbers`
+            // row — so on every plan with verification on (the plan default)
+            // this refused every managed reply before it could be sent. The
+            // check stays exactly as it was for every other Business.
+            if ($owner->customer->getOption('sender_id_verification') == 'yes'
+                && ! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
                 $number = PhoneNumbers::where('business_id', $business->id)
                     ->where('number', $sender_id)
                     ->where('status', 'assigned')
@@ -742,7 +798,12 @@
                     $query->where('notification', '!=', 0);
                     break;
                 case 'read':
-                    $query->where('notification', 0);
+                    // A conversation that was never marked unread holds NULL,
+                    // not 0 (the column has no default) — it is read too.
+                    // Grouped, so the OR can never escape the business_id filter.
+                    $query->where(function ($q) {
+                        $q->where('notification', 0)->orWhereNull('notification');
+                    });
                     break;
                 case 'recents':
                     $query->orderBy('updated_at', 'desc');

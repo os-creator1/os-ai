@@ -74,6 +74,9 @@ class ManagedDispatchDelegate
 
     /**
      * @param list<string> $mediaUrls
+     * @param string|null  $historySource who asked for the send, recorded on its
+     *                                    conversation history row
+     *                                    (ConversationHistoryWriter::SOURCE_*)
      *
      * @return OutboundMessageResult|null null when this Business has no
      *                                    managed identity and the caller
@@ -87,6 +90,7 @@ class ManagedDispatchDelegate
         array $mediaUrls = [],
         string $quantity = '1',
         ?string $smsType = null,
+        ?string $historySource = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -132,7 +136,7 @@ class ManagedDispatchDelegate
             ));
         }
 
-        return app(ManagedMessageDispatcher::class)->dispatch(
+        $result = app(ManagedMessageDispatcher::class)->dispatch(
             $business,
             $toNumber,
             (string) $body,
@@ -140,6 +144,63 @@ class ManagedDispatchDelegate
             $mediaUrls,
             $quantity,
         );
+
+        if ($result->accepted) {
+            self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Conversations is the canonical history of what happened with a person, so
+     * a managed send the provider accepted must also exist there — with its
+     * final text — or it would show once, optimistically, and be gone on reopen.
+     *
+     * Every managed send crosses attempt(), so this is the one place that
+     * happens, for every caller: a reply from Conversations, an Outreach quick
+     * send, an automation, a campaign.
+     *
+     * THE SEND HAS ALREADY HAPPENED. A failure to record history must never
+     * turn an accepted send into a reported failure — that would invite the
+     * caller to send it again. So it is caught and logged (Business, operation,
+     * exception class; never the number or the text), and the accepted result
+     * is returned unchanged. It reconciles by itself: the same logical send
+     * replayed (a retried job, a repeated request with the same key) gets the
+     * recorded result from the dispatcher WITHOUT a second provider call, comes
+     * back through here, and the writer records it exactly once.
+     *
+     * A replay of a send whose history already exists writes nothing: the
+     * writer finds the row by the send's own operation id.
+     *
+     * @param list<string> $mediaUrls
+     */
+    private static function recordConversationHistory(
+        Business $business,
+        string $toNumber,
+        ?string $body,
+        array $mediaUrls,
+        ?string $smsType,
+        string $operationKey,
+        ?string $historySource,
+    ): void {
+        try {
+            app(\App\Library\Conversations\ConversationHistoryWriter::class)->recordManagedOutbound(
+                $business,
+                $toNumber,
+                $body,
+                $mediaUrls,
+                $smsType,
+                $operationKey,
+                $historySource,
+            );
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::error('conversation_history.managed_outbound_not_recorded', [
+                'business_id' => (int) $business->id,
+                'operation_key_hash' => hash('sha256', $operationKey),
+                'exception' => $exception::class,
+            ]);
+        }
     }
 
     /**
@@ -215,16 +276,39 @@ class ManagedDispatchDelegate
             $attributes['media_url'] = $preparedData['media_url'];
         }
 
+        // The managed operation this report belongs to, by its own identity:
+        // (Business, operation key) is unique on the operations table.
+        $operationId = $operationKey !== null && $campaign->business_id !== null
+            ? DB::table(ManagedMessageDispatcher::TABLE)
+                ->where('business_id', (int) $campaign->business_id)
+                ->where('operation_key', $operationKey)
+                ->value('id')
+            : null;
+
+        // ONE MANAGED OPERATION CAN BE TRACKED BY MORE THAN ONE CAMPAIGN JOB.
+        //
+        // Two contacts of the campaign on the same number share one operation
+        // key, and a redelivered job reaches it again. The dispatcher returns
+        // the recorded result with no second provider call, but each tracked
+        // job still needs its OWN report: `track_message()` stores the report id
+        // as `tracking_logs.message_id`, which is unique, and campaign
+        // per-recipient accounting depends on it. So the report is written here
+        // exactly as it always was — and stamped with its operation, so the
+        // Conversations timeline can prove, by that identity, that the
+        // conversation message already stands for every report of the send.
+        if ($operationId !== null) {
+            $attributes['business_messaging_operation_id'] = (int) $operationId;
+        }
+
         $report = Reports::create($attributes);
 
         // The durable correlation. Without it a delivery callback has no way
         // to find the customer-visible record except by guessing from
         // (Business, phone, roughly when) — ambiguous the moment a Business
         // messages the same recipient twice.
-        if ($operationKey !== null && $campaign->business_id !== null) {
+        if ($operationId !== null) {
             DB::table(ManagedMessageDispatcher::TABLE)
-                ->where('business_id', (int) $campaign->business_id)
-                ->where('operation_key', $operationKey)
+                ->where('id', (int) $operationId)
                 ->whereNull('report_id')
                 ->update(['report_id' => (int) $report->id, 'updated_at' => Carbon::now()]);
         }

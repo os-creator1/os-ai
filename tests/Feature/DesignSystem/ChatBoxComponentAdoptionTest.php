@@ -22,6 +22,14 @@ use Tests\TestCase;
  * .remove-btn) — and explicitly proves every non-adoption named in §5.3,
  * §5.5–§5.9 introduced zero forbidden component markers. Never a generic
  * "every X adopts" assumption.
+ *
+ * Conversations contact activity timeline, stated rather than hidden: the
+ * index gains ONE more <x-button> — the contact-panel toggle in the
+ * conversation header (8 in total) — and the list row the pinned rail and the
+ * loaded list used to duplicate is now one shared partial, `_chat_row`, which
+ * joins this allowlist with zero components. The timeline and contact-panel
+ * partials are new surfaces with their own adoption, asserted in
+ * ChatBoxDesignSystemContentTest and ConversationTimelineScreenTest.
  */
 class ChatBoxComponentAdoptionTest extends TestCase
 {
@@ -33,6 +41,7 @@ class ChatBoxComponentAdoptionTest extends TestCase
         'resources/views/customer/ChatBox/new.blade.php',
         'resources/views/customer/ChatBox/_sidebar.blade.php',
         'resources/views/customer/ChatBox/partials/_chat_list.blade.php',
+        'resources/views/customer/ChatBox/partials/_chat_row.blade.php',
     ];
 
     protected function setUp(): void
@@ -67,18 +76,19 @@ class ChatBoxComponentAdoptionTest extends TestCase
         }
     }
 
-    public function test_exactly_7_button_markers_are_present(): void
+    public function test_exactly_8_button_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-button', 7);
+        $this->assertMarkerTotal('<x-button', 8);
     }
 
     public function test_exact_per_file_button_breakdown(): void
     {
         $expected = [
             'resources/views/customer/ChatBox/_sidebar.blade.php' => 5, // 4 tab-filters + Load More
-            'resources/views/customer/ChatBox/index.blade.php' => 1, // composer send
+            'resources/views/customer/ChatBox/index.blade.php' => 2, // composer send + contact-panel toggle
             'resources/views/customer/ChatBox/new.blade.php' => 1, // submit
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php' => 0,
+            'resources/views/customer/ChatBox/partials/_chat_row.blade.php' => 0,
         ];
 
         foreach ($expected as $view => $count) {
@@ -179,14 +189,23 @@ class ChatBoxComponentAdoptionTest extends TestCase
         $this->assertFileDoesNotExist(base_path('resources/views/components/message-bubble.blade.php'));
     }
 
+    /**
+     * The badge lives in the one shared list row now; the pinned rail and the
+     * loaded list both render that row, so both still show the same native
+     * badge.
+     */
     public function test_notification_badge_remains_native_solid_bg_primary(): void
     {
+        $row = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_chat_row.blade.php'));
+        $this->assertStringContainsString('badge bg-primary rounded-pill float-end notification_count', $row);
+        $this->assertStringNotContainsString('<x-badge', $row);
+
         foreach ([
             'resources/views/customer/ChatBox/_sidebar.blade.php',
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php',
         ] as $view) {
             $contents = file_get_contents(base_path($view));
-            $this->assertStringContainsString('badge bg-primary rounded-pill float-end notification_count', $contents);
+            $this->assertStringContainsString("@include('customer.ChatBox.partials._chat_row'", $contents);
             $this->assertStringNotContainsString('<x-badge', $contents);
         }
     }

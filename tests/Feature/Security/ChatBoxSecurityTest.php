@@ -351,8 +351,19 @@ class ChatBoxSecurityTest extends TestCase
     }
 
     // ===================================================================
-    // E. XSS / safe message source assertions (unchanged by 2B)
+    // E. XSS / safe message rendering
     // ===================================================================
+    //
+    // Conversations contact activity timeline, stated rather than hidden:
+    // stored history and live messages are no longer built into markup in the
+    // browser at all. Opening a conversation (and a live Echo message for the
+    // open one) fetches the `timeline` action, whose HTML Blade renders and
+    // escapes on the server, and the page inserts it whole. The history and
+    // Echo bubble builders — and safeTypedMediaParagraph(), which only they
+    // used — are gone. The property these tests protect is unchanged and is
+    // now proven where it lives: no stored message or media value ever reaches
+    // the page unescaped, and the one client-built bubble left (the optimistic
+    // send) still goes through safeMessageParagraph().
 
     public function test_safe_message_paragraph_helper_and_its_three_call_sites(): void
     {
@@ -361,138 +372,117 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame(1, substr_count($source, 'function safeMessageParagraph(value) {'));
         $this->assertStringContainsString('return $("<p></p>").text(value);', $source);
 
-        // Exactly 1 definition + 3 call sites = 4 occurrences of the name.
-        $this->assertSame(4, substr_count($source, 'safeMessageParagraph('));
+        // 1 definition + the optimistic send: the only client-built bubble left.
+        $this->assertSame(2, substr_count($source, 'safeMessageParagraph('));
 
         $helperStart = strpos($source, 'function safeMessageParagraph(value) {');
-        $helperEnd = strpos($source, 'function safeTypedMediaParagraph', $helperStart);
-        $this->assertNotFalse($helperStart);
-        $this->assertNotFalse($helperEnd);
+        $helperEnd = strpos($source, '}', $helperStart);
         $helperBody = substr($source, $helperStart, $helperEnd - $helperStart);
         $this->assertStringNotContainsString('if (', $helperBody);
         $this->assertStringNotContainsString('.html(', $helperBody);
 
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.message\)\s*\{\s*\$content\.append\(safeMessageParagraph\(sms\.message\)\);/',
-            $source
-        );
-
         $this->assertStringContainsString('$content.append(safeMessageParagraph(messageValue));', $source);
         $this->assertStringNotContainsString('if (messageValue)', $source);
 
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.message\s*!==\s*null\)\s*\{\s*\$content\.append\(safeMessageParagraph\(sms\.message\)\);/',
-            $source
-        );
-
-        $this->assertStringNotContainsString('${sms.message}', $source);
+        // No stored message field is read in the page script at all…
+        $this->assertStringNotContainsString('sms.message', $source);
+        $this->assertStringNotContainsString('${sms.', $source);
         $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $source);
+
+        // …the only response fields inserted as HTML are the two panes the
+        // server rendered and the unread count (a number, as before).
+        preg_match_all('/\.html\(response\.([a-z_]+)\)/', $source, $inserted);
+        $fields = array_values(array_unique($inserted[1]));
+        sort($fields);
+        $this->assertSame(['context', 'notification', 'timeline'], $fields);
+        $this->assertStringContainsString('$(".chat_history").html(response.timeline);', $source);
+        $this->assertStringContainsString('$("#conversation-context").html(response.context);', $source);
+
+        // And the server partials never echo raw.
+        foreach (['_timeline', '_context', '_chat_row'] as $partial) {
+            $this->assertStringNotContainsString('{!!', file_get_contents(base_path("resources/views/customer/ChatBox/partials/{$partial}.blade.php")), $partial);
+        }
     }
 
     /**
-     * Renders the real, Business-scoped inbox over an authenticated request,
-     * so the safe-rendering seam is proven to survive Blade compilation.
+     * Renders the real, Business-scoped inbox and a real timeline over
+     * authenticated requests, with hostile message text and media stored, so
+     * escaping is proven on the actual output — not only in the source.
      */
     public function test_rendered_index_response_contains_the_safe_seam_and_not_the_original_unsafe_patterns(): void
     {
         [[$customerA, $businessA, $workspaceA]] = $this->twoTenantBusinesses();
         $this->authenticateAs($customerA, ['chat_box']);
 
-        $response = $this->get($this->conversationUrl('index', $workspaceA, $businessA));
-        $response->assertOk();
-
-        $html = $response->getContent();
+        $html = $this->get($this->conversationUrl('index', $workspaceA, $businessA))->assertOk()->getContent();
 
         $this->assertStringContainsString('function safeMessageParagraph(value)', $html);
-        $this->assertStringContainsString('function safeTypedMediaParagraph(url, imgAlt)', $html);
-        $this->assertStringContainsString('$content.append(safeMessageParagraph(sms.message));', $html);
         $this->assertStringContainsString('$content.append(safeMessageParagraph(messageValue));', $html);
-        $this->assertStringContainsString('$content.append(safeTypedMediaParagraph(sms.media_url, "media"));', $html);
-
         $this->assertStringNotContainsString('${sms.message}', $html);
         $this->assertStringNotContainsString('${sms.media_url}', $html);
         $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $html);
+
+        $box = $this->box($businessA, '15550001099', '15550009099');
+        ChatBoxMessage::create(['box_id' => $box->id, 'message' => '<script>alert("x")</script><img src=x onerror=alert(1)>', 'direction' => 'incoming', 'media_url' => 'javascript:alert(2)']);
+        ChatBoxMessage::create(['box_id' => $box->id, 'message' => 'photo', 'direction' => 'incoming', 'media_url' => 'https://media.example.test/a.png" onerror="alert(3)']);
+
+        $timeline = $this->postJson($this->conversationUrl('timeline', $workspaceA, $businessA, $box->uid))->assertOk()->json('timeline');
+
+        $this->assertStringContainsString('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;', $timeline);
+        $this->assertStringNotContainsString('<script>', $timeline);
+        $this->assertStringNotContainsString('<img src=x', $timeline);
+        $this->assertStringNotContainsString('javascript:', $timeline, 'A media URL that is not http(s) is never rendered.');
+        $this->assertStringNotContainsString('" onerror="', $timeline, 'A media URL cannot break out of its attribute.');
+        $this->assertStringContainsString('src="https://media.example.test/a.png&quot; onerror=&quot;alert(3)"', $timeline);
     }
 
     // ===================================================================
-    // F. Media source assertions (unchanged by 2B)
+    // F. Media rendering
     // ===================================================================
 
     public function test_safe_typed_media_paragraph_helper_and_its_call_sites(): void
     {
         $source = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertSame(1, substr_count($source, 'function safeTypedMediaParagraph(url, imgAlt) {'));
-        $this->assertSame(3, substr_count($source, 'safeTypedMediaParagraph('));
+        // Stored media is rendered by the server now; the client helper is gone.
+        $this->assertSame(0, substr_count($source, 'safeTypedMediaParagraph('));
+        $this->assertSame(0, substr_count($source, 'isImageOrVideo('));
 
-        $helperStart = strpos($source, 'function safeTypedMediaParagraph(url, imgAlt) {');
-        $helperEnd = strpos($source, '// RFC-005 Milestone 5', $helperStart);
-        $this->assertNotFalse($helperStart);
-        $this->assertNotFalse($helperEnd);
-        $helperBody = substr($source, $helperStart, $helperEnd - $helperStart);
-        $this->assertStringContainsString('isImageOrVideo(url)', $helperBody);
-        $this->assertStringContainsString('.attr("src", url)', $helperBody);
-        $this->assertStringNotContainsString('if (url', $helperBody);
-        $this->assertStringNotContainsString('if (!url', $helperBody);
+        $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+        $this->assertStringContainsString("preg_match('#^(https?://|/)#i', \$url) === 1", $timeline);
+        $this->assertSame(3, substr_count($timeline, 'src="{{ $url }}"'), 'Video, audio and image each set src through an escaped echo.');
 
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.media_url\s*!==\s*null\)\s*\{\s*\$content\.append\(safeTypedMediaParagraph\(sms\.media_url,\s*"media"\)\);/',
-            $source
-        );
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.media_url\s*!==\s*null\)\s*\{\s*\$content\.append\(safeTypedMediaParagraph\(sms\.media_url,\s*""\)\);/',
-            $source
-        );
-
+        // The optimistic send keeps its exact, attribute-only image.
         $this->assertStringContainsString('if (response.media_url) {', $source);
         $this->assertStringContainsString('.attr("src", response.media_url)', $source);
         $this->assertStringContainsString('.attr("alt", "media")', $source);
         $this->assertStringContainsString('.attr("style", "max-width:200px; max-height:200px;")', $source);
         $this->assertSame(1, substr_count($source, 'max-width:200px; max-height:200px;'));
 
-        $optimisticStart = strpos($source, 'if (response.media_url) {');
-        $optimisticEnd = strpos($source, 'chatHistory.append($chat);', $optimisticStart);
-        $this->assertNotFalse($optimisticStart);
-        $this->assertNotFalse($optimisticEnd);
-        $optimisticBlock = substr($source, $optimisticStart, $optimisticEnd - $optimisticStart);
-        $this->assertStringNotContainsString('safeTypedMediaParagraph', $optimisticBlock);
-        $this->assertStringNotContainsString('isImageOrVideo', $optimisticBlock);
-
         $this->assertStringNotContainsString('${sms.media_url}', $source);
     }
 
     // ===================================================================
-    // G. Structure/order preservation (unchanged by 2B)
+    // G. Structure/order
     // ===================================================================
 
     public function test_structure_and_order_are_preserved_per_rendering_path(): void
     {
         $source = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertSame(2, substr_count($source, 'avatar box-shadow-1 cursor-pointer'));
-        $this->assertSame(2, substr_count($source, 'height="36" width="36"'));
-        $this->assertSame(2, substr_count($source, 'class="avatar m-0" href="#"'));
-        $this->assertSame(2, substr_count($source, 'height="40" width="40"'));
-        $this->assertStringContainsString("route('user.avatar', Auth::user()->uid)", $source);
-
-        $this->assertSame(2, substr_count($source, 'chat-time'));
         $this->assertStringContainsString('$counter.html(response.notification);', $source);
         $this->assertStringContainsString('$counter.removeAttr("hidden");', $source);
 
         $this->assertSame(2, substr_count($source, "@if(config('broadcasting.connections.pusher.app_id'))"));
         $this->assertSame(2, substr_count($source, '@endif'));
 
-        $historyStart = strpos($source, 'cwData.forEach((sms) => {');
-        $historyEnd = strpos($source, 'chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 400);', $historyStart);
-        $this->assertNotFalse($historyStart, 'History loop start anchor not found.');
-        $this->assertNotFalse($historyEnd, 'History loop end anchor not found.');
-        $historyRegion = substr($source, $historyStart, $historyEnd - $historyStart);
+        // Timeline (was the client-side history): media -> message -> time.
+        $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+        $this->assertTrue(strpos($timeline, 'timeline-media') < strpos($timeline, '{{ $item->body }}'));
+        $this->assertTrue(strpos($timeline, '{{ $item->body }}') < strpos($timeline, 'timeline-message-meta'));
+        $this->assertStringContainsString("{{ \$item->isInbound() ? 'chat-left' : '' }}", $timeline);
 
-        $this->assertTrue(strpos($historyRegion, 'safeTypedMediaParagraph(') < strpos($historyRegion, 'safeMessageParagraph('));
-        $this->assertTrue(strpos($historyRegion, 'safeMessageParagraph(') < strpos($historyRegion, 'chat-time'));
-        $this->assertStringContainsString('if (sms.media_url !== null)', $historyRegion);
-        $this->assertStringContainsString('if (sms.message)', $historyRegion);
-
+        // Optimistic send: message always -> optional media -> no time.
         $optimisticStart = strpos($source, 'let chatHistory = $(".chat_history");');
         $optimisticEnd = strpos($source, 'message.val("");', $optimisticStart);
         $this->assertNotFalse($optimisticStart, 'Optimistic block start anchor not found.');
@@ -502,21 +492,16 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertTrue(strpos($optimisticRegion, 'safeMessageParagraph(messageValue)') < strpos($optimisticRegion, '.attr("src", response.media_url)'));
         $this->assertStringNotContainsString('chat-time', $optimisticRegion);
         $this->assertStringContainsString('if (response.media_url) {', $optimisticRegion);
-        $this->assertStringNotContainsString('safeTypedMediaParagraph', $optimisticRegion);
-        $this->assertStringNotContainsString('isImageOrVideo', $optimisticRegion);
 
-        $echoStart = strpos($source, 'const sms = response.data;');
+        // Echo: the open conversation reloads its server-rendered timeline;
+        // any other conversation only gets its unread count.
+        $echoStart = strpos($source, 'Echo.private(');
         $echoEnd = strpos($source, '@endif', $echoStart);
         $this->assertNotFalse($echoStart, 'Echo block start anchor not found.');
-        $this->assertNotFalse($echoEnd, 'Echo block end anchor not found.');
         $echoRegion = substr($source, $echoStart, $echoEnd - $echoStart);
 
-        $this->assertTrue(strpos($echoRegion, 'safeTypedMediaParagraph(') < strpos($echoRegion, 'safeMessageParagraph('));
-        $this->assertTrue(strpos($echoRegion, 'safeMessageParagraph(') < strpos($echoRegion, 'chat-time'));
-        $this->assertTrue(strpos($echoRegion, 'chat-time') < strpos($echoRegion, 'if (chat_id === activeChatID)'));
-        $this->assertStringContainsString('if (sms.media_url !== null)', $echoRegion);
-        $this->assertStringContainsString('if (sms.message !== null)', $echoRegion);
-        $this->assertStringContainsString('sms.direction === "incoming"', $echoRegion);
+        $this->assertTrue(strpos($echoRegion, 'loadTimeline(chat_id);') < strpos($echoRegion, "conversationUrl('notification', chat_id)"));
+        $this->assertStringNotContainsString('sms.', $echoRegion);
     }
 
     // ===================================================================

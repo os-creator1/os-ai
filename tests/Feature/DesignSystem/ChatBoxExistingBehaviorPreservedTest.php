@@ -34,6 +34,14 @@ use Tests\TestCase;
  * endpoint strings and per-login resolver are updated in place — never
  * deleted — to the Business-scoped equivalents; each says so in its own
  * docblock. The presentation hooks this file protects are unchanged.
+ *
+ * The Conversations contact activity timeline replaced the SMS-only
+ * transcript with one server-rendered timeline per person and a contact
+ * panel. The tests that pinned the transcript's client-side rendering (the
+ * `messages` fetch on open, the history and Echo bubble builders) are updated
+ * in place to what now guarantees the same things: an eleventh action that
+ * serves the timeline, message text escaped by Blade on the server, and the
+ * unchanged optimistic send bubble. Each says so in its own docblock.
  */
 class ChatBoxExistingBehaviorPreservedTest extends TestCase
 {
@@ -66,6 +74,10 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
      * The eight flat POST names are retired; `customer.chatbox.index` and
      * `customer.chatbox.new` survive only as GET compatibility redirectors.
      * The property is unchanged — every one of the ten actions resolves.
+     *
+     * The contact activity timeline adds an eleventh, `timeline`, which the
+     * page now opens a conversation with; `messages` still resolves and still
+     * serves the raw thread.
      */
     public function test_all_10_chatbox_route_names_still_resolve(): void
     {
@@ -77,6 +89,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             'customer.workspaces.businesses.conversations.new' => $pair,
             'customer.workspaces.businesses.conversations.sent' => $pair,
             'customer.workspaces.businesses.conversations.messages' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.timeline' => [...$pair, $box->uid],
             'customer.workspaces.businesses.conversations.notification' => [...$pair, $box->uid],
             'customer.workspaces.businesses.conversations.reply' => [...$pair, $box->uid],
             'customer.workspaces.businesses.conversations.delete' => [...$pair, $box->uid],
@@ -91,7 +104,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             $this->assertIsString(route($name, $params));
         }
 
-        $this->assertCount(10, $named);
+        $this->assertCount(11, $named);
 
         // The two compatibility redirectors, and nothing else, keep the
         // old names.
@@ -109,12 +122,18 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
      * map, uid substituted client-side) instead of being concatenated onto
      * `url('/chat-box')`. The template picker uses B1's Business-scoped
      * template endpoint.
+     *
+     * Contact activity timeline: opening a conversation calls `timeline`
+     * instead of `messages`, so the page's route map carries `timeline` and no
+     * longer carries the `messages` entry it no longer uses.
      */
     public function test_ajax_endpoint_url_constructions_are_unchanged(): void
     {
         $index = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        foreach (['messages', 'notification', 'reply', 'delete', 'block', 'pin'] as $action) {
+        $this->assertStringNotContainsString("conversationUrl('messages'", $index);
+
+        foreach (['timeline', 'notification', 'reply', 'delete', 'block', 'pin'] as $action) {
             $this->assertStringContainsString(
                 "{$action}: \"{{ route('customer.workspaces.businesses.conversations.{$action}', [\$workspaceUid, \$businessUid, '__UID__']) }}\"",
                 $index,
@@ -124,7 +143,7 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringContainsString("load: \"{{ route('customer.workspaces.businesses.conversations.load', [\$workspaceUid, \$businessUid]) }}\"", $index);
         $this->assertStringContainsString("const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));", $index);
 
-        foreach (["conversationUrl('messages', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', sms_id)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
+        foreach (["conversationUrl('timeline', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', sms_id)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
             $this->assertStringContainsString($call, $index);
         }
 
@@ -202,16 +221,27 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
     // Significant class/id/data-* JS-selector hooks
     // -----------------------------------------------------------------
 
+    /**
+     * Contact activity timeline: the bubble classes `chat-left` and
+     * `chat-time` are now written by the server-rendered timeline partial
+     * rather than by the index's script, so they are asserted there.
+     */
     public function test_every_significant_js_selector_hook_survives(): void
     {
         $index = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
         foreach ([
             '.tab-button', '.send', '.message', '.counter', '.notification_count',
-            '.active', 'chat-left', 'chat-time', '.add-to-pin', '.add-to-blacklist',
-            '.remove-btn', '.start-chat-area', '.active-chat',
+            '.active', '.add-to-pin', '.add-to-blacklist',
+            '.remove-btn', '.start-chat-area', '.active-chat', '.chat_id',
         ] as $selector) {
             $this->assertStringContainsString($selector, $index, "Expected {$selector} to survive in index.blade.php.");
+        }
+
+        $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+
+        foreach (['chat-left', 'chat-time', 'chat-body', 'chat-content'] as $selector) {
+            $this->assertStringContainsString($selector, $timeline, "Expected {$selector} in the timeline partial.");
         }
     }
 
@@ -292,53 +322,49 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $response->assertStatus(401);
     }
 
+    /**
+     * Contact activity timeline: stored history and live messages are no
+     * longer turned into markup in the browser at all. The timeline arrives
+     * rendered by Blade, which escapes every message (proven over HTTP in
+     * ConversationTimelineScreenTest), and is inserted whole — so the history
+     * and Echo builders, and the typed-media helper only they used, are gone.
+     * The one client-built bubble left is the optimistic send, which still
+     * goes through safeMessageParagraph() unconditionally.
+     */
     public function test_safe_message_and_media_helpers_and_their_presence_rules_survive(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
         $this->assertSame(1, substr_count($contents, 'function safeMessageParagraph(value) {'));
-        $this->assertSame(1, substr_count($contents, 'function safeTypedMediaParagraph(url, imgAlt) {'));
-        $this->assertStringNotContainsString('${sms.message}', $contents);
-        $this->assertStringNotContainsString('${sms.media_url}', $contents);
+        $this->assertSame(0, substr_count($contents, 'safeTypedMediaParagraph('));
+        $this->assertStringNotContainsString('${sms.', $contents);
+        $this->assertStringNotContainsString('sms.message', $contents);
         $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $contents);
 
-        // History
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.message\)\s*\{\s*\$content\.append\(safeMessageParagraph\(sms\.message\)\);/',
-            $contents
-        );
+        // Server-rendered panes, inserted as the server rendered them.
+        $this->assertStringContainsString('$(".chat_history").html(response.timeline);', $contents);
+        $this->assertStringContainsString('$("#conversation-context").html(response.context);', $contents);
+
         // Optimistic — unconditional
         $this->assertStringContainsString('$content.append(safeMessageParagraph(messageValue));', $contents);
         $this->assertStringNotContainsString('if (messageValue)', $contents);
-        // Echo
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.message\s*!==\s*null\)\s*\{\s*\$content\.append\(safeMessageParagraph\(sms\.message\)\);/',
-            $contents
-        );
-
-        // Media presence rules
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.media_url\s*!==\s*null\)\s*\{\s*\$content\.append\(safeTypedMediaParagraph\(sms\.media_url,\s*"media"\)\);/',
-            $contents
-        );
-        $this->assertMatchesRegularExpression(
-            '/if\s*\(sms\.media_url\s*!==\s*null\)\s*\{\s*\$content\.append\(safeTypedMediaParagraph\(sms\.media_url,\s*""\)\);/',
-            $contents
-        );
         $this->assertStringContainsString('if (response.media_url) {', $contents);
+
+        // The partial escapes: no raw echo anywhere in it.
+        $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
+        $this->assertStringNotContainsString('{!!', $timeline);
+        $this->assertStringContainsString('{{ $item->body }}', $timeline);
     }
 
     public function test_child_order_and_optimistic_200px_image_only_constraint_preserved(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        // History: media -> message -> chat-time.
-        $historyStart = strpos($contents, 'cwData.forEach((sms) => {');
-        $historyEnd = strpos($contents, 'chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 400);', $historyStart);
-        $historyRegion = substr($contents, $historyStart, $historyEnd - $historyStart);
+        // Timeline partial (was the client-side history): media -> message -> time.
+        $timeline = file_get_contents(base_path('resources/views/customer/ChatBox/partials/_timeline.blade.php'));
         $this->assertTrue(
-            strpos($historyRegion, 'safeTypedMediaParagraph(') < strpos($historyRegion, 'safeMessageParagraph(')
-            && strpos($historyRegion, 'safeMessageParagraph(') < strpos($historyRegion, 'chat-time')
+            strpos($timeline, 'timeline-media') < strpos($timeline, '{{ $item->body }}')
+            && strpos($timeline, '{{ $item->body }}') < strpos($timeline, 'timeline-message-meta')
         );
 
         // Optimistic: message always -> optional media -> no chat-time; exact 200px sizing.
@@ -349,15 +375,16 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         $this->assertStringNotContainsString('chat-time', $optimisticRegion);
         $this->assertSame(1, substr_count($contents, 'max-width:200px; max-height:200px;'));
 
-        // Echo: media -> message -> chat-time, before the activeChatID branch.
-        $echoStart = strpos($contents, 'const sms = response.data;');
+        // Echo: the open conversation reloads its server-rendered timeline
+        // (so a live message looks exactly like the rest of it); any other
+        // conversation only gets its unread count.
+        $echoStart = strpos($contents, 'Echo.private(');
         $echoEnd = strpos($contents, '@endif', $echoStart);
         $echoRegion = substr($contents, $echoStart, $echoEnd - $echoStart);
         $this->assertTrue(
-            strpos($echoRegion, 'safeTypedMediaParagraph(') < strpos($echoRegion, 'safeMessageParagraph(')
-            && strpos($echoRegion, 'safeMessageParagraph(') < strpos($echoRegion, 'chat-time')
-            && strpos($echoRegion, 'chat-time') < strpos($echoRegion, 'if (chat_id === activeChatID)')
+            strpos($echoRegion, 'loadTimeline(chat_id);') < strpos($echoRegion, "conversationUrl('notification', chat_id)")
         );
+        $this->assertStringNotContainsString('chat-time', $echoRegion);
     }
 
     // -----------------------------------------------------------------

@@ -15,6 +15,11 @@ class ChatBoxMessage extends Model
         'direction',
         'sending_server_id',
         'send_by',
+        // Send provenance (ConversationHistoryWriter) — set only on managed
+        // outbound history; NULL on every other row.
+        'business_messaging_operation_id',
+        'automation_step_run_id',
+        'source',
     ];
 
     protected static function booted()

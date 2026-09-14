@@ -25,6 +25,12 @@ use Tests\TestCase;
  * retained plugin wiring (Select2, SweetAlert2, #load-more/#chat-search
  * AJAX) and both Echo/Pusher guards remain structurally present. This file
  * makes zero assertion requiring any ChatBoxController change.
+ *
+ * Conversations contact activity timeline, stated rather than hidden: the
+ * index gains one icon — the contact-panel toggle's `panel-right` (14 in
+ * total) — the shared list row `_chat_row` joins the allowlist with none, and
+ * the new timeline and contact-panel partials are held to the same rules
+ * (tokens only, no data-feather) by their own test below.
  */
 class ChatBoxDesignSystemContentTest extends TestCase
 {
@@ -36,6 +42,12 @@ class ChatBoxDesignSystemContentTest extends TestCase
         'resources/views/customer/ChatBox/new.blade.php',
         'resources/views/customer/ChatBox/_sidebar.blade.php',
         'resources/views/customer/ChatBox/partials/_chat_list.blade.php',
+        'resources/views/customer/ChatBox/partials/_chat_row.blade.php',
+    ];
+
+    private const TIMELINE_VIEWS = [
+        'resources/views/customer/ChatBox/partials/_timeline.blade.php',
+        'resources/views/customer/ChatBox/partials/_context.blade.php',
     ];
 
     protected function setUp(): void
@@ -92,7 +104,7 @@ class ChatBoxDesignSystemContentTest extends TestCase
             (string) file_get_contents(resource_path('views/components/search-field.blade.php'))
         );
 
-        foreach (['x', 'search', 'plus-circle', 'refresh-cw', 'message-square', 'menu', 'shield', 'trash', 'image', 'send', 'delete', 'edit-2', 'info'] as $name) {
+        foreach (['x', 'search', 'plus-circle', 'refresh-cw', 'message-square', 'menu', 'shield', 'trash', 'image', 'send', 'delete', 'edit-2', 'info', 'panel-right'] as $name) {
             $present = str_contains($combined, 'name="' . $name . '"')
                 || str_contains($combined, 'icon="' . $name . '"')
                 || ($name === 'search' && str_contains($combined, '<x-search-field'));
@@ -107,9 +119,10 @@ class ChatBoxDesignSystemContentTest extends TestCase
     {
         $expected = [
             'resources/views/customer/ChatBox/_sidebar.blade.php' => 3, // x, plus-circle (literal) + refresh-cw (icon prop); search is drawn by <x-search-field>
-            'resources/views/customer/ChatBox/index.blade.php' => 8, // all 8 as literal <x-ds-icon> tags
+            'resources/views/customer/ChatBox/index.blade.php' => 9, // 8 literal <x-ds-icon> tags + the contact-panel toggle's panel-right (icon prop)
             'resources/views/customer/ChatBox/new.blade.php' => 2, // info (literal) + send (icon prop)
             'resources/views/customer/ChatBox/partials/_chat_list.blade.php' => 0,
+            'resources/views/customer/ChatBox/partials/_chat_row.blade.php' => 0,
         ];
 
         $total = 0;
@@ -120,7 +133,25 @@ class ChatBoxDesignSystemContentTest extends TestCase
             $total += $actual;
         }
 
-        $this->assertSame(13, $total);
+        $this->assertSame(14, $total);
+    }
+
+    /**
+     * The timeline and the contact panel draw their icons through the icon
+     * seam and their colors from tokens, like the rest of the inbox — and the
+     * page's own new styles add no color literal either (checked above for the
+     * index).
+     */
+    public function test_the_timeline_and_contact_panel_partials_use_ds_icons_and_no_color_literals(): void
+    {
+        foreach (self::TIMELINE_VIEWS as $view) {
+            $contents = file_get_contents(base_path($view));
+
+            $this->assertSame(0, substr_count($contents, 'data-feather'), $view);
+            $this->assertSame(0, preg_match('/#[0-9A-Fa-f]{3,8}\b/', $contents), "No hex color in {$view}.");
+            $this->assertSame(0, preg_match('/\brgba?\([^)]*\)/', $contents), "No rgb() color in {$view}.");
+            $this->assertStringContainsString('<x-ds-icon', $contents, $view);
+        }
     }
 
     /**

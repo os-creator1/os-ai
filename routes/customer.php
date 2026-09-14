@@ -962,6 +962,7 @@
             Route::post('/sent', 'ChatBoxController@sent')->name('sent');
             Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
             Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');
+            Route::post('/{uid}/timeline', 'ChatBoxController@timeline')->name('timeline');
             Route::post('/{uid}/notification', 'ChatBoxController@messagesWithNotification')->name('notification');
             Route::post('/{uid}/reply', 'ChatBoxController@reply')->name('reply');
             Route::post('/{uid}/delete', 'ChatBoxController@delete')->name('delete');
