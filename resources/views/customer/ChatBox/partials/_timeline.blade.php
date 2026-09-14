@@ -37,7 +37,7 @@
     @endif
 
     @if ($item->isMessage())
-        <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
+        <div class="chat {{ $item->isInbound() ? 'chat-left' : '' }} timeline-message {{ $item->tone->value === 'warning' ? 'timeline-message-warning' : '' }}" data-role="timeline-message" data-direction="{{ $item->direction?->value }}" data-channel="{{ $item->channel }}">
             <div class="chat-body">
                 <div class="chat-content">
                     @foreach ($item->media as $url)
@@ -70,6 +70,15 @@
                             <span data-role="timeline-detail">· {{ $item->detail }}</span>
                         @endif
                     </p>
+
+                    @if ($item->retryable && $item->retrySendUid !== null)
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary timeline-message-retry"
+                            data-role="timeline-message-retry"
+                            data-send-uid="{{ $item->retrySendUid }}"
+                        >{{ __('locale.conversations.retry') }}</button>
+                    @endif
                 </div>
             </div>
         </div>

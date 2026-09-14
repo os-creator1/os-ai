@@ -367,6 +367,14 @@ class InboundWebhookAttributionResolver
                 $this->syncCorrelatedReport($report, $target);
             }
 
+            // Conversations failed-send/retry (item 5) — a delivery FAILURE
+            // is the one transition Conversations must also reflect: the
+            // bubble that showed Sent becomes Delivery failed, in the same
+            // transaction as the operation's own transition.
+            if ($target === MessagingOperationStatus::Failed) {
+                $this->history->markManagedOutboundDeliveryFailed((int) $locked->id);
+            }
+
             return self::TRANSITION_APPLIED;
         });
 

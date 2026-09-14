@@ -20,6 +20,18 @@ class ChatBoxMessage extends Model
         'business_messaging_operation_id',
         'automation_step_run_id',
         'source',
+        // Manual-send retry state (ConversationHistoryWriter) — set only on
+        // a Conversations manual send this feature tracks; NULL everywhere
+        // else, including every automation/campaign/quick-send row.
+        'send_uid',
+        'send_status',
+        'send_failure_reason',
+        'retry_count',
+        'send_claimed_at',
+    ];
+
+    protected $casts = [
+        'send_claimed_at' => 'datetime',
     ];
 
     protected static function booted()

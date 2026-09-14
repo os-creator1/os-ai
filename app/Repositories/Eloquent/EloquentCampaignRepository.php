@@ -538,7 +538,14 @@
             // recipient collapse to one operation. The alternative — a fresh
             // random key per call — is what produced the double-billing this
             // replaces.
-            $quickSendKey = $input['idempotency_token'] ?? null;
+            // Correction round 4, item 3 — a Conversations manual send
+            // (reply()/retry()) supplies its own conversation-scoped key
+            // here, distinct from 'idempotency_token' (which stays the
+            // client's raw token — the RFC-005 M5 reservation lookup above
+            // is keyed on that unchanged). Every other caller — Outreach
+            // quick send, an automation, a campaign — never sets this, and
+            // gets today's unchanged behaviour.
+            $quickSendKey = $input['managed_operation_key'] ?? ($input['idempotency_token'] ?? null);
 
             if (! is_string($quickSendKey) || $quickSendKey === '') {
                 $quickSendKey = 'managed:quicksend:' . ($input['business_id'] ?? '0')
@@ -558,6 +565,25 @@
                 $conversationContext
                     ? \App\Library\Conversations\ConversationHistoryWriter::SOURCE_CONVERSATIONS
                     : \App\Library\Conversations\ConversationHistoryWriter::SOURCE_QUICK_SEND,
+                // Conversations failed-send/retry (item 2/4) — the stable
+                // bubble identity, distinct from $quickSendKey so a retry can
+                // mint a FRESH operation key (a genuine new provider attempt)
+                // while still updating the ORIGINAL bubble. Only ever set by
+                // ChatBoxController's manual-send paths; every other caller
+                // leaves 'send_uid' unset and gets today's unchanged behaviour.
+                $conversationContext ? ($input['send_uid'] ?? null) : null,
+                // Correction round 6, item 2 — the ORIGINAL ChatBox a tracked
+                // retry belongs to, so history attaches to that exact
+                // conversation rather than one re-derived from the
+                // Business's CURRENT primary managed number. Only ever set
+                // by retry(); reply()/every other caller leaves this unset
+                // and keeps today's number-derived resolution.
+                $conversationContext ? ($input['conversation_box_id'] ?? null) : null,
+                // Correction round 6, item 3 — retry()'s own mandatory-
+                // managed flag: this send must reach managed transport or
+                // fail closed, never silently fall through to whatever
+                // legacy/BYO server this Business also happens to have.
+                (bool) ($input['require_managed'] ?? false),
             );
 
             if ($managedResult !== null) {
@@ -566,6 +592,15 @@
                     'message' => $managedResult->accepted
                         ? __('locale.campaigns.campaign_successfully_sent')
                         : __('locale.campaigns.campaign_sending_failed'),
+                    // Tells the caller the managed dispatcher itself made
+                    // this accept/reject decision, and — only when rejected —
+                    // the coarse category it decided on (Slice 3 §4.3),
+                    // never a provider payload or id. A Conversations caller
+                    // uses this for a more specific customer-safe reason than
+                    // an early-return legacy failure (which never reaches
+                    // the dispatcher at all) can be given.
+                    'managed' => true,
+                    'error_category' => $managedResult->accepted ? null : $managedResult->errorCategory?->value,
                 ]);
             }
 

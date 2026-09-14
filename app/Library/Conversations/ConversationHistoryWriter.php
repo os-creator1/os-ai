@@ -7,6 +7,7 @@ use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\Business;
+use App\Models\BusinessMessagingNumber;
 use App\Models\ChatBox;
 use App\Models\ChatBoxMessage;
 use App\Models\Reports;
@@ -144,6 +145,29 @@ final class ConversationHistoryWriter
      * nothing to anchor it to — no recorded operation for this key, or no usable
      * number — in which case nothing is written.
      *
+     * $sendUid IS THE RETRY SEAM (item 2/4), and is optional so every existing
+     * caller (Outreach quick send, an automation, a campaign — none of which
+     * offer a customer Retry) is completely unaffected. When given, it is the
+     * stable identity of ONE logical, customer-visible message: a prior row
+     * already carrying it — a failed first attempt, or an accepted send a
+     * later DLR marked failed — is UPDATED in place (the new operation now
+     * represents that same bubble) rather than a second row being created, so
+     * a successful retry can never produce a duplicate bubble. A caller that
+     * never passes $sendUid always creates fresh, exactly as before.
+     *
+     * $conversationBoxId (correction round 6, item 2) is the ORIGINAL
+     * ChatBox id a tracked retry belongs to. Without it, the conversation
+     * was always re-derived from the Business's CURRENT primary managed
+     * number — correct for a first send, but unsafe for a retry: if the
+     * Business's number changed between the original failed attempt and
+     * this retry succeeding, that re-derivation resolves (or creates) a
+     * DIFFERENT ChatBox, leaving the original bubble stranded 'sending'
+     * forever and attaching the accepted operation to the wrong thread.
+     * When given, this method updates THAT exact ChatBox — verified to
+     * still belong to $business — instead of re-deriving one. Null for
+     * every caller that is not retrying an already-tracked bubble
+     * (unchanged behaviour).
+     *
      * @param  list<string>  $mediaUrls
      */
     public function recordManagedOutbound(
@@ -154,6 +178,8 @@ final class ConversationHistoryWriter
         ?string $smsType,
         string $operationKey,
         ?string $source,
+        ?string $sendUid = null,
+        ?int $conversationBoxId = null,
     ): ?ChatBoxMessage {
         $operationId = DB::table(ManagedMessageDispatcher::TABLE)
             ->where('business_id', (int) $business->id)
@@ -183,8 +209,8 @@ final class ConversationHistoryWriter
         $stepRunId = $this->sendContext->currentStepRunId();
 
         try {
-            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source): ?ChatBoxMessage {
-                $conversation = $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
+            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid, $conversationBoxId): ?ChatBoxMessage {
+                $conversation = $this->resolveConversationForWrite($business, $number, $contactNumber, $conversationBoxId);
 
                 if ($conversation === null) {
                     return null;
@@ -194,6 +220,51 @@ final class ConversationHistoryWriter
                 // so the conversation no longer awaits a reply from it.
                 $conversation->reply_by_customer = false;
                 $conversation->save();
+
+                $existing = $sendUid !== null ? $this->recordedForSendUid((int) $conversation->id, $sendUid) : null;
+
+                // Correction round 5 (state machine), item 2 — the CURRENT
+                // durable operation status, re-read and locked inside THIS
+                // transaction, never assumed to still be the Accepted result
+                // ManagedDispatchDelegate::attempt() saw moments ago: a DLR
+                // can finalize Accepted -> Delivered/Failed in the gap
+                // between dispatch() returning and this write landing
+                // (InboundWebhookAttributionResolver's own transition
+                // transaction takes the SAME lock on this row before it
+                // moves the operation, so these two transactions correctly
+                // serialize against each other rather than racing).
+                $operationRow = $sendUid !== null
+                    ? DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->lockForUpdate()->first()
+                    : null;
+
+                // Unresolved (null) is unreachable in practice at this call
+                // site — dispatch() only finalizes an operation to Accepted
+                // or Rejected before this method is ever reached, and
+                // Rejected is projected too — but the fallback stays the
+                // conservative 'sent' rather than crashing, matching what
+                // this code path always did before this projection existed.
+                $projection = $operationRow !== null
+                    ? (ManagedSendStateMachine::projectOperation($operationRow) ?? new ManagedSendProjection(ManagedSendStateMachine::SENT, null))
+                    : null;
+
+                if ($existing !== null) {
+                    // A retry just succeeded: the SAME bubble now points at
+                    // the operation that actually got accepted, and carries
+                    // no failure reason any more (or, per the projection
+                    // above, whatever the operation's CURRENT durable state
+                    // actually authorizes — never blindly 'sent').  The
+                    // operation this row used to name is left exactly as it
+                    // was — the durable audit trail of every attempt lives
+                    // there, in business_messaging_operations, not in this
+                    // pointer.
+                    $existing->update([
+                        'business_messaging_operation_id' => (int) $operationId,
+                        'send_status' => $projection->sendStatus,
+                        'send_failure_reason' => $projection->failureReason,
+                    ]);
+
+                    return $existing->fresh();
+                }
 
                 return ChatBoxMessage::create([
                     'box_id' => $conversation->id,
@@ -205,16 +276,251 @@ final class ConversationHistoryWriter
                     'business_messaging_operation_id' => (int) $operationId,
                     'automation_step_run_id' => $stepRunId,
                     'source' => $source,
+                    'send_uid' => $sendUid,
+                    'send_status' => $projection?->sendStatus,
+                    'send_failure_reason' => $projection?->failureReason,
+                    'retry_count' => $sendUid !== null ? 1 : null,
                 ]);
             });
         } catch (UniqueConstraintViolationException) {
-            // A concurrent copy of the same send recorded it first.
-            return $this->recordedFor((int) $operationId);
+            // A concurrent copy of the same send recorded it first — found,
+            // as always, by the operation id THIS accepted result itself
+            // belongs to.
+            $recorded = $this->recordedFor((int) $operationId);
+
+            if ($recorded !== null) {
+                return $recorded;
+            }
+
+            // Correction round 4, item 4 — the row that now exists for this
+            // exact (box_id, send_uid) is not one recordedFor() above can
+            // find (it carries no business_messaging_operation_id, or a
+            // different one): the insert above lost the unique-key race to
+            // a CONCURRENT FAILURE WRITE instead, one whose own read of
+            // "does a row already exist" happened a moment before this
+            // writer's own insert — recordManualSendFailure() has no way to
+            // see a row this transaction had not committed yet. The
+            // provider ACCEPTED this send regardless of which write landed
+            // in the table first, so whichever row is sitting there now
+            // must be promoted to the truthful 'sent' state — never a
+            // second bubble for the same logical message.
+            if ($sendUid === null) {
+                return null;
+            }
+
+            $conversation = $this->resolveConversationForWrite($business, $number, $contactNumber, $conversationBoxId);
+
+            if ($conversation === null) {
+                return null;
+            }
+
+            return DB::transaction(function () use ($conversation, $sendUid, $operationId): ?ChatBoxMessage {
+                $existing = ChatBoxMessage::query()
+                    ->where('box_id', $conversation->id)
+                    ->where('send_uid', $sendUid)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($existing === null) {
+                    // Lost the unique-key race to something this writer
+                    // cannot identify at all (never observed in practice —
+                    // the composite key is scoped to exactly the writers
+                    // this class documents). Nothing safe to promote.
+                    return null;
+                }
+
+                // Correction round 5 (state machine), item 2 — the SAME
+                // fresh, locked re-read of the durable operation applies to
+                // this promotion path too: the insert-race winner is never
+                // blindly written as 'sent'.
+                $operationRow = DB::table(ManagedMessageDispatcher::TABLE)->where('id', $operationId)->lockForUpdate()->first();
+                $projection = ManagedSendStateMachine::projectOperation($operationRow)
+                    ?? new ManagedSendProjection(ManagedSendStateMachine::SENT, null);
+
+                $existing->update([
+                    'business_messaging_operation_id' => (int) $operationId,
+                    'send_status' => $projection->sendStatus,
+                    'send_failure_reason' => $projection->failureReason,
+                ]);
+
+                return $existing->fresh();
+            });
         }
+    }
+
+    /**
+     * A manual Conversations send that did NOT reach an accepted provider
+     * state — refused before commitment (item 1 Class A), or the managed
+     * dispatcher's own rejection. The bubble this writes is the customer's
+     * truthful record of "this was tried and did not go out"; it is never
+     * written for a send the provider accepted (item 1 Class B stays exactly
+     * as it already was — an accepted send whose history write later fails is
+     * never turned into a reported failure by this or any other writer).
+     *
+     * IDENTITY: (box_id, $sendUid), always — the same composite key
+     * recordManagedOutbound() looks up by. $sendUid is CLIENT-chosen,
+     * untrusted input; a first attempt with no prior row IN THIS
+     * conversation creates one, and a retry that failed again updates the
+     * SAME row in place, exactly as a successful retry does, so a
+     * repeatedly-failing message still shows as ONE bubble — but a uid
+     * another Business's (or another thread's) conversation already used is
+     * never found here at all, and never rewrites that stranger's row.
+     *
+     * FAILS CLOSED if the supplied conversation does not genuinely belong
+     * to the supplied Business — defense in depth beyond the caller's own
+     * tenancy resolution, since this is the seam that would otherwise let a
+     * mismatched pair silently write into the wrong Business's history.
+     *
+     * MONOTONIC WITH RESPECT TO SUCCESS (correction round 3, item 1). A
+     * failure write NEVER downgrades a bubble that already proves the
+     * provider accepted this logical message ('sent' or 'delivered'). This
+     * closes a genuine race: reply() has no claim/lock of its own (unlike
+     * retry()), so a double-submitted first send reaches
+     * ManagedMessageDispatcher::dispatch() twice with the SAME operation
+     * key. The loser finds the winner's operation row still 'attempted'
+     * (not yet finalized), and dispatch()'s own resultFromRecordedOperation()
+     * reads an in-flight 'attempted' row as not-accepted — so the loser's
+     * copy of attemptManagedSend() can reach this method with a failure
+     * result for a send the winner's copy is, at the same moment, recording
+     * as accepted. Whichever write lands second must never win if it is the
+     * failure. The row is locked for the comparison and the update
+     * together, so this is race-free against a concurrent success write
+     * too. business_messaging_operations is never touched here — the
+     * durable per-attempt audit trail is exactly as full either way.
+     *
+     * @param  list<string>  $mediaUrls
+     *
+     * @throws \InvalidArgumentException when $conversation does not belong to $business
+     */
+    public function recordManualSendFailure(
+        Business $business,
+        ChatBox $conversation,
+        string $body,
+        array $mediaUrls,
+        string $smsType,
+        string $sendUid,
+        string $failureReasonCode,
+    ): ChatBoxMessage {
+        if ((int) $conversation->business_id !== (int) $business->id) {
+            throw new \InvalidArgumentException(
+                'recordManualSendFailure() refuses a conversation that does not belong to the supplied Business.',
+            );
+        }
+
+        // Correction round 4, item 1 — the bubble state a failure lands in
+        // is DERIVED from the reason, not always 'failed': an Ambiguous
+        // outcome (see ConversationSendFailureReason) gets its own
+        // 'ambiguous' state, which is deliberately never offered a Retry.
+        $reason = ConversationSendFailureReason::tryFrom($failureReasonCode);
+        $sendStatus = $reason?->bubbleStatus() ?? 'failed';
+
+        return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode, $sendStatus): ChatBoxMessage {
+            $existing = ChatBoxMessage::query()
+                ->where('box_id', $conversation->id)
+                ->where('send_uid', $sendUid)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing !== null) {
+                // Correction round 5 (state machine), item 1 — sent/delivered
+                // AND ambiguous are all protected from a local, pre-provider
+                // refusal (invariants 1 & 2): a stale replay of an old local
+                // failure result must never downgrade any of them, however
+                // it got re-triggered (a changed kill-switch setting, a
+                // repeated request). Only durable operation evidence —
+                // reconciliation, via ManagedSendStateMachine::projectOperation() —
+                // may resolve ambiguous further.
+                if (! ManagedSendStateMachine::canApplyLocalRefusal($existing->send_status)) {
+                    return $existing;
+                }
+
+                $existing->update([
+                    'send_status' => $sendStatus,
+                    'send_failure_reason' => $failureReasonCode,
+                ]);
+
+                return $existing->fresh();
+            }
+
+            return ChatBoxMessage::create([
+                'box_id' => $conversation->id,
+                'message' => $body,
+                'media_url' => $mediaUrls === [] ? null : implode(',', $mediaUrls),
+                'sms_type' => $smsType === 'mms' ? 'mms' : 'plain',
+                'direction' => Reports::DIRECTION_OUTGOING,
+                'send_by' => 'from',
+                'send_uid' => $sendUid,
+                'send_status' => $sendStatus,
+                'send_failure_reason' => $failureReasonCode,
+                'retry_count' => 1,
+            ]);
+        });
+    }
+
+    /**
+     * Conversations failed-send/retry (item 5) — a provider that ACCEPTED a
+     * managed send and a later delivery-status callback then reported as
+     * failed. The bubble that send already has is turned into a truthful
+     * Delivery failed state — never a second row, and the caller's own
+     * transaction, not a new one here.
+     *
+     * ONLY 'sent' -> 'delivery_failed'. An operation whose bubble has since
+     * moved on to a later attempt — recordManagedOutbound() repoints
+     * business_messaging_operation_id to the NEW attempt the moment a retry
+     * is accepted — no longer owns this operation id at all, so a late or
+     * out-of-order DLR for a superseded attempt finds no row here and
+     * safely does nothing to whatever the bubble now shows.
+     */
+    public function markManagedOutboundDeliveryFailed(int $operationId): void
+    {
+        ChatBoxMessage::query()
+            ->where('business_messaging_operation_id', $operationId)
+            ->where('send_status', ManagedSendStateMachine::SENT)
+            ->update([
+                'send_status' => ManagedSendStateMachine::DELIVERY_FAILED,
+                'send_failure_reason' => ConversationSendFailureReason::DeliveryFailed->value,
+            ]);
+    }
+
+    /**
+     * Correction round 6, item 2 — the conversation a managed outbound
+     * write actually belongs to. For a tracked retry ($conversationBoxId
+     * given), this is the ORIGINAL logical bubble's own ChatBox, verified
+     * to still belong to $business — never re-derived from the Business's
+     * CURRENT primary managed number, which may have changed since the
+     * bubble was first created. Every other caller (no $conversationBoxId)
+     * keeps the exact prior behaviour: resolved/created from the number
+     * that actually sent this message.
+     */
+    private function resolveConversationForWrite(
+        Business $business,
+        BusinessMessagingNumber $number,
+        string $contactNumber,
+        ?int $conversationBoxId,
+    ): ?ChatBox {
+        if ($conversationBoxId !== null) {
+            return ChatBox::query()
+                ->where('id', $conversationBoxId)
+                ->where('business_id', (int) $business->id)
+                ->first();
+        }
+
+        return $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
     }
 
     private function recordedFor(int $operationId): ?ChatBoxMessage
     {
         return ChatBoxMessage::query()->where('business_messaging_operation_id', $operationId)->first();
+    }
+
+    /**
+     * NEVER by send_uid alone (item 1) — it is client-chosen, untrusted
+     * input, and two different conversations (any two Businesses, or two
+     * threads of the same Business) may legitimately carry the identical
+     * value with no relationship to each other at all.
+     */
+    private function recordedForSendUid(int $boxId, string $sendUid): ?ChatBoxMessage
+    {
+        return ChatBoxMessage::query()->where('box_id', $boxId)->where('send_uid', $sendUid)->first();
     }
 }

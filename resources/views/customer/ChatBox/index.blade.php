@@ -405,6 +405,7 @@
         timeline: "{{ route('customer.workspaces.businesses.conversations.timeline', [$workspaceUid, $businessUid, '__UID__']) }}",
         notification: "{{ route('customer.workspaces.businesses.conversations.notification', [$workspaceUid, $businessUid, '__UID__']) }}",
         reply: "{{ route('customer.workspaces.businesses.conversations.reply', [$workspaceUid, $businessUid, '__UID__']) }}",
+        retry: "{{ route('customer.workspaces.businesses.conversations.retry', [$workspaceUid, $businessUid, '__UID__']) }}",
         delete: "{{ route('customer.workspaces.businesses.conversations.delete', [$workspaceUid, $businessUid, '__UID__']) }}",
         block: "{{ route('customer.workspaces.businesses.conversations.block', [$workspaceUid, $businessUid, '__UID__']) }}",
         pin: "{{ route('customer.workspaces.businesses.conversations.pin', [$workspaceUid, $businessUid, '__UID__']) }}",
@@ -708,6 +709,13 @@
                 newestOnTop: true,
                 rtl: isRtl
               });
+
+              // Conversations failed-send/retry — a managed Business's
+              // failed attempt is now persisted server-side as a truthful
+              // Failed bubble instead of disappearing; reloading the
+              // timeline is what shows it, exactly as any other server
+              // state does. A full re-render, never an appended duplicate.
+              loadTimeline(chatBoxId);
             }
           },
           error: function(reject) {
@@ -736,6 +744,52 @@
           }
         });
       }
+
+      // Conversations failed-send/retry — delegated because the button is
+      // part of the timeline HTML the server re-renders on every load.
+      // Disabled immediately on click so a second physical click cannot
+      // even reach the network before the first request returns; the
+      // server enforces the same guarantee independently (a locked claim
+      // on the message row), so this is a UX nicety, not the safety net.
+      $(document).on("click", "[data-role='timeline-message-retry']", function() {
+        const $btn = $(this);
+        const sendUid = $btn.data("send-uid");
+        const chatBoxId = $(".chat_id").val();
+
+        if (!sendUid || !chatBoxId || $btn.prop("disabled")) {
+          return;
+        }
+
+        $btn.prop("disabled", true);
+
+        $.ajax({
+          url: conversationUrl('retry', chatBoxId),
+          type: "POST",
+          data: {
+            _token: "{{ csrf_token() }}",
+            send_uid: sendUid
+          },
+          success: function(response) {
+            if (response.status !== "success") {
+              toastr["warning"](response.message, "{{ __('locale.labels.attention') }}", {
+                closeButton: true,
+                positionClass: "toast-top-right",
+                progressBar: true,
+                newestOnTop: true,
+                rtl: isRtl
+              });
+            }
+
+            // The authoritative re-render either way: Sent/Delivered,
+            // still Failed, or Delivery failed — never an appended
+            // duplicate of the bubble the retry button was already on.
+            loadTimeline(chatBoxId);
+          },
+          error: function() {
+            loadTimeline(chatBoxId);
+          }
+        });
+      });
 
 
       $(".remove-btn").on("click", function(event) {

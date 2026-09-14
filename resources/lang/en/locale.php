@@ -1762,6 +1762,30 @@
 
         ],
 
+        // Conversations — customer-safe manual-send failure reasons and
+        // retry copy (item 3). Never provider jargon, ids, or raw
+        // exceptions — see ConversationSendFailureReason.
+        'conversations' => [
+            'send_failure' => [
+                'insufficient_balance'  => 'Messaging balance is too low.',
+                'messaging_not_ready'   => 'Text messaging is not ready yet.',
+                'messaging_unavailable' => 'Messaging is temporarily unavailable.',
+                'delivery_failed'       => 'Message could not be delivered.',
+                'send_failed'           => 'This message could not be sent.',
+                // Correction round 4, item 1 — the provider's own outcome
+                // was never conclusively disproven; never paired with a
+                // Retry control (see ConversationSendFailureReason::isRetryable()).
+                'ambiguous'             => 'We could not confirm whether this message was sent.',
+            ],
+            'send_failed_label'    => 'Failed',
+            'delivery_failed_label' => 'Delivery failed',
+            'ambiguous_label'       => 'Status unknown',
+            'sending_label'         => 'Sending…',
+            'retry'                 => 'Retry',
+            'retry_in_progress'     => 'A retry for this message is already in progress.',
+            'retry_refused_ambiguous' => 'This message\'s delivery status could not be confirmed, so it cannot be retried automatically.',
+        ],
+
         'developers' => [
             'api_documents'                          => 'API Documents',
             'contacts_api'                           => 'Contacts API',

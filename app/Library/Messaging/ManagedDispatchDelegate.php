@@ -77,10 +77,36 @@ class ManagedDispatchDelegate
      * @param string|null  $historySource who asked for the send, recorded on its
      *                                    conversation history row
      *                                    (ConversationHistoryWriter::SOURCE_*)
+     * @param string|null  $sendUid       Conversations failed-send/retry (item 2)
+     *                                    — the stable identity of ONE customer-visible
+     *                                    bubble, passed through unchanged to
+     *                                    ConversationHistoryWriter so a retry's
+     *                                    acceptance updates that SAME bubble instead
+     *                                    of creating a second one. Null for every
+     *                                    caller that does not offer a customer
+     *                                    Retry (unchanged behaviour).
+     *
+     * @param bool $requireManaged Correction round 6, item 3 — a historical
+     *                             PR-301 retry bubble is PERMANENTLY a
+     *                             managed-transport message: once true, a
+     *                             failure to resolve the identity HERE
+     *                             (even though an earlier controller-level
+     *                             check saw one moments ago — the exact
+     *                             race this closes) fails closed with
+     *                             MessagingIdentityConflictException
+     *                             instead of returning null, so the caller
+     *                             can never fall through to a legacy/BYO
+     *                             provider for this send. Every other
+     *                             caller (a first reply, a genuinely
+     *                             non-managed Business's quick send, an
+     *                             automation, a campaign) leaves this
+     *                             false and keeps today's fall-through
+     *                             behaviour exactly as it is.
      *
      * @return OutboundMessageResult|null null when this Business has no
      *                                    managed identity and the caller
      *                                    should proceed with its legacy path
+     *                                    ($requireManaged false only)
      */
     public static function attempt(
         ?int $businessId,
@@ -91,6 +117,9 @@ class ManagedDispatchDelegate
         string $quantity = '1',
         ?string $smsType = null,
         ?string $historySource = null,
+        ?string $sendUid = null,
+        ?int $conversationBoxId = null,
+        bool $requireManaged = false,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -112,6 +141,22 @@ class ManagedDispatchDelegate
         $identity = app(BusinessMessagingIdentityResolver::class)->resolveForBusiness($business);
 
         if ($identity === null) {
+            // Correction round 6, item 3 — THE lowest seam where the
+            // managed-vs-legacy decision is actually made. An earlier
+            // controller-level isManaged() precheck is not enough on its
+            // own: the identity can be archived/deactivated in the gap
+            // between that check and this one, in the SAME request. For a
+            // caller that has said this send MUST be managed, that gap
+            // must never silently resolve to "fall through to legacy" —
+            // it fails closed instead, exactly like the narrower
+            // already-established case below (a missing operation key).
+            if ($requireManaged) {
+                throw new MessagingIdentityConflictException(sprintf(
+                    'Managed-only dispatch for Business [%d] found no resolvable identity; refusing to fall through to legacy transport.',
+                    $businessId,
+                ));
+            }
+
             return null;
         }
 
@@ -146,7 +191,7 @@ class ManagedDispatchDelegate
         );
 
         if ($result->accepted) {
-            self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource);
+            self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource, $sendUid, $conversationBoxId);
         }
 
         return $result;
@@ -173,6 +218,13 @@ class ManagedDispatchDelegate
      * A replay of a send whose history already exists writes nothing: the
      * writer finds the row by the send's own operation id.
      *
+     * $conversationBoxId (correction round 6, item 2) is the ORIGINAL
+     * logical bubble's own ChatBox id, passed through unchanged for a
+     * tracked retry so the writer updates THAT conversation, never one
+     * re-derived from the Business's CURRENT primary managed number. Null
+     * for every caller that is not retrying an already-tracked bubble
+     * (unchanged behaviour).
+     *
      * @param list<string> $mediaUrls
      */
     private static function recordConversationHistory(
@@ -183,6 +235,8 @@ class ManagedDispatchDelegate
         ?string $smsType,
         string $operationKey,
         ?string $historySource,
+        ?string $sendUid,
+        ?int $conversationBoxId,
     ): void {
         try {
             app(\App\Library\Conversations\ConversationHistoryWriter::class)->recordManagedOutbound(
@@ -193,6 +247,8 @@ class ManagedDispatchDelegate
                 $smsType,
                 $operationKey,
                 $historySource,
+                $sendUid,
+                $conversationBoxId,
             );
         } catch (\Throwable $exception) {
             \Illuminate\Support\Facades\Log::error('conversation_history.managed_outbound_not_recorded', [
