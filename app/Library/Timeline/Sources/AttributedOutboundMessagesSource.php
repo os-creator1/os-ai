@@ -34,11 +34,12 @@ use Illuminate\Support\Facades\DB;
  * A managed campaign send ALSO gets a conversation message now
  * (ConversationHistoryWriter). One managed operation can be tracked by more
  * than one campaign job — each with its own report — and every one of those
- * reports carries `business_messaging_operation_id`. When the conversation
- * message for that operation is in the open conversation, those reports are
- * skipped here, in SQL, by that identity — never by comparing text or times —
- * so the send is one bubble. (The message also `represents` the one report its
- * operation names, which stays harmless.)
+ * reports carries `business_messaging_operation_id`. Here, in SQL and by that
+ * identity — never by comparing text or times — only the first report of an
+ * operation is read, and not even that one when the operation's conversation
+ * message is in the open conversation. So the send is one bubble in every
+ * conversation. (The message also `represents` the one report its operation
+ * names, which stays harmless.)
  *
  * Every join is pinned to the same Business, so a stamp that no longer resolves
  * inside it names nothing (the message still shows, attributed generically).
@@ -93,10 +94,21 @@ final class AttributedOutboundMessagesSource implements TimelineSource
                     ->orWhereNotNull('r.automation_id')
                     ->orWhereNotNull('r.campaign_id');
             })
-            // A managed campaign send is also a conversation message. Every
-            // report of that send carries its operation, and when the message
-            // for that operation is in this conversation, the message is the
-            // one bubble — however many campaign jobs tracked the send.
+            // One managed send can have several reports (one per campaign job
+            // that tracked it), all carrying its operation. Only the first of
+            // them ever stands for the send here, by that identity — so the
+            // send is one bubble in every conversation, including one that does
+            // not hold its message. A report with no operation (every legacy
+            // and non-managed report) compares NULL and is always kept.
+            ->whereNotExists(function ($earlier) use ($businessId): void {
+                $earlier->selectRaw('1')
+                    ->from('reports as r2')
+                    ->whereColumn('r2.business_messaging_operation_id', 'r.business_messaging_operation_id')
+                    ->whereColumn('r2.id', '<', 'r.id')
+                    ->where('r2.business_id', $businessId);
+            })
+            // And where the send's conversation message IS in this
+            // conversation, the message is the one bubble.
             ->when($conversationId !== null, function ($query) use ($conversationId): void {
                 $query->whereNotExists(function ($carried) use ($conversationId): void {
                     $carried->selectRaw('1')

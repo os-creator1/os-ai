@@ -169,10 +169,12 @@ a managed Business only; every other Business is verified exactly as before
   tried and rejected: the second tracking log collides with that index and the
   job retries for up to 30 days.) So `recordLegacyReport()` writes the report
   exactly as before and **stamps** it with its operation —
-  `reports.business_messaging_operation_id` (nullable, no backfill). The
-  timeline's reports source skips every report whose operation already has its
-  conversation message in the open conversation — by that identity, never by
-  text or time — so the send is one bubble. Provider calls, measurement, wallet
+  `reports.business_messaging_operation_id` (nullable, indexed, no backfill).
+  By that identity — never by text or time — the timeline's reports source
+  reads only the **first** report of an operation, and not even that one when
+  the operation's conversation message is in the open conversation. So the send
+  is one bubble in every conversation with the person, including an older
+  thread that does not hold its message. Provider calls, measurement, wallet
   behaviour, delivery correlation (`business_messaging_operations.report_id`
   still names the first report), counters and tracking are unchanged.
 - Automations V2 self-reply protection reads the `reports` stamp, which a managed

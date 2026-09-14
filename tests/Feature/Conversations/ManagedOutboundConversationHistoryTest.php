@@ -282,6 +282,23 @@ class ManagedOutboundConversationHistoryTest extends TestCase
             [(string) $first->id, (string) $again->id],
             DB::table('tracking_logs')->where('campaign_id', $campaign->id)->orderBy('id')->pluck('message_id')->map(fn ($id) => (string) $id)->all(),
         );
+
+        // Another conversation with the same person — an older thread from a
+        // number the Business used before going managed. It does not hold the
+        // send's message, so the send appears there from its reports: still
+        // exactly one bubble, never one per tracked job.
+        $olderThread = new ChatBox([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => '18005550100',
+            'to' => self::PERSON,
+            'reply_by_customer' => false,
+        ]);
+        $olderThread->uid = (string) Str::uuid();
+        $olderThread->save();
+
+        $this->assertSame(['Spring sessions are open'], $this->bubbleBodies($business, $olderThread), 'One bubble in a thread without the message, too.');
+        $this->assertSame(['Sent by campaign: Spring promo'], array_map(fn (TimelineItem $item) => $item->via, $this->bubbles($business, $olderThread)));
     }
     public function test_sender_verification_still_refuses_a_business_that_is_not_managed(): void
     {
