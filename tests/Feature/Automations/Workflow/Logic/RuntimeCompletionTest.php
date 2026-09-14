@@ -127,6 +127,11 @@ class RuntimeCompletionTest extends TestCase
             WorkflowTriggerType::ContactDateReached->value => DateReachedTriggerSource::class,
             WorkflowTriggerType::ManualEnrollment->value => ManualEnrollmentTriggerSource::class,
             WorkflowTriggerType::MessageReceived->value => \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
+            // CRM sales opportunities — one source class, registered per trigger type.
+            WorkflowTriggerType::OpportunityCreated->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityStageChanged->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityWon->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityLost->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -150,7 +155,7 @@ class RuntimeCompletionTest extends TestCase
         $this->assertSame($executors, app(NodeExecutorRegistry::class));
         $this->assertSame($sources, app(TriggerSourceRegistry::class));
         $this->assertCount(7, $executors->registeredTypes());
-        $this->assertCount(4, $sources->registeredTypes());
+        $this->assertCount(8, $sources->registeredTypes());
     }
 
     // =================================================================

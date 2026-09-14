@@ -72,7 +72,10 @@ class NoUnsupportedVocabularyTest extends TestCase
 
     public function test_no_unsupported_domain_vocabulary_appears_in_the_builder_js(): void
     {
-        $forbidden = ['booking', 'appointment', 'payment_received', 'invoice', 'quote', 'pipeline', 'crm_stage', 'webhook_action', 'ai_node', 'tag_added', 'email_to_contact'];
+        // `pipeline` left this list when the CRM Opportunities domain shipped: its
+        // pipelines are real, Business-scoped rows, and "Opportunity moves stage"
+        // filters on them (contract §9.2). Pipeline ACTIONS remain a non-goal.
+        $forbidden = ['booking', 'appointment', 'payment_received', 'invoice', 'quote', 'crm_stage', 'webhook_action', 'ai_node', 'tag_added', 'email_to_contact'];
 
         foreach ($this->jsFiles() as $file) {
             $source = $this->stripJsComments(file_get_contents($file));
@@ -85,7 +88,8 @@ class NoUnsupportedVocabularyTest extends TestCase
 
     public function test_no_unsupported_domain_vocabulary_appears_in_the_builder_views(): void
     {
-        $forbidden = ['booking', 'appointment', 'payment_received', 'invoice', 'quote', 'pipeline', 'webhook_action', 'tag_added'];
+        // `pipeline` is a supported CRM trigger filter now (contract §9.2).
+        $forbidden = ['booking', 'appointment', 'payment_received', 'invoice', 'quote', 'webhook_action', 'tag_added'];
 
         foreach ($this->bladeFiles() as $file) {
             $source = $this->stripBladeComments(file_get_contents($file));

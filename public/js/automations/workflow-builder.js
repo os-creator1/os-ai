@@ -869,6 +869,33 @@ var TRIGGER_TYPES = [{
   description: 'Starts only when you add a contact to it yourself.',
   icon: 'hand',
   defaultPolicy: 'once_ever'
+},
+// CRM sales opportunities. Each defaults to "every time it happens": one
+// contact can have many deals, and a deal many moves.
+{
+  value: 'opportunity_created',
+  title: 'Opportunity created',
+  description: 'Starts when a new opportunity is added for a contact.',
+  icon: 'briefcase-business',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'opportunity_stage_changed',
+  title: 'Opportunity moves stage',
+  description: 'Starts when an opportunity moves to another stage.',
+  icon: 'arrow-right-left',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'opportunity_won',
+  title: 'Opportunity marked won',
+  description: 'Starts when an opportunity is marked won.',
+  icon: 'trophy',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'opportunity_lost',
+  title: 'Opportunity marked lost',
+  description: 'Starts when an opportunity is marked lost.',
+  icon: 'circle-x',
+  defaultPolicy: 'once_per_occurrence'
 }];
 function triggerTypeInfo(value) {
   return TRIGGER_TYPES.find(function (entry) {
@@ -1141,6 +1168,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
+function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _iterableToArrayLimit(r, l) { var t = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (null != t) { var e, n, i, u, a = [], f = !0, o = !1; try { if (i = (t = t.call(r)).next, 0 === l) { if (Object(t) !== t) return; f = !1; } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0); } catch (r) { o = !0, n = r; } finally { try { if (!f && null != t["return"] && (u = t["return"](), Object(u) !== u)) return; } finally { if (o) throw n; } } return a; } }
+function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
 function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
@@ -1255,7 +1286,10 @@ function createDrawer(_ref) {
       control.disabled = control.disabled || readOnly;
     });
     drawerEl.hidden = false;
-    var first = formEl.querySelector('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])');
+
+    // A choice list takes focus on its CHOSEN option, so the focus ring never
+    // sits on a card that is not the one selected.
+    var first = formEl.querySelector('input[type="radio"]:checked:not([disabled]), input:not([type="hidden"]):not([type="radio"]):not([disabled]), select:not([disabled]), textarea:not([disabled])');
     if (first && !options.keepFocus) {
       first.focus({
         preventScroll: true
@@ -1389,6 +1423,9 @@ function createDrawer(_ref) {
       sections.forEach(function (section) {
         section.hidden = section.dataset.triggerSection !== type;
       });
+      formEl.querySelectorAll('[data-trigger-note]').forEach(function (note) {
+        note.hidden = note.dataset.triggerNote !== type;
+      });
       formEl.querySelectorAll('.wf-choice').forEach(function (choice) {
         choice.classList.toggle('is-checked', choice.querySelector('input').checked);
       });
@@ -1437,7 +1474,77 @@ function createDrawer(_ref) {
     policySelect.value = node.config.enrollment_policy || defaultPolicyFor(type);
     policySourceInput.value = node.config.enrollment_policy_source || 'default';
     confirmNote.hidden = true;
+    populateStageFilters(node.config);
     syncVisibility();
+  }
+
+  /**
+   * "Opportunity moves stage": pipeline, stage it leaves, stage it enters —
+   * each optional. Options are this Business's CRM catalog only. Archived
+   * pipelines and stages are hidden, except one the trigger already names,
+   * which stays visible and marked so the validator's message makes sense.
+   */
+  function populateStageFilters(config) {
+    var pipelineSelect = formEl.querySelector('[data-role="wf-crm-pipeline-select"]');
+    var fromSelect = formEl.querySelector('[data-role="wf-crm-from-stage-select"]');
+    var toSelect = formEl.querySelector('[data-role="wf-crm-to-stage-select"]');
+    var noPipelines = formEl.querySelector('[data-role="wf-crm-no-pipelines"]');
+    var pipelines = catalogs.crmPipelines || [];
+    var stages = catalogs.crmStages || [];
+    var kept = function kept(row, selected) {
+      return !row.archived || String(row.id) === String(selected !== null && selected !== void 0 ? selected : '');
+    };
+    var labelled = function labelled(row) {
+      return row.archived ? "".concat(row.name, " (archived)") : row.name;
+    };
+    pipelineSelect.innerHTML = '';
+    var anyPipeline = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, 'Any pipeline');
+    anyPipeline.value = '';
+    pipelineSelect.appendChild(anyPipeline);
+    pipelines.filter(function (row) {
+      return kept(row, config.pipeline_id);
+    }).forEach(function (row) {
+      var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, labelled(row));
+      opt.value = String(row.id);
+      pipelineSelect.appendChild(opt);
+    });
+    pipelineSelect.value = config.pipeline_id != null ? String(config.pipeline_id) : '';
+    noPipelines.hidden = pipelines.length > 0;
+    function fillStages(select, selected) {
+      select.innerHTML = '';
+      var any = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, 'Any stage');
+      any.value = '';
+      select.appendChild(any);
+      pipelines.filter(function (pipeline) {
+        return pipelineSelect.value === '' || String(pipeline.id) === pipelineSelect.value;
+      }).forEach(function (pipeline) {
+        var rows = stages.filter(function (row) {
+          return String(row.pipeline_id) === String(pipeline.id) && kept(row, selected);
+        });
+        if (rows.length === 0) {
+          return;
+        }
+
+        // Grouped by pipeline, so two pipelines' "Booked" are told apart.
+        var group = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('optgroup');
+        group.label = pipeline.name;
+        rows.forEach(function (row) {
+          var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, labelled(row));
+          opt.value = String(row.id);
+          group.appendChild(opt);
+        });
+        select.appendChild(group);
+      });
+      select.value = selected != null && _toConsumableArray(select.options).some(function (opt) {
+        return opt.value === String(selected);
+      }) ? String(selected) : '';
+    }
+    fillStages(fromSelect, config.from_stage_id);
+    fillStages(toSelect, config.to_stage_id);
+    pipelineSelect.addEventListener('change', function () {
+      fillStages(fromSelect, fromSelect.value || null);
+      fillStages(toSelect, toSelect.value || null);
+    });
   }
   function populateIfElse(node) {
     var matchSelect = formEl.querySelector('[data-field="match"]');
@@ -1586,6 +1693,15 @@ function createDrawer(_ref) {
       config.source = formEl.querySelector('select[data-field="source"]').value;
       var _groupValue = formEl.querySelector('[data-role="wf-contact-group-select"]').value;
       config.contact_group_id = _groupValue ? Number(_groupValue) : null;
+    } else if (triggerType === 'opportunity_stage_changed') {
+      ;
+      [['pipeline_id', 'wf-crm-pipeline-select'], ['from_stage_id', 'wf-crm-from-stage-select'], ['to_stage_id', 'wf-crm-to-stage-select']].forEach(function (_ref2) {
+        var _ref3 = _slicedToArray(_ref2, 2),
+          key = _ref3[0],
+          role = _ref3[1];
+        var value = formEl.querySelector("[data-role=\"".concat(role, "\"]")).value;
+        config[key] = value ? Number(value) : null;
+      });
     }
     return config;
   }
@@ -2673,6 +2789,17 @@ function fieldLabel(rows, id) {
   });
   return field ? field.label : null;
 }
+
+/** A CRM pipeline or stage name from the Business catalog, or null when not set or not found. */
+function crmName(rows, id) {
+  if (id === null || id === undefined || id === '') {
+    return null;
+  }
+  var row = (rows || []).find(function (candidate) {
+    return String(candidate.id) === String(id);
+  });
+  return row ? row.name : null;
+}
 function plural(amount, unit) {
   var singular = unit.replace(/s$/, '');
   return Number(amount) === 1 ? "1 ".concat(singular) : "".concat(amount, " ").concat(unit);
@@ -2842,6 +2969,43 @@ function summarizeTrigger(config, catalogs) {
       return {
         title: info.title,
         summary: 'When you add a contact to this workflow',
+        incomplete: false
+      };
+    case 'opportunity_created':
+      return {
+        title: info.title,
+        summary: 'When a new opportunity is added, in any pipeline',
+        incomplete: false
+      };
+    case 'opportunity_stage_changed':
+      {
+        var pipeline = crmName(catalogs.crmPipelines, config.pipeline_id);
+        var from = crmName(catalogs.crmStages, config.from_stage_id);
+        var to = crmName(catalogs.crmStages, config.to_stage_id);
+        var move = 'When an opportunity moves stage';
+        if (from && to) {
+          move = "When an opportunity moves from ".concat(from, " to ").concat(to);
+        } else if (to) {
+          move = "When an opportunity moves to ".concat(to);
+        } else if (from) {
+          move = "When an opportunity leaves ".concat(from);
+        }
+        return {
+          title: info.title,
+          summary: "".concat(move).concat(pipeline ? " \xB7 ".concat(pipeline) : ''),
+          incomplete: false
+        };
+      }
+    case 'opportunity_won':
+      return {
+        title: info.title,
+        summary: 'When an opportunity is marked won',
+        incomplete: false
+      };
+    case 'opportunity_lost':
+      return {
+        title: info.title,
+        summary: 'When an opportunity is marked lost',
         incomplete: false
       };
     default:

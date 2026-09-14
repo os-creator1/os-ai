@@ -33,6 +33,10 @@
                                           (the caller has already excluded any
                                           is_phone field — this view never
                                           receives one to render)
+      iterable $crmPipelines            optional; CRM sales pipelines of this Business,
+                                          each: ->id, ->name, ->archived
+      iterable $crmStages               optional; their stages,
+                                          each: ->id, ->pipeline_id, ->name, ->archived
 --}}
 
 @php
@@ -64,6 +68,8 @@
             'contactGroups' => $toArrayList($contactGroups ?? [], ['id', 'name']),
             'dateFields' => $toArrayList($dateFields ?? [], ['id', 'label', 'contact_group_id']),
             'writableFields' => $toArrayList($writableFields ?? [], ['id', 'label', 'contact_group_id', 'type']),
+            'crmPipelines' => $toArrayList($crmPipelines ?? [], ['id', 'name', 'archived']),
+            'crmStages' => $toArrayList($crmStages ?? [], ['id', 'pipeline_id', 'name', 'archived']),
         ],
         'limits' => [
             'maxNodes' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_NODES_PER_VERSION,
@@ -80,6 +86,7 @@
         'zap', 'message-square-text', 'bell', 'user-pen', 'clock', 'split', 'circle-stop',
         'plus', 'flag', 'triangle-alert', 'ellipsis-vertical', 'chevron-up', 'chevron-down',
         'trash-2', 'search', 'user', 'user-plus', 'message-square-reply', 'calendar-clock', 'hand', 'x',
+        'briefcase-business', 'arrow-right-left', 'trophy', 'circle-x',
     ];
 
     $statusLabel = __('automations.v2.list.status_' . $statusValue);

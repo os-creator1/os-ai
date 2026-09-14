@@ -117,7 +117,9 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
 
         drawerEl.hidden = false
 
-        const first = formEl.querySelector('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])')
+        // A choice list takes focus on its CHOSEN option, so the focus ring never
+        // sits on a card that is not the one selected.
+        const first = formEl.querySelector('input[type="radio"]:checked:not([disabled]), input:not([type="hidden"]):not([type="radio"]):not([disabled]), select:not([disabled]), textarea:not([disabled])')
 
         if (first && !options.keepFocus) {
             first.focus({ preventScroll: true })
@@ -265,6 +267,9 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             sections.forEach((section) => {
                 section.hidden = section.dataset.triggerSection !== type
             })
+            formEl.querySelectorAll('[data-trigger-note]').forEach((note) => {
+                note.hidden = note.dataset.triggerNote !== type
+            })
             formEl.querySelectorAll('.wf-choice').forEach((choice) => {
                 choice.classList.toggle('is-checked', choice.querySelector('input').checked)
             })
@@ -318,7 +323,75 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         policySelect.value = node.config.enrollment_policy || defaultPolicyFor(type)
         policySourceInput.value = node.config.enrollment_policy_source || 'default'
         confirmNote.hidden = true
+        populateStageFilters(node.config)
         syncVisibility()
+    }
+
+    /**
+     * "Opportunity moves stage": pipeline, stage it leaves, stage it enters —
+     * each optional. Options are this Business's CRM catalog only. Archived
+     * pipelines and stages are hidden, except one the trigger already names,
+     * which stays visible and marked so the validator's message makes sense.
+     */
+    function populateStageFilters(config) {
+        const pipelineSelect = formEl.querySelector('[data-role="wf-crm-pipeline-select"]')
+        const fromSelect = formEl.querySelector('[data-role="wf-crm-from-stage-select"]')
+        const toSelect = formEl.querySelector('[data-role="wf-crm-to-stage-select"]')
+        const noPipelines = formEl.querySelector('[data-role="wf-crm-no-pipelines"]')
+        const pipelines = catalogs.crmPipelines || []
+        const stages = catalogs.crmStages || []
+
+        const kept = (row, selected) => !row.archived || String(row.id) === String(selected ?? '')
+        const labelled = (row) => (row.archived ? `${row.name} (archived)` : row.name)
+
+        pipelineSelect.innerHTML = ''
+        const anyPipeline = el('option', null, 'Any pipeline')
+        anyPipeline.value = ''
+        pipelineSelect.appendChild(anyPipeline)
+        pipelines.filter((row) => kept(row, config.pipeline_id)).forEach((row) => {
+            const opt = el('option', null, labelled(row))
+            opt.value = String(row.id)
+            pipelineSelect.appendChild(opt)
+        })
+        pipelineSelect.value = config.pipeline_id != null ? String(config.pipeline_id) : ''
+        noPipelines.hidden = pipelines.length > 0
+
+        function fillStages(select, selected) {
+            select.innerHTML = ''
+            const any = el('option', null, 'Any stage')
+            any.value = ''
+            select.appendChild(any)
+
+            pipelines
+                .filter((pipeline) => pipelineSelect.value === '' || String(pipeline.id) === pipelineSelect.value)
+                .forEach((pipeline) => {
+                    const rows = stages.filter((row) => String(row.pipeline_id) === String(pipeline.id) && kept(row, selected))
+
+                    if (rows.length === 0) {
+                        return
+                    }
+
+                    // Grouped by pipeline, so two pipelines' "Booked" are told apart.
+                    const group = el('optgroup')
+                    group.label = pipeline.name
+                    rows.forEach((row) => {
+                        const opt = el('option', null, labelled(row))
+                        opt.value = String(row.id)
+                        group.appendChild(opt)
+                    })
+                    select.appendChild(group)
+                })
+
+            select.value = selected != null && [...select.options].some((opt) => opt.value === String(selected)) ? String(selected) : ''
+        }
+
+        fillStages(fromSelect, config.from_stage_id)
+        fillStages(toSelect, config.to_stage_id)
+
+        pipelineSelect.addEventListener('change', () => {
+            fillStages(fromSelect, fromSelect.value || null)
+            fillStages(toSelect, toSelect.value || null)
+        })
     }
 
     function populateIfElse(node) {
@@ -489,6 +562,15 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             config.source = formEl.querySelector('select[data-field="source"]').value
             const groupValue = formEl.querySelector('[data-role="wf-contact-group-select"]').value
             config.contact_group_id = groupValue ? Number(groupValue) : null
+        } else if (triggerType === 'opportunity_stage_changed') {
+            ;[
+                ['pipeline_id', 'wf-crm-pipeline-select'],
+                ['from_stage_id', 'wf-crm-from-stage-select'],
+                ['to_stage_id', 'wf-crm-to-stage-select'],
+            ].forEach(([key, role]) => {
+                const value = formEl.querySelector(`[data-role="${role}"]`).value
+                config[key] = value ? Number(value) : null
+            })
         }
 
         return config

@@ -107,6 +107,22 @@ return [
                 'title' => 'Added by hand',
                 'description' => 'Starts only when you add a contact to it yourself.',
             ],
+            'opportunity_created' => [
+                'title' => 'Opportunity created',
+                'description' => 'Starts when a new opportunity is added for a contact.',
+            ],
+            'opportunity_stage_changed' => [
+                'title' => 'Opportunity moves stage',
+                'description' => 'Starts when an opportunity moves to another stage.',
+            ],
+            'opportunity_won' => [
+                'title' => 'Opportunity marked won',
+                'description' => 'Starts when an opportunity is marked won.',
+            ],
+            'opportunity_lost' => [
+                'title' => 'Opportunity marked lost',
+                'description' => 'Starts when an opportunity is marked lost.',
+            ],
         ],
         'trigger_form' => [
             'trigger_type' => 'What starts this workflow',
@@ -127,6 +143,13 @@ return [
             'send_at' => 'Time of day',
             'message_received_note' => 'Any text from one of your contacts starts this workflow. Replies to this workflow’s own texts don’t restart it, and the same contact can’t restart it again for :hours hours.',
             'manual_enrollment_note' => 'Contacts only enter this workflow when you add them yourself.',
+            'group_contacts' => 'Contacts and messages',
+            'group_opportunities' => 'Opportunities',
+            'pipeline' => 'Pipeline',
+            'from_stage' => 'Moves from',
+            'to_stage' => 'Moves to',
+            'no_pipelines' => 'This business has no pipelines yet. Set one up in Opportunities to choose stages here.',
+            'opportunity_contact_note' => 'The opportunity’s contact enters this workflow. Opportunities without a contact are skipped.',
         ],
         'send_sms_form' => [
             'body' => 'Message',

@@ -44,6 +44,11 @@ class MessageReceivedCoexistenceTest extends TestCase
             WorkflowTriggerType::ContactDateReached->value => DateReachedTriggerSource::class,
             WorkflowTriggerType::ManualEnrollment->value => ManualEnrollmentTriggerSource::class,
             WorkflowTriggerType::MessageReceived->value => MessageReceivedTriggerSource::class,
+            // CRM sales opportunities — one source class, registered per trigger type.
+            WorkflowTriggerType::OpportunityCreated->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityStageChanged->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityWon->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            WorkflowTriggerType::OpportunityLost->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {
