@@ -558,6 +558,13 @@
                 $conversationContext
                     ? \App\Library\Conversations\ConversationHistoryWriter::SOURCE_CONVERSATIONS
                     : \App\Library\Conversations\ConversationHistoryWriter::SOURCE_QUICK_SEND,
+                // Conversations failed-send/retry (item 2/4) — the stable
+                // bubble identity, distinct from $quickSendKey so a retry can
+                // mint a FRESH operation key (a genuine new provider attempt)
+                // while still updating the ORIGINAL bubble. Only ever set by
+                // ChatBoxController's manual-send paths; every other caller
+                // leaves 'send_uid' unset and gets today's unchanged behaviour.
+                $conversationContext ? ($input['send_uid'] ?? null) : null,
             );
 
             if ($managedResult !== null) {
@@ -566,6 +573,15 @@
                     'message' => $managedResult->accepted
                         ? __('locale.campaigns.campaign_successfully_sent')
                         : __('locale.campaigns.campaign_sending_failed'),
+                    // Tells the caller the managed dispatcher itself made
+                    // this accept/reject decision, and — only when rejected —
+                    // the coarse category it decided on (Slice 3 §4.3),
+                    // never a provider payload or id. A Conversations caller
+                    // uses this for a more specific customer-safe reason than
+                    // an early-return legacy failure (which never reaches
+                    // the dispatcher at all) can be given.
+                    'managed' => true,
+                    'error_category' => $managedResult->accepted ? null : $managedResult->errorCategory?->value,
                 ]);
             }
 

@@ -1762,6 +1762,24 @@
 
         ],
 
+        // Conversations — customer-safe manual-send failure reasons and
+        // retry copy (item 3). Never provider jargon, ids, or raw
+        // exceptions — see ConversationSendFailureReason.
+        'conversations' => [
+            'send_failure' => [
+                'insufficient_balance'  => 'Messaging balance is too low.',
+                'messaging_not_ready'   => 'Text messaging is not ready yet.',
+                'messaging_unavailable' => 'Messaging is temporarily unavailable.',
+                'delivery_failed'       => 'Message could not be delivered.',
+                'send_failed'           => 'This message could not be sent.',
+            ],
+            'send_failed_label'    => 'Failed',
+            'delivery_failed_label' => 'Delivery failed',
+            'sending_label'         => 'Sending…',
+            'retry'                 => 'Retry',
+            'retry_in_progress'     => 'A retry for this message is already in progress.',
+        ],
+
         'developers' => [
             'api_documents'                          => 'API Documents',
             'contacts_api'                           => 'Contacts API',

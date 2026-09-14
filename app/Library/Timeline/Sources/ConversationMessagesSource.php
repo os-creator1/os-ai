@@ -7,6 +7,7 @@ use App\Enums\Timeline\TimelineDirection;
 use App\Enums\Timeline\TimelineItemKind;
 use App\Enums\Timeline\TimelineTone;
 use App\Library\Conversations\ConversationHistoryWriter;
+use App\Library\Conversations\ConversationSendFailureReason;
 use App\Library\Timeline\Contracts\TimelineSource;
 use App\Library\Timeline\TimelineItem;
 use App\Library\Timeline\TimelineSubject;
@@ -74,13 +75,13 @@ final class ConversationMessagesSource implements TimelineSource
             ->get([
                 'm.id', 'm.message', 'm.media_url', 'm.direction', 'm.send_by', 'm.created_at',
                 'm.automation_step_run_id', 'm.source',
+                'm.send_uid', 'm.send_status', 'm.send_failure_reason',
                 'bmo.status as operation_status', 'r.id as report_id', 'r.campaign_id',
                 'asr.id as step_run_id', 'aw.name as workflow_name', 'c.campaign_name',
             ])
             ->map(function (object $row): TimelineItem {
                 $direction = $this->direction($row);
                 $outbound = $direction === TimelineDirection::Outbound;
-                $undelivered = $outbound && $row->operation_status === MessagingOperationStatus::Failed->value;
 
                 $represents = [];
 
@@ -92,6 +93,8 @@ final class ConversationMessagesSource implements TimelineSource
                     $represents[] = AttributedOutboundMessagesSource::reportKey((int) $row->report_id);
                 }
 
+                [$detail, $tone, $retrySendUid, $retryable] = $this->sendState($row, $outbound);
+
                 return new TimelineItem(
                     key: 'conversation_message:' . $row->id,
                     kind: TimelineItemKind::Message,
@@ -100,13 +103,70 @@ final class ConversationMessagesSource implements TimelineSource
                     direction: $direction,
                     media: self::mediaList($row->media_url),
                     via: $outbound ? $this->via($row) : null,
-                    detail: $undelivered ? 'Not delivered' : null,
-                    tone: $undelivered ? TimelineTone::Warning : TimelineTone::Neutral,
+                    detail: $detail,
+                    tone: $tone,
                     represents: $represents,
                     sequence: (int) $row->id,
+                    retrySendUid: $retrySendUid,
+                    retryable: $retryable,
                 );
             })
             ->all();
+    }
+
+    /**
+     * Conversations failed-send/retry (item 2/4/5) — the ONE customer-visible
+     * bubble's current state.
+     *
+     * `send_status` is authoritative whenever the row carries one: it is set
+     * only on a Conversations manual send this feature tracks, and it is
+     * always kept current across however many attempts a retry takes,
+     * including a later delivery-status failure (item 5) — so a tracked row
+     * never also falls into the older, coarser `operation_status` check
+     * below. Every other row — every legacy send, every automation and
+     * campaign send, every quick send outside Conversations — carries no
+     * `send_status` at all and keeps EXACTLY the "Not delivered" behaviour
+     * this already had, unchanged.
+     *
+     * @return array{0: ?string, 1: TimelineTone, 2: ?string, 3: bool}
+     */
+    private function sendState(object $row, bool $outbound): array
+    {
+        if (! $outbound) {
+            return [null, TimelineTone::Neutral, null, false];
+        }
+
+        if ($row->send_status !== null) {
+            return match ($row->send_status) {
+                'sending' => [__('locale.conversations.sending_label'), TimelineTone::Neutral, null, false],
+                'failed', 'delivery_failed' => [
+                    $this->failureDetail($row),
+                    TimelineTone::Warning,
+                    $row->send_uid,
+                    true,
+                ],
+                default => [null, TimelineTone::Neutral, null, false],
+            };
+        }
+
+        $undelivered = $row->operation_status === MessagingOperationStatus::Failed->value;
+
+        return [$undelivered ? 'Not delivered' : null, $undelivered ? TimelineTone::Warning : TimelineTone::Neutral, null, false];
+    }
+
+    private function failureDetail(object $row): string
+    {
+        $reason = $row->send_failure_reason !== null
+            ? ConversationSendFailureReason::tryFrom((string) $row->send_failure_reason)
+            : null;
+
+        $reason ??= ConversationSendFailureReason::SendFailed;
+
+        $label = $row->send_status === 'delivery_failed'
+            ? __('locale.conversations.delivery_failed_label')
+            : __('locale.conversations.send_failed_label');
+
+        return $label . ' — ' . $reason->customerMessage();
     }
 
     /**

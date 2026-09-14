@@ -35,6 +35,11 @@ final class TimelineItem
      * @param  ?string  $detail  one short secondary line: a reason, a delivery problem, a group
      * @param  list<string>  $represents  keys of items this one already stands for
      * @param  int  $sequence  the source row's id, to order items that share a timestamp
+     * @param  ?string  $retrySendUid  the stable logical-message id a Retry
+     *                                 control posts back (item 4/5); null
+     *                                 whenever this item offers no retry
+     * @param  bool  $retryable  whether a Retry control should be offered at all —
+     *                           never true without $retrySendUid also being set
      */
     public function __construct(
         public readonly string $key,
@@ -51,6 +56,8 @@ final class TimelineItem
         public readonly string $icon = 'info',
         public readonly array $represents = [],
         public readonly int $sequence = 0,
+        public readonly ?string $retrySendUid = null,
+        public readonly bool $retryable = false,
     ) {
     }
 

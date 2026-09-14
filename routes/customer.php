@@ -965,6 +965,7 @@
             Route::post('/{uid}/timeline', 'ChatBoxController@timeline')->name('timeline');
             Route::post('/{uid}/notification', 'ChatBoxController@messagesWithNotification')->name('notification');
             Route::post('/{uid}/reply', 'ChatBoxController@reply')->name('reply');
+            Route::post('/{uid}/retry', 'ChatBoxController@retry')->name('retry');
             Route::post('/{uid}/delete', 'ChatBoxController@delete')->name('delete');
             Route::post('/{uid}/block', 'ChatBoxController@block')->name('block');
             Route::post('/{uid}/pin', 'ChatBoxController@pin')->name('pin');

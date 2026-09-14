@@ -9,6 +9,8 @@
     use App\Http\Controllers\Controller;
     use App\Http\Requests\ChatBox\SentRequest;
     use App\Library\Conversations\ConversationContextReader;
+    use App\Library\Conversations\ConversationHistoryWriter;
+    use App\Library\Conversations\ConversationSendFailureReason;
     use App\Library\Entitlement\EntitlementManager;
     use App\Library\Navigation\CustomerContext;
     use App\Library\Timeline\ContactActivityTimeline;
@@ -40,8 +42,11 @@
     use Illuminate\Http\JsonResponse;
     use Illuminate\Http\RedirectResponse;
     use Illuminate\Http\Request;
+    use Illuminate\Http\UploadedFile;
     use Illuminate\Support\Facades\Auth;
+    use Illuminate\Support\Facades\DB;
     use Illuminate\Support\Facades\Gate;
+    use Illuminate\Support\Facades\Log;
     use Illuminate\Support\Facades\Validator;
     use Illuminate\Support\Str;
     use libphonenumber\NumberParseException;
@@ -544,15 +549,218 @@
                 ]);
             }
 
+            // RFC-005 Milestone 5 §7 — unchanged, fail-closed: a missing or
+            // invalid token never reaches quickSend() or the provider.
+            //
+            // Conversations failed-send/retry (item 2) — this token doubles
+            // as the stable identity of this message's own bubble for a
+            // managed Business: one logical message, one uid, for its whole
+            // lifetime across however many attempts it takes.
+            if (! $request->filled('idempotency_token') || ! Str::isUuid($request->input('idempotency_token'))) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ], 422);
+            }
+
             $owner = $this->owner($business);
 
+            $input = $this->buildManualSendInput(
+                $box,
+                $business,
+                $owner,
+                (string) $request->message,
+                $request->hasFile('media_image') ? $request->file('media_image') : null,
+            );
+
+            if ($input instanceof JsonResponse) {
+                return $input;
+            }
+
+            $sendUid = (string) $request->input('idempotency_token');
+            $input['idempotency_token'] = $sendUid;
+            $input['send_uid'] = $sendUid;
+
+            $campaign->business_id = $business->id;
+
+            return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid);
+        }
+
+        /**
+         * Conversations failed-send/retry (item 4) — a deliberate new
+         * provider attempt for a message that is currently showing Failed or
+         * Delivery failed, re-checking every gate a first send goes through:
+         * Business authorization and tenancy (resolveConversation() below,
+         * exactly as reply() uses), messaging readiness and current
+         * funding/balance (buildManualSendInput() + quickSend(), run fresh —
+         * never assumed from the original attempt).
+         *
+         * The ORIGINAL text/media is reused verbatim from the stored bubble,
+         * never re-taken from the request, and the SAME logical bubble is
+         * updated in place — never a second one, whether this attempt
+         * succeeds or fails again.
+         *
+         * @throws Throwable when quickSend() itself throws something other
+         *                   than the one managed-specific exception this
+         *                   already handles — the failed bubble is recorded
+         *                   first, so a "sending…" state is never left
+         *                   stranded, and then the error still surfaces
+         *                   exactly as it always has for this controller.
+         */
+        public function retry(Request $request, string $workspaceUid, string $businessUid, string $uid): JsonResponse
+        {
+            $box = $this->resolveConversation($workspaceUid, $businessUid, $uid);
+
+            if ($box === null) {
+                return $this->notFound();
+            }
+
+            $business = $box->business;
+
+            // Retry is a manual-send, managed-transport feature in this
+            // slice (item 6): a legacy/BYO conversation has no retryable
+            // bubble to find, so this is the same 404 every other tenancy
+            // failure on this controller is.
+            if (! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
+                return $this->notFound();
+            }
+
+            if (config('app.stage') == 'demo') {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => 'Sorry! This option is not available in demo mode',
+                ]);
+            }
+
+            $sendUid = (string) $request->input('send_uid');
+
+            if ($sendUid === '' || ! Str::isUuid($sendUid)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ], 422);
+            }
+
+            // Business isolation (item 7 G) falls straight out of this
+            // query: $box is already resolved to THIS Business above, so a
+            // send_uid belonging to another Business's, another
+            // conversation's, or another contact's message is simply not
+            // found here — never a foreign bubble retried by guessing a uid.
+            $message = ChatBoxMessage::where('box_id', $box->id)->where('send_uid', $sendUid)->first();
+
+            if ($message === null) {
+                return $this->notFound();
+            }
+
+            // The double-click / concurrent-retry guard (item 4, item 8 C):
+            // only a message CURRENTLY in a retryable terminal state may
+            // start a new attempt, and the claim — reading the row, checking
+            // it, and moving it to the transient 'sending' state — is one
+            // atomic transaction under a row lock. A second click that
+            // arrives while the first is still inside this transaction
+            // blocks on the lock, then sees 'sending' (not 'failed' or
+            // 'delivery_failed') and is refused: it can never also pass the
+            // claim and start a second provider attempt.
+            $claimed = DB::transaction(function () use ($message) {
+                $locked = ChatBoxMessage::whereKey($message->id)->lockForUpdate()->first();
+
+                if ($locked === null || ! in_array($locked->send_status, ['failed', 'delivery_failed'], true)) {
+                    return null;
+                }
+
+                $locked->update([
+                    'send_status' => 'sending',
+                    'retry_count' => (int) $locked->retry_count + 1,
+                ]);
+
+                return $locked->fresh();
+            });
+
+            if ($claimed === null) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.conversations.retry_in_progress'),
+                ]);
+            }
+
+            $owner = $this->owner($business);
+
+            $input = $this->buildManualSendInput(
+                $box,
+                $business,
+                $owner,
+                (string) $claimed->message,
+                null,
+                $claimed->media_url !== null && $claimed->media_url !== '' ? $claimed->media_url : null,
+            );
+
+            if ($input instanceof JsonResponse) {
+                // Re-checking readiness itself refused (item 4) before any
+                // provider call — the claimed 'sending' state goes straight
+                // back to a truthful 'failed', under the same bubble.
+                $this->recordManagedSendFailure(
+                    $box,
+                    ['message' => $claimed->message, 'media_url' => $claimed->media_url, 'sms_type' => $claimed->sms_type ?? 'plain'],
+                    $sendUid,
+                    ConversationSendFailureReason::SendFailed,
+                );
+
+                return $input;
+            }
+
+            // A FRESH, deterministic operation key every attempt — a
+            // genuinely new provider send is never silently short-circuited
+            // by the dispatcher's own same-key idempotency (§4.9) — while
+            // 'send_uid' keeps this the SAME logical, customer-visible
+            // bubble no matter how many attempts it takes.
+            $input['idempotency_token'] = 'retry:' . $sendUid . ':' . $claimed->retry_count;
+            $input['send_uid'] = $sendUid;
+
+            $campaign = new Campaigns();
+            $campaign->business_id = $business->id;
+
+            try {
+                return $this->attemptManagedSend($box, $business, $campaign, $input, $sendUid);
+            } catch (Throwable $exception) {
+                $this->recordManagedSendFailure(
+                    $box,
+                    ['message' => $claimed->message, 'media_url' => $claimed->media_url, 'sms_type' => $claimed->sms_type ?? 'plain'],
+                    $sendUid,
+                    ConversationSendFailureReason::SendFailed,
+                );
+
+                throw $exception;
+            }
+        }
+
+        /**
+         * Everything reply() and retry() share to build quickSend()'s
+         * $input: the spam filter, sender-id/sending-server rules, and the
+         * destination's country/region. Returns the built array, or the
+         * exact refusal reply() has always returned for each check, unchanged.
+         *
+         * $mediaFile is a freshly uploaded file (reply()'s own upload,
+         * validated and stored here exactly as before). $existingMediaUrl is
+         * a retry's ALREADY-uploaded media, reused verbatim — never
+         * re-validated or re-uploaded, since it was the first time.
+         *
+         * @return array<string, mixed>|JsonResponse
+         */
+        private function buildManualSendInput(
+            ChatBox $box,
+            Business $business,
+            User $owner,
+            string $message,
+            ?UploadedFile $mediaFile,
+            ?string $existingMediaUrl = null,
+        ): array|JsonResponse {
             // The reply goes out from the conversation's own Business-side
             // number — `from` — to its external party, `to`. Never the other
             // way round.
             $sender_id = $box->from;
 
             if ($owner->customer->getOption('send_spam_message') == 'no') {
-                $spamWords = SpamWord::whereRaw("LOWER(?) LIKE CONCAT('%', LOWER(word), '%')", [$request->input('message')])->get();
+                $spamWords = SpamWord::whereRaw("LOWER(?) LIKE CONCAT('%', LOWER(word), '%')", [$message])->get();
                 if ($spamWords->isNotEmpty()) {
                     return response()->json([
                         'status'  => 'error',
@@ -565,26 +773,15 @@
                 'sender_id'    => $sender_id,
                 'originator'   => 'phone_number',
                 'sms_type'     => 'plain',
-                'message'      => $request->message,
+                'message'      => $message,
                 'exist_c_code' => 'yes',
                 'user'         => $owner,
                 'user_id'      => $owner->id,
                 'business_id'  => $business->id,
             ];
 
-            // RFC-005 Milestone 5 §7 — unchanged, fail-closed: a missing or
-            // invalid token never reaches quickSend() or the provider.
-            if (! $request->filled('idempotency_token') || ! Str::isUuid($request->input('idempotency_token'))) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('locale.exceptions.something_went_wrong'),
-                ], 422);
-            }
-
-            $input['idempotency_token'] = $request->input('idempotency_token');
-
-            if ($request->hasFile('media_image')) {
-                $v = Validator::make($request->all(), [
+            if ($mediaFile !== null) {
+                $v = Validator::make(['media_image' => $mediaFile], [
                     'media_image' => 'required|mimes:mp4,mov,ogg,qt,jpeg,png,jpg,gif,bmp,webp|max:20000',
                 ]);
 
@@ -595,7 +792,10 @@
                     ]);
                 }
 
-                $input['media_url'] = Tool::uploadImage($request->file('media_image'));
+                $input['media_url'] = Tool::uploadImage($mediaFile);
+                $input['sms_type']  = 'mms';
+            } elseif ($existingMediaUrl !== null) {
+                $input['media_url'] = $existingMediaUrl;
                 $input['sms_type']  = 'mms';
             }
 
@@ -670,29 +870,128 @@
             $input['recipient']    = $phoneNumberObject->getNationalNumber();
             $input['region_code']  = $regionCode;
 
-            $campaign->business_id = $business->id;
+            return $input;
+        }
 
-            $data = $this->campaigns->quickSend($campaign, $input, true);
+        /**
+         * Runs quickSend() and shapes its JSON response exactly as reply()
+         * always has, with one addition (item 1): a MANAGED Business's
+         * failed attempt records a truthful, customer-safe bubble instead of
+         * letting the message disappear. A non-managed Business's response
+         * is untouched — no history write is ever attempted for it here
+         * (item 8 H).
+         */
+        private function attemptManagedSend(ChatBox $box, Business $business, Campaigns $campaign, array $input, string $sendUid): JsonResponse
+        {
+            $managed = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
 
-            if (isset($data->getData()->status)) {
-                if ($data->getData()->status == 'success') {
-                    return response()->json([
-                        'status'    => 'success',
-                        'message'   => __('locale.campaigns.message_successfully_delivered'),
-                        'media_url' => $data->getData()->data->media_url ?? null,
-                    ]);
+            try {
+                $data = $this->campaigns->quickSend($campaign, $input, true);
+            } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+                // Zero provider calls (Slice 3 §4.5) — a Class A refusal
+                // before any commitment (item 1), always safe to offer a
+                // deliberate retry for.
+                if ($managed) {
+                    $this->recordManagedSendFailure($box, $input, $sendUid, ConversationSendFailureReason::MessagingNotReady);
                 }
 
                 return response()->json([
-                    'status'  => $data->getData()->status,
-                    'message' => $data->getData()->message,
+                    'status'  => 'error',
+                    'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
                 ]);
             }
 
+            $payload = $data->getData();
+
+            if (! isset($payload->status)) {
+                if ($managed) {
+                    $this->recordManagedSendFailure($box, $input, $sendUid, ConversationSendFailureReason::SendFailed);
+                }
+
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ]);
+            }
+
+            if ($payload->status === 'success') {
+                return response()->json([
+                    'status'    => 'success',
+                    'message'   => __('locale.campaigns.message_successfully_delivered'),
+                    'media_url' => $payload->data->media_url ?? null,
+                ]);
+            }
+
+            if ($managed) {
+                // 'managed' === true means the dispatcher itself reached
+                // provider dispatch and was rejected — its own coarse
+                // category (never a provider payload or id) maps to a more
+                // specific reason than this seam could otherwise derive.
+                // Everything else never reached the dispatcher at all
+                // (coverage, blacklist, the legacy balance check, spam, an
+                // unparsable destination), so only the generic classifier
+                // has anything to go on.
+                $reason = ($payload->managed ?? false) === true
+                    ? ConversationSendFailureReason::fromProviderErrorCategory(
+                        isset($payload->error_category) ? \App\Enums\Messaging\ProviderErrorCategory::tryFrom((string) $payload->error_category) : null,
+                    )
+                    : $this->classifyEarlyRefusal((string) $payload->message);
+
+                $this->recordManagedSendFailure($box, $input, $sendUid, $reason);
+            }
+
             return response()->json([
-                'status'  => 'error',
-                'message' => __('locale.exceptions.something_went_wrong'),
+                'status'  => $payload->status,
+                'message' => $payload->message,
             ]);
+        }
+
+        /**
+         * The one early-return legacy refusal specific enough to name
+         * (insufficient balance, matched against the ACTIVE locale's own
+         * rendered message — never a hardcoded English string) — everything
+         * else quickSend() can refuse a managed Business's send for before
+         * ever reaching the dispatcher is reported generically (item 3):
+         * nothing more specific is genuinely known about it here.
+         */
+        private function classifyEarlyRefusal(string $message): ConversationSendFailureReason
+        {
+            $template = __('locale.campaigns.not_enough_balance', ['current_balance' => '__CB__', 'campaign_price' => '__CP__']);
+            $prefix = Str::before($template, '__CB__');
+
+            if ($prefix !== '' && $prefix !== $template && str_starts_with($message, $prefix)) {
+                return ConversationSendFailureReason::InsufficientBalance;
+            }
+
+            return ConversationSendFailureReason::SendFailed;
+        }
+
+        /**
+         * Never lets a bookkeeping failure of ITS OWN become customer-visible
+         * (item 1 Class B, applied consistently to failure history too): a
+         * send that genuinely failed is still reported as failed to the
+         * caller even when recording that fact does not itself succeed.
+         */
+        private function recordManagedSendFailure(ChatBox $box, array $input, string $sendUid, ConversationSendFailureReason $reason): void
+        {
+            try {
+                app(ConversationHistoryWriter::class)->recordManualSendFailure(
+                    $box->business,
+                    $box,
+                    (string) ($input['message'] ?? ''),
+                    isset($input['media_url']) && $input['media_url'] !== null && $input['media_url'] !== ''
+                        ? [(string) $input['media_url']]
+                        : [],
+                    (string) ($input['sms_type'] ?? 'plain'),
+                    $sendUid,
+                    $reason->value,
+                );
+            } catch (Throwable $exception) {
+                Log::error('conversation_send_failure_not_recorded', [
+                    'business_id' => (int) $box->business_id,
+                    'exception' => $exception::class,
+                ]);
+            }
         }
 
         /**

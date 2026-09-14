@@ -77,6 +77,14 @@ class ManagedDispatchDelegate
      * @param string|null  $historySource who asked for the send, recorded on its
      *                                    conversation history row
      *                                    (ConversationHistoryWriter::SOURCE_*)
+     * @param string|null  $sendUid       Conversations failed-send/retry (item 2)
+     *                                    — the stable identity of ONE customer-visible
+     *                                    bubble, passed through unchanged to
+     *                                    ConversationHistoryWriter so a retry's
+     *                                    acceptance updates that SAME bubble instead
+     *                                    of creating a second one. Null for every
+     *                                    caller that does not offer a customer
+     *                                    Retry (unchanged behaviour).
      *
      * @return OutboundMessageResult|null null when this Business has no
      *                                    managed identity and the caller
@@ -91,6 +99,7 @@ class ManagedDispatchDelegate
         string $quantity = '1',
         ?string $smsType = null,
         ?string $historySource = null,
+        ?string $sendUid = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -146,7 +155,7 @@ class ManagedDispatchDelegate
         );
 
         if ($result->accepted) {
-            self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource);
+            self::recordConversationHistory($business, $toNumber, $body, $mediaUrls, $smsType, $operationKey, $historySource, $sendUid);
         }
 
         return $result;
@@ -183,6 +192,7 @@ class ManagedDispatchDelegate
         ?string $smsType,
         string $operationKey,
         ?string $historySource,
+        ?string $sendUid,
     ): void {
         try {
             app(\App\Library\Conversations\ConversationHistoryWriter::class)->recordManagedOutbound(
@@ -193,6 +203,7 @@ class ManagedDispatchDelegate
                 $smsType,
                 $operationKey,
                 $historySource,
+                $sendUid,
             );
         } catch (\Throwable $exception) {
             \Illuminate\Support\Facades\Log::error('conversation_history.managed_outbound_not_recorded', [

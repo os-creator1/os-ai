@@ -144,6 +144,16 @@ final class ConversationHistoryWriter
      * nothing to anchor it to — no recorded operation for this key, or no usable
      * number — in which case nothing is written.
      *
+     * $sendUid IS THE RETRY SEAM (item 2/4), and is optional so every existing
+     * caller (Outreach quick send, an automation, a campaign — none of which
+     * offer a customer Retry) is completely unaffected. When given, it is the
+     * stable identity of ONE logical, customer-visible message: a prior row
+     * already carrying it — a failed first attempt, or an accepted send a
+     * later DLR marked failed — is UPDATED in place (the new operation now
+     * represents that same bubble) rather than a second row being created, so
+     * a successful retry can never produce a duplicate bubble. A caller that
+     * never passes $sendUid always creates fresh, exactly as before.
+     *
      * @param  list<string>  $mediaUrls
      */
     public function recordManagedOutbound(
@@ -154,6 +164,7 @@ final class ConversationHistoryWriter
         ?string $smsType,
         string $operationKey,
         ?string $source,
+        ?string $sendUid = null,
     ): ?ChatBoxMessage {
         $operationId = DB::table(ManagedMessageDispatcher::TABLE)
             ->where('business_id', (int) $business->id)
@@ -183,7 +194,7 @@ final class ConversationHistoryWriter
         $stepRunId = $this->sendContext->currentStepRunId();
 
         try {
-            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source): ?ChatBoxMessage {
+            return DB::transaction(function () use ($business, $number, $contactNumber, $body, $mediaUrls, $smsType, $operationId, $stepRunId, $source, $sendUid): ?ChatBoxMessage {
                 $conversation = $this->conversationFor($business, (string) $number->phone_number, $contactNumber);
 
                 if ($conversation === null) {
@@ -195,6 +206,24 @@ final class ConversationHistoryWriter
                 $conversation->reply_by_customer = false;
                 $conversation->save();
 
+                $existing = $sendUid !== null ? $this->recordedForSendUid($sendUid) : null;
+
+                if ($existing !== null) {
+                    // A retry just succeeded: the SAME bubble now points at
+                    // the operation that actually got accepted, and carries
+                    // no failure reason any more. The operation this row
+                    // used to name is left exactly as it was — the durable
+                    // audit trail of every attempt lives there, in
+                    // business_messaging_operations, not in this pointer.
+                    $existing->update([
+                        'business_messaging_operation_id' => (int) $operationId,
+                        'send_status' => 'sent',
+                        'send_failure_reason' => null,
+                    ]);
+
+                    return $existing->fresh();
+                }
+
                 return ChatBoxMessage::create([
                     'box_id' => $conversation->id,
                     'message' => $body,
@@ -205,6 +234,9 @@ final class ConversationHistoryWriter
                     'business_messaging_operation_id' => (int) $operationId,
                     'automation_step_run_id' => $stepRunId,
                     'source' => $source,
+                    'send_uid' => $sendUid,
+                    'send_status' => $sendUid !== null ? 'sent' : null,
+                    'retry_count' => $sendUid !== null ? 1 : null,
                 ]);
             });
         } catch (UniqueConstraintViolationException) {
@@ -213,8 +245,90 @@ final class ConversationHistoryWriter
         }
     }
 
+    /**
+     * A manual Conversations send that did NOT reach an accepted provider
+     * state — refused before commitment (item 1 Class A), or the managed
+     * dispatcher's own rejection. The bubble this writes is the customer's
+     * truthful record of "this was tried and did not go out"; it is never
+     * written for a send the provider accepted (item 1 Class B stays exactly
+     * as it already was — an accepted send whose history write later fails is
+     * never turned into a reported failure by this or any other writer).
+     *
+     * IDENTITY: $sendUid, always — the same stable id recordManagedOutbound()
+     * uses. A first attempt with no prior row creates one; a retry that
+     * failed again updates the SAME row in place, exactly as a successful
+     * retry does, so a repeatedly-failing message still shows as ONE bubble.
+     *
+     * @param  list<string>  $mediaUrls
+     */
+    public function recordManualSendFailure(
+        Business $business,
+        ChatBox $conversation,
+        string $body,
+        array $mediaUrls,
+        string $smsType,
+        string $sendUid,
+        string $failureReasonCode,
+    ): ChatBoxMessage {
+        return DB::transaction(function () use ($conversation, $body, $mediaUrls, $smsType, $sendUid, $failureReasonCode): ChatBoxMessage {
+            $existing = $this->recordedForSendUid($sendUid);
+
+            if ($existing !== null) {
+                $existing->update([
+                    'send_status' => 'failed',
+                    'send_failure_reason' => $failureReasonCode,
+                ]);
+
+                return $existing->fresh();
+            }
+
+            return ChatBoxMessage::create([
+                'box_id' => $conversation->id,
+                'message' => $body,
+                'media_url' => $mediaUrls === [] ? null : implode(',', $mediaUrls),
+                'sms_type' => $smsType === 'mms' ? 'mms' : 'plain',
+                'direction' => Reports::DIRECTION_OUTGOING,
+                'send_by' => 'from',
+                'send_uid' => $sendUid,
+                'send_status' => 'failed',
+                'send_failure_reason' => $failureReasonCode,
+                'retry_count' => 1,
+            ]);
+        });
+    }
+
+    /**
+     * Conversations failed-send/retry (item 5) — a provider that ACCEPTED a
+     * managed send and a later delivery-status callback then reported as
+     * failed. The bubble that send already has is turned into a truthful
+     * Delivery failed state — never a second row, and the caller's own
+     * transaction, not a new one here.
+     *
+     * ONLY 'sent' -> 'delivery_failed'. An operation whose bubble has since
+     * moved on to a later attempt — recordManagedOutbound() repoints
+     * business_messaging_operation_id to the NEW attempt the moment a retry
+     * is accepted — no longer owns this operation id at all, so a late or
+     * out-of-order DLR for a superseded attempt finds no row here and
+     * safely does nothing to whatever the bubble now shows.
+     */
+    public function markManagedOutboundDeliveryFailed(int $operationId): void
+    {
+        ChatBoxMessage::query()
+            ->where('business_messaging_operation_id', $operationId)
+            ->where('send_status', 'sent')
+            ->update([
+                'send_status' => 'delivery_failed',
+                'send_failure_reason' => 'delivery_failed',
+            ]);
+    }
+
     private function recordedFor(int $operationId): ?ChatBoxMessage
     {
         return ChatBoxMessage::query()->where('business_messaging_operation_id', $operationId)->first();
+    }
+
+    private function recordedForSendUid(string $sendUid): ?ChatBoxMessage
+    {
+        return ChatBoxMessage::query()->where('send_uid', $sendUid)->first();
     }
 }

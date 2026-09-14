@@ -105,7 +105,13 @@ class ManagedOutboundConversationHistoryTest extends TestCase
     // B. A reply the provider refuses
     // =================================================================
 
-    public function test_a_refused_managed_reply_records_nothing_and_leaves_no_bubble(): void
+    /**
+     * Conversations failed-send/retry — a refused managed reply used to
+     * leave no trace at all (the message simply disappeared). It now
+     * records a truthful Failed bubble the person can see and retry, still
+     * with zero provider calls beyond the one that was refused.
+     */
+    public function test_a_refused_managed_reply_records_a_truthful_failed_bubble(): void
     {
         [, $business, $workspace] = $this->managedTenant();
         $box = $this->inboundConversation($business, self::PERSON);
@@ -115,8 +121,14 @@ class ManagedOutboundConversationHistoryTest extends TestCase
             ->assertOk()
             ->assertJson(['status' => 'error']);
 
-        $this->assertSame(0, DB::table('chat_box_messages')->where('direction', 'outgoing')->count());
-        $this->assertStringNotContainsString('This one will not arrive', $this->openTimeline($workspace, $business, $box)->json('timeline'));
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('This one will not arrive', $message->message);
+        $this->assertSame('failed', $message->send_status);
+        $this->assertNotNull($message->send_uid);
+
+        $timeline = $this->openTimeline($workspace, $business, $box)->json('timeline');
+        $this->assertSame(1, substr_count($timeline, 'This one will not arrive'), 'The failed attempt is shown, exactly once.');
+        $this->assertStringContainsString(__('locale.conversations.retry'), $timeline);
     }
 
     // =================================================================
