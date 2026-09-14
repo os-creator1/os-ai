@@ -267,6 +267,159 @@ class ManagedSendRetryTest extends TestCase
         $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->where('send_uid', $sharedUid)->count());
     }
 
+    // =================================================================
+    // Correction round 2, item 1 — managed messaging unavailable
+    // =================================================================
+
+    public function test_a_first_send_with_managed_messaging_disabled_records_a_failed_bubble_with_zero_provider_calls(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        config(['messaging.managed_messaging_enabled' => false]);
+
+        $this->reply($workspace, $business, $box, 'Are you open today?', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.messaging_unavailable')]);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Thrown before the adapter is even resolved.');
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('failed', $message->send_status);
+        $this->assertSame('messaging_unavailable', $message->send_failure_reason);
+    }
+
+    public function test_a_retry_while_still_unavailable_still_makes_no_provider_call(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        config(['messaging.managed_messaging_enabled' => false]);
+        $this->reply($workspace, $business, $box, 'Are you open today?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => __('locale.conversations.send_failure.messaging_unavailable')]);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $again = DB::table('chat_box_messages')->where('id', $message->id)->sole();
+        $this->assertSame('failed', $again->send_status);
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one bubble.');
+    }
+
+    public function test_a_retry_after_availability_is_restored_makes_exactly_one_new_provider_attempt(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+
+        config(['messaging.managed_messaging_enabled' => false]);
+        $this->reply($workspace, $business, $box, 'Are you open today?', (string) Str::uuid())->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+
+        config(['messaging.managed_messaging_enabled' => true]);
+
+        $this->retry($workspace, $business, $box, $message->send_uid)
+            ->assertOk()
+            ->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'Exactly one new provider attempt, once available again.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count());
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('id', $message->id)->value('send_status'));
+    }
+
+    // =================================================================
+    // Correction round 2, item 2 — first-send preparation failures
+    // =================================================================
+
+    public function test_a_spam_refusal_on_first_send_creates_exactly_one_failed_bubble_with_zero_provider_calls(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        \App\Models\SpamWord::create(['word' => 'freegift']);
+
+        $this->reply($workspace, $business, $box, 'Claim your freegift now', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => 'Your message contains spam words.']);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('Claim your freegift now', $message->message);
+        $this->assertSame('failed', $message->send_status);
+        $this->assertSame('send_failed', $message->send_failure_reason);
+    }
+
+    public function test_an_invalid_destination_refusal_on_first_send_creates_exactly_one_failed_bubble_with_zero_provider_calls(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        DB::table('chat_boxes')->where('id', $box->id)->update(['to' => 'not-a-number']);
+
+        $this->reply($workspace, $business, $box->fresh(), 'Hello?', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error']);
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('Hello?', $message->message);
+        $this->assertSame('failed', $message->send_status);
+    }
+
+    public function test_a_preparation_failure_that_later_succeeds_on_retry_stays_one_bubble(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        \App\Models\SpamWord::create(['word' => 'discount']);
+        $sendUid = (string) Str::uuid();
+
+        $this->reply($workspace, $business, $box, 'Huge discount inside', $sendUid)->assertJson(['status' => 'error']);
+        $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
+        $this->assertSame('failed', $message->send_status);
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+
+        // The word is removed — the same reason a real customer could retry
+        // successfully (they edited the message, or the filter changed).
+        \App\Models\SpamWord::query()->delete();
+
+        $this->retry($workspace, $business, $box, $sendUid)->assertJson(['status' => 'success']);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'The retry is the first-ever provider call for this message.');
+        $this->assertSame(1, DB::table('chat_box_messages')->where('box_id', $box->id)->count(), 'Still one logical bubble.');
+        $this->assertSame('sent', DB::table('chat_box_messages')->where('id', $message->id)->value('send_status'));
+    }
+
+    public function test_a_preparation_failure_on_a_non_managed_business_creates_no_bubble(): void
+    {
+        [, $business, $workspace] = $this->entitledTenant();
+        $this->sendableChannel($business);
+        \App\Models\SpamWord::create(['word' => 'freegift']);
+        $box = app(\App\Library\Conversations\ConversationHistoryWriter::class)->conversationFor($business, '14155550199', self::PERSON);
+        $box->save();
+
+        $this->reply($workspace, $business, $box, 'Claim your freegift now', (string) Str::uuid())
+            ->assertOk()
+            ->assertJson(['status' => 'error', 'message' => 'Your message contains spam words.']);
+
+        $this->assertSame(0, DB::table('chat_box_messages')->count(), 'Non-managed behaviour is unchanged: no bubble at all.');
+    }
+
+    public function test_a_client_input_media_validation_failure_creates_no_bubble(): void
+    {
+        [, $business, $workspace] = $this->managedTenant();
+        $box = $this->inboundConversation($business, self::PERSON);
+        $this->authenticateAsCustomer(Customer::query()->where('user_id', $business->customer_id)->firstOrFail(), ['chat_box']);
+
+        $response = $this->post(route('customer.workspaces.businesses.conversations.reply', [$workspace->uid, $business->uid, $box->uid]), [
+            'message' => 'A message with a bad attachment',
+            'idempotency_token' => (string) Str::uuid(),
+            'media_image' => \Illuminate\Http\UploadedFile::fake()->create('malware.exe', 10),
+        ]);
+
+        $response->assertOk()->assertJson(['status' => 'error']);
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(0, DB::table('chat_box_messages')->count(), 'A pure client-input validation error creates no bubble, exactly as before.');
+    }
+
     // -----------------------------------------------------------------
 
     /**

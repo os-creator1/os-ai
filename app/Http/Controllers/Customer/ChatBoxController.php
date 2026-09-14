@@ -563,6 +563,13 @@
                 ], 422);
             }
 
+            // Correction round 2, item 2 — derived immediately after the
+            // token is validated and BEFORE buildManualSendInput(), so a
+            // managed Business's safe pre-provider refusal (spam, an
+            // unparseable destination…) still has the bubble's stable
+            // identity available to record against.
+            $sendUid = (string) $request->input('idempotency_token');
+
             $owner = $this->owner($business);
 
             $input = $this->buildManualSendInput(
@@ -574,10 +581,14 @@
             );
 
             if ($input instanceof JsonResponse) {
+                $this->recordPreparationFailureIfManaged($box, $business, $input, $sendUid, [
+                    'message' => (string) $request->message,
+                    'sms_type' => 'plain',
+                ]);
+
                 return $input;
             }
 
-            $sendUid = (string) $request->input('idempotency_token');
             $input['idempotency_token'] = $sendUid;
             $input['send_uid'] = $sendUid;
 
@@ -697,13 +708,15 @@
             if ($input instanceof JsonResponse) {
                 // Re-checking readiness itself refused (item 4) before any
                 // provider call — the claimed 'sending' state goes straight
-                // back to a truthful 'failed', under the same bubble.
-                $this->recordManagedSendFailure(
-                    $box,
-                    ['message' => $claimed->message, 'media_url' => $claimed->media_url, 'sms_type' => $claimed->sms_type ?? 'plain'],
-                    $sendUid,
-                    ConversationSendFailureReason::SendFailed,
-                );
+                // back to a truthful 'failed', under the same bubble. (No
+                // media is re-validated on retry, so the client-input-error
+                // branch can never actually apply here — recordPreparationFailureIfManaged()
+                // is still used for consistency with reply()'s own path.)
+                $this->recordPreparationFailureIfManaged($box, $business, $input, $sendUid, [
+                    'message' => $claimed->message,
+                    'media_url' => $claimed->media_url,
+                    'sms_type' => $claimed->sms_type ?? 'plain',
+                ]);
 
                 return $input;
             }
@@ -786,9 +799,18 @@
                 ]);
 
                 if ($v->fails()) {
+                    // A malformed/oversized upload is a CLIENT-input problem
+                    // (correction round 2, item 2) — the same kind of thing
+                    // the empty-message and missing-token checks above are,
+                    // neither of which has ever created a bubble either.
+                    // It is not a fact about whether the MESSAGE could be
+                    // sent, so it is marked for the caller to skip recording
+                    // a failed bubble for, preserving existing validation
+                    // semantics exactly.
                     return response()->json([
                         'status'  => 'error',
                         'message' => $v->errors()->first(),
+                        'client_input_error' => true,
                     ]);
                 }
 
@@ -899,6 +921,21 @@
                     'status'  => 'error',
                     'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
                 ]);
+            } catch (\App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException) {
+                // §4.4 — the platform kill switch is off, or managed
+                // messaging is otherwise unconfigured. Thrown BEFORE the
+                // adapter is even resolved (ManagedMessageDispatcher::dispatch()'s
+                // very first check), so this is also zero provider calls —
+                // a platform-side readiness problem, not the customer's,
+                // and retryable the moment availability is restored.
+                if ($managed) {
+                    $this->recordManagedSendFailure($box, $input, $sendUid, ConversationSendFailureReason::MessagingUnavailable);
+                }
+
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => ConversationSendFailureReason::MessagingUnavailable->customerMessage(),
+                ]);
             }
 
             $payload = $data->getData();
@@ -964,6 +1001,42 @@
             }
 
             return ConversationSendFailureReason::SendFailed;
+        }
+
+        /**
+         * Correction round 2, item 2 — buildManualSendInput() refusing a
+         * managed Business's send during PREPARATION (spam, an unparseable
+         * destination, sender-id checks — all before quickSend() and
+         * therefore before any provider call) must show the same truthful
+         * failed bubble a provider-level refusal already does; it was
+         * silently disappearing instead, exactly like the bug item 1
+         * originally fixed for the provider-reached case.
+         *
+         * SKIPPED for a non-managed Business (untouched, item 8 H) and for
+         * $refusal's own 'client_input_error' marker — the media-upload
+         * validation branch is a pure client-input problem (a malformed or
+         * oversized file), not a fact about whether the message could be
+         * sent, exactly like the empty-message/missing-token checks that
+         * have never created a bubble either.
+         */
+        private function recordPreparationFailureIfManaged(
+            ChatBox $box,
+            Business $business,
+            JsonResponse $refusal,
+            string $sendUid,
+            array $attempted,
+        ): void {
+            if (! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
+                return;
+            }
+
+            $payload = $refusal->getData();
+
+            if (($payload->client_input_error ?? false) === true) {
+                return;
+            }
+
+            $this->recordManagedSendFailure($box, $attempted, $sendUid, ConversationSendFailureReason::SendFailed);
         }
 
         /**
