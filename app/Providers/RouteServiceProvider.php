@@ -99,7 +99,7 @@
 
             Route::prefix('api/v3')
                 ->name('api.')
-                ->middleware(['api', 'auth:sanctum', 'json.response'])
+                ->middleware(['api', 'auth:sanctum', 'json.response', \App\Http\Middleware\CustomerAccountAccessApiGate::class])
                 ->namespace($this->namespace . '\API')
                 ->group(base_path('routes/api.php'));
 

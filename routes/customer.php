@@ -1,6 +1,21 @@
 <?php
 
 //Customer Module
+
+    /*
+    |--------------------------------------------------------------------------
+    | Chat F — Customer Account Access Gate
+    |--------------------------------------------------------------------------
+    |
+    | Workspace-agnostic on purpose: CustomerAccountAccessGate resolves the
+    | current Workspace itself (route {workspaceUid} when present, else the
+    | resolved CustomerContext's frame Workspace) and this route's own
+    | controller re-resolves the same decision independently — see
+    | AccountLockedController's docblock.
+    */
+
+    Route::get('account-locked', 'AccountLockedController@show')->name('account-locked.show');
+
     /*
     |--------------------------------------------------------------------------
     | Contact Module

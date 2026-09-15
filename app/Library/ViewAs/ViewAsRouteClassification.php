@@ -66,6 +66,22 @@ final class ViewAsRouteClassification
         // Ending the authenticated session ends the view (Logout listener);
         // it never addresses a Business.
         'logout',
+        // PR #302 correction 3, finding E. Not "account-independent" in the
+        // literal sense every other entry here is — it may read the
+        // CURRENTLY VIEWED Workspace's own truthful lock facts (name, plan)
+        // when one applies. What it IS is reachable regardless of View-as
+        // narrowing, and it never falls back to any OTHER Business: this
+        // route carries no {businessUid}/{workspaceUid} of its own, so
+        // CustomerContextResolver's existing View-as branch (point 1 of its
+        // own docblock) is what narrows the CustomerContext this page reads
+        // to exactly the viewed Workspace, before this page ever runs — the
+        // same machinery every other classified route already relies on,
+        // not a new View-as-specific code path. Classifying it Denied
+        // (its previous, unclassified default) 404'd the very page
+        // CustomerAccountAccessGate redirects a locked viewed session to,
+        // leaving no way to reach the locked-account state, or Exit,
+        // without logging out.
+        'customer.account-locked.show',
     ];
 
     /** Controller actions of safe routes registered without a name. */

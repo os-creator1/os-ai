@@ -4,6 +4,7 @@
 
     use App\Http\Controllers\Controller;
     use App\Http\Requests\Campaigns\SendAPICampaign;
+    use App\Library\Entitlement\CustomerAccountAccessGuard;
     use App\Library\SMSCounter;
     use App\Library\Tool;
     use App\Models\Campaigns;
@@ -22,6 +23,16 @@
     use libphonenumber\NumberParseException;
     use libphonenumber\PhoneNumberUtil;
 
+    /**
+     * PR #302 correction 3, finding A. Like ContactsHTTPController, this
+     * legacy `/api/http` surface authenticates via a request-supplied
+     * `api_token` inside each method — no upstream middleware can resolve
+     * the actor. smsSend()/campaign() carry no bound target resource at
+     * all (a one-off send, a brand-new campaign), so the account-lock
+     * check here is always actor-scoped: CustomerAccountAccessGuard::
+     * decisionForActor(), the same seam ContactsHTTPController and the
+     * Sanctum /api/v3 gate use for their own actor-scoped routes.
+     */
     class CampaignHTTPController extends Controller
     {
         use ApiResponser;
@@ -31,8 +42,10 @@
         /**
          * CampaignController constructor.
          */
-        public function __construct(CampaignRepository $campaigns)
-        {
+        public function __construct(
+            CampaignRepository $campaigns,
+            private readonly CustomerAccountAccessGuard $accessGuard,
+        ) {
             $this->campaigns = $campaigns;
         }
 
@@ -73,6 +86,14 @@
 
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
+            }
+
+            $lockDecision = $this->accessGuard->decisionForActor((int) $user->id);
+            if ($lockDecision === null) {
+                return $this->accessGuard->ambiguousJsonError();
+            }
+            if ($lockDecision->isLocked()) {
+                return $this->accessGuard->jsonError($lockDecision);
             }
 
 
@@ -416,6 +437,14 @@
 
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
+            }
+
+            $lockDecision = $this->accessGuard->decisionForActor((int) $user->id);
+            if ($lockDecision === null) {
+                return $this->accessGuard->ambiguousJsonError();
+            }
+            if ($lockDecision->isLocked()) {
+                return $this->accessGuard->jsonError($lockDecision);
             }
 
 

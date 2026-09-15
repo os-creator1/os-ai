@@ -5,6 +5,7 @@
     use App\Http\Middleware\Authenticate;
     use App\Http\Middleware\CheckForMaintenanceMode;
     use App\Http\Middleware\CheckPasswordChanged;
+    use App\Http\Middleware\CustomerAccountAccessGate;
     use App\Http\Middleware\EncryptCookies;
     use App\Http\Middleware\EnsureBusinessOnboardingIsEnabled;
     use App\Http\Middleware\EnsureBusinessProfileIsAccessible;
@@ -76,6 +77,11 @@
                 // Customer Experience Slice 1B — account context + view-as
                 // layer; a no-op for guests, admins and API traffic.
                 ResolveCustomerContext::class,
+                // Chat F — customer software access gate; a no-op for
+                // guests, admins and API traffic, and depends on
+                // ResolveCustomerContext having already run (must stay
+                // directly after it).
+                CustomerAccountAccessGate::class,
             ],
 
             'api' => [

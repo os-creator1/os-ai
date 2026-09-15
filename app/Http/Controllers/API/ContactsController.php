@@ -175,6 +175,18 @@
                 return $this->error('You do not have permission to access API', 403);
             }
 
+            // PR #302 correction 4 — $uid is bound purely by its own uid,
+            // independent of $group_id; nothing above this line has proven
+            // it actually belongs to the routed group. updateFields() below
+            // writes $uid directly, so a contact from a DIFFERENT group (in
+            // a different Business entirely) must never reach it just
+            // because the supplied group_id happens to be one this actor
+            // can reach. Ordinary not-found semantics, never a lock-state
+            // disclosure either way.
+            if ((int) $uid->group_id !== (int) $group_id->id) {
+                return $this->error(__('locale.http.404.description'));
+            }
+
             $this->validate($request, $uid->getRules());
 
             $uid->updateFields($request->all());
