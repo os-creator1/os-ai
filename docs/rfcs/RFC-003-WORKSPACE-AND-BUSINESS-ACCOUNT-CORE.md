@@ -1,5 +1,11 @@
 # RFC-003 — Workspace and Business Account Core
 
+> **V1 architecture notice:** the Workspace:Business cardinality and Agency
+> tenant-modeling decisions in §7.1, §16.1, §16.2, §9.3, and §27 of this RFC
+> are superseded by [`V1-ARCHITECTURE-DECISION-ADDENDUM.md`](./V1-ARCHITECTURE-DECISION-ADDENDUM.md)
+> §1–§2, §17. Historical implementation/migration context in this RFC remains
+> valid unless explicitly superseded there.
+
 **Status:** Ready for M1A implementation
 **Version:** 1.3 (approved specification; see §1)
 **Priority:** P0

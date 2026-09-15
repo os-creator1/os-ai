@@ -1,5 +1,13 @@
 # RFC-005 — Business Usage Billing and Wallets
 
+> **V1 architecture notice:** the `agency_rebill` payer-type status in §16 of
+> this RFC ("never activated in v1") is updated by
+> [`V1-ARCHITECTURE-DECISION-ADDENDUM.md`](./V1-ARCHITECTURE-DECISION-ADDENDUM.md)
+> §10, §17, which authorizes activating `PayerType::AgencyRebill` under
+> specific new consent/authority rules that extend, and do not weaken, this
+> RFC's existing §16 safeguards. Historical implementation/migration context
+> in this RFC remains valid unless explicitly superseded there.
+
 **Status: DRAFT — NOT IMPLEMENTATION-AUTHORIZED**
 **Version: 1.4 (Final Surgical Patch)**
 
