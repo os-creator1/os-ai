@@ -177,9 +177,12 @@ Top bar: notifications (Activity Center, §24), Global Search (§24), **+
 Create** (§24), and a **Location switcher** when the Business has more than
 one Location — hidden entirely for a single-Location Business rather than
 shown disabled. Switching Location re-scopes every Location-bound list and
-record on screen (§5) without changing Workspace/Business context; it is
-never a tenancy or authorization boundary (§4, Addendum §4) — it only
-changes which Location's data is in view.
+record on screen (§5) without changing Workspace/Business context, and
+without itself granting any access — a staff member can only switch into a
+Location they already hold a grant for (§26, Addendum §4). The switcher is
+not a second tenancy layer beneath Workspace/Business: it changes which
+already-authorized Location's data is in view, never what the viewer is
+authorized to see in the first place.
 
 There is no visible "CRM" wrapper or internal module branding anywhere in
 this navigation — every label is the plain product noun a Business owner
@@ -760,6 +763,15 @@ only.
   row inside the Agency's Workspace. The Navigation Contract's UI copy and
   mental model survive; its underlying tenancy mapping does not — this
   Blueprint's §28 and Addendum §2 control.
+- **"A Location is not... an authorization boundary."** The Navigation
+  Contract §3.3 states this as a locked invariant, written before Location
+  staff ACL existed as a product decision. Addendum §4 and this Blueprint's
+  §4/§26 now make Location exactly that for staff access scoping — the
+  Navigation Contract's narrower claim ("not a navigation *tenant*", i.e.
+  never a top-level switchable context like Workspace/Business) remains
+  true and is preserved in §7/§25; its broader claim ("not an authorization
+  boundary" at all) is superseded by Addendum §4 and must not be read as
+  still governing.
 - **Same-Workspace-only View As.** `ViewAsManager` currently resolves a
   viewed Business only from within the actor's own Workspace. §28/§32's
   cross-Workspace Agency View As requires the new authorization path
