@@ -45,7 +45,7 @@ a V1 product model, regardless of what current `main` still permits at the
 schema level. DB-level 1:1 enforcement (a unique constraint on
 `businesses.workspace_id`) **MUST** happen only after existing Agency
 consumers and any existing multi-Business Workspace data have been migrated
-(§17, Transition Order).
+(§18, Transition Order).
 
 ## 2. Agency ↔ Client Workspace relationship
 
@@ -311,7 +311,7 @@ initial installation.
   its premise (a Business legitimately moving between two ordinary Workspaces
   that both already exist and both may hold Businesses) is **superseded** by
   §1: under V1, moving a Business to a different Workspace is no longer a
-  routine operation once DB-level 1:1 is enforced (§17 transition order,
+  routine operation once DB-level 1:1 is enforced (§18 transition order,
   step 7).
 - **§9.3 (`workspace_membership_businesses`, scoped Business assignment)**
   and the `business_access_scope`/`Selected` mechanism it supports are
@@ -337,7 +337,7 @@ initial installation.
   charges` billing flow they drive) is **superseded** as V1 product
   architecture. It remains historically accurate as a description of what
   `main` currently implements, and **MUST** be treated as a migration
-  condition to retire (§17 transition order, step 5), not as ongoing product
+  condition to retire (§18 transition order, step 5), not as ongoing product
   direction.
 
 ### RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md
