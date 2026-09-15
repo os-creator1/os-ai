@@ -5,6 +5,8 @@
 
     use App\Enums\Automation\Workflow\ContactCreationSource;
     use App\Http\Controllers\Controller;
+    use App\Library\Entitlement\CustomerAccountAccessGuard;
+    use App\Models\Business;
     use App\Models\ContactGroups;
     use App\Models\Contacts;
     use App\Models\Traits\ApiResponser;
@@ -16,6 +18,22 @@
     use Illuminate\Support\Facades\Validator;
     use Illuminate\Validation\Rule;
 
+    /**
+     * PR #302 correction 3, finding A. This legacy `/api/http` surface
+     * authenticates via a request-supplied `api_token` looked up inside
+     * each method, never through Sanctum/`$request->user()` — so no
+     * middleware upstream of these controllers can truthfully resolve the
+     * actor, let alone the target resource, ahead of time. The account-lock
+     * check is therefore inline here, right after the token resolves a real
+     * User (identity known) and, for every resource-addressed method,
+     * before any write that method makes — mirroring exactly where the
+     * pre-existing `can('developers')` check already sits.
+     *
+     * Reuses CustomerAccountAccessGuard — the same shared seam
+     * CustomerAccountAccessApiGate (the Sanctum /api/v3 counterpart) and
+     * the legacy web ContactsController now call too — never a second
+     * policy.
+     */
     class ContactsHTTPController extends Controller
     {
         use ApiResponser;
@@ -25,9 +43,42 @@
          */
         protected ContactsRepository $contactGroups;
 
-        public function __construct(ContactsRepository $contactGroups)
-        {
+        public function __construct(
+            ContactsRepository $contactGroups,
+            private readonly CustomerAccountAccessGuard $accessGuard,
+        ) {
             $this->contactGroups = $contactGroups;
+        }
+
+        /**
+         * PR #302 correction 3, finding A — the target ContactGroups' own
+         * Business decides, never the actor's primary Business. Returns
+         * the exact response to send back when locked, or null when the
+         * request may proceed.
+         */
+        private function lockedResponseForBusiness(?int $businessId): ?JsonResponse
+        {
+            $business = $businessId !== null ? Business::find($businessId) : null;
+            $decision = $this->accessGuard->decisionForBusiness($business);
+
+            return $decision->isLocked() ? $this->accessGuard->jsonError($decision) : null;
+        }
+
+        /**
+         * No target resource on this request (creating a brand-new contact
+         * group) — the actor's own single deterministic Business decides,
+         * failing closed rather than guessing when that is itself
+         * ambiguous.
+         */
+        private function lockedResponseForActor(int $userId): ?JsonResponse
+        {
+            $decision = $this->accessGuard->decisionForActor($userId);
+
+            if ($decision === null) {
+                return $this->accessGuard->ambiguousJsonError();
+            }
+
+            return $decision->isLocked() ? $this->accessGuard->jsonError($decision) : null;
         }
 
         /**
@@ -78,6 +129,10 @@
 
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
+            }
+
+            if ($locked = $this->lockedResponseForBusiness($group_id->business_id)) {
+                return $locked;
             }
 
             $validator = Validator::make($request->all(), [
@@ -213,6 +268,10 @@
                 return $this->error('You do not have permission to access API', 403);
             }
 
+            if ($locked = $this->lockedResponseForBusiness($group_id->business_id)) {
+                return $locked;
+            }
+
 
             $validator = Validator::make($request->all(), [
                 'phone' => ['required', new Phone($request->input('phone'))],
@@ -274,6 +333,10 @@
 
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
+            }
+
+            if ($locked = $this->lockedResponseForBusiness($group_id->business_id)) {
+                return $locked;
             }
 
 
@@ -398,6 +461,10 @@
                 return $this->error('You do not have permission to access API', 403);
             }
 
+            if ($locked = $this->lockedResponseForActor((int) $user->id)) {
+                return $locked;
+            }
+
             $customer_id      = $user->id;
             $name             = $request->input('name');
             $input            = $request->all();
@@ -494,6 +561,10 @@
                 return $this->error('You do not have permission to access API', 403);
             }
 
+            if ($locked = $this->lockedResponseForBusiness($contact->business_id)) {
+                return $locked;
+            }
+
 
             $id          = $contact->id;
             $customer_id = $user->id;
@@ -550,6 +621,10 @@
 
             if ( ! $user->can('developers')) {
                 return $this->error('You do not have permission to access API', 403);
+            }
+
+            if ($locked = $this->lockedResponseForBusiness($contact->business_id)) {
+                return $locked;
             }
 
 

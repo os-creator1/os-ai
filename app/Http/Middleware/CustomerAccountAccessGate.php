@@ -6,6 +6,7 @@ use App\Library\Entitlement\CustomerAccountAccessDecision;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Workspace\AccountFrameAccess;
+use App\Library\Workspace\WorkspaceManager;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -81,6 +82,34 @@ use Symfony\Component\HttpFoundation\Response;
  *    /verify would be bounced there by TwoFactor, then straight back to the
  *    locked screen by this gate, forever. Login must be able to finish
  *    before the product lock applies.
+ *
+ * PR #302 CORRECTION 3 — two more fixes to the same boundary:
+ *
+ * 4. (finding C) A route carrying BOTH {workspaceUid} AND {businessUid} is
+ *    no longer decided by AccountFrameAccess alone. AccountFrameAccess only
+ *    ever answers "may this actor stand in the Workspace's own ACCOUNT
+ *    FRAME" (owner, or an active all-scope member) — it says nothing about
+ *    a direct Business owner or a selected-scope member authorized for
+ *    exactly this Business, both of which the routed controller itself
+ *    authorizes via the canonical WorkspaceManager::userCanAccessBusiness().
+ *    Treating "fails AccountFrameAccess" as "foreign Workspace, pass
+ *    through unevaluated" let such an actor's operational Business writes
+ *    (e.g. a location update) bypass the lock entirely. When {businessUid}
+ *    is present, the routed Business is first proven to belong to the
+ *    routed Workspace (WorkspaceRepository::businessesForWorkspace(),
+ *    the same lookup ContactsController::currentBusinessContext() and
+ *    ResolvesBusinessTenancy already use) and then proven reachable via
+ *    userCanAccessBusiness() — never a second tenancy algorithm — before
+ *    the Workspace lock is evaluated. Failing either still passes through
+ *    unevaluated, exactly like finding C's foreign-Workspace case: the
+ *    route's own tenancy authorization decides what happens next.
+ *
+ * 5. (finding F) 'customer.view-as.exit' is allowlisted alongside logout: a
+ *    viewed Workspace that becomes locked during an active View-as session
+ *    must still let the actor explicitly end that session. It carries no
+ *    {workspaceUid}, so without this it fell to the workspace-agnostic
+ *    path, resolved the (locked) viewed Workspace, and redirected to the
+ *    locked screen before ExitViewAsAction ever ran.
  */
 class CustomerAccountAccessGate
 {
@@ -109,6 +138,10 @@ class CustomerAccountAccessGate
         'verify.resend',
         'verify.backup',
         'verify.backup.store',
+        // PR #302 correction 3, finding F — ending an active View-as
+        // session must remain possible even when the viewed Workspace is
+        // itself locked; see the class docblock, point 5.
+        'customer.view-as.exit',
     ];
 
     public function __construct(
@@ -116,6 +149,7 @@ class CustomerAccountAccessGate
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly CustomerAccountAccessResolver $resolver,
         private readonly AccountFrameAccess $accountFrameAccess,
+        private readonly WorkspaceManager $workspaceManager,
     ) {
     }
 
@@ -151,11 +185,15 @@ class CustomerAccountAccessGate
     }
 
     /**
-     * The route's own {workspaceUid} first, but ONLY once AccountFrameAccess
-     * proves the actor may reach it (correction 2, point 1) — a Workspace
-     * that fails that check is never evaluated at all, so its plan state is
-     * never disclosed; the request passes through and the route's own
-     * tenancy authorization decides what happens next, unchanged.
+     * The route's own {workspaceUid} first. When the route ALSO carries a
+     * {businessUid}, the Business-level authorization path decides
+     * reachability (correction 3, finding C) — never AccountFrameAccess,
+     * which only ever answers the narrower "may stand in the account
+     * frame" question. Without a {businessUid}, AccountFrameAccess is the
+     * right — and unchanged — question (correction 2, point 1). Either way,
+     * a Workspace/Business the actor cannot reach is never evaluated at
+     * all, so its plan state is never disclosed; the request passes through
+     * and the route's own tenancy authorization decides what happens next.
      *
      * A route with no {workspaceUid} (the workspace-agnostic dashboard)
      * falls back to CustomerAccountAccessResolver::resolveForContext() — the
@@ -170,7 +208,23 @@ class CustomerAccountAccessGate
         if (is_string($routeWorkspaceUid) && $routeWorkspaceUid !== '') {
             $workspace = $this->workspaceRepository->findByUid($routeWorkspaceUid);
 
-            if ($workspace === null || ! $this->accountFrameAccess->allows($workspace, (int) $user->id)) {
+            if ($workspace === null) {
+                return CustomerAccountAccessDecision::usable();
+            }
+
+            $routeBusinessUid = $request->route('businessUid');
+
+            if (is_string($routeBusinessUid) && $routeBusinessUid !== '') {
+                $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $routeBusinessUid);
+
+                if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) $user->id, $business)) {
+                    return CustomerAccountAccessDecision::usable();
+                }
+
+                return $this->resolver->resolve($workspace);
+            }
+
+            if (! $this->accountFrameAccess->allows($workspace, (int) $user->id)) {
                 return CustomerAccountAccessDecision::usable();
             }
 

@@ -11,6 +11,7 @@
     use App\Jobs\ReplicateContacts;
     use App\Library\ContactGroupFieldMapping;
     use App\Library\CrmRouting;
+    use App\Library\Entitlement\CustomerAccountAccessGuard;
     use App\Library\StringHelper;
     use App\Library\Tool;
     use App\Library\Workspace\WorkspaceManager;
@@ -68,6 +69,7 @@
             ContactsRepository $contactGroups,
             private readonly WorkspaceRepository $workspaceRepository,
             private readonly WorkspaceManager $workspaceManager,
+            private readonly CustomerAccountAccessGuard $accessGuard,
         ) {
             $this->contactGroups = $contactGroups;
         }
@@ -109,6 +111,19 @@
          * boundary, or abort(404). Business-addressable requests scope by
          * business_id; legacy requests keep scoping by customer_id.
          *
+         * PR #302 correction 3, finding D. The legacy (non-Business-
+         * addressable) branch below scopes only by customer_id — a
+         * customer with more than one Business/Workspace can therefore
+         * resolve a ContactGroups row belonging to a DIFFERENT one than
+         * whichever the customer's own current/session Workspace happens to
+         * be. The account-lock decision here is derived from the resolved
+         * row's OWN business_id, never from CustomerAccountAccessGate's
+         * separate, workspace-agnostic session fallback — the same
+         * CustomerAccountAccessGuard seam the API surfaces reuse, so this is
+         * one shared, testable choke point covering every caller of this
+         * method (store/update/delete/import/field mutations), not a
+         * per-action copy.
+         *
          * @param  string  $uid
          *
          * @return ContactGroups
@@ -128,6 +143,11 @@
             $contact = $query->first();
 
             abort_unless($contact, 404);
+
+            $decision = $this->accessGuard->decisionForBusiness(
+                $contact->business_id !== null ? Business::find($contact->business_id) : null
+            );
+            abort_if($decision->isLocked(), 403, $decision->message ?? 'Your account is not currently active.');
 
             return $contact;
         }

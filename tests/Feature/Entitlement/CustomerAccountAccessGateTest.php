@@ -7,6 +7,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Models\ContactGroups;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
@@ -385,5 +386,105 @@ class CustomerAccountAccessGateTest extends TestCase
         $this->actingAs($user);
 
         return $user->two_factor_code;
+    }
+
+    // =========================================================================
+    // PR #302 correction 3, finding C — a {businessUid} route must be
+    // decided by Business-level authorization, never AccountFrameAccess
+    // alone.
+    // =========================================================================
+
+    public function test_a_selected_scope_member_authorized_for_the_routed_business_is_locked_when_the_workspace_is_locked(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Agency Co', 'Agency Workspace');
+        $this->lockWorkspace($workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $staffCustomer = $this->createCustomer();
+        $membership = $this->member($workspace, $staffCustomer->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, true);
+        $this->assign($membership, $business);
+
+        $this->authenticateAs($staffCustomer);
+
+        // AccountFrameAccess alone would say no (not owner, not all-scope)
+        // and previously let this pass through unevaluated. This actor IS
+        // authorized for exactly this Business via the canonical
+        // WorkspaceManager::userCanAccessBusiness() the routed controller
+        // itself relies on, so the Workspace lock must apply.
+        $this->get(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.account-locked.show'));
+    }
+
+    public function test_an_actor_with_no_access_to_the_routed_business_gets_ordinary_denial_without_disclosing_the_lock(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Agency Co', 'Agency Workspace');
+        $this->lockWorkspace($workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        [$strangerCustomer] = $this->tenant(WorkspacePlanTier::Core, 'Stranger Co', 'Stranger Workspace');
+        $this->authenticateAs($strangerCustomer);
+
+        $response = $this->get(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]));
+
+        $response->assertNotFound();
+        $this->assertStringNotContainsString('plan_suspended', $response->getContent());
+    }
+
+    // =========================================================================
+    // PR #302 correction 3, finding D — a legacy resource-addressed web
+    // route (no {workspaceUid} at all) must be decided by the target
+    // resource's own Business/Workspace, never the customer's current
+    // session selection.
+    // =========================================================================
+
+    public function test_a_legacy_web_contact_write_in_a_secondary_locked_workspace_is_blocked_even_though_current_selection_is_active(): void
+    {
+        [$customer, , $primaryWorkspace] = $this->tenant(WorkspacePlanTier::Core, 'Primary Co', 'Primary Workspace');
+        // $primaryWorkspace stays Active -- the customer's current/only
+        // session context, per tenant()'s own default.
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Business']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $this->authenticateAs($customer);
+
+        $group = ContactGroups::create([
+            'customer_id' => $customer->user_id,
+            'business_id' => $secondaryBusiness->id,
+            'name' => 'Fixture Group',
+        ]);
+
+        // postJson (not post): this app's own exception handler renders
+        // EVERY generic HttpException as the same errors.404 page outside
+        // `wantsJson()` requests (existence-disclosure hardening already
+        // applied broadly elsewhere in this codebase) -- only a JSON
+        // request surfaces the real 403 abort_if() raises.
+        $this->postJson(route('customer.contact.store', $group->uid), ['PHONE' => '15551234567'])
+            ->assertStatus(403);
+    }
+
+    public function test_a_legacy_web_contact_write_in_the_active_primary_workspace_remains_reachable_while_a_secondary_is_locked(): void
+    {
+        [$customer, $primaryBusiness] = $this->tenant(WorkspacePlanTier::Core, 'Primary Co', 'Primary Workspace');
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Business']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $this->authenticateAs($customer);
+
+        $group = ContactGroups::create([
+            'customer_id' => $customer->user_id,
+            'business_id' => $primaryBusiness->id,
+            'name' => 'Fixture Group',
+        ]);
+
+        // postJson so a real 403 (if one occurred) would be visible as
+        // such rather than masked into this app's generic errors.404 page
+        // -- see the companion "secondary locked" test above.
+        $response = $this->postJson(route('customer.contact.store', $group->uid), ['PHONE' => '15551234567']);
+
+        // Never this gate's own 403: the locked secondary Workspace must
+        // never contaminate a write correctly addressed to the active one.
+        $this->assertNotSame(403, $response->getStatusCode());
     }
 }

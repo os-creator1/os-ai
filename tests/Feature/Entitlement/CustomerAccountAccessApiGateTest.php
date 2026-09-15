@@ -193,6 +193,14 @@ class CustomerAccountAccessApiGateTest extends TestCase
      * Business and no single primary can never have their Workspace
      * guessed. Both Workspaces here are genuinely Active — proving this is
      * about the ambiguity itself, never about picking a status.
+     *
+     * Uses sms/send deliberately: it carries no bound target resource at
+     * all (PR #302 correction 3, finding B), so it is genuinely
+     * actor-scoped and still exercises CustomerAccountAccessGuard::
+     * decisionForActor()'s own ambiguity handling. A resource-addressed
+     * route like contact.store no longer would — see
+     * test_a_contact_write_is_decided_by_its_own_business_even_when_the_actor_has_an_ambiguous_business_set()
+     * below for why that is now correct.
      */
     public function test_ambiguous_workspace_resolution_fails_closed(): void
     {
@@ -209,12 +217,89 @@ class CustomerAccountAccessApiGateTest extends TestCase
         app(EntitlementManager::class)->assignFirstPlan($businessB->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
 
         $this->authenticateApi($customer);
-        $group = $this->fixtureContactGroup($customer, $businessA);
+
+        $response = $this->postJson(route('api.sms.send'), [
+            'recipient' => '15551234567',
+            'message' => 'Blocked attempt.',
+            'sender_id' => 'Test',
+        ]);
+
+        $response->assertStatus(403);
+        $response->assertJson(['status' => 'error', 'reason' => 'workspace_ambiguous']);
+    }
+
+    // =========================================================================
+    // PR #302 correction 3, finding B — resource-addressed routes must be
+    // decided by the TARGET resource's own Business/Workspace, never the
+    // actor's primary Business.
+    // =========================================================================
+
+    public function test_a_contact_write_in_a_secondary_locked_workspace_is_blocked_even_though_the_primary_is_active(): void
+    {
+        $customer = $this->createCustomer();
+        $primaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Primary Active']));
+        app(EntitlementManager::class)->assignFirstPlan($primaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Suspended']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $this->authenticateApi($customer);
+        $group = $this->fixtureContactGroup($customer, $secondaryBusiness);
+        $contactCountBefore = Contacts::count();
 
         $response = $this->postJson(route('api.contact.store', $group), ['PHONE' => '15551234567']);
 
         $response->assertStatus(403);
-        $response->assertJson(['status' => 'error', 'reason' => 'workspace_ambiguous']);
+        $response->assertJson(['status' => 'error', 'reason' => 'plan_suspended']);
+        $this->assertSame($contactCountBefore, Contacts::count(), 'The locked denial must happen before any Contact row is written.');
+    }
+
+    public function test_a_contact_write_in_the_active_primary_workspace_remains_usable_while_a_secondary_is_locked(): void
+    {
+        $customer = $this->createCustomer();
+        $primaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Primary Active']));
+        app(EntitlementManager::class)->assignFirstPlan($primaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Suspended']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $this->authenticateApi($customer);
+        $group = $this->fixtureContactGroup($customer, $primaryBusiness);
+
+        $response = $this->postJson(route('api.contact.store', $group), ['PHONE' => '15551234567']);
+
+        // Never the gate's own denial: the locked secondary Workspace must
+        // never contaminate a write correctly addressed to the active one.
+        $this->assertNotSame(403, $response->getStatusCode());
+        $this->assertNotContains($response->json('reason'), ['plan_inactive', 'plan_suspended', 'workspace_ambiguous']);
+    }
+
+    /**
+     * The precise contrast with the pre-existing ambiguity test above: an
+     * actor whose OWN Business set is ambiguous (ownership-wide) still gets
+     * a normal, resource-scoped decision when the request names a concrete
+     * target resource — the ambiguity never applies once a specific
+     * Business is already known from the route itself.
+     */
+    public function test_a_contact_write_is_decided_by_its_own_business_even_when_the_actor_has_an_ambiguous_business_set(): void
+    {
+        $customer = $this->createCustomer();
+        $businessA = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Business A']));
+        $businessB = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Business B']));
+        DB::table('businesses')->where('id', $businessA->id)->update(['is_primary' => true]);
+        DB::table('businesses')->where('id', $businessB->id)->update(['is_primary' => true]);
+        app(EntitlementManager::class)->assignFirstPlan($businessA->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        app(EntitlementManager::class)->assignFirstPlan($businessB->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+
+        $this->authenticateApi($customer);
+        $group = $this->fixtureContactGroup($customer, $businessA);
+
+        $response = $this->postJson(route('api.contact.store', $group), ['PHONE' => '15551234567']);
+
+        $this->assertNotSame(403, $response->getStatusCode());
+        $this->assertNotContains($response->json('reason'), ['plan_inactive', 'plan_suspended', 'workspace_ambiguous']);
     }
 
     /**

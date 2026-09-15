@@ -2,11 +2,14 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\ViewAs\ViewAsManager;
 use App\Models\ViewAsSession;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -174,5 +177,56 @@ class ViewAsClientTest extends TestCase
         $this->post(route('logout'));
 
         $this->assertSame(ViewAsSession::END_REASON_LOGOUT, ViewAsSession::query()->findOrFail($rows[1]->id)->end_reason);
+    }
+
+    // =========================================================================
+    // PR #302 correction 3, findings E and F — the account-lock boundary
+    // during an active View-as session.
+    // =========================================================================
+
+    public function test_a_locked_viewed_workspace_reaches_the_narrowed_locked_screen_during_view_as(): void
+    {
+        [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
+
+        $this->lockWorkspace($workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        // The gate redirects here (finding E's own trigger); the locked
+        // screen must be classified reachable during View-as at all
+        // (previously Unclassified -> Denied -> 404) and must show facts
+        // about the VIEWED Workspace -- never some other, never a
+        // fallback.
+        $this->home()->assertRedirect(route('customer.account-locked.show'));
+
+        $lockedScreen = $this->get(route('customer.account-locked.show'));
+        $lockedScreen->assertOk();
+        $lockedScreen->assertSee('suspended');
+        $lockedScreen->assertSee('Northwind Agency');
+    }
+
+    public function test_view_as_exit_remains_reachable_while_the_viewed_workspace_is_locked(): void
+    {
+        [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
+
+        $this->lockWorkspace($workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        // Without finding F's fix this route has no {workspaceUid}, falls
+        // to the workspace-agnostic path, resolves the locked viewed
+        // Workspace, and the account-lock gate redirects to the locked
+        // screen before ExitViewAsAction ever runs.
+        $this->post(route('customer.view-as.exit'))->assertRedirect(route('user.home'));
+
+        $row = ViewAsSession::query()->sole();
+        $this->assertNotNull($row->ended_at, 'Exit must still end the View-as session while the viewed Workspace is locked.');
+        $this->assertSame(ViewAsSession::END_REASON_EXIT, $row->end_reason);
+        $this->assertSame((int) $agency->user_id, Auth::id(), 'Exit never logs the actor out.');
+    }
+
+    private function lockWorkspace(Workspace $workspace, WorkspacePlanAssignmentStatus $status): void
+    {
+        app(EntitlementManager::class)->changePlanStatus($workspace, $status, $this->platformAdminId(), 'PR #302 correction 3 fixture lock.');
     }
 }

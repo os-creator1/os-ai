@@ -2,11 +2,13 @@
 
 namespace App\Http\Middleware;
 
-use App\Library\Business\LegacyBusinessResolver;
-use App\Library\Entitlement\CustomerAccountAccessResolver;
+use App\Library\Entitlement\CustomerAccountAccessGuard;
 use App\Models\Business;
+use App\Models\Campaigns;
+use App\Models\ContactGroups;
+use App\Models\Contacts;
+use App\Models\Reports;
 use App\Models\User;
-use App\Models\Workspace;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -20,35 +22,36 @@ use Symfony\Component\HttpFoundation\Response;
  * delete) directly. This closes that bypass at the same request boundary
  * the web gate uses conceptually — before the controller ever runs.
  *
- * REUSES the same authority as the web gate — CustomerAccountAccessResolver
- * — for the actual Active/Inactive/Suspended decision. This class's only
- * new responsibility is resolving WHICH Workspace a stateless Sanctum
- * request belongs to, since there is no web-session CustomerContext here.
+ * REUSES the same authority as the web gate — CustomerAccountAccessResolver,
+ * via CustomerAccountAccessGuard — for the actual Active/Inactive/Suspended
+ * decision. This class's only responsibility is resolving WHICH
+ * Business/Workspace a stateless Sanctum request belongs to.
  *
- * TENANCY. Every route this gate covers predates RFC-004 Workspaces and
- * still authorizes and operates purely off the authenticated User, with no
- * {workspaceUid} anywhere in routes/api.php. Rather than inventing a second
- * mapping, this reuses LegacyBusinessResolver — the same conservative
- * "legacy owner user id -> single deterministic Business" resolver every
- * other non-Workspace-aware legacy write path already uses
- * (EloquentContactsRepository, EloquentCampaignRepository,
- * EloquentSenderIDRepository, RegisterController, and others).
+ * PR #302 CORRECTION 3, finding B. Every route this gate covers predates
+ * RFC-004 Workspaces and carries no {workspaceUid}, but several of them ARE
+ * addressed to a concrete resource — routes/api.php's own {group_id}/{uid}
+ * segments. SubstituteBindings (part of the 'api' Kernel group, ahead of
+ * this middleware in the pipeline for every route this covers) has already
+ * resolved those into real ContactGroups/Contacts/Campaigns/Reports model
+ * instances by the time this runs. resolveTargetBusiness() reads that
+ * resource's OWN business_id when one is bound — the SAME field its
+ * controller already writes through (e.g. ContactsController::storeContact()
+ * creates the new contact inside the routed ContactGroups). A customer's
+ * primary Business being Active must never authorize a mutation against a
+ * different, locked, Business the same request is actually addressed to.
  *
- * AMBIGUITY. LegacyBusinessResolver's own null return does not distinguish
- * "no Business at all" (a legitimate, unlocked state — the same "null
- * Workspace is usable" precedent CustomerAccountAccessResolver itself
- * already applies, e.g. a brand-new customer with nothing to lock yet) from
- * "genuinely ambiguous" (more than one Business, no single primary). This
- * gate tells the two apart itself and fails closed only for the second: a
- * request whose Workspace cannot be resolved unambiguously is refused,
- * never guessed, and never defaulted to "the first one" or "the newest
- * one".
+ * A route with no bound resource at all (sms/send, sms/campaign, creating a
+ * brand-new contact group) is genuinely actor/global-scoped — there is
+ * nothing to derive a target from — and falls back to
+ * CustomerAccountAccessGuard::decisionForActor(), unchanged from correction
+ * 1: the customer's own single deterministic Business via
+ * LegacyBusinessResolver, failing closed (never guessing) when that is
+ * itself ambiguous.
  */
 class CustomerAccountAccessApiGate
 {
     public function __construct(
-        private readonly LegacyBusinessResolver $legacyBusinessResolver,
-        private readonly CustomerAccountAccessResolver $resolver,
+        private readonly CustomerAccountAccessGuard $guard,
     ) {
     }
 
@@ -60,38 +63,48 @@ class CustomerAccountAccessApiGate
             return $next($request);
         }
 
-        $businessCount = Business::where('customer_id', $user->id)->count();
+        $target = $this->resolveTargetBusiness($request);
 
-        if ($businessCount === 0) {
-            // Nothing to lock: the same null-Workspace-is-usable case
-            // CustomerAccountAccessResolver itself already applies.
-            return $next($request);
+        if ($target !== null) {
+            $decision = $this->guard->decisionForBusiness($target);
+        } else {
+            $decision = $this->guard->decisionForActor((int) $user->id);
+
+            if ($decision === null) {
+                return $this->guard->ambiguousJsonError();
+            }
         }
-
-        $business = $this->legacyBusinessResolver->resolveForCustomer($user->id);
-
-        if ($business === null) {
-            // $businessCount > 0 but the resolver still returned null: more
-            // than one Business and no single primary — genuinely
-            // ambiguous. Never guess which one this request is for.
-            return response()->json([
-                'status' => 'error',
-                'message' => "We can't determine which account this request belongs to. Please contact support.",
-                'reason' => 'workspace_ambiguous',
-            ], 403);
-        }
-
-        $workspace = $business->workspace;
-        $decision = $this->resolver->resolve($workspace instanceof Workspace ? $workspace : null);
 
         if (! $decision->isLocked()) {
             return $next($request);
         }
 
-        return response()->json([
-            'status' => 'error',
-            'message' => $decision->message ?? 'Your account is not currently active.',
-            'reason' => $decision->reason,
-        ], 403);
+        return $this->guard->jsonError($decision);
+    }
+
+    /**
+     * The route's own bound target resource, when it has one — never a
+     * second tenancy algorithm, just reading the business_id every one of
+     * these legacy models already carries and the controller already
+     * trusts.
+     */
+    private function resolveTargetBusiness(Request $request): ?Business
+    {
+        foreach ($request->route()?->parameters() ?? [] as $value) {
+            if (! $value instanceof ContactGroups
+                && ! $value instanceof Contacts
+                && ! $value instanceof Campaigns
+                && ! $value instanceof Reports) {
+                continue;
+            }
+
+            if ($value->business_id === null) {
+                continue;
+            }
+
+            return Business::find($value->business_id);
+        }
+
+        return null;
     }
 }
