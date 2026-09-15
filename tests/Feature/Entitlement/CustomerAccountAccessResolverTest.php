@@ -110,4 +110,46 @@ class CustomerAccountAccessResolverTest extends TestCase
         $this->assertNull($decision->recoveryLabel);
         $this->assertStringNotContainsString('reactivat', strtolower((string) $decision->message));
     }
+
+    // =========================================================================
+    // PR #302 correction 2 — resolveAmbiguous(): the multiple-accessible-
+    // Workspaces, no-explicit-selection case, in isolation from CustomerContext.
+    // =========================================================================
+
+    public function test_resolve_ambiguous_with_no_workspaces_is_usable(): void
+    {
+        $decision = app(CustomerAccountAccessResolver::class)->resolveAmbiguous([]);
+
+        $this->assertSame(CustomerAccountAccessState::Usable, $decision->state);
+        $this->assertFalse($decision->isLocked());
+    }
+
+    public function test_resolve_ambiguous_is_locked_only_when_every_candidate_is_locked(): void
+    {
+        $inactive = $this->workspaceWithStatus(WorkspacePlanAssignmentStatus::Inactive);
+        $suspended = $this->workspaceWithStatus(WorkspacePlanAssignmentStatus::Suspended);
+
+        $decision = app(CustomerAccountAccessResolver::class)->resolveAmbiguous([$inactive, $suspended]);
+
+        $this->assertTrue($decision->isLocked());
+        // One of the two locked decisions -- never a third, invented state.
+        $this->assertContains($decision->reason, ['plan_inactive', 'plan_suspended']);
+    }
+
+    public function test_resolve_ambiguous_is_usable_when_at_least_one_candidate_is_usable(): void
+    {
+        $inactive = $this->workspaceWithStatus(WorkspacePlanAssignmentStatus::Inactive);
+        $active = $this->workspaceWithStatus(WorkspacePlanAssignmentStatus::Active);
+
+        // Order must not matter -- the locked candidate first, then again
+        // with it last, both resolve the same way (no "first Workspace
+        // wins" behavior of any kind).
+        $decisionA = app(CustomerAccountAccessResolver::class)->resolveAmbiguous([$inactive, $active]);
+        $decisionB = app(CustomerAccountAccessResolver::class)->resolveAmbiguous([$active, $inactive]);
+
+        $this->assertFalse($decisionA->isLocked());
+        $this->assertSame(CustomerAccountAccessState::Usable, $decisionA->state);
+        $this->assertFalse($decisionB->isLocked());
+        $this->assertSame(CustomerAccountAccessState::Usable, $decisionB->state);
+    }
 }

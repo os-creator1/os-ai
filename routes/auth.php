@@ -34,7 +34,7 @@
             //two-step verification routes
             Route::get('verify/resend', 'TwoFactorController@resend')->name('verify.resend');
             Route::get('verify/backup-code', 'TwoFactorController@backUpCode')->name('verify.backup');
-            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode');
+            Route::post('verify/backup-code', 'TwoFactorController@updateBackUpCode')->name('verify.backup.store');
             Route::resource('verify', 'TwoFactorController')->only(['index', 'store']);
 
             //common or public data access routes
