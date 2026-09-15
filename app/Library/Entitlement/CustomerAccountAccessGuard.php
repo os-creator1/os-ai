@@ -97,4 +97,23 @@ final class CustomerAccountAccessGuard
             'reason' => 'workspace_ambiguous',
         ], 403);
     }
+
+    /**
+     * PR #302 correction 4 — a multi-resource request (e.g. a contact UID
+     * scoped by a contact-group UID) whose bound resources resolve to
+     * DIFFERENT Businesses. Never evaluated against either candidate: doing
+     * so would either authorize a mutation against the wrong one, or
+     * disclose one candidate's plan state to a request that may not even
+     * legitimately reach it. This is the multi-resource counterpart to
+     * ambiguousJsonError() — same fail-closed shape, a different root
+     * cause (a route/relationship mismatch, not an unresolvable actor).
+     */
+    public function mismatchJsonError(): JsonResponse
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => "We can't determine which account this request belongs to. Please contact support.",
+            'reason' => 'resource_mismatch',
+        ], 403);
+    }
 }

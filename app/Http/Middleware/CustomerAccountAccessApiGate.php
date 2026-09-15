@@ -47,6 +47,30 @@ use Symfony\Component\HttpFoundation\Response;
  * 1: the customer's own single deterministic Business via
  * LegacyBusinessResolver, failing closed (never guessing) when that is
  * itself ambiguous.
+ *
+ * PR #302 CORRECTION 4. A route can bind MORE than one resource at once —
+ * contacts/{group_id}/update/{uid} binds a ContactGroups AND a Contacts
+ * row. Correction 3's resolveTargetBusiness() returned whichever one it
+ * found FIRST, so a request whose bound resources belong to two DIFFERENT
+ * Businesses (an Active group_id paired with a uid that is actually inside
+ * a Suspended one) was evaluated only against the first — the customer's
+ * mutation could still land on the locked Business the request never
+ * proved it was actually addressed to. This never picks a winner: every
+ * bound resource's business_id is collected, and the request proceeds only
+ * when they all agree (the ordinary, well-formed case) or there are none at
+ * all (the actor-scoped case, unchanged). Any disagreement fails closed —
+ * mismatchJsonError() — without ever calling
+ * CustomerAccountAccessResolver on either candidate, so neither one's plan
+ * state is disclosed to a request that has not proven which Business it
+ * actually belongs to.
+ *
+ * This still is not a second tenancy algorithm: it does not decide WHETHER
+ * a Contacts row genuinely belongs to a ContactGroups row (that relationship
+ * check belongs to, and now also lives in, the controller — see
+ * ContactsController::updateContact()/ContactsHTTPController::updateContact()
+ * — since middleware must not be the only protection against a mismatched
+ * pair). It only refuses to let two disagreeing business_id readings both
+ * pass this gate.
  */
 class CustomerAccountAccessApiGate
 {
@@ -63,10 +87,14 @@ class CustomerAccountAccessApiGate
             return $next($request);
         }
 
-        $target = $this->resolveTargetBusiness($request);
+        $businessIds = $this->resolveTargetBusinessIds($request);
 
-        if ($target !== null) {
-            $decision = $this->guard->decisionForBusiness($target);
+        if (count($businessIds) > 1) {
+            return $this->guard->mismatchJsonError();
+        }
+
+        if ($businessIds !== []) {
+            $decision = $this->guard->decisionForBusiness(Business::find($businessIds[0]));
         } else {
             $decision = $this->guard->decisionForActor((int) $user->id);
 
@@ -83,13 +111,17 @@ class CustomerAccountAccessApiGate
     }
 
     /**
-     * The route's own bound target resource, when it has one — never a
-     * second tenancy algorithm, just reading the business_id every one of
-     * these legacy models already carries and the controller already
-     * trusts.
+     * Every DISTINCT business_id carried by the route's bound resources —
+     * never just the first one. A resource with no business_id at all
+     * (never backfilled) contributes nothing; it is neither a target nor a
+     * conflict.
+     *
+     * @return array<int, int>
      */
-    private function resolveTargetBusiness(Request $request): ?Business
+    private function resolveTargetBusinessIds(Request $request): array
     {
+        $ids = [];
+
         foreach ($request->route()?->parameters() ?? [] as $value) {
             if (! $value instanceof ContactGroups
                 && ! $value instanceof Contacts
@@ -102,9 +134,9 @@ class CustomerAccountAccessApiGate
                 continue;
             }
 
-            return Business::find($value->business_id);
+            $ids[(int) $value->business_id] = true;
         }
 
-        return null;
+        return array_keys($ids);
     }
 }

@@ -231,4 +231,167 @@ class CustomerAccountAccessHttpGateTest extends TestCase
         $this->assertNotSame(403, $activeResponse->getStatusCode());
         $this->assertNotContains($activeResponse->json('reason'), ['plan_inactive', 'plan_suspended', 'workspace_ambiguous']);
     }
+
+    // =========================================================================
+    // PR #302 correction 4 — the /api/http counterpart of
+    // CustomerAccountAccessApiGateTest's multi-resource (group_id + uid)
+    // coverage. ContactsHTTPController::updateContact() has the exact same
+    // direct-mutation shape as its /api/v3 sibling.
+    // =========================================================================
+
+    private function fixtureContact(Customer $customer, Business $business, ContactGroups $group, string $phone): Contacts
+    {
+        return Contacts::create([
+            'customer_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'group_id' => $group->id,
+            'phone' => $phone,
+            'status' => Contacts::STATUS_SUBSCRIBE,
+        ]);
+    }
+
+    public function test_updating_an_http_contact_in_a_suspended_secondary_workspace_is_blocked_even_though_the_group_is_active(): void
+    {
+        [$customer, $primaryBusiness, , $token] = $this->httpCustomerWithWorkspace();
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Suspended']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $group = $this->fixtureContactGroup($customer, $primaryBusiness);
+        $contact = $this->fixtureContact($customer, $secondaryBusiness, $group, '15551230100');
+        $originalPhone = $contact->phone;
+
+        $response = $this->patchJson(route('api_http.contact.update', [$group->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $response->assertStatus(403);
+        $this->assertSame($originalPhone, $contact->fresh()->phone, 'The denial must happen before any Contact row is written.');
+    }
+
+    public function test_updating_an_http_contact_in_an_inactive_secondary_workspace_is_blocked_even_though_the_group_is_active(): void
+    {
+        [$customer, $primaryBusiness, , $token] = $this->httpCustomerWithWorkspace();
+
+        $secondaryBusiness = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Secondary Inactive']));
+        app(EntitlementManager::class)->assignFirstPlan($secondaryBusiness->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($secondaryBusiness->workspace, WorkspacePlanAssignmentStatus::Inactive);
+
+        $group = $this->fixtureContactGroup($customer, $primaryBusiness);
+        $contact = $this->fixtureContact($customer, $secondaryBusiness, $group, '15551230101');
+        $originalPhone = $contact->phone;
+
+        $response = $this->patchJson(route('api_http.contact.update', [$group->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $response->assertStatus(403);
+        $this->assertSame($originalPhone, $contact->fresh()->phone);
+    }
+
+    public function test_http_group_and_contact_resolving_to_different_businesses_fails_closed_without_disclosing_either_plan_state(): void
+    {
+        [$customer, $businessA, , $token] = $this->httpCustomerWithWorkspace();
+        $businessB = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Business B']));
+        app(EntitlementManager::class)->assignFirstPlan($businessB->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+        $this->lockWorkspace($businessB->workspace, WorkspacePlanAssignmentStatus::Suspended);
+
+        $group = $this->fixtureContactGroup($customer, $businessA);
+        $contact = $this->fixtureContact($customer, $businessB, $group, '15551230102');
+        $originalPhone = $contact->phone;
+
+        $response = $this->patchJson(route('api_http.contact.update', [$group->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $response->assertStatus(403);
+        $this->assertNotSame('plan_suspended', $response->json('reason'));
+        $this->assertNotSame('plan_inactive', $response->json('reason'));
+        $this->assertSame('resource_mismatch', $response->json('reason'));
+        $this->assertSame($originalPhone, $contact->fresh()->phone);
+    }
+
+    public function test_http_group_and_contact_in_the_same_business_but_different_group_is_rejected_by_ordinary_resource_semantics(): void
+    {
+        [$customer, $business, , $token] = $this->httpCustomerWithWorkspace();
+
+        $realGroup = $this->fixtureContactGroup($customer, $business);
+        $otherGroup = ContactGroups::create([
+            'customer_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'name' => 'Other Group',
+        ]);
+        $contact = $this->fixtureContact($customer, $business, $realGroup, '15551230103');
+        $originalPhone = $contact->phone;
+
+        $response = $this->patchJson(route('api_http.contact.update', [$otherGroup->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $this->assertNotSame(200, $response->getStatusCode());
+        $this->assertSame($originalPhone, $contact->fresh()->phone, 'A mismatched group/contact pair must never be written.');
+    }
+
+    public function test_a_valid_active_http_group_and_contact_pair_remains_reachable(): void
+    {
+        [$customer, $business, , $token] = $this->httpCustomerWithWorkspace();
+        $group = $this->fixtureContactGroup($customer, $business);
+        $contact = $this->fixtureContact($customer, $business, $group, '15551230104');
+
+        $response = $this->patchJson(route('api_http.contact.update', [$group->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $this->assertNotSame(403, $response->getStatusCode());
+        $this->assertNotContains($response->json('reason'), ['plan_inactive', 'plan_suspended', 'workspace_ambiguous', 'resource_mismatch']);
+    }
+
+    public function test_a_valid_locked_http_group_and_contact_pair_discloses_the_real_reason(): void
+    {
+        [$customer, $business, $workspace, $token] = $this->httpCustomerWithWorkspace();
+        $this->lockWorkspace($workspace, WorkspacePlanAssignmentStatus::Suspended);
+        $group = $this->fixtureContactGroup($customer, $business);
+        $contact = $this->fixtureContact($customer, $business, $group, '15551230105');
+
+        $response = $this->patchJson(route('api_http.contact.update', [$group->uid, $contact->uid]), [
+            'api_token' => $token,
+            'phone' => '15559998888',
+        ]);
+
+        $response->assertStatus(403);
+        $response->assertJson(['status' => 'error', 'reason' => 'plan_suspended']);
+    }
+
+    /**
+     * delete now has the same explicit, consistent conflict check as
+     * update. search has none added (it is genuinely read-only, and its
+     * own Contacts::where('group_id', ...)->where('uid', ...) query
+     * already returns nothing -- a plain not-found, no disclosure either
+     * way -- for a mismatched pair without needing the lock machinery at
+     * all), so it keeps its own pre-existing not-found response shape.
+     */
+    public function test_http_search_and_delete_with_mismatched_businesses_are_also_refused_by_the_gate(): void
+    {
+        [$customer, $businessA, , $token] = $this->httpCustomerWithWorkspace();
+        $businessB = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Business B']));
+        app(EntitlementManager::class)->assignFirstPlan($businessB->workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'Fixture.', true, 0);
+
+        $group = $this->fixtureContactGroup($customer, $businessA);
+        $contact = $this->fixtureContact($customer, $businessB, $group, '15551230106');
+
+        $searchResponse = $this->postJson(route('api_http.contact.search', [$group->uid, $contact->uid]), ['api_token' => $token]);
+        $this->assertNotSame(200, $searchResponse->getStatusCode());
+        $this->assertNotContains($searchResponse->json('reason'), ['plan_inactive', 'plan_suspended']);
+
+        $this->deleteJson(route('api_http.contact.delete', [$group->uid, $contact->uid]), ['api_token' => $token])
+            ->assertStatus(403)
+            ->assertJson(['status' => 'error', 'reason' => 'resource_mismatch']);
+        $this->assertNotNull(Contacts::find($contact->id), 'Delete must never proceed for a mismatched pair.');
+    }
 }
