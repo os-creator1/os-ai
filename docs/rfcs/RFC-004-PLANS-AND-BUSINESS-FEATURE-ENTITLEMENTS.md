@@ -1,5 +1,12 @@
 # RFC-004 — Plans and Business Feature Entitlements
 
+> **V1 architecture notice:** the Business-slot/capacity model in §13 and §17
+> of this RFC (included/additional/maximum Businesses per Workspace,
+> `additional_business_slots`, `unlimited_business_slots`) is superseded by
+> [`V1-ARCHITECTURE-DECISION-ADDENDUM.md`](./V1-ARCHITECTURE-DECISION-ADDENDUM.md)
+> §1, §17. Historical implementation/migration context in this RFC remains
+> valid unless explicitly superseded there.
+
 **Status:** DRAFT — DESIGN ONLY — IMPLEMENTATION NOT AUTHORIZED
 **Version:** 1.3
 **Priority:** P1
