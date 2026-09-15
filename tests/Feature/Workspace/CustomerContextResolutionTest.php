@@ -233,15 +233,50 @@ class CustomerContextResolutionTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
+        // CrmOpportunitiesController::VIEW_PERMISSION deliberately reuses
+        // 'view_contact' (its own docblock: "a deal is always about a
+        // contact: view_contact to see the board" — confirmed authoritative
+        // by CrmOpportunitiesHttpTest::test_permissions_and_the_crm_entitlement,
+        // which asserts this exact permission alone reaches the board with
+        // no other grant). CustomerMenuBuilder's 'opportunities' entry gates
+        // on that identical constant, so a restricted staff member holding
+        // view_contact genuinely reaches Opportunities too — the menu must
+        // include it to keep reflecting real reachability (S-3), the same
+        // rule test_opportunities_requires_the_crm_board_read_permission()
+        // (CustomerNavigationTreeTest) already exercises from the other
+        // direction: WITHOUT view_contact, this same entry is absent.
+        //
         // Customer Experience Slice 1A's Locations, which every actor who can
         // reach the Business may read (restricted staff read locations; they
         // cannot change them), is a module of the one Settings entry.
-        $this->assertSame(['home', 'contacts', 'settings'], $keys, 'Only Home, the permitted Contacts entry and Settings remain (§9.3 #6).');
+        $this->assertSame(['home', 'contacts', 'opportunities', 'settings'], $keys, 'Home, the permitted Contacts and Opportunities entries (both gated on view_contact) and Settings remain (§9.3 #6).');
         $this->assertSame(
             ['business-setup' => ['locations']],
             $this->settingsHubModules($this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent()),
             'Settings holds only the read-only Locations module.',
         );
+    }
+
+    /**
+     * The permission alone is not enough: WorkspaceManager::
+     * userCanAccessBusiness() — the same tenancy check
+     * CrmOpportunitiesController::business() enforces via
+     * ResolvesBusinessTenancy — still gates Opportunities (and the whole
+     * Business frame) for a Selected-scope staff member never actually
+     * assigned to a Business.
+     */
+    public function test_restricted_staff_with_no_business_assignment_gains_no_opportunities_access(): void
+    {
+        [, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $staff = $this->createCustomer();
+        // Deliberately no assign(): the membership exists, but no Business
+        // is assigned to it.
+        $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
+        $this->authenticateAs($staff, ['view_contact']);
+
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        $this->assertNotContains('opportunities', $keys, 'No Business tenancy means no Opportunities access, regardless of permission.');
     }
 
     public function test_the_platform_owner_shell_carries_no_customer_navigation(): void
