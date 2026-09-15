@@ -39,18 +39,18 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Complexity:** M. **Risk:** Low. **Lane:** A.
 
 ### Slice 2 — Cross-Workspace Agency authorization + View As extension
-- **Objective:** extend authorization so an Agency Workspace owner/admin can act on a linked Client Workspace via the Slice 1 relationship; extend `ViewAsManager` to resolve a viewed Business across Workspaces through that relationship instead of only `businessesForWorkspace($workspace)`.
+- **Objective:** extend authorization so any authorized Agency team member (owner, admin, or a permitted staff member — Blueprint §2, §28; View As is not owner-only) can act on a linked Client Workspace via the Slice 1 relationship; extend `ViewAsManager` to resolve a viewed Business across Workspaces through that relationship instead of only `businessesForWorkspace($workspace)`.
 - **Why here:** the Blueprint's View As guarantee (§28, §32) and every later Agency-facing slice need this before any client-facing Agency UI is safe to build.
-- **Sections:** Blueprint §28, §32; Addendum §2, §6 (View As).
+- **Sections:** Blueprint §2, §28, §32; Addendum §2, §6 (View As).
 - **Code domains:** `app/Library/ViewAs/ViewAsManager.php`, `WorkspaceManager::userCanAccessBusiness()` (add an explicit second entry point rather than changing its existing single-Workspace contract).
 - **Schema impact:** none beyond Slice 1's table.
-- **Tenancy/security impact:** **High** — this is the seam identified as the single hardest rewrite in the prior architecture audit; changes must be additive (new cross-Workspace path alongside the existing same-Workspace path, not a replacement) until Slice 5 retires the old path.
+- **Tenancy/security impact:** **High** — this is the seam identified as the single hardest rewrite in the prior architecture audit; changes must be additive (new cross-Workspace path alongside the existing same-Workspace path, not a replacement) until Slice 14 retires the old path.
 - **Billing impact:** none directly.
 - **Prerequisites:** Slice 1.
 - **Blocks:** Slices 4, 5, 7.
 - **Concurrent with:** Slice 3 (different subsystem), not with Slice 1 (hard dependency).
 - **Migration/backfill:** none.
-- **Adversarial test themes:** an Agency actor without an active relationship row must be refused, not merely unlisted; a terminated relationship must immediately lose View As and management authority while historical audit stays intact (Addendum §2); the pre-existing same-Workspace View As path must still work unchanged for Core/Growth.
+- **Adversarial test themes:** an Agency actor without an active relationship row must be refused, not merely unlisted; an Agency team member without ordinary Agency-management permission (e.g. a permission-less Staff row) must be refused even with an active relationship, proving the check composes normal Agency-Workspace authorization *with* the relationship rather than substituting for it; a terminated relationship must immediately lose View As and management authority while historical audit stays intact (Addendum §2); an Agency Admin/Staff member must be independently proven unable to reach AgencyRebill consent/payer actions through the View As session (Addendum §10 — View As is a lens, never an escalation path); the pre-existing same-Workspace View As path must still work unchanged for Core/Growth.
 - **Acceptance criteria:** both View As paths pass their respective test suites; no regression in `ViewAsRouteBoundaryTest`-style coverage.
 - **Complexity:** L. **Risk:** Critical. **Lane:** A (serial after Slice 1).
 
@@ -124,13 +124,13 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Sections:** Blueprint §6, §28; Addendum §1, §2.
 - **Code domains:** new Agency-facing controller/flow; reuses existing signup provisioning logic (`BusinessOnboardingController`/`WorkspaceManager::createWorkspace()`) rather than duplicating it.
 - **Schema impact:** none new.
-- **Tenancy/security impact:** Medium — must not allow provisioning a Client Workspace without an Agency actor holding relationship-management authority (Slice 2).
-- **Billing impact:** Low — client's own plan/trial starts per §6/§27, independent of the Agency.
+- **Tenancy/security impact:** Medium — provisioning requires ordinary Agency-management permission (owner, admin, or permitted staff — Blueprint §2, §28; not owner-only, per Addendum §2's silence on who *creates* a relationship versus its explicit owner/Platform-Owner-only *termination* rule) plus the actor's own Agency Workspace authority (Slice 2); an Agency team member with no Agency-management permission at all must still be refused.
+- **Billing impact:** Low — client's own plan/trial starts per §6/§27, independent of the Agency; if provisioning also assigns a resold SaaS plan billed through money lane C (Addendum §12), that specific sub-step may carry its own narrower authority rule to be confirmed against SaaS Plans (§28) when that surface is specified — provisioning the Workspace/Business/Location itself is not owner-only.
 - **Prerequisites:** Slices 1, 2.
 - **Blocks:** Slice 8.
 - **Concurrent with:** Slices 3, 4, 6 if not already merged; otherwise Slice 11/13 (independent product modules).
 - **Migration/backfill:** none.
-- **Adversarial test themes:** a non-owner Agency team member without relationship authority cannot provision a client (Addendum §2).
+- **Adversarial test themes:** an Agency team member with no Agency-management permission cannot provision a client even though they belong to the Agency Workspace; an actor from an unrelated Agency Workspace cannot provision a client under an Agency it has no relationship with.
 - **Acceptance criteria:** provisioning a client produces a Workspace indistinguishable in shape from an organic Core/Growth signup, plus one active relationship row.
 - **Complexity:** M. **Risk:** Medium. **Lane:** A (serial after Slice 2).
 
@@ -147,7 +147,7 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Concurrent with:** these two efforts can run as separate lanes (different files) within the same wave.
 - **Migration/backfill:** for (b), existing staff `business_access_scope = Selected` memberships need an equivalent Location grant seeded so nobody's access silently widens or narrows on cutover.
 - **Adversarial test themes:** (b) is exactly the repeat of the Task-3-style multi-resource-route ID-mismatch defense already proven necessary once this session for Business tenancy — the same class of test must be written per Location-bound controller.
-- **Acceptance criteria:** (a) an Agency owner can list/open/View-As every linked client; (b) every Location-bound controller has an adversarial cross-Location-ID test.
+- **Acceptance criteria:** (a) any authorized Agency team member (owner, admin, or permitted staff) can list/open/View-As every linked client, while an Agency team member without Agency-management permission is refused; (b) every Location-bound controller has an adversarial cross-Location-ID test.
 - **Complexity:** XL (b is the larger share). **Risk:** High. **Lane:** A for (a), B for (b) — run concurrently as two lanes.
 
 ### Slice 9 — AgencyRebill activation
@@ -155,11 +155,11 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Why here:** structurally requires Slice 1 (relationship) and benefits from Slice 5 (Agency/Client effective-access composition) already existing, since every automated Agency-funded effect must check both.
 - **Sections:** Blueprint §20, §28; Addendum §10.
 - **Code domains:** `app/Enums/Usage/PayerType.php` (no change needed, already defined), `BillingProfileManager::changePayer()`, `UsageBillingCheckoutManager`, RFC-005 §16 consent table (doc update alongside code).
-- **Schema impact:** none new — `business_payer_assignments.payer_type` already supports the value; add the FK/invariant tying an `agency_rebill` assignment to the specific relationship row from Slice 1 (Addendum §10 Q3 invariant).
+- **Schema impact:** **not none** — confirmed via `database/migrations/2026_08_16_130006_create_business_payer_assignments_table.php`: `business_payer_assignments` today is `id, business_id (unique FK -> businesses, restrictOnDelete), payer_type string(16), effective_payment_instrument_id (nullable, unsignedBigInteger, no FK yet), timestamps` — there is no column anywhere on this table capable of recording *which* Agency Workspace is paying. Add one nullable `managing_agency_relationship_id` (FK to the Slice 1 relationship table, `restrictOnDelete`), with an application-enforced invariant: NULL when `payer_type` is `business`/`workspace`; NOT NULL when `payer_type = 'agency_rebill'`, and its value MUST reference an *active* Slice 1 relationship row whose `client_workspace_id` resolves to this Business's own Workspace. This is the single source of truth for "which Agency is paying" — no second column or table may duplicate it, and no code path may accept an arbitrary Workspace ID in its place.
 - **Tenancy/security impact:** none beyond existing payer-consent pattern.
 - **Billing impact:** Critical — this is real money movement; every existing wallet/cap/entitlement/STOP-DND/provider-readiness/idempotency check must apply unchanged (Addendum §10).
 - **Prerequisites:** Slice 1 (hard); Slice 5 (recommended).
-- **Blocks:** none.
+- **Blocks:** Slice 10 (now a hard prerequisite — Slice 10's payer migration matrix requires `AgencyRebill` to already be a legal target).
 - **Concurrent with:** Slice 8, Slice 11.
 - **Migration/backfill:** none — inert until this slice, no existing data to migrate.
 - **Adversarial test themes:** Agency Admin/Staff, Client owner/staff, and Platform Administrator must each be independently proven unable to originate AgencyRebill consent or charges (Addendum §10); revocation must block only new activity while ledgering already-incurred costs.
@@ -167,35 +167,57 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Complexity:** L. **Risk:** Critical. **Lane:** C (serial after Slice 1/5).
 
 ### Slice 10 — Agency data migration (existing multi-Business Agency accounts)
-- **Objective:** for every existing Agency Workspace holding multiple Businesses today, create a Client Workspace + Primary Location per Business and an active Slice 1 relationship row, then repoint payer/wallet/history to the new Client Workspace without losing it.
-- **Why here:** needs Slices 1, 2, 7, 8(a) all merged and stable — this is the point where real (if test/staging) data moves.
+- **Objective:** for every existing Agency Workspace holding multiple Businesses today, move each non-primary Business into its own new Client Workspace (reassigning the *existing* Business row, never creating a duplicate) and establish an active Slice 1 relationship — preserving every existing `BusinessLocation`, payer, wallet, and history record exactly as identified below, rather than recreating them.
+- **Why here:** needs Slices 1, 2, 7, 8(a) **and 9** merged and stable — Slice 9 is now a hard prerequisite (not merely "benefits from"), because the payer-migration matrix below requires `PayerType::AgencyRebill` to already exist as a legal target.
 - **Sections:** Addendum §18 step 4; Blueprint §35.
 - **Code domains:** one-shot migration command, not a schema migration file — mirrors the caution already applied to `WorkspaceBackfillV1` (RFC-003 §27's own migration-authoring policy: query-builder based, not mutable Eloquent events).
 - **Schema impact:** none new; heavy data movement across existing tables.
 - **Tenancy/security impact:** Critical during the migration window — must be transactional per Agency, resumable, and never leave a Business without a Workspace.
-- **Billing impact:** Critical — existing wallets/payers (`business_id`-scoped already, per traceability matrix row 17) move with the Business, requiring no re-keying, which is exactly why Addendum §9's "wallet already Business-scoped" finding matters here.
-- **Prerequisites:** Slices 1, 2, 7, 8(a).
+- **Billing impact:** Critical. See the **payer migration matrix** below — this is money-movement logic, not a mechanical re-key.
+
+**A4 — Location handling (mechanically verified against `app/Models/BusinessLocation.php` and `database/migrations/2026_07_18_120002_create_business_locations_table.php`):** `business_locations.business_id` is a plain `constrained('businesses')->onDelete('cascade')` FK with no `NOT NULL`-style guarantee that a Business has at least one row, and `is_primary` carries only a plain index, not a unique constraint — the "exactly one primary" invariant is enforced at the application layer only, by `BusinessLocationManager`. The migration therefore **MUST NOT** create a new Primary Location for a Business that already has one. Exact rule:
+1. Reassign the existing Business's `workspace_id` to the new Client Workspace (via the existing `WorkspaceManager::reassignBusiness()`-style write, or its Slice-14-era successor) — every existing `business_locations` row, `is_primary` flag, and lifecycle/archived state (`BusinessLocationLifecycleState::Active|Archived`) stays untouched, since these rows key on `business_id`, not `workspace_id`, and the Business's own `id` is preserved.
+2. Only if `BusinessLocationRepository::findPrimary($business)` returns null for that Business (a genuinely primary-less legacy row) does the migration invoke the existing, already-authoritative repair path — `BusinessLocationManager::upsertPrimaryLocation()` — and only to *create*, never to overwrite an existing primary's fields with migration-invented data (this method's own documented behavior: "edits the primary location, or — only when the Business has none — creates it"). This is the same method organic onboarding already uses; the migration must not invent a second creation path.
+3. No duplicate Location is ever created. Preflight reports the count of primary-less Businesses found so a human can review before any repair runs.
+
+**A5 — Payer migration matrix (mechanically verified against `database/migrations/2026_08_16_130006_create_business_payer_assignments_table.php` and the M2 backfill migration `2026_08_16_130008_backfill_business_payer_assignments.php`):** `business_payer_assignments` is keyed `business_id unique`, so it already travels with the Business unchanged by the Workspace move — but its **meaning** depends on which Workspace it resolves against, which is exactly what moving the Business changes. The M2 backfill's own documented default (M2 contract §6.E) was `payerType = tier === 'agency' ? 'business' : 'workspace'` — i.e. for an Agency-tier Workspace, the *default* was self-pay (`business`), and a `payer_type = 'workspace'` row on a Business under an Agency Workspace is exactly the case where the **Agency's own shared Workspace funding was paying for that specific client's usage** — a real, human-consented `BillingProfileManager::changePayer()` action (RFC-005 §16), not a default. Since the default may since have been explicitly changed, the migration **MUST read each Business's actual current `payer_type`, never assume the backfill default still holds.**
+
+| Current state found | Meaning under the OLD model | Safe migration action |
+|---|---|---|
+| `payer_type = 'business'` | Self-pay — the Business's own instrument pays | **No change.** Row is already correct for the new Client Workspace; `business_id` FK is unaffected by the Workspace move. |
+| `payer_type = 'workspace'`, under an Agency-tier Workspace, for a **non-primary** Business (i.e. a client) | The Agency's shared Workspace funding was paying for this client's usage — functionally identical to what `AgencyRebill` now exists to represent | **STOP condition, not a silent conversion.** Moving the Business to its own Client Workspace would silently flip this row's meaning to "the *client's own new* Workspace pays" — the opposite of the original intent, and a real payer change requires the managing Agency owner's own explicit, reasoned consent (Addendum §10), which a batch migration cannot manufacture on a human's behalf. The migration must list every such Business, **halt that Business's split**, and require the Agency owner to explicitly re-establish `AgencyRebill` consent (through the ordinary Slice 9 consent flow, now pointed at the new Slice 1 relationship) before the split proceeds for that specific Business. |
+| `payer_type = 'workspace'`, under a non-Agency Workspace | Ordinary Core/Growth self-pay via the single Workspace (already 1:1) | Not applicable to this slice — these Workspaces are not being split. |
+| No `business_payer_assignments` row at all | Should not occur (M2 backfill is complete per `AI-AUTONOMY-STATE.json`'s RFC-005 closure note) | Preflight failure — treat as a data-integrity stop condition, not a case to default-assign silently. |
+
+This table is the migration's **entire** payer-handling logic — no additional inference is permitted. **Do not guess** for any row that does not exactly match one of the rows above; add it to the preflight report as unresolved and stop rather than choosing.
+
+- **Prerequisites:** Slices 1, 2, 7, 8(a), **9**.
 - **Blocks:** Slice 11.
 - **Concurrent with:** none — **SERIAL ONLY**, run against one Agency account at a time with verification between batches.
-- **Migration/backfill:** this slice *is* the migration.
-- **Adversarial test themes:** a migration interrupted mid-Agency must be safely resumable, not leave a half-migrated Agency with some clients in the old shape and some in the new.
-- **Acceptance criteria:** zero Agency Workspaces with >1 Business remain; every migrated client passes the same acceptance checks as an organically Slice-7-provisioned client.
+- **Migration/backfill:** this slice *is* the migration; see A4/A5 above for its two most consequential rules. Preflight report **MUST** enumerate, per Agency Workspace: Business count, primary-less Business count (A4), and payer-migration-matrix classification per Business (A5) — before any write runs.
+- **Adversarial test themes:** a migration interrupted mid-Agency must be safely resumable, not leave a half-migrated Agency with some clients in the old shape and some in the new; a `payer_type = 'workspace'` client Business must never complete its split until its Agency-funding consent is explicitly re-established; a primary-less Business must never end up with two primaries after repair.
+- **Acceptance criteria:** zero Agency Workspaces with >1 Business remain; every migrated client passes the same acceptance checks as an organically Slice-7-provisioned client; every pre-migration `business_payer_assignments` row's economic meaning (who actually pays) is provably unchanged post-migration, or the Business's split was correctly halted pending consent.
 - **Complexity:** XL. **Risk:** Critical. **Lane:** SERIAL ONLY.
 
 ### Slice 11 — Retire additional-business-slots purchase flow
-- **Objective:** freeze new sales of `additional_business_slots`/`additional_business_slot_agreements` and decide existing-holder treatment (Addendum §18 step 5, Blueprint §35).
+- **Objective:** freeze new sales of `additional_business_slots`/`additional_business_slot_agreements` (Addendum §18 step 5, Blueprint §35). **This is a conditional migration/operations gate, not an open architecture decision** — the architecture (retire the Nth-Business-slot model) is already frozen by the Addendum regardless of what current data holds; only the treatment of any already-*paid* holder is conditional on data reality, and is reconciled below rather than left as a blocker.
 - **Why here:** must follow Slice 10 — cannot retire the mechanism Agency accounts still depend on before they're migrated off it.
 - **Sections:** Blueprint §21, §35; Addendum §17 (RFC-004 §13/§17 superseded), §18.
 - **Code domains:** `EntitlementManager::assertCanCreateAnotherBusiness()`/`setAdditionalBusinessSlots()`/`allocateAdditionalBusinessSlotsFromVerifiedPayment()`, the checkout routes.
 - **Schema impact:** none removed yet (Slice 13 does removal); this slice stops new writes only.
 - **Tenancy/security impact:** none.
-- **Billing impact:** High — existing paid holders need an explicit, human-decided treatment (refund, grandfathering, or conversion), not a silent freeze.
+- **Billing impact:** High, conditional on preflight below.
+
+**A7 — reconciling "no blocking decision" with existing paid holders:** `SlotAgreementState` (`app/Enums/Usage/SlotAgreementState.php`) shows `additional_business_slot_agreements.state` reaches `Completed` for a fully paid, allocated slot agreement — the state that represents a genuine existing commercial commitment. The correct posture, matching the "architecture-locked either way" instruction:
+1. **Preflight, before this slice writes anything:** `SELECT COUNT(*) FROM additional_business_slot_agreements WHERE state = 'completed' AND cancellation_effective_at IS NULL` (a completed agreement that has not already had its cancellation take effect).
+2. **Zero rows found:** no commercial-treatment decision is needed — freeze new sales and proceed; this is the expected case for a pre-launch or low-volume product state and requires no human sign-off beyond the freeze itself.
+3. **One or more rows found:** **STOP this slice** before disabling renewal/entitlement for those specific Workspaces. Report the exact list (Workspace, current allocation, next renewal date) and require an explicit, separately authorized commercial decision (refund, grandfather until natural expiry, or convert) **before** proceeding — this is the one piece of this slice that is genuinely a business decision, not an architecture one, and it must never be invented by an implementation agent.
 - **Prerequisites:** Slice 10.
 - **Blocks:** Slice 12.
 - **Concurrent with:** Slice 9 if not already landed, and any pure product-module slice (§14/§15/§18/§19 style work).
-- **Migration/backfill:** none beyond Slice 10's.
-- **Adversarial test themes:** an existing holder's already-purchased slots must not silently vanish before the human-decided treatment executes.
-- **Acceptance criteria:** no new `additional_business_slots` purchase is possible; existing holders' treatment is executed per the separate human decision this slice defers to, not invented here.
+- **Migration/backfill:** none beyond Slice 10's; the preflight count above is the only new inspection this slice requires.
+- **Adversarial test themes:** an existing holder's already-purchased slots must not silently vanish before the human-decided treatment executes; a zero-row preflight must not require any human sign-off to proceed with the freeze.
+- **Acceptance criteria:** no new `additional_business_slots` purchase is possible; if the preflight found zero active agreements, the flow is frozen outright; if it found any, the slice halts at the report and does not silently choose a treatment.
 - **Complexity:** M. **Risk:** Medium. **Lane:** SERIAL ONLY (billing-sensitive).
 
 ### Slice 12 — Backfill remaining non-Agency multi-Business Workspaces
@@ -273,8 +295,11 @@ concurrently from Wave 1 onward. No wave assigns two lanes to the same
 central file in the same wave.
 
 ### WAVE 0 — Gate
-Confirm the Addendum and Blueprint are merged to `main` (already true as of
-this roadmap). No code lane starts before this.
+Before any implementation lane starts, confirm that the Addendum, the
+Blueprint, the Traceability Matrix, this Roadmap, and the Acceptance Matrix
+are all merged to `main` — not merely pushed to a planning branch. This is a
+standing precondition to re-check at the start of every wave, not a
+one-time fact about when this Roadmap was written.
 
 ### WAVE 1
 | Lane | Work |
@@ -310,18 +335,34 @@ read schema Wave 1 just added). **Verification gate:** Slice 2's adversarial
 View As tests and Slice 5's lifecycle-composition matrix both pass before
 Wave 3 begins.
 
-### WAVE 3
+### WAVE 3a
+Slice 8(a) has a **hard dependency** on Slice 7's provisioning
+contract/API, not ordinary concurrency — it must not begin consuming that
+interface until Slice 7 is merged and stable. Wave 3 is therefore split
+into two sub-waves rather than one wave with an in-flight hand-off.
+
 | Lane | Work |
 |---|---|
 | A | Slice 7 — Client Workspace provisioning (needs Wave2 A) |
-| B | Slice 8(a) — Agency "Clients" UI (needs A/Wave3 in progress — coordinate hand-off) |
-| C | Slice 9 — AgencyRebill activation (needs Wave1 A, Wave2 C) |
+| C | Slice 9 — AgencyRebill activation (needs Wave1 A, Wave2 C) — independent of Slice 7, safe to run alongside it |
 | D–F | Continue/finish any Wave 1–2 product-module overflow, or start further independent modules as the Blueprint requires |
 
 **Serial prerequisites:** Wave 2 fully merged. **Merge barrier:** Slice 2
-and Slice 5 both stable on `main`. **Verification gate:** an Agency owner
-can provision a client, View As it, and (if configured) fund its usage —
-full end-to-end coverage before Wave 4.
+and Slice 5 both stable on `main`. **Verification gate:** Slice 7's
+provisioning contract/API is merged and its own acceptance criteria pass
+before Wave 3b's Lane B may start.
+
+### WAVE 3b
+| Lane | Work |
+|---|---|
+| B | Slice 8(a) — Agency "Clients" UI (starts only after Wave 3a Lane A/Slice 7 is merged — not concurrent with it) |
+| A, C, D–F | Continue Wave 3a work if not yet finished, or move to independent product modules |
+
+**Serial prerequisites:** Slice 7 merged (hard gate for Lane B specifically;
+other lanes are not blocked by it). **Merge barrier:** none beyond Slice 7
+itself. **Verification gate:** an authorized Agency team member can
+provision a client, View As it, and (owner-only, per Addendum §10) fund its
+usage — full end-to-end coverage before Wave 4.
 
 ### WAVE 4 — Data migration (mostly serial)
 | Lane | Work |
@@ -329,11 +370,15 @@ full end-to-end coverage before Wave 4.
 | A (SERIAL ONLY) | Slice 10 — Agency data migration |
 | E, F | Continue independent product modules unaffected by the migration |
 
-**Serial prerequisites:** Wave 3 Lanes A/B/C merged and stable. **Merge
-barrier:** freeze further changes to `WorkspaceManager`/relationship tables
-while Slice 10 runs. **Verification gate:** zero Agency Workspaces with >1
+**Serial prerequisites:** Wave 3a/3b's Slices 7, 8(a), and **9 (AgencyRebill,
+now a hard prerequisite per Slice 10's payer migration matrix)** all merged
+and stable. **Merge barrier:** freeze further changes to
+`WorkspaceManager`/relationship tables/`business_payer_assignments` while
+Slice 10 runs. **Verification gate:** zero Agency Workspaces with >1
 Business remain; every migrated client passes Slice 7's own acceptance
-checks.
+checks; every pre-migration payer row's economic meaning is provably
+unchanged or its Business's split was correctly halted pending consent
+(Slice 10 A5).
 
 ### WAVE 5 — Retirement and enforcement (serial)
 | Lane | Work |

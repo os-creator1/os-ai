@@ -51,7 +51,7 @@ silently reappear inside a V1 section.
 |---|---|
 | **Platform Owner** | The software operator. Reaches every account, every Workspace, platform-wide configuration, billing/revenue, and support tooling (§30). Never a customer's financial consent authority (Addendum §10). |
 | **Agency Workspace Owner** | Owns the Agency's own Workspace/Business (operationally identical to a Core/Growth owner, §3) *plus* the Agency product surface (§28): managing every Client Workspace their Agency has an active management relationship with (Addendum §2), Outreach, SaaS Plans, White Label, Agency team. |
-| **Agency team member** | An ordinary member (Admin or Staff, §26) of the Agency's own Workspace. Reaches the Agency product surface only to the extent their role/permissions allow. **Does not** automatically gain management authority over Client Workspaces merely by being an Agency team member — Agency management authority is the explicit relationship in Addendum §2, never inferred from ordinary membership. |
+| **Agency team member** | An ordinary member (Admin or Staff, §26) of the Agency's own Workspace. Reaches the Agency management surface (§28) — Clients list, opening a linked Client Workspace's management surfaces, View As/support access, Outreach, ordinary non-financial client management — to the extent their own Agency-Workspace role/permissions allow, gated on an active Agency↔Client relationship (Addendum §2). Three actions stay owner-only regardless of Agency-team permissions: AgencyRebill financial consent/payer selection/funding configuration (Addendum §10), terminating the Agency↔Client relationship (Addendum §2), and any other action an authoritative financial/ownership rule explicitly reserves to the owner. This authority is never inferred merely from ordinary *membership in the Client Workspace itself* (Addendum §2) — it flows only from the Agency-side relationship and the actor's own Agency-Workspace role. |
 | **Business Workspace Owner** | Owns one Workspace containing exactly one Business (Addendum §1). Full authority over that Business: all Locations, staff, billing, integrations. |
 | **Business Staff** | A member of a Business's Workspace, scoped to one, several, or all Locations (§26, Addendum §4). Never manages staff/permissions or billing in V1 (§26). |
 | **Agency SaaS Client** | The owner (and their staff) of a Client Workspace — a Business Workspace Owner/Staff in every operational respect, whose Workspace additionally has an active managing-Agency relationship (Addendum §2) that grants the Agency View As, support, and (if configured) usage-payer authority. The client cannot remove that relationship themselves. |
@@ -601,11 +601,16 @@ Agency's own Workspace.
 **Clients** manages the Agency↔Client Workspace relationship set (Addendum
 §2): provisioning a new client (creating their Client Workspace + Business
 + Primary Location and establishing the management relationship in one
-flow), viewing/ending a relationship (only the Agency owner or Platform
-Owner may end one; the client cannot), and the entry point for **View As**
-— which preserves the viewed client's normal tenancy, security, wallet, and
-STOP/DND rules exactly as if the client were using it themselves (§32),
-with every action attributed to the real Agency actor.
+flow), viewing a relationship, and the entry point for **View As** and
+ordinary support/client-management actions. Any Agency team member with
+Agency-management permissions (§2, §26) — not only the owner — may open the
+Clients list, view a linked client, View As it, and perform ordinary
+non-financial client management, gated on the relationship being active;
+every action is attributed to the real acting Agency user, never the
+viewed client's identity. **Ending** a relationship is narrower — only the
+Agency owner or Platform Owner may end one; the client cannot. View As
+itself preserves the viewed client's normal tenancy, security, wallet, and
+STOP/DND rules exactly as if the client were using it themselves (§32).
 
 Also from here: **SaaS Plans** (the Agency's own resale plan
 configuration for its clients, billed through the Agency's connected
@@ -661,8 +666,14 @@ Library** manage the platform-level Blueprint catalog (§22) and its
 versioning. **Platform Automations** are platform-internal, distinct from
 per-Business automations (§13). **Messaging / Numbers** manages the
 central provider relationship and number inventory (§19). **Billing /
-Revenue** covers platform-side margins and liabilities across all three
-money lanes A/B/C (Addendum §12). **Support / Privacy Requests** and
+Revenue** gives the Platform Owner separate visibility/accounting across
+all four money lanes (Addendum §12) — platform-side margin on lane A, and
+operational/reporting visibility into lanes B/C/D where the platform's own
+infrastructure or provider relationship is involved — without ever
+conflating them: lane B revenue belongs to the Business, lane C revenue
+belongs to the Agency, and lane D funds Business usage, none of it
+platform revenue merely because the Platform Owner can see it.
+**Support / Privacy Requests** and
 **Audit Logs** are the support and compliance surfaces (§32, §33). The
 Platform Owner administers and supports the platform; they are never
 themselves a payer or financial-consent authority for any customer or
@@ -832,9 +843,10 @@ Outreach campaigns to acquire new clients (§29); white-label the product
 
 **A Platform Owner can:** operate and support the platform — manage
 accounts and Workspaces, maintain the niche Blueprint/Template Library,
-manage the central messaging/provider relationship, see platform-wide
-billing and revenue across all three money lanes, handle support and
-privacy requests, and review audit logs (§30, §32, §33).
+manage the central messaging/provider relationship, see separate
+visibility/accounting across all four money lanes without conflating them,
+handle support and privacy requests, and review audit logs (§30, §32,
+§33).
 
 ---
 
@@ -846,4 +858,10 @@ implementation default (§36). Exact Core/Growth/Agency pricing is left as
 commercial configuration (§21) rather than a blocker, since it does not
 constrain architecture. The Navigation Contract's "Client account = Business
 in Agency Workspace" mapping is corrected in §35 rather than left as an open
-question, since the Addendum already resolves it.
+question, since the Addendum already resolves it. Existing-holder treatment
+for any already-paid `additional_business_slots` agreement (§21, §35) is a
+**conditional migration/operations gate**, not an architecture blocker — the
+retirement of that flow is already architecture-locked either way; only the
+commercial treatment of a paid holder, if any exist when that migration
+slice runs its preflight, needs a separate business decision at that time
+(see `V1-IMPLEMENTATION-ROADMAP.md` Slice 11).
