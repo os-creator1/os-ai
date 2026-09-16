@@ -5,6 +5,7 @@ namespace App\Library\Entitlement;
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use Carbon\CarbonInterface;
 
 final readonly class WorkspaceEntitlementSummary
 {
@@ -21,6 +22,17 @@ final readonly class WorkspaceEntitlementSummary
         public array $planFeatureKeys,
         public array $overrides,
         public BusinessSlotCapacityDecision $capacity,
+        /**
+         * Contract 03 §5 (Slice 4) — the assignment's three lifecycle
+         * timestamps, carried here because this summary is the ONLY read seam
+         * CustomerAccountAccessResolver is allowed to use: it must never query
+         * workspace_plan_assignments itself (§3). Trailing and defaulted, so
+         * both existing construction sites and every existing reader are
+         * untouched.
+         */
+        public ?CarbonInterface $trialEndsAt = null,
+        public ?CarbonInterface $graceStartedAt = null,
+        public ?CarbonInterface $lockedAt = null,
     ) {
     }
 }

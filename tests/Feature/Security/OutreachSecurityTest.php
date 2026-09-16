@@ -209,6 +209,7 @@ class OutreachSecurityTest extends TestCase
             'user_id' => $staffCustomer->user_id,
             'role' => 'staff',
             'business_access_scope' => 'all',
+            'location_access_scope' => 'all',
             'is_active' => true,
         ]);
 
@@ -229,6 +230,7 @@ class OutreachSecurityTest extends TestCase
             'user_id' => $staffCustomer->user_id,
             'role' => 'staff',
             'business_access_scope' => 'selected',
+            'location_access_scope' => 'all',
             'is_active' => true,
         ]);
 
@@ -257,6 +259,7 @@ class OutreachSecurityTest extends TestCase
             'user_id' => $staffCustomer->user_id,
             'role' => 'staff',
             'business_access_scope' => 'all',
+            'location_access_scope' => 'all',
             'is_active' => true,
         ]);
 

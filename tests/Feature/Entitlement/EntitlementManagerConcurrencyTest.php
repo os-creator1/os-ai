@@ -4,6 +4,7 @@ namespace Tests\Feature\Entitlement;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
@@ -217,6 +218,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         WorkspaceMembership::create([
             'workspace_id' => $destinationWorkspace->id, 'user_id' => $sourceOwnerUserId,
             'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
     }
@@ -616,6 +618,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $staffMembership2 = WorkspaceMembership::create([
             'workspace_id' => $sourceWorkspace2->id, 'user_id' => $staffUser2,
             'role' => WorkspaceMembershipRole::Staff, 'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $staffMembership2->id, 'business_id' => $business2->id]);

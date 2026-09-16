@@ -4,6 +4,7 @@ namespace Tests\Feature\Entitlement;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Entitlement\BusinessFeatureToggleChanged;
@@ -96,13 +97,13 @@ class EntitlementManagerBusinessToggleTest extends TestCase
 
         // Active Admin allowed.
         $activeAdmin = $this->createUser();
-        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $activeAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => true]);
+        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $activeAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => true]);
         app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::Crm, $activeAdmin->id);
         app(EntitlementManager::class)->enableBusinessFeature($business->fresh(), PlatformFeature::Crm, $activeAdmin->id);
 
         // Ordinary Staff denied.
         $staff = $this->createUser();
-        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $staff->id, 'role' => WorkspaceMembershipRole::Staff, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => true]);
+        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $staff->id, 'role' => WorkspaceMembershipRole::Staff, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => true]);
         try {
             app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::Crm, $staff->id);
             $this->fail('Expected UnauthorizedWorkspaceManagementException for Staff.');
@@ -111,7 +112,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
 
         // Inactive Admin denied.
         $inactiveAdmin = $this->createUser();
-        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $inactiveAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => false]);
+        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $inactiveAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => false]);
         try {
             app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::Crm, $inactiveAdmin->id);
             $this->fail('Expected UnauthorizedWorkspaceManagementException for inactive Admin.');
@@ -144,7 +145,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
 
     private function grantCrossAuthority(Workspace $oldWorkspace, Workspace $newWorkspace): int
     {
-        WorkspaceMembership::create(['workspace_id' => $newWorkspace->id, 'user_id' => $oldWorkspace->owner_user_id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => true]);
+        WorkspaceMembership::create(['workspace_id' => $newWorkspace->id, 'user_id' => $oldWorkspace->owner_user_id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => true]);
 
         return (int) $oldWorkspace->owner_user_id;
     }
@@ -179,7 +180,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
         // prove "no standing" — a genuinely separate old-Workspace-only
         // Admin is needed for that half of the proof.
         $oldWorkspaceOnlyAdmin = $this->createUser();
-        WorkspaceMembership::create(['workspace_id' => $oldWorkspace->id, 'user_id' => $oldWorkspaceOnlyAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => true]);
+        WorkspaceMembership::create(['workspace_id' => $oldWorkspace->id, 'user_id' => $oldWorkspaceOnlyAdmin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => true]);
 
         app(WorkspaceManager::class)->reassignBusiness($actor, $business, $newWorkspace);
         $fresh = $business->fresh();
@@ -211,7 +212,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     {
         ['workspace' => $workspace, 'business' => $business] = $this->entitledWorkspaceWithBusiness();
         $admin = $this->createUser();
-        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $admin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'is_active' => true]);
+        WorkspaceMembership::create(['workspace_id' => $workspace->id, 'user_id' => $admin->id, 'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All, 'location_access_scope' => LocationAccessScope::All, 'is_active' => true]);
         $workspace->update(['is_active' => false]);
 
         $this->expectException(InactiveWorkspaceMutationException::class);

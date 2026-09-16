@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\WorkspaceMembership;
@@ -38,7 +39,8 @@ class WorkspaceMembershipRepositoryTest extends TestCase
             $workspace,
             $member->id,
             WorkspaceMembershipRole::Admin,
-            WorkspaceBusinessAccessScope::Selected
+            WorkspaceBusinessAccessScope::Selected,
+            LocationAccessScope::All
         );
 
         $this->assertSame(WorkspaceMembershipRole::Admin, $membership->fresh()->role);
@@ -62,8 +64,8 @@ class WorkspaceMembershipRepositoryTest extends TestCase
         $workspace = $this->createWorkspace($this->createCustomer()->user);
         $member = $this->createCustomer()->user;
 
-        $first = $repository->create($workspace, $member->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
-        $second = $repository->create($workspace, $member->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected);
+        $first = $repository->create($workspace, $member->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
+        $second = $repository->create($workspace, $member->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All);
 
         $this->assertTrue($first->is($second));
         $this->assertSame(

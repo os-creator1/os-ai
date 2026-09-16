@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Contracts;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Workspace;
@@ -47,13 +48,16 @@ interface WorkspaceMembershipRepository extends BaseRepository
      * (RFC-003 §9.2, §12.2): a duplicate call returns the existing row
      * rather than surfacing a raw database exception. $scope has no
      * database default (§9.2), so it is always required here, never
-     * optional or defaulted.
+     * optional or defaulted. Implementation Contract 02 (Location ACL
+     * Foundation) §5/§12 — $locationScope mirrors $scope exactly: also no
+     * database default once enforcement lands, also always required here.
      */
     public function create(
         Workspace $workspace,
         int $userId,
         WorkspaceMembershipRole $role,
-        WorkspaceBusinessAccessScope $scope
+        WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope
     ): WorkspaceMembership;
 
     public function updateRole(WorkspaceMembership $membership, WorkspaceMembershipRole $role): WorkspaceMembership;

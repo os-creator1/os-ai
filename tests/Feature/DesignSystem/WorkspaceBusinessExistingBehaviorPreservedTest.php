@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\DesignSystem;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\AppConfig;
@@ -60,6 +61,7 @@ class WorkspaceBusinessExistingBehaviorPreservedTest extends TestCase
             'user_id' => $staffUser->id,
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
 

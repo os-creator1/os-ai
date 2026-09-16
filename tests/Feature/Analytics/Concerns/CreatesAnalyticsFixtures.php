@@ -3,6 +3,7 @@
 namespace Tests\Feature\Analytics\Concerns;
 
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
@@ -72,6 +73,7 @@ trait CreatesAnalyticsFixtures
             'user_id' => $user->id,
             'role' => $role->value,
             'business_access_scope' => $scope->value,
+            'location_access_scope' => LocationAccessScope::All->value,
             'is_active' => $isActive,
         ]);
     }
