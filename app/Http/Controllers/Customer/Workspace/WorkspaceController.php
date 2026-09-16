@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Workspace;
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
@@ -729,7 +730,14 @@ class WorkspaceController extends CustomerBaseController
         }
 
         try {
-            $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, $businessIds);
+            // Implementation Contract 02 (Location ACL Foundation) §12 —
+            // addMember()'s new required parameter. All, matching the
+            // form's own lack of a Location-scope field: this slice adds
+            // no consumer-facing Location-scope selection (Contract 08B
+            // does), so every member added through this form keeps the
+            // same full Location reach they would have had before this
+            // slice landed.
+            $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, LocationAccessScope::All, $businessIds);
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {

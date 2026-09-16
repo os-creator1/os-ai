@@ -3,6 +3,7 @@
 namespace Tests\Feature\Automations\Workflow\Actions;
 
 use App\Enums\Automation\Workflow\EnrollmentStatus;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Automation\Workflow\Contracts\EnrollmentService;
@@ -63,6 +64,7 @@ class InternalNotificationExecutorTest extends TestCase
             'user_id' => $user->id,
             'role' => WorkspaceMembershipRole::Staff->value,
             'business_access_scope' => $scope->value,
+            'location_access_scope' => LocationAccessScope::All->value,
             'is_active' => $isActive,
         ]);
 

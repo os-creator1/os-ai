@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Automations\Workflow\Http;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\AutomationEnrollment;
@@ -79,6 +80,7 @@ class WorkflowHttpAuthorizationTest extends TestCase
             'user_id' => $user->id,
             'role' => $role->value,
             'business_access_scope' => $scope->value,
+            'location_access_scope' => LocationAccessScope::All->value,
             'is_active' => $active,
         ]);
 

@@ -4,6 +4,7 @@ namespace Tests\Feature\Usage;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\PayerType;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Usage\UnauthorizedPayerAssignmentException;
@@ -101,6 +102,7 @@ class PayerAssignmentTransitionScenariosTest extends TestCase
         $membership = WorkspaceMembership::create([
             'workspace_id' => $business->workspace->id, 'user_id' => $adminId,
             'role' => WorkspaceMembershipRole::Admin, 'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
 

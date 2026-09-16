@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Workspace\WorkspaceMembershipBusinessAccessScopeChanged;
@@ -141,8 +142,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $this->manager()->deactivateWorkspace($owner->user_id, $workspace);
 
         $this->assertThrowsForAllThreeMethods(InactiveWorkspaceMutationException::class, $owner->user_id, $membership, $business);
@@ -157,8 +157,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $this->manager()->deactivateMember($owner->user_id, $membership);
 
         $this->assertThrowsForAllThreeMethods(InactiveWorkspaceMembershipMutationException::class, $owner->user_id, $membership, $business);
@@ -175,8 +174,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($ownerB->user_id, $workspaceB->id);
         $membership = $this->manager()->addMember(
             $ownerB->user_id, $workspaceB, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $mutated = clone $membership;
         $mutated->workspace_id = $workspaceA->id;
@@ -422,8 +420,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $result = $this->manager()->changeMemberBusinessAccessScope($owner->user_id, $membership, WorkspaceBusinessAccessScope::All, []);
 
@@ -442,8 +439,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $orderedIds = collect([$businessA->id, $businessB->id])->sort()->values()->all();
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, $orderedIds,
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, $orderedIds);
 
         $order = [];
         Event::listen(WorkspaceMembershipBusinessUnassigned::class, function (WorkspaceMembershipBusinessUnassigned $event) use (&$order) {
@@ -467,8 +463,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -496,8 +491,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $businessC = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessA->id, $businessB->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id, $businessB->id]);
 
         $this->manager()->changeMemberBusinessAccessScope(
             $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
@@ -519,8 +513,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $businessC = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessA->id, $businessB->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id, $businessB->id]);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -545,8 +538,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessA->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id]);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -612,8 +604,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $existing = WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->where('business_id', $business->id)->firstOrFail();
 
         $result = $this->manager()->assignBusinessToMember($owner->user_id, $membership, $business);
@@ -656,8 +647,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $foreignBusiness = $this->createBusinessForCustomer($otherOwner->user_id, $otherWorkspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -719,8 +709,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $this->manager()->unassignBusinessFromMember($owner->user_id, $membership, $business);
 
@@ -778,8 +767,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -834,8 +822,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspaceA->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspaceA, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $mutated = clone $business;
         $mutated->workspace_id = $workspaceB->id;
@@ -864,8 +851,7 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $this->manager()->deactivateMember($owner->user_id, $membership);
         $this->manager()->reactivateMember($owner->user_id, $membership);

@@ -6,6 +6,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
@@ -106,6 +107,7 @@ class RequestScopedCacheQueueLifecycleTest extends TestCase
             'user_id' => $member->id,
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
         WorkspaceMembershipBusiness::create([

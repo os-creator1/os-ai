@@ -4,6 +4,7 @@ namespace Tests\Feature\AgencyProspecting;
 
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Jobs\AgencyProspectingFollowUpJob;
@@ -2309,6 +2310,7 @@ class AgencyProspectingRuntimeTest extends TestCase
             'user_id' => $user->id,
             'role' => $role->value,
             'business_access_scope' => WorkspaceBusinessAccessScope::All->value,
+            'location_access_scope' => LocationAccessScope::All->value,
             'is_active' => $isActive,
         ]);
     }

@@ -43,6 +43,7 @@
     use App\Repositories\Contracts\TemplateTagsRepository;
     use App\Repositories\Contracts\UserRepository;
     use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
+    use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
     use App\Repositories\Contracts\WorkspaceMembershipRepository;
     use App\Repositories\Contracts\WorkspaceRepository;
     use App\Repositories\Contracts\WorkspaceTransitionRepository;
@@ -80,6 +81,7 @@
     use App\Repositories\Eloquent\EloquentTemplateTagsRepository;
     use App\Repositories\Eloquent\EloquentUserRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceMembershipBusinessRepository;
+    use App\Repositories\Eloquent\EloquentWorkspaceMembershipLocationRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceMembershipRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceTransitionRepository;
@@ -188,6 +190,8 @@
                 WorkspaceRepository::class => EloquentWorkspaceRepository::class,
                 WorkspaceMembershipRepository::class => EloquentWorkspaceMembershipRepository::class,
                 WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
+                // Implementation Contract 02 (Location ACL Foundation) §12.
+                WorkspaceMembershipLocationRepository::class => EloquentWorkspaceMembershipLocationRepository::class,
                 WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanCatalogRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanCatalogPricingChangeRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogPricingChangeRepository::class,

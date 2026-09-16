@@ -3,6 +3,7 @@
 namespace App\Library\Workspace;
 
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -336,9 +337,10 @@ class WorkspaceManager
         int $memberUserId,
         WorkspaceMembershipRole $role,
         WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope,
         array $businessIds = [],
     ): WorkspaceMembership {
-        return DB::transaction(function () use ($actorUserId, $workspace, $memberUserId, $role, $scope, $businessIds) {
+        return DB::transaction(function () use ($actorUserId, $workspace, $memberUserId, $role, $scope, $locationScope, $businessIds) {
             $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
 
             if ($lockedWorkspace === null) {
@@ -384,7 +386,7 @@ class WorkspaceManager
                 throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, true);
             }
 
-            $membership = $this->membershipRepository->create($lockedWorkspace, $memberUserId, $role, $scope);
+            $membership = $this->membershipRepository->create($lockedWorkspace, $memberUserId, $role, $scope, $locationScope);
 
             if ($scope === WorkspaceBusinessAccessScope::Selected && $normalizedIds !== []) {
                 $this->membershipBusinessRepository->syncForMembership($membership, $normalizedIds);
@@ -1235,7 +1237,16 @@ class WorkspaceManager
         int $previousOwnerUserId,
     ): void {
         if ($previousMembership === null) {
-            $newMembership = $this->membershipRepository->create($workspace, $previousOwnerUserId, WorkspaceMembershipRole::Admin, $disposition->scope);
+            // Implementation Contract 02 (Location ACL Foundation) §8/§12 —
+            // a second, previously-unenumerated production caller of
+            // WorkspaceMembershipRepository::create() discovered by
+            // mechanical re-verification (the contract's own §8 inventory
+            // named only WorkspaceManager::addMember() as "the only one").
+            // All, for the same reason every other caller in this slice
+            // defaults to it: preserves this reconciled member's existing
+            // effective Location reach unchanged until Contract 08B wires
+            // real consumer-facing scope selection.
+            $newMembership = $this->membershipRepository->create($workspace, $previousOwnerUserId, WorkspaceMembershipRole::Admin, $disposition->scope, LocationAccessScope::All);
 
             if ($disposition->scope === WorkspaceBusinessAccessScope::Selected && $disposition->businessIds !== []) {
                 $this->membershipBusinessRepository->syncForMembership($newMembership, $disposition->businessIds);

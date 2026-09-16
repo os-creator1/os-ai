@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use Illuminate\Database\Eloquent\Model;
@@ -16,12 +17,17 @@ class WorkspaceMembership extends Model
         'user_id',
         'role',
         'business_access_scope',
+        // Implementation Contract 02 (Location ACL Foundation) §5 — a new,
+        // separate column on this same table, a sibling axis to
+        // business_access_scope, not a new membership-like entity.
+        'location_access_scope',
         'is_active',
     ];
 
     protected $casts = [
         'role' => WorkspaceMembershipRole::class,
         'business_access_scope' => WorkspaceBusinessAccessScope::class,
+        'location_access_scope' => LocationAccessScope::class,
         'is_active' => 'boolean',
     ];
 

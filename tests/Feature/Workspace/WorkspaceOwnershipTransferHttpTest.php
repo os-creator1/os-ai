@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\Workspace\WorkspaceTransitionType;
@@ -131,6 +132,7 @@ class WorkspaceOwnershipTransferHttpTest extends TestCase
             'user_id' => $customer->user->id,
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
 

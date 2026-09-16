@@ -846,6 +846,7 @@ class MessagingChannelsTest extends TestCase
             'user_id' => $staffCustomer->user_id,
             'role' => $role,
             'business_access_scope' => $scope,
+            'location_access_scope' => \App\Enums\Workspace\LocationAccessScope::All,
             'is_active' => true,
         ]);
     }

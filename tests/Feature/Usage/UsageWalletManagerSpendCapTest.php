@@ -93,6 +93,7 @@ class UsageWalletManagerSpendCapTest extends TestCase
             'workspace_id' => $business->workspace->id, 'user_id' => (int) $staffCustomer->user_id,
             'role' => \App\Enums\Workspace\WorkspaceMembershipRole::Staff,
             'business_access_scope' => \App\Enums\Workspace\WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => \App\Enums\Workspace\LocationAccessScope::All,
             'is_active' => true,
         ]);
 
