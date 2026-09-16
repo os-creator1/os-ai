@@ -7,6 +7,7 @@ use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\WorkspaceCandidate;
 use App\Models\Workspace;
+use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 
 /**
@@ -37,12 +38,29 @@ use App\Repositories\Contracts\WorkspaceRepository;
  * Still READ-ONLY after Slice 4: every lifecycle timestamp this class reads
  * is written by EntitlementManager's own writers (enterGracePeriod(),
  * lockForNonPayment(), recoverAccess()), never here.
+ *
+ * Contract 05 (Slice 5) — Agency non-payment composition. A Client
+ * Workspace with an ACTIVE managing Agency (Contract 01) also loses
+ * effective access while that Agency's own account is locked, inactive or
+ * suspended (Addendum §8). This is composition of two READS, never a write:
+ * neither Workspace's plan assignment and no relationship row is ever
+ * touched, so the Client's own lifecycle record keeps meaning exactly what
+ * it meant, and the moment the Agency recovers or the relationship ends,
+ * the Client's own decision is simply what resolve() returns again.
+ *
+ * Structurally one hop, never recursive: resolve() is the only method that
+ * reads the relationship, and it evaluates the Agency through
+ * resolveOwnWorkspaceDecision() — a primitive that looks at one Workspace's
+ * own row and nothing else. No method in this class can reach resolve()
+ * from resolve(), so an Agency's own management relationship (which
+ * Contract 01 never creates) could not chain even if one existed.
  */
 final class CustomerAccountAccessResolver
 {
     public function __construct(
         private readonly EntitlementManager $entitlementManager,
         private readonly WorkspaceRepository $workspaceRepository,
+        private readonly AgencyClientWorkspaceRelationshipRepository $relationshipRepository,
     ) {
     }
 
@@ -52,6 +70,14 @@ final class CustomerAccountAccessResolver
      * none — a brand-new customer who has not created an account yet). That
      * is the onboarding/workspace-creation surface's own concern, not this
      * gate's: nothing is locked for a Workspace that does not exist yet.
+     *
+     * Contract 05 §4 — the orchestrator. The Workspace's own decision first;
+     * then, only if an Active Contract 01 relationship names a managing
+     * Agency, that Agency's OWN decision (resolveOwnWorkspaceDecision(),
+     * never resolve()), composed by composeWithManagingAgency(). Without an
+     * Active relationship the Workspace's own decision is returned as is —
+     * exactly the pre-Contract-05 result, for every Workspace that exists
+     * today.
      */
     public function resolve(?Workspace $workspace): CustomerAccountAccessDecision
     {
@@ -59,6 +85,37 @@ final class CustomerAccountAccessResolver
             return CustomerAccountAccessDecision::usable();
         }
 
+        $ownDecision = $this->resolveOwnWorkspaceDecision($workspace);
+
+        $relationship = $this->relationshipRepository->findActiveForClientWorkspace((int) $workspace->id);
+
+        if ($relationship === null) {
+            return $ownDecision;
+        }
+
+        // restrictOnDelete on the relationship's foreign key keeps this
+        // non-null in practice; the fallback is Contract 05 §4's own — a
+        // missing Agency row can never lock a Client.
+        $agencyWorkspace = $this->workspaceRepository->findById((int) $relationship->agency_workspace_id);
+        $agencyDecision = $agencyWorkspace === null
+            ? CustomerAccountAccessDecision::usable()
+            : $this->resolveOwnWorkspaceDecision($agencyWorkspace);
+
+        return $this->composeWithManagingAgency($ownDecision, $agencyDecision);
+    }
+
+    /**
+     * Contract 05 §4 — the non-composing primitive: what THIS Workspace's own
+     * workspace_plan_assignments row means, and nothing upstream of it. This
+     * is Contract 03's per-Workspace truth table, moved here unchanged from
+     * resolve().
+     *
+     * It must never read an Agency relationship, never call resolve(), and
+     * never call itself — that is what makes the composition in resolve()
+     * one hop by construction rather than by a data-model assumption.
+     */
+    private function resolveOwnWorkspaceDecision(Workspace $workspace): CustomerAccountAccessDecision
+    {
         $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
 
         // An unassigned Workspace (no plan at all yet) is a distinct,
@@ -101,6 +158,61 @@ final class CustomerAccountAccessResolver
                 recoveryLabel: null,
             ),
         };
+    }
+
+    /**
+     * Contract 05 §5 — Client lifecycle × managing-Agency lifecycle.
+     *
+     * Locked if EITHER own decision is locked (a plain OR over isLocked()),
+     * with one precedence rule for what the customer is told:
+     *
+     *  - The Client's own decision, when locked, is returned UNCHANGED — the
+     *    very same object. Its own delinquency, closure or suspension is never
+     *    hidden, softened or re-worded because of the Agency's state, and no
+     *    combined reason is ever invented.
+     *  - The Client's own decision, when usable and the Agency is usable too,
+     *    is also returned unchanged — including its own Trial/Grace hints.
+     *    The Agency's hints are not the Client's to show.
+     *  - Only when the Client would otherwise be usable and the Agency is
+     *    locked is a NEW decision constructed, carrying an Agency-caused
+     *    reason.
+     */
+    private function composeWithManagingAgency(
+        CustomerAccountAccessDecision $clientDecision,
+        CustomerAccountAccessDecision $agencyDecision,
+    ): CustomerAccountAccessDecision {
+        if ($clientDecision->isLocked() || ! $agencyDecision->isLocked()) {
+            return $clientDecision;
+        }
+
+        return $this->agencyCausedDecision($agencyDecision->state);
+    }
+
+    /**
+     * The one Agency-caused lock a Client sees. Three distinct reasons, one
+     * per Agency state (Contract 05 §5), so machine consumers — Contract 09's
+     * AgencyRebill checks among them — can tell them apart.
+     *
+     * The copy is deliberately shared and neutral: it never discloses the
+     * Agency's billing details to the Client's users, and it offers no
+     * recovery route, because nothing on the Client's own billing page can
+     * fix an Agency's account — the same "never a fake pay-to-fix CTA" rule
+     * the Suspended decision follows.
+     */
+    private function agencyCausedDecision(CustomerAccountAccessState $agencyState): CustomerAccountAccessDecision
+    {
+        return new CustomerAccountAccessDecision(
+            state: CustomerAccountAccessState::Locked,
+            reason: match ($agencyState) {
+                CustomerAccountAccessState::Locked => 'agency_locked',
+                CustomerAccountAccessState::LockedInactive => 'agency_inactive',
+                CustomerAccountAccessState::LockedSuspended => 'agency_suspended',
+            },
+            heading: 'Account unavailable',
+            message: 'Access to this account is currently unavailable because of the status of the agency account that manages it. Your setup and data are saved — please contact your agency to restore access.',
+            recoveryRouteName: null,
+            recoveryLabel: null,
+        );
     }
 
     /**
