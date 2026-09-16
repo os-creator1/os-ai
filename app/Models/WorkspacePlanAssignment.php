@@ -19,6 +19,12 @@ class WorkspacePlanAssignment extends Model
         'complimentary_granted_by_user_id',
         'complimentary_granted_at',
         'additional_business_slots',
+        // Contract 03 §5 — the account lifecycle timestamps. Written only by
+        // EntitlementManager's lifecycle writers, read only through
+        // getWorkspaceEntitlementSummary().
+        'trial_ends_at',
+        'grace_started_at',
+        'locked_at',
     ];
 
     protected $casts = [
@@ -26,6 +32,9 @@ class WorkspacePlanAssignment extends Model
         'is_complimentary' => 'boolean',
         'complimentary_granted_at' => 'datetime',
         'additional_business_slots' => 'integer',
+        'trial_ends_at' => 'datetime',
+        'grace_started_at' => 'datetime',
+        'locked_at' => 'datetime',
     ];
 
     public function workspace(): BelongsTo

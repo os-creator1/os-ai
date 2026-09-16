@@ -35,4 +35,16 @@ enum WorkspaceEntitlementTransitionType: string
      * location (which consumes that allowance rather than freeing it).
      */
     case CapacityGrandfathered = 'capacity_grandfathered';
+
+    /**
+     * Contract 03 §5/§10 (Slice 4) — the account lifecycle's three durable
+     * facts. The base `status` does not change for any of them (it stays
+     * Active); what changes is which lifecycle timestamp the assignment row
+     * carries, so these rows are the audit trail for Grace/Locked/recovery.
+     */
+    case GraceStarted = 'grace_started';
+
+    case AccountLocked = 'account_locked';
+
+    case AccessRestored = 'access_restored';
 }
