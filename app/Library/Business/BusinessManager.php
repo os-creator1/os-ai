@@ -13,6 +13,7 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Customer;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
@@ -69,6 +70,62 @@ class BusinessManager
         }
 
         return $outcome['business'];
+    }
+
+    /**
+     * Implementation Contract 07 §4(b)/§12 — the smallest safe seam for
+     * creating a Business at the moment a real Customer/Workspace already
+     * exist but no session-scoped onboarding state does (Agency-initiated
+     * client provisioning, AgencyClientProvisioningManager::accept()).
+     *
+     * WHY NOT createOrUpdateOnboardingBusiness()/applyIdentity(): that
+     * method's CREATE branch calls
+     * WorkspaceManager::resolveLegacyOnboardingWorkspace() — the exact
+     * "reuse an existing owner's Workspace" behavior Contract 07 forbids
+     * reviving — and gates on
+     * EntitlementManager::assertCanCreateAnotherBusiness(), which throws
+     * WorkspacePlanUnassignedException for any Workspace with no plan
+     * assigned yet (mechanically confirmed:
+     * decideBusinessSlotCapacity() has no "first Business is free"
+     * exemption the way evaluateLocationCapacity() does for its first
+     * Location). A freshly-provisioned Client Workspace has no plan by
+     * design (Contract 07 §11 — no billing in this slice), so calling
+     * that gate here would make every acceptance fail. This method
+     * therefore goes straight to the same
+     * BusinessRepository::createForCustomerInWorkspace() write
+     * applyIdentity()'s CREATE branch itself ultimately calls, skipping
+     * only the legacy-Workspace-resolution and entitlement-gating steps
+     * that do not apply to a brand-new, not-yet-entitled Workspace —
+     * not a rewrite of Business-creation policy, the same one write with
+     * two preconditions that cannot fire here removed.
+     *
+     * Preserves BusinessCreated's exact existing dispatch shape
+     * (businessId, customer.user_id), so every existing listener (B4
+     * Automations, etc.) sees this Business exactly like any organically
+     * created one.
+     */
+    public function createBusinessForNewWorkspace(Customer $customer, Workspace $workspace, array $attributes): Business
+    {
+        $normalizedAttributes = $attributes;
+
+        foreach (self::URL_FIELDS as $field) {
+            if (array_key_exists($field, $normalizedAttributes)) {
+                $normalizedAttributes[$field] = $this->urlNormalizer->normalize($normalizedAttributes[$field]);
+            }
+        }
+
+        return DB::transaction(function () use ($customer, $workspace, $normalizedAttributes) {
+            $business = $this->businessRepository->createForCustomerInWorkspace($customer, $workspace, $normalizedAttributes);
+
+            if (array_key_exists('website_url', $normalizedAttributes)) {
+                $canonicalDomain = $this->urlNormalizer->canonicalDomain($normalizedAttributes['website_url']);
+                $business = $this->businessRepository->updateCanonicalDomain($business, $canonicalDomain);
+            }
+
+            BusinessCreated::dispatch($business->id, $customer->user_id);
+
+            return $business;
+        });
     }
 
     /**

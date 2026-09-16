@@ -49,6 +49,17 @@
     Route::post('/pusher/auth', [PusherController::class, 'pusherAuth'])
         ->middleware('auth')->name('pusher.auth');
 
+    // Implementation Contract 07 §5/§12 — the recipient side of an
+    // Agency client invitation. GET is safe/side-effect-free and
+    // reachable unauthenticated on purpose (it renders the generic
+    // sign-in/create-account screen for a guest, per §5's
+    // existence-disclosure discipline); only POST accept performs any
+    // write, and requires authentication.
+    Route::get('client-invitations/{uid}/{token}', [\App\Http\Controllers\ClientInvitationClaimController::class, 'show'])
+        ->name('client-invitations.claim');
+    Route::post('client-invitations/{uid}/{token}/accept', [\App\Http\Controllers\ClientInvitationClaimController::class, 'accept'])
+        ->middleware('auth')->name('client-invitations.accept');
+
     // Security Remediation Slice 0 §16.A.1 (D-24) — the five unauthenticated
     // GET routes formerly registered here (add-gateways, remove-jobs,
     // remove-contacts, cache-clear, update-campaign-cache/{campaign}/{number})

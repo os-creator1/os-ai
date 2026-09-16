@@ -136,6 +136,11 @@ final class ViewAsRouteClassification
         'customer.gbp.oauth.',
         'user.callback.',
         'user.registers.',
+        // Implementation Contract 07 §12 — Agency-side client-workspace
+        // provisioning is a Workspace/Agency-frame action unrelated to any
+        // viewed Business, and never itself business-scoped; denied while
+        // viewing exactly like the other Workspace-frame routes above.
+        'client-invitations.',
     ];
 
     /** Controller actions of denied routes registered without a name. */
