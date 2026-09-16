@@ -528,6 +528,25 @@
             'category'     => 'Workspace',
         ],
 
+        /*
+         * Agency Relationships Module (V1 Implementation Contract 01 §6).
+         *
+         * The dedicated admin-side authority to terminate an Agency<->Client
+         * Workspace management relationship on the platform's behalf —
+         * Addendum §2's second owner-only exception.
+         *
+         * This is deliberately its own Role permission rather than a bare
+         * is_admin check: this repository has no graduated Platform Owner
+         * vs. Platform Administrator distinction, and treating every
+         * admin-panel account as the Platform Owner would admit
+         * narrowly-scoped support roles to an act reserved to the owner.
+         * Granting it is an explicit Role decision.
+         */
+        'manage agency relationships' => [
+            'display_name' => 'update',
+            'category'     => 'Agency Relationships',
+        ],
+
         // Workspace Plans Module (RFC-004 Milestone 3)
         'view workspace plans' => [
             'display_name' => 'read',

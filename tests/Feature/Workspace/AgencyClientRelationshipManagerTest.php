@@ -1,0 +1,781 @@
+<?php
+
+namespace Tests\Feature\Workspace;
+
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\AgencyClientRelationshipStatus;
+use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Events\Workspace\AgencyClientRelationshipEstablished;
+use App\Events\Workspace\AgencyClientRelationshipTerminated;
+use App\Exceptions\Workspace\AgencyClientSelfLinkException;
+use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
+use App\Exceptions\Workspace\ClientWorkspaceAlreadyManagedException;
+use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
+use App\Exceptions\Workspace\WorkspaceNotFoundException;
+use App\Library\Workspace\AgencyClientRelationshipManager;
+use App\Models\AgencyClientWorkspaceRelationship;
+use App\Models\Role;
+use App\Models\User;
+use App\Models\Workspace;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\QueryException;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
+use Tests\TestCase;
+
+/**
+ * V1 Implementation Contract 01 §13 — the Agency<->Client Workspace
+ * relationship foundation.
+ *
+ * Every authority case in §6's matrix is asserted individually, including the
+ * ones that must FAIL, because this slice's whole value is the authority it
+ * refuses: the relationship itself does nothing yet, so a silent
+ * over-permission here would surface only later, as a cross-tenant hole in
+ * Contract 04's View As.
+ *
+ * Real concurrency (two connections racing for the same Client Workspace)
+ * cannot live in this class: it needs committed rows, which RefreshDatabase's
+ * open transaction hides from any other connection. It has its own file,
+ * AgencyClientRelationshipConcurrencyTest, the same split
+ * WorkspaceManagerTest / WorkspaceManagerConcurrencyTest already use.
+ */
+class AgencyClientRelationshipManagerTest extends TestCase
+{
+    use CreatesCustomerContextFixtures;
+    use RefreshDatabase;
+
+    private const ALL_RELATIONSHIP_EVENTS = [
+        AgencyClientRelationshipEstablished::class,
+        AgencyClientRelationshipTerminated::class,
+    ];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Burns user id 1 on the platform administrator before any actor
+        // exists: EloquentAccountRepository::hasPermission() short-circuits
+        // that id to "every permission", which would quietly invalidate
+        // every denial asserted below.
+        $this->platformAdminId();
+    }
+
+    private function manager(): AgencyClientRelationshipManager
+    {
+        return app(AgencyClientRelationshipManager::class);
+    }
+
+    /**
+     * A Workspace on the Agency tier, plus its owner.
+     *
+     * @return array{0: Workspace, 1: User}
+     */
+    private function agency(string $name = 'Northwind Agency'): array
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => $name]);
+        $this->assignTier($workspace, WorkspacePlanTier::Agency);
+
+        return [$workspace->fresh(), $customer->user];
+    }
+
+    /**
+     * An ordinary customer Workspace, plus its owner. Tier is assigned only
+     * when asked for — an unassigned Workspace is a real state, and the
+     * client side of this relationship has no tier requirement at all.
+     *
+     * @return array{0: Workspace, 1: User}
+     */
+    private function workspaceOn(?WorkspacePlanTier $tier = null, string $name = 'Alpha Dental'): array
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => $name]);
+
+        if ($tier !== null) {
+            $this->assignTier($workspace, $tier);
+        }
+
+        return [$workspace->fresh(), $customer->user];
+    }
+
+    /**
+     * A customer User who is an active (or deliberately inactive) member of
+     * $workspace, holding exactly $permissions on the customer side.
+     *
+     * @param  array<int, string>  $permissions
+     */
+    private function memberOf(
+        Workspace $workspace,
+        WorkspaceMembershipRole $role,
+        array $permissions = [],
+        bool $active = true,
+    ): User {
+        $customer = $this->createCustomer();
+        $customer->permissions = json_encode($permissions);
+        $customer->save();
+
+        $this->createMembership($workspace, $customer->user, [
+            'role' => $role,
+            'is_active' => $active,
+        ]);
+
+        return $customer->user->fresh();
+    }
+
+    /**
+     * An admin-panel User, optionally holding the dedicated admin-side
+     * termination Role permission. Never user id 1, so the assertion is
+     * about the Role permission and nothing else.
+     */
+    private function adminPanelUser(bool $withTerminationPermission): User
+    {
+        $user = User::create([
+            'first_name' => 'Support',
+            'last_name' => 'Staff',
+            'email' => 'admin-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+
+        $role = Role::create(['name' => 'role-' . uniqid('', true), 'status' => 1]);
+        $role->permissions()->create(['name' => 'view workspace']);
+
+        if ($withTerminationPermission) {
+            $role->permissions()->create(['name' => AgencyClientRelationshipManager::ADMIN_TERMINATE_PERMISSION]);
+        }
+
+        $user->roles()->attach($role->id);
+
+        return $user->fresh();
+    }
+
+    /** A customer User owning nothing relevant, holding the management permission anyway. */
+    private function outsiderHoldingThePermission(): User
+    {
+        $customer = $this->createCustomer();
+        $customer->permissions = json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $customer->save();
+
+        return $customer->user->fresh();
+    }
+
+    private function established(?Workspace $agency = null, ?User $owner = null, ?Workspace $client = null): AgencyClientWorkspaceRelationship
+    {
+        if ($agency === null || $owner === null) {
+            [$agency, $owner] = $this->agency();
+        }
+
+        $client ??= $this->workspaceOn()[0];
+
+        return $this->manager()->create((int) $owner->id, $agency, $client);
+    }
+
+    // ------------------------------------------------------------------
+    // Happy path
+    // ------------------------------------------------------------------
+
+    public function test_the_agency_owner_establishes_an_active_relationship_with_a_real_audit_trail(): void
+    {
+        Event::fake(self::ALL_RELATIONSHIP_EVENTS);
+
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn(WorkspacePlanTier::Core);
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $this->assertSame((int) $agency->id, (int) $relationship->agency_workspace_id);
+        $this->assertSame((int) $client->id, (int) $relationship->client_workspace_id);
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $relationship->status);
+        $this->assertSame((int) $agencyOwner->id, (int) $relationship->established_by_user_id);
+        $this->assertNotNull($relationship->established_at);
+        $this->assertNull($relationship->terminated_by_user_id);
+        $this->assertNull($relationship->terminated_at);
+        $this->assertNull($relationship->termination_reason);
+        $this->assertTrue(Str::isUuid((string) $relationship->uid));
+
+        $this->assertSame(1, DB::table('agency_client_workspace_relationships')->count());
+
+        Event::assertDispatched(AgencyClientRelationshipEstablished::class, 1);
+        Event::assertDispatched(
+            AgencyClientRelationshipEstablished::class,
+            fn (AgencyClientRelationshipEstablished $event): bool => $event->relationshipId === (int) $relationship->id
+                && $event->agencyWorkspaceId === (int) $agency->id
+                && $event->clientWorkspaceId === (int) $client->id
+                && $event->actorUserId === (int) $agencyOwner->id,
+        );
+    }
+
+    public function test_one_agency_may_manage_many_client_workspaces(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$first] = $this->workspaceOn(null, 'First Client');
+        [$second] = $this->workspaceOn(null, 'Second Client');
+
+        $this->manager()->create((int) $agencyOwner->id, $agency, $first);
+        $this->manager()->create((int) $agencyOwner->id, $agency, $second);
+
+        $active = $this->manager()->findActiveForAgencyWorkspace((int) $agency->id);
+
+        $this->assertCount(2, $active);
+        $this->assertEqualsCanonicalizing(
+            [(int) $first->id, (int) $second->id],
+            $active->map(fn ($row) => (int) $row->client_workspace_id)->all(),
+        );
+    }
+
+    /** Blueprint §2 as corrected: an Agency team member, not only the owner. */
+    public function test_an_agency_admin_or_staff_member_holding_the_permission_may_establish_a_relationship(): void
+    {
+        foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
+            [$agency] = $this->agency('Agency for ' . $role->value);
+            [$client] = $this->workspaceOn(null, 'Client for ' . $role->value);
+
+            $member = $this->memberOf($agency, $role, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+
+            $relationship = $this->manager()->create((int) $member->id, $agency, $client);
+
+            $this->assertSame(AgencyClientRelationshipStatus::Active, $relationship->status);
+            $this->assertSame((int) $member->id, (int) $relationship->established_by_user_id);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Authority matrix — creation (Contract 01 §6)
+    // ------------------------------------------------------------------
+
+    public function test_an_agency_member_without_the_permission_cannot_establish_a_relationship(): void
+    {
+        foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
+            [$agency] = $this->agency('Agency for bare ' . $role->value);
+            [$client] = $this->workspaceOn(null, 'Client for bare ' . $role->value);
+
+            $member = $this->memberOf($agency, $role);
+
+            $this->assertRefusesToCreate($member, $agency, $client);
+        }
+    }
+
+    public function test_an_inactive_agency_member_holding_the_permission_cannot_establish_a_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $member = $this->memberOf(
+            $agency,
+            WorkspaceMembershipRole::Admin,
+            [AgencyClientRelationshipManager::MANAGE_PERMISSION],
+            active: false,
+        );
+
+        $this->assertRefusesToCreate($member, $agency, $client);
+    }
+
+    public function test_the_client_workspace_owner_cannot_establish_the_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client, $clientOwner] = $this->workspaceOn();
+
+        $clientOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
+
+        $this->assertRefusesToCreate($clientOwner, $agency, $client);
+    }
+
+    /**
+     * Addendum §2's own sentence, asserted: Agency authority is never
+     * inferred from ordinary membership in the CLIENT Workspace. This actor
+     * is an active Admin of the client, holding the management permission,
+     * and is still nobody on the Agency side.
+     */
+    public function test_membership_in_the_client_workspace_grants_no_agency_authority(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $clientAdmin = $this->memberOf(
+            $client,
+            WorkspaceMembershipRole::Admin,
+            [AgencyClientRelationshipManager::MANAGE_PERMISSION],
+        );
+
+        $this->assertRefusesToCreate($clientAdmin, $agency, $client);
+    }
+
+    public function test_an_unrelated_third_workspace_owner_cannot_establish_a_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $this->assertRefusesToCreate($this->outsiderHoldingThePermission(), $agency, $client);
+    }
+
+    /**
+     * Addendum §10's posture — an administrator never originates on a
+     * customer's behalf — applied symmetrically to creation, including for
+     * the admin who may legitimately TERMINATE one.
+     */
+    public function test_no_admin_panel_user_may_ever_establish_a_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $this->assertRefusesToCreate($this->adminPanelUser(withTerminationPermission: false), $agency, $client);
+        $this->assertRefusesToCreate($this->adminPanelUser(withTerminationPermission: true), $agency, $client);
+    }
+
+    // ------------------------------------------------------------------
+    // Adversarial creation
+    // ------------------------------------------------------------------
+
+    public function test_a_workspace_cannot_be_established_as_the_managing_agency_of_itself(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+
+        $this->expectException(AgencyClientSelfLinkException::class);
+
+        try {
+            $this->manager()->create((int) $agencyOwner->id, $agency, $agency);
+        } finally {
+            $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+        }
+    }
+
+    public function test_an_already_managed_client_workspace_cannot_be_claimed_by_a_second_agency(): void
+    {
+        [$firstAgency, $firstOwner] = $this->agency('First Agency');
+        [$secondAgency, $secondOwner] = $this->agency('Second Agency');
+        [$client] = $this->workspaceOn();
+
+        $this->manager()->create((int) $firstOwner->id, $firstAgency, $client);
+
+        try {
+            $this->manager()->create((int) $secondOwner->id, $secondAgency, $client);
+            $this->fail('A second Agency must not be able to manage an already-managed Client Workspace.');
+        } catch (ClientWorkspaceAlreadyManagedException $e) {
+            $this->assertSame((int) $client->id, $e->clientWorkspaceId);
+            $this->assertSame((int) $firstAgency->id, $e->existingAgencyWorkspaceId);
+        }
+
+        $this->assertSame(1, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    /** The same Agency re-running the same action is not silently idempotent either. */
+    public function test_the_same_agency_cannot_establish_the_same_relationship_twice(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $this->expectException(ClientWorkspaceAlreadyManagedException::class);
+
+        try {
+            $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+        } finally {
+            $this->assertSame(1, DB::table('agency_client_workspace_relationships')->count());
+        }
+    }
+
+    public function test_a_workspace_that_is_not_on_the_agency_tier_cannot_manage_a_client(): void
+    {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, null] as $tier) {
+            [$notAnAgency, $owner] = $this->workspaceOn($tier, 'Pretender ' . ($tier?->value ?? 'unassigned'));
+            [$client] = $this->workspaceOn(null, 'Client of ' . ($tier?->value ?? 'unassigned'));
+
+            try {
+                $this->manager()->create((int) $owner->id, $notAnAgency, $client);
+                $this->fail('A ' . ($tier?->value ?? 'plan-less') . ' Workspace must not be able to manage a Client Workspace.');
+            } catch (AgencyWorkspaceNotEligibleException $e) {
+                $this->assertSame((int) $notAnAgency->id, $e->workspaceId);
+                $this->assertSame($tier?->value, $e->tier);
+            }
+        }
+
+        $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    /**
+     * Authority is asserted before entitlement, so an actor who may not
+     * manage this Agency never learns anything about its plan.
+     */
+    public function test_authority_is_refused_before_the_plan_tier_is_ever_considered(): void
+    {
+        [$notAnAgency] = $this->workspaceOn(WorkspacePlanTier::Core, 'Core Workspace');
+        [$client] = $this->workspaceOn();
+
+        $this->assertRefusesToCreate($this->outsiderHoldingThePermission(), $notAnAgency, $client);
+    }
+
+    public function test_a_missing_workspace_is_refused_rather_than_linked(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+
+        $vanished = new Workspace();
+        $vanished->id = 99_999_999;
+
+        $this->expectException(WorkspaceNotFoundException::class);
+
+        try {
+            $this->manager()->create((int) $agencyOwner->id, $agency, $vanished);
+        } finally {
+            $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+        }
+    }
+
+    /**
+     * The database's own backstop, independent of the manager: the
+     * generated-column unique index refuses a second ACTIVE row for one
+     * Client Workspace even when the domain layer is bypassed entirely.
+     */
+    public function test_the_database_itself_refuses_a_second_active_row_for_the_same_client(): void
+    {
+        [$agency, $agencyOwner] = $this->agency('First Agency');
+        [$otherAgency] = $this->agency('Second Agency');
+        [$client] = $this->workspaceOn();
+
+        $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $this->expectException(QueryException::class);
+
+        DB::table('agency_client_workspace_relationships')->insert([
+            'uid' => (string) Str::uuid(),
+            'agency_workspace_id' => $otherAgency->id,
+            'client_workspace_id' => $client->id,
+            'status' => AgencyClientRelationshipStatus::Active->value,
+            'established_by_user_id' => $agencyOwner->id,
+            'established_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /** ...while placing no limit at all on how much terminated history one client accumulates. */
+    public function test_the_database_allows_many_terminated_rows_for_the_same_client(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        foreach (range(1, 3) as $round) {
+            $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+            $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'Round ' . $round . ' ended.');
+        }
+
+        $this->assertSame(3, DB::table('agency_client_workspace_relationships')->where('client_workspace_id', $client->id)->count());
+        $this->assertNull($this->manager()->findActiveForClientWorkspace((int) $client->id));
+    }
+
+    /**
+     * Contract 01 §7 fixes the lock order, and the order is the whole
+     * mechanism: both Workspace rows are locked, ascending by id, BEFORE the
+     * duplicate check reads the relationships table — otherwise two racers
+     * could both pass that check and one would be stopped only by the raw
+     * unique index. Asserted structurally because the outcome alone cannot
+     * distinguish it: the foreign keys take parent-row locks of their own at
+     * insert time, which mask a missing explicit lock in most interleavings.
+     */
+    public function test_both_workspace_rows_are_locked_in_ascending_id_order_before_the_duplicate_check(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $locking = [];
+
+        DB::listen(function ($query) use (&$locking): void {
+            if (! str_contains(strtolower($query->sql), 'for update')) {
+                return;
+            }
+
+            $locking[] = ['sql' => strtolower($query->sql), 'bindings' => $query->bindings];
+        });
+
+        $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $this->assertGreaterThanOrEqual(3, count($locking), 'Expected two Workspace row locks and one locking relationship read.');
+
+        $this->assertStringContainsString('from `workspaces`', $locking[0]['sql']);
+        $this->assertStringContainsString('from `workspaces`', $locking[1]['sql']);
+        $this->assertStringContainsString('from `agency_client_workspace_relationships`', $locking[2]['sql']);
+
+        $lockedIds = [(int) $locking[0]['bindings'][0], (int) $locking[1]['bindings'][0]];
+
+        $this->assertSame($lockedIds, collect($lockedIds)->sort()->values()->all(), 'The two Workspace rows must be locked in ascending id order.');
+        $this->assertEqualsCanonicalizing([(int) $agency->id, (int) $client->id], $lockedIds);
+    }
+
+    // ------------------------------------------------------------------
+    // Termination (Contract 01 §6 — strictly narrower than management)
+    // ------------------------------------------------------------------
+
+    public function test_the_agency_owner_terminates_and_the_row_becomes_history(): void
+    {
+        Event::fake(self::ALL_RELATIONSHIP_EVENTS);
+
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+        $terminated = $this->manager()->terminate((int) $agencyOwner->id, $relationship, '  Client moved in-house.  ');
+
+        $this->assertSame(AgencyClientRelationshipStatus::Terminated, $terminated->status);
+        $this->assertSame((int) $agencyOwner->id, (int) $terminated->terminated_by_user_id);
+        $this->assertNotNull($terminated->terminated_at);
+        $this->assertSame('Client moved in-house.', $terminated->termination_reason);
+
+        // The establishment audit survives its own termination.
+        $this->assertSame((int) $agencyOwner->id, (int) $terminated->established_by_user_id);
+        $this->assertNotNull($terminated->established_at);
+
+        Event::assertDispatched(AgencyClientRelationshipTerminated::class, 1);
+        Event::assertDispatched(
+            AgencyClientRelationshipTerminated::class,
+            fn (AgencyClientRelationshipTerminated $event): bool => $event->relationshipId === (int) $relationship->id
+                && $event->agencyWorkspaceId === (int) $agency->id
+                && $event->clientWorkspaceId === (int) $client->id
+                && $event->actorUserId === (int) $agencyOwner->id
+                && $event->reason === 'Client moved in-house.',
+        );
+    }
+
+    public function test_an_admin_panel_actor_holding_the_dedicated_permission_may_terminate(): void
+    {
+        $relationship = $this->established();
+        $platform = $this->adminPanelUser(withTerminationPermission: true);
+
+        $terminated = $this->manager()->terminate((int) $platform->id, $relationship, 'Platform intervention.');
+
+        $this->assertSame(AgencyClientRelationshipStatus::Terminated, $terminated->status);
+        $this->assertSame((int) $platform->id, (int) $terminated->terminated_by_user_id);
+    }
+
+    /**
+     * The whole point of the dedicated permission: an admin-panel account
+     * with other admin permissions is not the Platform Owner.
+     */
+    public function test_an_admin_panel_actor_without_the_dedicated_permission_cannot_terminate(): void
+    {
+        $relationship = $this->established();
+
+        $this->assertRefusesToTerminate($this->adminPanelUser(withTerminationPermission: false), $relationship);
+    }
+
+    public function test_no_agency_team_member_may_terminate_however_permitted(): void
+    {
+        foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
+            [$agency, $agencyOwner] = $this->agency('Agency for terminating ' . $role->value);
+            [$client] = $this->workspaceOn(null, 'Client for terminating ' . $role->value);
+
+            $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+            $member = $this->memberOf($agency, $role, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+
+            $this->assertRefusesToTerminate($member, $relationship);
+        }
+    }
+
+    public function test_the_client_workspace_cannot_remove_its_own_managing_relationship(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client, $clientOwner] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $clientOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
+        $this->assertRefusesToTerminate($clientOwner, $relationship);
+
+        $clientAdmin = $this->memberOf($client, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $this->assertRefusesToTerminate($clientAdmin, $relationship);
+    }
+
+    public function test_an_unrelated_third_workspace_owner_cannot_terminate(): void
+    {
+        $relationship = $this->established();
+
+        $this->assertRefusesToTerminate($this->outsiderHoldingThePermission(), $relationship);
+    }
+
+    public function test_termination_requires_a_reason(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        try {
+            $this->manager()->terminate((int) $agencyOwner->id, $relationship, '   ');
+        } finally {
+            $this->assertSame(
+                AgencyClientRelationshipStatus::Active,
+                $this->manager()->findActiveForClientWorkspace((int) $client->id)?->status,
+            );
+        }
+    }
+
+    public function test_a_relationship_that_does_not_exist_cannot_be_terminated(): void
+    {
+        [$agency] = $this->agency();
+
+        $phantom = new AgencyClientWorkspaceRelationship();
+        $phantom->id = 99_999_999;
+        $phantom->agency_workspace_id = $agency->id;
+
+        $this->expectException(ModelNotFoundException::class);
+
+        $this->manager()->terminate((int) $agency->owner_user_id, $phantom, 'Nothing to end.');
+    }
+
+    /**
+     * WorkspaceManager::deactivateWorkspace()'s precedent: the duplicate
+     * transition is an authorized no-op, and the original audit is never
+     * overwritten by the second caller.
+     */
+    public function test_terminating_an_already_terminated_relationship_is_an_authorized_no_op(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+        $first = $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'First and only reason.');
+
+        $platform = $this->adminPanelUser(withTerminationPermission: true);
+        $second = $this->manager()->terminate((int) $platform->id, $first, 'A different, later reason.');
+
+        $this->assertSame('First and only reason.', $second->termination_reason);
+        $this->assertSame((int) $agencyOwner->id, (int) $second->terminated_by_user_id);
+        $this->assertEquals($first->terminated_at, $second->terminated_at);
+    }
+
+    public function test_an_unauthorized_actor_is_still_refused_on_an_already_terminated_relationship(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+        $terminated = $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'Ended.');
+
+        $this->assertRefusesToTerminate($this->outsiderHoldingThePermission(), $terminated);
+    }
+
+    // ------------------------------------------------------------------
+    // History (Addendum §2 — never hard-deleted)
+    // ------------------------------------------------------------------
+
+    public function test_a_terminated_relationship_leaves_the_active_lookups_but_stays_queryable(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+        $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'Ended.');
+
+        $this->assertNull($this->manager()->findActiveForClientWorkspace((int) $client->id));
+        $this->assertCount(0, $this->manager()->findActiveForAgencyWorkspace((int) $agency->id));
+
+        $history = $this->manager()->historyForClientWorkspace((int) $client->id);
+
+        $this->assertCount(1, $history);
+        $this->assertSame((int) $relationship->id, (int) $history->first()->id);
+        $this->assertSame(AgencyClientRelationshipStatus::Terminated, $history->first()->status);
+        $this->assertSame(1, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    public function test_history_distinguishes_a_previously_managed_client_from_one_never_managed(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$previouslyManaged] = $this->workspaceOn(null, 'Former Client');
+        [$neverManaged] = $this->workspaceOn(null, 'Stranger');
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $previouslyManaged);
+        $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'Ended.');
+
+        $this->assertCount(1, $this->manager()->historyForClientWorkspace((int) $previouslyManaged->id));
+        $this->assertCount(0, $this->manager()->historyForClientWorkspace((int) $neverManaged->id));
+
+        $this->assertNull($this->manager()->findActiveForClientWorkspace((int) $previouslyManaged->id));
+        $this->assertNull($this->manager()->findActiveForClientWorkspace((int) $neverManaged->id));
+    }
+
+    public function test_after_termination_a_different_agency_may_manage_the_same_client(): void
+    {
+        [$firstAgency, $firstOwner] = $this->agency('First Agency');
+        [$secondAgency, $secondOwner] = $this->agency('Second Agency');
+        [$client] = $this->workspaceOn();
+
+        $first = $this->manager()->create((int) $firstOwner->id, $firstAgency, $client);
+        $this->manager()->terminate((int) $firstOwner->id, $first, 'Client changed agencies.');
+
+        $second = $this->manager()->create((int) $secondOwner->id, $secondAgency, $client);
+
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $second->status);
+        $this->assertSame((int) $secondAgency->id, (int) $this->manager()->findActiveForClientWorkspace((int) $client->id)?->agency_workspace_id);
+        $this->assertCount(2, $this->manager()->historyForClientWorkspace((int) $client->id));
+    }
+
+    /**
+     * Contract 01 §6's explicit rule: the row is the LINK, not proof of a
+     * currently-true entitlement. A downgrade after the fact leaves it
+     * standing, and this slice adds no downgrade-triggered termination.
+     */
+    public function test_an_active_relationship_survives_the_agencys_own_downgrade(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+
+        DB::table('workspace_plan_assignments')
+            ->where('workspace_id', $agency->id)
+            ->update([
+                'workspace_plan_catalog_id' => DB::table('workspace_plan_catalog')->where('tier', WorkspacePlanTier::Core->value)->value('id'),
+            ]);
+
+        $stillActive = $this->manager()->findActiveForClientWorkspace((int) $client->id);
+
+        $this->assertNotNull($stillActive);
+        $this->assertSame((int) $relationship->id, (int) $stillActive->id);
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $stillActive->status);
+    }
+
+    // ------------------------------------------------------------------
+
+    private function assertRefusesToCreate(User $actor, Workspace $agency, Workspace $client): void
+    {
+        $before = DB::table('agency_client_workspace_relationships')->count();
+
+        try {
+            $this->manager()->create((int) $actor->id, $agency, $client);
+            $this->fail('User [' . $actor->id . '] must not be able to establish an Agency client relationship.');
+        } catch (UnauthorizedAgencyRelationshipManagementException $e) {
+            $this->assertSame((int) $actor->id, $e->actorUserId);
+            $this->assertSame((int) $agency->id, $e->agencyWorkspaceId);
+        }
+
+        $this->assertSame($before, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    private function assertRefusesToTerminate(User $actor, AgencyClientWorkspaceRelationship $relationship): void
+    {
+        $before = DB::table('agency_client_workspace_relationships')
+            ->where('id', $relationship->id)
+            ->first();
+
+        try {
+            $this->manager()->terminate((int) $actor->id, $relationship, 'Attempted termination.');
+            $this->fail('User [' . $actor->id . '] must not be able to terminate an Agency client relationship.');
+        } catch (UnauthorizedAgencyRelationshipManagementException $e) {
+            $this->assertSame((int) $actor->id, $e->actorUserId);
+            $this->assertSame((int) $relationship->agency_workspace_id, $e->agencyWorkspaceId);
+        }
+
+        $after = DB::table('agency_client_workspace_relationships')->where('id', $relationship->id)->first();
+
+        $this->assertSame($before->status, $after->status);
+        $this->assertSame($before->terminated_by_user_id, $after->terminated_by_user_id);
+        $this->assertSame($before->termination_reason, $after->termination_reason);
+    }
+}
