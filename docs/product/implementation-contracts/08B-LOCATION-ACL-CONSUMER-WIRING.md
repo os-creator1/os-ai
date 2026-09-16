@@ -1,4 +1,4 @@
-# Implementation Contract 08B — Location ACL Consumer Wiring
+# Implementation Contract 08B — First Location ACL Consumer Wave
 
 **Status:** Planning contract only. Does not authorize implementation.
 Depends on Contract 02 (Location ACL foundation) and, per this contract's
@@ -8,14 +8,28 @@ must add for Contacts and Opportunities — see §3's inventory before
 assuming the Roadmap's original four-resource scope is achievable as
 written.
 
+**Renamed from "Location ACL Consumer Wiring" to "First Location ACL
+Consumer Wave"** (this remediation) — the original title implied this
+contract covers every Location-bound controller in the product; §3's own
+inventory proves it covers exactly four resources
+(Conversations/Contacts/Opportunities via two controllers) and explicitly
+defers an entire family of eleven further controllers
+(`ResolvesBusinessTenancy` consumers: Automations, Website, GBP, Messaging
+Channels, Outreach, and others). This is the **first** wave of Location
+ACL adoption, not the complete rollout — §15/the Roadmap gate below name
+what remains.
+
 ## 1. Objective
 
-Wire Contract 02's `LocationAccessGuard` into every Location-bound
-controller — but **first**, per the required deep-dive, inventory every
-such controller/route and prove, resource by resource, whether the
-underlying record even carries a `location_id` to check yet. **Finding,
-stated up front:** it does not, for two of the Roadmap's four named
-resources.
+Wire Contract 02's `LocationAccessGuard` into the **first wave** of
+Location-bound controllers — but **first**, per the required deep-dive,
+inventory every such controller/route and prove, resource by resource,
+whether the underlying record even carries a `location_id` to check yet.
+**Finding, stated up front:** it does not, for two of the Roadmap's four
+originally-named resources. **This contract's scope is bounded to exactly
+what §3's inventory mechanically supports** — it does not claim, and must
+not be read as claiming, coverage of every Location-bound module in the
+product.
 
 ## 2. Governing authority
 
@@ -243,6 +257,20 @@ Channels, or any other Family-A resource — explicitly deferred (§3), not
 silently included. Does not add a Location column to
 `BusinessMessagingNumber` (same gap Contract 06 already flagged, not
 re-solved here). Does not implement Calendar/Booking (doesn't exist).
+**Does not generate the follow-on contract(s) for those remaining
+resources** — this remediation task explicitly excludes creating
+additional V1 feature contracts; the roadmap gate immediately below
+records the requirement without producing the work itself.
+
+**Roadmap gate (required by this remediation, recorded here and to be
+reflected in the Roadmap/Index per item 10):** V1 Location isolation is
+**not complete** once this contract's wave lands. Every Family-A
+resource §3 lists (Automations, Website, GBP, Messaging Channels,
+Outreach, and the remaining `ResolvesBusinessTenancy` consumers not yet
+audited for Location-bearing data) still needs its own Location
+ownership model and its own Location ACL wiring pass, each following the
+same "inventory before wiring" discipline this contract demonstrates, in
+a follow-on wave not produced by this task.
 
 ## 16. Merge prerequisites
 

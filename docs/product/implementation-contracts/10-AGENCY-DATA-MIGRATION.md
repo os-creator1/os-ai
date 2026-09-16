@@ -57,14 +57,42 @@ not assumed:
 
 ## 4. Delta from current state to target
 
-For each Business being migrated, in one transaction (§7):
+**Corrected step order (this remediation) — two bugs fixed from the
+original draft:**
+
+1. **Bug fixed: capacity-check ordering.** `WorkspaceManager::
+   reassignBusiness()` internally calls `EntitlementManager::
+   assertCanCreateAnotherBusiness($lockedTargetWorkspace)` (confirmed by
+   direct read, line ~1021), which **throws `WorkspacePlanUnassignedException`**
+   (confirmed via `assertCanCreateAnotherBusiness()`'s own `match` on
+   `decideBusinessSlotCapacity()`'s denial reasons) if the target Workspace
+   has no plan assignment yet. A bare `createWorkspace()` call produces
+   exactly such an unassigned Workspace. Calling `reassignBusiness()`
+   immediately after `createWorkspace()` — the original draft's step
+   order — would **fail every single migration attempt** with this
+   exception. **Plan assignment must happen between Workspace creation and
+   Business reassignment, never after.**
+2. **Bug fixed: relationship-creation chicken-and-egg.** The original
+   draft created the Contract 01 relationship **last** (step 6), but its
+   own payer-matrix halt case (§5) required the Agency owner to
+   "re-establish `AgencyRebill` consent via Contract 09's flow, pointed
+   at the new relationship" — a relationship that, at that point in the
+   sequence, **does not exist yet**. Contract 09's `isManagingAgencyOwner()`
+   requires an **Active** relationship to resolve at all; there was no
+   way to satisfy that requirement while the relationship's own creation
+   was still three steps away. **The relationship must be created
+   immediately after the Business moves, before the payer decision.**
+
+**Corrected per-Business sequence, in one transaction (§7):**
 1. Create the Client Workspace (`WorkspaceManager::createWorkspace()`, unchanged).
-2. Reassign the Business's `workspace_id` — **reuse
+2. **Assign a plan to the new Client Workspace** (Contract 07's own
+   provisioning shape — not a copy of the Agency's plan) — **before** step 3,
+   fixing bug 1 above.
+3. Reassign the Business's `workspace_id` — **reuse
    `WorkspaceManager::reassignBusiness()` itself**, not a new bespoke
    write, since it already performs exactly the required sub-steps in the
    right order: locks both Workspaces (ascending ID), asserts capacity on
-   the target (harmlessly satisfied — a brand-new empty Workspace always
-   has capacity), calls
+   the target (now genuinely satisfied, per step 2), calls
    `WorkspaceMembershipBusinessRepository::removeAllForBusinessInWorkspace()`
    (the exact cleanup row 4 of §3's table needs), writes the
    `workspace_transitions` row, dispatches `BusinessReassignedToWorkspace`.
@@ -73,30 +101,61 @@ For each Business being migrated, in one transaction (§7):
    "move a Business between two ordinary Workspaces" does almost
    everything this migration's per-Business core step needs, with zero
    modification.
-3. Assign a plan to the new Client Workspace (Contract 07's own
-   provisioning shape — not a copy of the Agency's plan).
-4. Run the primary-location repair check (§3, `BusinessLocation` row —
+4. **Create the Contract 01 relationship** (Agency Workspace → new Client
+   Workspace) **immediately after reassignment**, via Contract 01's
+   manager, actor = the human operator running this migration (recorded
+   honestly as the actor, not a system user pretending to be the Agency
+   owner — see §10) — **before** the payer decision, fixing bug 2 above.
+5. Run the primary-location repair check (§3, `BusinessLocation` row —
    only if genuinely absent).
-5. Resolve and, if needed, halt on the payer matrix (§5).
-6. Create the Contract 01 relationship (Agency Workspace → new Client
-   Workspace), via Contract 01's manager, actor = the human operator
-   running this migration (recorded honestly as the actor, not a system
-   user pretending to be the Agency owner — see §10).
+6. Resolve the payer matrix (§5) — the relationship now exists (step 4),
+   so the `workspace`-under-Agency case can reference it immediately
+   rather than halting the whole migration.
 
 **Explicitly does NOT change:** any table row keyed on `business_id`
 (§3's "automatic" rows) — this migration's writes are narrowly: the
 Business's own `workspace_id`, one new Workspace row, one new plan
 assignment row, `workspace_membership_businesses` deletions (via the
-reused method), one new relationship row, and — only for the flagged
-payer case — a `business_payer_assignments` update.
+reused method), one new relationship row, and — for the flagged payer
+case — a `business_payer_assignments` update per §5's corrected design.
 
-## 5. Payer migration matrix (restated precisely from Roadmap A5, the authoritative source — not re-derived, operationalized here)
+## 5. Payer migration matrix (executable, consent-preserving — corrected in this remediation)
 
-| Current `business_payer_assignments.payer_type` | Action |
+**New schema addition, shared with Contract 09 (a small, necessary
+addendum to that contract's own schema, noted there too): two nullable
+columns on `business_payer_assignments` — `agency_rebill_consented_at`
+and `agency_rebill_consented_by_user_id`** — mirroring the exact standing-
+consent pattern `auto_recharge_consented_at`/`_by_user_id` already
+establishes elsewhere in this codebase (Contract 09 §3's own citation).
+**Meaning:** for any row with `payer_type = 'agency_rebill'`, `NULL` means
+*provisionally* AgencyRebill-typed but **not yet consented by the real
+Agency owner** — every charge-causing check must treat a `NULL` here
+identically to "no provider customer found" (the existing, already-safe
+`initiateCharge()` fail-closed path, confirmed: `if ($providerCustomer
+=== null) return new FundingAttemptResult(0, Failed, 'no_provider_customer')`)
+— **no new paid activity may start** for such a row. Contract 09's own
+*normal*, owner-initiated `assignPayer(business, AgencyRebill, ...)` call
+sets both fields to `now()`/the acting owner's ID **immediately, in the
+same write** (authorization *is* consent, synchronously, in that flow) —
+only a *migration-initiated* conversion (this contract) ever leaves them
+`NULL` after the write.
+
+| Current `business_payer_assignments.payer_type` | Migration action |
 |---|---|
 | `business` | No change — self-pay, `business_id` FK unaffected by the Workspace move. |
-| `workspace`, under the Agency-tier Workspace, for this (non-primary/client) Business | **Halt this Business's migration.** Report it (Workspace, current allocation, next renewal if relevant) for the Agency owner to explicitly re-establish `AgencyRebill` consent via Contract 09's flow, pointed at the **new** relationship, before this Business's migration proceeds. **Do not** silently convert to `agency_rebill` (no consent actor) and **do not** silently leave as `workspace` (would silently flip to self-pay once the Business moves — the exact "must not silently change who pays" failure this whole matrix exists to prevent). |
+| `workspace`, under the Agency-tier Workspace, for this (non-primary/client) Business | **No longer a halt.** Immediately set `payer_type = 'agency_rebill'` and `managing_agency_relationship_id` to the relationship created in §4 step 4 (which now exists) — but leave `agency_rebill_consented_at`/`_by_user_id` **`NULL`**. This is the durable "pre-consent/migration-intent" record the remediation calls for: the payer type is correctly AgencyRebill-shaped from the moment the Business moves (never a stale `workspace` value that would silently self-pay against the wrong new Workspace), but **zero new paid activity can occur** until the real Agency owner visits Contract 09's consent flow and it sets the two consent columns. The migration's own report lists every such Business as "pending Agency confirmation," with a direct link/reference the Agency owner can act on. |
 | No assignment row at all | Preflight failure — data-integrity stop condition (should not occur; M2 backfill is documented complete). |
+
+**This resolves every one of the remediation's explicit requirements:**
+no fabricated Agency-owner consent (the timestamp is only ever set by the
+real owner, via Contract 09's own authorization path); no temporary
+accidental Client-paid state (`payer_type` is never left as `workspace`
+pointing at the wrong Workspace, even transiently); no ambiguous paid
+activity (the `NULL`-consent state fails every charge-causing check
+closed, reusing an existing, proven mechanism rather than inventing a new
+one); resumable (§7); Business ID and Locations preserved (§3, unchanged
+by this correction); explicit Agency-owner consent required before Agency
+funding *continues* (the whole point of the two new columns).
 
 **This table is the migration's entire payer-handling logic.** Any row
 not matching one of these three cases is added to the preflight's
@@ -144,15 +203,17 @@ posture, exactly as required:**
    check), and §5's payer-matrix classification per Business. Output as a
    structured report a human reviews before any execution run.
 2. **Dry-run mode**: executes every read and every decision branch (§4's
-   steps 1–6) without committing writes, reporting exactly what *would*
-   happen per Business, including which Businesses would halt on §5's
-   payer case.
+   corrected six-step sequence) without committing writes, reporting
+   exactly what *would* happen per Business, including which Businesses
+   would land in §5's pending-Agency-confirmation state.
 3. **Execution**: per-Agency transaction (§7), real writes, resumable.
 4. **Verification**: post-run, assert zero remaining Businesses under the
    processed Agency Workspace(s) other than the Agency's own primary one;
    assert every migrated Business's `business_payer_assignments` row is
-   either unchanged (`business` case) or was correctly halted-and-reported
-   (`workspace` case) — never silently converted.
+   either unchanged (`business` case) or correctly converted to
+   `agency_rebill` with both consent columns `NULL` (`workspace` case,
+   §5) — never silently left as a stale `workspace` value, and never
+   fabricated as already-consented.
 5. **Resumability**: §7.
 6. **Rollback/backout posture**: this migration does **not** provide an
    automated rollback (matching this codebase's own established
@@ -195,6 +256,7 @@ Business-keyed needs no provider-side change at all, since the Business
 ## 12. Exact implementation allowlist
 
 **New files:**
+- `database/migrations/2026_09_2x_100014_add_agency_rebill_consent_columns_to_business_payer_assignments_table.php` (the two new columns §5 requires — shared with, and must be coordinated against, Contract 09's own migration to the same table)
 - `app/Console/Commands/MigrateAgencyClientBusinesses.php` (or equivalent Artisan command — the operator entry point, supporting `--dry-run`)
 - `app/Library/Workspace/Migration/AgencyBusinessMigrationV1.php` (the actual logic class, mirroring `WorkspaceBackfillV1`'s own "versioned, immutable, invoked by a thin wrapper" pattern)
 - `tests/Feature/Workspace/AgencyBusinessMigrationV1Test.php`
@@ -202,6 +264,9 @@ Business-keyed needs no provider-side change at all, since the Business
 **Existing files NOT modified:** `WorkspaceManager.php` (its existing
 `reassignBusiness()` is called, not changed), `WorkspaceMembershipBusinessRepository.php`
 (its existing `removeAllForBusinessInWorkspace()` is called, not changed).
+**Existing file consumed, not modified, but its own consent-column write
+path (§5) must already exist by the time this migration runs** —
+`app/Library/Usage/BillingProfileManager.php` (Contract 09's dependency).
 
 **Flagged, not allowlisted:** whatever file holds the connected-Stripe-
 account reference (§3) — confirm at implementation time before assuming
@@ -211,23 +276,40 @@ no file needs touching.
 
 `AgencyBusinessMigrationV1Test.php`: every §3 table's "preserved
 automatically" claim, individually asserted (not just trusted); §5's
-three payer cases, each with its own test, including the halt case
-producing a report entry and **zero** write to that Business's payer
-assignment; §3's primary-location repair — both "already has one, no
-duplicate created" and "genuinely none, one created" branches; §7's
-resumability (interrupt mid-Agency, rerun, assert exactly the remaining
-Businesses are processed, not the already-done ones again); §9 dry-run
+three payer cases, each with its own test — the `business` case (no
+change), the `workspace`-under-Agency case (relationship created, payer
+converted to `agency_rebill` with **both consent columns `NULL`**, zero
+new paid activity possible — proven by attempting a charge against that
+Business immediately after migration and asserting it fails closed with
+`no_provider_customer`-equivalent, never silently succeeding against
+either the old or new Workspace's instrument), and the no-assignment-row
+preflight-failure case; **step-order regression**: assert plan assignment
+happens before `reassignBusiness()` is called (a direct test that
+`WorkspacePlanUnassignedException` is never thrown during a real
+migration run); **relationship-before-payer-decision regression**: assert
+the Contract 01 relationship row exists and is `Active` before the payer
+matrix step ever runs for that Business; §3's primary-location repair —
+both "already has one, no duplicate created" and "genuinely none, one
+created" branches; §7's resumability (interrupt mid-Agency, rerun, assert
+exactly the remaining Businesses are processed, not the already-done ones
+again — including a Business already converted to pending-`agency_rebill`
+being correctly skipped, not reprocessed or double-converted); dry-run
 mode makes zero writes.
 
 ## 14. Acceptance criteria
 
 1. Every §3 entity's preservation claim is proven by test, not assumed.
-2. §5's payer matrix is fully implemented with a real halt-and-report
-   path for the `workspace`-under-Agency case — zero silent conversions.
-3. Resumability proven by test.
-4. Zero provider calls made by this migration, proven by test (mock/spy
+2. §5's payer matrix executes to completion for every case, including
+   `workspace`-under-Agency — **no case blocks the whole migration**, and
+   the pending-consent state fails closed at charge time, proven by test.
+3. The corrected step order (§4) is proven by test — no
+   `WorkspacePlanUnassignedException`, and the relationship exists before
+   the payer decision runs.
+4. Resumability proven by test, including the pending-`agency_rebill`
+   case's own idempotency.
+5. Zero provider calls made by this migration, proven by test (mock/spy
    on any Stripe/Telnyx client asserting zero invocations).
-5. `git diff --check` clean; diff matches §12's allowlist.
+6. `git diff --check` clean; diff matches §12's allowlist.
 
 ## 15. Non-goals
 
@@ -240,8 +322,10 @@ Workspaces (Contract 12). Does not enforce the DB 1:1 constraint
 ## 16. Merge prerequisites
 
 Contracts 01, 02, 04, 07, 08A, and **09** (hard, per Roadmap A4/A5 —
-the payer matrix's halt case requires `AgencyRebill`'s consent flow to
-already exist for the Agency owner to use).
+`AgencyRebill` must already be a legal target and Contract 09's own
+`agency_rebill_consented_at`/`_by_user_id` columns and consent flow must
+already exist for this migration's §5 conversion and the Agency owner's
+follow-up confirmation to both be possible).
 
 ## 17. Conflict map
 
@@ -268,30 +352,42 @@ Before writing any code:
    every one is a hard prerequisite. If any is missing, STOP and report.
 3. Create a fresh branch for this slice only (e.g.
    agent/v1-slice-10-agency-data-migration).
-4. Re-read the full contract, especially SS3's entity inventory and SS5's
-   payer matrix -- both are authoritative and must not be re-derived or
-   second-guessed.
+4. Re-read the full contract, especially SS4's corrected six-step
+   sequence (plan assignment before reassignment; relationship creation
+   before the payer decision) and SS5's executable payer matrix -- both
+   are authoritative and must not be re-derived, reordered, or
+   second-guessed. The step order in SS4 fixes two real bugs found in an
+   earlier draft (a capacity-check failure and a chicken-and-egg
+   dependency) -- do not revert to a simpler-looking order.
 5. Re-verify SS3's inventory against actual current main: confirm
-   WorkspaceManager::reassignBusiness() and WorkspaceMembershipBusiness
-   Repository::removeAllForBusinessInWorkspace() still exist with the
-   signatures this contract assumes; locate the connected-Stripe-account
-   reference this contract flagged as unconfirmed. If anything differs,
-   STOP and report before proceeding.
+   WorkspaceManager::reassignBusiness(), EntitlementManager::
+   assertCanCreateAnotherBusiness()'s WorkspacePlanUnassignedException
+   behavior, and WorkspaceMembershipBusinessRepository::
+   removeAllForBusinessInWorkspace() still exist with the signatures this
+   contract assumes; confirm Contract 09's agency_rebill_consented_at/
+   _by_user_id columns exist on business_payer_assignments (SS5's hard
+   dependency); locate the connected-Stripe-account reference this
+   contract flagged as unconfirmed. If anything differs, STOP and report
+   before proceeding.
 
 Implement exactly the scope in this contract: the Artisan command with
 --dry-run, the AgencyBusinessMigrationV1 class reusing reassignBusiness()
 and removeAllForBusinessInWorkspace() verbatim, the full preflight/dry-
-run/execution/verification/resumability posture in SS8, and the payer
-matrix's halt-and-report behavior in SS5 with zero silent conversions.
-Do NOT modify WorkspaceManager or WorkspaceMembershipBusinessRepository.
-Do NOT implement an automated rollback -- SS8 explicitly says this
-migration does not provide one. Do NOT run this migration against any
-real or production-looking database yourself -- this contract authorizes
-building the tool, not running it against live data.
+run/execution/verification/resumability posture in SS8, and SS5's
+payer-conversion behavior (immediate agency_rebill conversion with both
+consent columns left NULL -- never a halt of the whole Business's
+migration, never a fabricated consent timestamp). Do NOT modify
+WorkspaceManager or WorkspaceMembershipBusinessRepository. Do NOT
+implement an automated rollback -- SS8 explicitly says this migration
+does not provide one. Do NOT run this migration against any real or
+production-looking database yourself -- this contract authorizes building
+the tool, not running it against live data.
 
 After implementing:
-- Run the new focused test file, covering every SS3 preservation claim
-  and every SS5 payer-matrix case individually.
+- Run the new focused test file, covering every SS3 preservation claim,
+  every SS5 payer-matrix case individually (including the fail-closed
+  charge attempt against a pending-consent AgencyRebill Business), and
+  the SS13 step-order regression tests.
 - Run the broader Workspace-domain regression.
 - Run git diff --check.
 - Verify the diff touches only the contract's allowlisted files (plus
@@ -304,7 +400,8 @@ ChatGPT will create it through GitHub.
 Return a full report: starting/final SHA, exact files changed, exact tests
 run and counts, what you found for the connected-Stripe-account reference,
 and explicit proof from your tests that (a) every automatic-preservation
-claim holds, (b) the payer-matrix halt case makes zero writes, and (c) the
-migration is resumable. Do NOT begin or authorize Contract 11 or any other
-later slice, and do NOT run this migration against any real data.
+claim holds, (b) the payer-matrix conversion makes zero writes to already-
+consented state and fails closed for new charges, and (c) the migration is
+resumable. Do NOT begin or authorize Contract 11 or any other later slice,
+and do NOT run this migration against any real data.
 ```

@@ -90,6 +90,26 @@ Mechanically confirmed on `origin/main`:
   existing Agency-only capacity rules — the same `$lockedCatalog->tier`
   read is the precedent for this slice's "is the Agency Workspace actually
   on the Agency tier" check.
+- **Platform Owner vs. generic Platform Administrator — mechanically
+  inspected, not assumed.** `User.is_admin` (`app/Models/User.php`, cast
+  `boolean`) is the **only** platform-level flag on the primary `User`
+  model — a single, flat boolean with no graduated Owner/Administrator
+  split. Separately, the legacy admin panel has its own RBAC layer:
+  `app/Models/Admin.php` (`admins` table, `user_id`, `creator_id`,
+  `admin_role` — this last column is fillable but confirmed **unused**
+  elsewhere in the codebase via `git grep`, i.e. vestigial, not an active
+  Owner/Administrator distinction) plus `app/Models/Role.php` +
+  `RoleUser.php`, a real Role→Permission RBAC system backed by
+  `config/permissions.php` (the **admin-side** permission registry —
+  distinct from `config/customer-permissions.php`, which is the
+  **customer/Workspace-side** one this contract's own `manage_agency_clients`
+  permission belongs in, see §6). **No existing single flag or role value
+  already means "the one Platform Owner"** as opposed to "any admin-panel
+  user with some role." Treating bare `is_admin === true` as satisfying
+  Addendum §2's "Platform Owner" exception would silently admit every
+  admin-panel account, including narrowly-scoped support-Role holders —
+  exactly the over-broadening this remediation must not do. §6 states the
+  minimum safe rule this evidence supports.
 
 ## 4. Delta from current state to target
 
@@ -177,47 +197,86 @@ fillable per the column list above (minus `id`/`uid`/timestamps);
 | Active Staff of the Agency Workspace | **Yes**, only with the same Agency-management permission | **No** | Yes, if permitted |
 | Agency Workspace member without the permission | No | No | No |
 | Client Workspace owner/staff | **No** | **No** — cannot remove its own managing relationship (Addendum §2) | No (not this manager's concern — the client never queries this table directly) |
-| Platform Owner/Administrator | No (never originates on a customer's behalf) | **Yes** (Addendum §2's second owner-only exception explicitly includes Platform Owner) | Yes (admin surface) |
+| Platform Owner (minimum safe rule, §3) | No (never originates on a customer's behalf) | **Yes** (Addendum §2's second owner-only exception) | Yes (admin surface) |
+| Any other admin-panel user (generic Platform Administrator) | No | **No** | Yes (admin surface, read-only) |
+
+**Exact permission-registration mechanism (mechanically located, §3):**
+this slice adds one new key to `config/customer-permissions.php` — the
+same flat array every other customer-side permission in this codebase is
+registered in (`view_google_business_profile`, `manage_advanced_provider`,
+etc.), auto-registered as a Gate by `AuthServiceProvider`'s existing
+generic loop over that config file (the same mechanism
+`manage_advanced_provider`'s own docblock cites). Exact addition:
+```php
+'manage_agency_clients' => [
+    'display_name' => 'manage_agency_clients',
+    'category'     => 'Agency',
+    'default'      => false,
+],
+```
+`default: false` follows the same conservative-default precedent already
+established in this file for `manage_google_business_profile`/
+`manage_advanced_provider` — an owner grants it explicitly, never on by
+default. Checked via `Gate::forUser($user)->allows('manage_agency_clients')`,
+the same convention `CustomerMenuBuilder` already uses.
 
 New private authority method on the manager,
 `assertActorMayManageAgencyRelationships(int $actorUserId, Workspace $agencyWorkspace): void`
 — **not** a call to `WorkspaceManager::assertActorIsOwnerOrActiveAdmin()`,
 precisely because that excludes Staff. Shape: owner → pass; active
 Admin/Staff membership → pass only if
-`Gate::forUser($user)->allows('manage_agency_clients')` (or the equivalent
-permission-check convention already used by `CustomerMenuBuilder`) also
-passes; otherwise throw a new `UnauthorizedAgencyRelationshipManagementException`.
+`Gate::forUser($user)->allows('manage_agency_clients')` also passes;
+otherwise throw a new `UnauthorizedAgencyRelationshipManagementException`.
 
-Termination uses a separate, narrower
-`assertActorMayTerminateAgencyRelationship()`: owner of the Agency Workspace
-OR Platform Owner/Administrator only — no permission bypass, matching
-Addendum §2's explicit second owner-only exception.
+**Termination authority — minimum safe rule (§3's evidence):** a separate,
+narrower `assertActorMayTerminateAgencyRelationship()`: the Agency
+Workspace owner, **or** an admin-panel actor holding a **new, dedicated**
+admin-side permission — `manage agency relationships` — registered in
+`config/permissions.php` (the admin-side registry, distinct from the
+customer-side one above) and checked through the existing `Role`/
+`Permission`/`RoleUser` RBAC the admin panel already uses elsewhere (not
+through `User.is_admin` alone). This is the minimum safe stand-in for
+"Platform Owner" until/unless this codebase ever adds a real graduated
+Owner-vs-Administrator distinction: it is **strictly narrower** than "any
+`is_admin = true` account," since an admin-panel user must additionally
+hold this specific new Role permission, matching how every other
+admin-side capability in this codebase is already gated by Role, never by
+the bare `is_admin` flag alone. **Do not** substitute a bare `is_admin`
+check for this — that would silently admit every admin-panel account
+regardless of their assigned Role's actual permissions.
 
 **Forbidden actors, explicitly tested (§13):** Agency Staff without the
 permission attempting create; Agency Admin (with or without the permission)
 attempting terminate; the Client Workspace's own owner attempting either;
-an unrelated third Workspace's owner attempting either; a Platform
-Administrator attempting create (never — Addendum §10's "administrator
-never originates on a customer's behalf" posture extends here by the same
-reasoning, even though §2 doesn't name creation explicitly, treating
-creation and termination symmetrically for platform-admin exclusion is the
-conservative, non-guessing choice).
+an unrelated third Workspace's owner attempting either; any admin-panel
+user without the new `manage agency relationships` Role permission
+attempting terminate; any admin-panel user at all attempting create (never
+— Addendum §10's "administrator never originates on a customer's behalf"
+posture extends here by the same reasoning, even though §2 doesn't name
+creation explicitly, treating creation and termination symmetrically for
+platform-admin exclusion is the conservative, non-guessing choice).
 
-**Agency-tier entitlement — checked at creation only, not on every read/use
-(§ deep-dive answer):** `create()` asserts
+**Relationship existence is structural, not entitlement proof — the
+distinction this remediation requires be explicit.** `create()` asserts
 `$lockedAgencyWorkspace`'s plan tier (via the same
 `workspace_plan_assignments` → `workspace_plan_catalog` join
-`EntitlementManager` already performs) is `WorkspacePlanTier::Agency` before
-inserting the row. It is **not** re-checked on every subsequent read/use of
-an already-active relationship — if an Agency Workspace's tier is later
-downgraded, that is an entitlement-lifecycle question for
-`EntitlementManager`/Contract 05, not something this narrow manager
-re-derives on every call. This mirrors how `WorkspaceMembership.role` isn't
-re-validated against a live permission check on every single read either —
-the relationship's existence is the authority artifact; downstream
-consumers (Contract 04's View As, Contract 09's AgencyRebill) are
-responsible for checking it's still `Active`, not for re-checking Agency
-tier themselves.
+`EntitlementManager` already performs) is `WorkspacePlanTier::Agency`
+**only at creation time**, before inserting the row — this is a one-time
+gate on *establishing* the relationship, not a standing guarantee. **An
+`Active` relationship row, by itself, is never sufficient proof that the
+managing Workspace currently holds Agency entitlement** — if that
+Workspace's tier is later downgraded away from Agency, the relationship
+row stays `Active` (this manager has no downgrade-triggered termination
+logic, and none is added here), but every Agency-only *capability* that
+consumes the relationship (Contract 04's View As, Contract 09's
+AgencyRebill, Contract 08A's Clients UI) **must independently re-check
+current Agency-tier entitlement each time it acts**, via
+`EntitlementManager`, not infer it from the relationship's mere existence.
+This mirrors how `WorkspaceMembership.role` isn't proof of a live
+permission grant either — the relationship row is the *link*, entitlement
+is a *separate, currently-true fact* downstream consumers must check for
+themselves. §4/§6 of Contract 04 and Contract 09 apply this rule
+explicitly at their own consumption points.
 
 ## 7. Transaction / concurrency boundary
 
@@ -313,7 +372,8 @@ billing safety becomes load-bearing.)
 
 **Existing files modified:**
 - `app/Providers/AppServiceProvider.php` — one new binding line (~line 188–198 block).
-- Possibly `app/Enums/Permission.php` or the equivalent permission-registration point, to add `manage_agency_clients` — **name and location must be confirmed against this codebase's actual permission-registration mechanism before implementation**, since this contract has not mechanically located it (flagged rather than guessed).
+- `config/customer-permissions.php` — add the `manage_agency_clients` entry per §6's exact array shape.
+- `config/permissions.php` — add the new admin-side `manage agency relationships` permission entry (mirroring this file's own existing `'view customer'`/`'edit customer'`-style key format), for the termination authority in §6.
 
 **No migrations to any existing table. No test file modified — only new
 test files added.**

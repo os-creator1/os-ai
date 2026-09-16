@@ -15,8 +15,8 @@ wave plan. Does not authorize implementation.
 | 06 | [Conversation Location scoping](./implementation-contracts/06-CONVERSATION-LOCATION-SCOPING.md) | none | none shared with 01–05 | D | Medium | L | 01, 02, 03 | none | Contract 06 §18 |
 | 07 | [Client Workspace provisioning](./implementation-contracts/07-CLIENT-WORKSPACE-PROVISIONING.md) | 01, 04 (hard) | none new | A | Medium | M | independent product modules only | 01 + 04 merged | Contract 07 §18 |
 | 08A | [Agency Clients UI](./implementation-contracts/08A-AGENCY-CLIENTS-UI.md) | 07 (hard, non-concurrent — Wave 3a→3b) | none | B | Low | M | 08B | 07 merged and stable | Contract 08A §18 |
-| 08B | [Location ACL consumer wiring](./implementation-contracts/08B-LOCATION-ACL-CONSUMER-WIRING.md) | 02, 06 (hard) | `ContactsController.php`, `OpportunityController.php`, `CrmOpportunitiesController.php`, `ChatBoxController.php` | B | High | XL | 08A | 02 + 06 merged | Contract 08B §18 |
-| 09 | [AgencyRebill activation](./implementation-contracts/09-AGENCYREBILL-ACTIVATION.md) | 01 (hard), 05 (recommended) | `BillingProfileManager.php` | C | Critical | L | 08A, 08B | 01 merged | Contract 09 §18 |
+| 08B | [First Location ACL consumer wave](./implementation-contracts/08B-LOCATION-ACL-CONSUMER-WIRING.md) | 02, 06 (hard) | `ContactsController.php`, `OpportunityController.php`, `CrmOpportunitiesController.php`, `ChatBoxController.php` | B | High | XL | 08A | 02 + 06 merged | Contract 08B §18 |
+| 09 | [AgencyRebill activation](./implementation-contracts/09-AGENCYREBILL-ACTIVATION.md) | 01 (hard), 05 (hard — upgraded from "recommended" in the contract remediation pass) | `BillingProfileManager.php`, `UsageBillingCheckoutManager.php`, `UsageWalletManager.php`, `PaymentInstrumentManager.php`, `EffectivePayer.php` (new `EffectivePayerResolver`) | C | Critical | L | 08A, 08B | 01 + 05 merged | Contract 09 §18 |
 | 10 | [Agency data migration](./implementation-contracts/10-AGENCY-DATA-MIGRATION.md) | 01, 02, 04, 07, 08A, **09** (all hard) | `WorkspaceManager::reassignBusiness()`, `WorkspaceMembershipBusinessRepository` (read/called, not modified) | SERIAL ONLY | Critical | XL | none — serial | every listed prerequisite merged | Contract 10 §18 |
 | 11 | [Retire additional-business-slots](./implementation-contracts/11-RETIRE-ADDITIONAL-BUSINESS-SLOTS.md) | 10 (hard, run + verified) | `EntitlementManager.php` (read only) | SERIAL ONLY | Medium | M | independent product modules | Contract 10 run and verified | Contract 11 §18 |
 | 12 | [Non-Agency multi-Business migration](./implementation-contracts/12-NONAGENCY-MULTIBUSINESS-MIGRATION.md) | 11 (hard) | `WorkspaceManager::reassignBusiness()` (read/called) | SERIAL ONLY | High | M | independent product modules | 11 merged | Contract 12 §18 |
@@ -32,7 +32,7 @@ with spare capacity in any wave, per the Roadmap's own note.
 
 - **Wave 1:** 01, 02, 03, 06 (concurrent, no real conflicts).
 - **Wave 2:** 04 (needs 01), 05 (needs 01+03).
-- **Wave 3a:** 07 (needs 01+04), 09 (needs 01, recommended 05) — concurrent with each other.
+- **Wave 3a:** 07 (needs 01+04), 09 (needs 01 and, as of the contract remediation pass, hard-requires 05 too — both are already Wave 2 prerequisites, so this wave placement was already correct) — concurrent with each other.
 - **Wave 3b:** 08A (needs 07 merged, not concurrent with it).
 - **Wave 3b/4 overlap:** 08B (needs 02+06, independent of the Agency-provisioning chain).
 - **Wave 4:** 10 (needs 01, 02, 04, 07, 08A, 09 — serial only).

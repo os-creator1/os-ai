@@ -85,49 +85,70 @@ already treated as usable).**
 
 ## 4. Delta from current state to target
 
-**Changes:** two (or three, see §5's flagged open point) new nullable
-timestamp columns on `workspace_plan_assignments`; two new
-`CustomerAccountAccessState` cases; `CustomerAccountAccessResolver::resolve()`'s
-internal branching extended (still the same public method signatures);
-new decision copy for the new states.
+**Changes:** three new nullable timestamp columns on
+`workspace_plan_assignments` (`trial_ends_at`, `grace_started_at`,
+`locked_at` — final, per §5); one new `CustomerAccountAccessState` case
+(`Locked`; Trial and Grace are both non-blocking DTO hints, not new
+states); `CustomerAccountAccessResolver::resolve()`'s internal branching
+extended per §5's canonical truth table (still the same public method
+signatures); `EntitlementManager::assignFirstPlan()` extended to accept
+and set `trial_ends_at` when a trial is granted (confirmed exact write
+site, §5); new decision copy for the new states.
 
 **Explicitly does NOT change:** the `WorkspacePlanAssignmentStatus` enum
-itself (stays 3 cases, per Addendum §7); `EntitlementManager`'s existing
-plan-assignment write paths (only reads the new columns, does not
-necessarily need to write `locked_at` itself — see §6 for who writes it);
-any of the five consumers' own method *signatures* (`resolve()` still takes
-`?Workspace`, still returns `CustomerAccountAccessDecision` — callers do
-not need to change merely because the resolver's internal logic grew richer,
-though each caller's *tests* must be re-verified against the new states per
-§13).
+itself (stays 3 cases, per Addendum §7); the legacy
+`Subscription`/Cashier trial mechanism (read by nothing this slice adds —
+§5 point 5); any of the five consumers' own method *signatures* (`resolve()`
+still takes `?Workspace`, still returns `CustomerAccountAccessDecision` —
+callers do not need to change merely because the resolver's internal logic
+grew richer, though each caller's *tests* must be re-verified against the
+new states per §13).
 
 ## 5. Data model contract
 
-**`workspace_plan_assignments` — new columns:**
+**`workspace_plan_assignments` — new columns (final, canonical — no open
+option remains):**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `grace_started_at` | `timestamp` | Yes | `NULL` | Set when a renewal failure first occurs while `status = Active`. Cleared (`NULL`) on successful payment. |
+| `trial_ends_at` | `timestamp` | Yes | `NULL` | Set once, at first-plan-assignment time, by `EntitlementManager::assignFirstPlan()` (confirmed exact write site, full signature read: `assignFirstPlan(Workspace $workspace, WorkspacePlanTier $tier, int $actorUserId, string $reason, bool $isComplimentary = false, int $additionalBusinessSlots = 0)`) when the signup/plan-selection flow grants a trial (Blueprint §6: "Plan selection → Payment method + trial start"). `NULL` means **not currently trialing** — either no trial was granted, or the trial has already ended and been resolved (converted or otherwise) — never "currently in Trial." |
+| `grace_started_at` | `timestamp` | Yes | `NULL` | Set when a renewal failure first occurs while `status = Active` — **including** a trial ending without a successful conversion, which reuses this exact same field rather than a separate trial-expiry mechanism (see the canonical truth table below). Cleared (`NULL`) on successful payment. |
 | `locked_at` | `timestamp` | Yes | `NULL` | Set when Grace's 3-day window elapses without payment. Cleared on successful payment (a payment resolves straight back to `Active`/`NULL`/`NULL`, skipping back through Grace — matches Blueprint §27's "immediate unlock on confirmed payment"). |
-| `trial_ends_at` *(flagged, not definitively in-scope — see below)* | `timestamp` | Yes | `NULL` | Only if the decision below is "yes, model Trial explicitly" |
 
-**Open point requiring a one-line confirmation before implementation (not
-guessed here):** should this slice also add `trial_ends_at` to make Trial a
-first-class derived state parallel to Grace/Locked, or continue
-representing Trial purely as "no assignment row yet" (today's existing
-behavior, already `usable()`)? Both are internally consistent with the
-Addendum's "no second resolver" rule; the difference is only how precisely
-Trial is distinguished from ordinary post-trial Active in `CustomerContext`/
-UI copy. This contract's **default recommendation**, absent further
-product input: **add `trial_ends_at`** for symmetry and because Blueprint
-§27 explicitly names Trial as a distinct lifecycle stage with its own
-product behavior expectations (a trial-specific Home banner, eventually) —
-but implementation should not proceed on this specific point without
-confirming it is not already planned to be handled by the separate,
-legacy `Subscription`/Cashier trial mechanism instead, since building a
-second, parallel trial concept without reconciling the two would itself
-violate the "no duplicate source of truth" principle this whole slice
-exists to uphold.
+**Canonical V1 decision (no Option A/B, no TBD, no human-confirmation gate
+remains — this is final):**
+1. **`trial_ends_at` is added**, on the *canonical* `workspace_plan_assignments`
+   row — not a new table, not a new resolver input beyond what §5's
+   `resolve()` already reads.
+2. **`NULL` on `trial_ends_at` means "not trialing."** It is never used to
+   mean, or read as meaning, Trial by its mere presence-or-absence of a
+   *row* — that conflation (the original draft's "no assignment row =
+   Trial, because it's currently usable") is explicitly wrong and is
+   corrected in the truth table below: **no assignment row is its own,
+   separate, non-Trial state** ("Unassigned / Pre-Plan-Selection" —
+   already `usable()` today, for an entirely different reason: onboarding
+   hasn't reached plan selection yet, not because a trial is running).
+3. **The signup/plan-assignment flow explicitly sets `trial_ends_at`** at
+   `assignFirstPlan()` time, only when a trial is actually granted (some
+   plans/paths may skip a trial entirely — that is a product/commercial
+   configuration decision outside this contract's scope, not something
+   this contract invents a rule for).
+4. **The resolver derives Trial as Usable + trial metadata** — Trial is
+   not a new blocking state, exactly like Grace; it surfaces via the same
+   kind of optional, non-blocking `CustomerAccountAccessDecision` hint
+   (§5 below), never a new `CustomerAccountAccessState` case.
+5. **The legacy `Subscription`/Cashier trial mechanism (`onTrial()`-style
+   methods, `app/Models/Subscription.php` lines ~330/~350) is explicitly
+   NOT a second access authority.** It continues to govern whatever it
+   already governs on the legacy Stripe-subscription/billing side (money
+   lane A mechanics), but `CustomerAccountAccessResolver` **never reads
+   it** for the access-usability decision — `trial_ends_at` on
+   `workspace_plan_assignments` is the **sole** source of truth for "is
+   this Workspace currently in a software-access trial," fully decoupled
+   from whatever the legacy Cashier trial concept separately tracks for
+   billing purposes. This is the concrete application of Addendum §7's
+   "no second lifecycle authority" rule to the specific trial question the
+   original draft left open.
 
 **`CustomerAccountAccessState` — two new cases:**
 ```php
@@ -156,18 +177,28 @@ needed — `Locked` (`'locked'`) — for the post-Grace, pre-Inactive state;
 `isInGracePeriod`) field for the non-blocking Grace signal, not a new
 `CustomerAccountAccessState` case.
 
-**Truth table — every `(status, grace_started_at, locked_at)` combination
-(§4 deep-dive requirement):**
+**Final canonical truth table — every `(assignment-existence, status,
+trial_ends_at, grace_started_at, locked_at)` combination, covering all six
+named lifecycle labels (Trial / Active / Grace / Locked / Inactive /
+Suspended) with zero remaining TBD (§4 deep-dive requirement, resolved):**
 
-| `status` | `grace_started_at` | `locked_at` | Effective lifecycle | `CustomerAccountAccessState` | `isLocked()` |
-|---|---|---|---|---|---|
-| *(no assignment row)* | — | — | Trial (today's existing behavior) | `Usable` | No |
-| `Active` | `NULL` | `NULL` | Active | `Usable` | No |
-| `Active` | set, within 3 days | `NULL` | Grace | `Usable` (with `graceEndsAt` hint) | No |
-| `Active` | set, **elapsed** 3+ days, but `locked_at` still `NULL` | — | **Defensive/transitional** — see §6 for who is responsible for setting `locked_at`; the resolver itself computes elapsed-time-based Locked defensively even if a scheduled job hasn't yet written `locked_at`, so a missed job run never silently leaves a delinquent account fully Usable | `Locked` | Yes |
-| `Active` | any | set (non-`NULL`) | Locked | `Locked` | Yes |
-| `Inactive` | any | any | Inactive (unchanged meaning — this is the terminal state after the 6-month recoverable window, or a direct legacy-path deactivation that never went through Grace/Locked) | `LockedInactive` (unchanged) | Yes |
-| `Suspended` | *(irrelevant — administrative, always wins)* | *(irrelevant)* | Suspended | `LockedSuspended` (unchanged) | Yes |
+| Assignment row? | `status` | `trial_ends_at` | `grace_started_at` | `locked_at` | Effective lifecycle | `CustomerAccountAccessState` | `isLocked()` |
+|---|---|---|---|---|---|---|---|
+| **No row at all** | — | — | — | — | **Unassigned / Pre-Plan-Selection** — explicitly *not* Trial (§5's canonical decision, point 2) | `Usable` | No |
+| Yes | `Active` | set, in the **future** | `NULL` | `NULL` | **Trial** | `Usable` (with trial metadata — days remaining) | No |
+| Yes | `Active` | `NULL`, or set and already **past** with a successful conversion | `NULL` | `NULL` | **Active** | `Usable` | No |
+| Yes | `Active` | irrelevant (past or null) | set, within 3 days | `NULL` | **Grace** — reached either from an ordinary renewal failure, or from a trial ending without conversion (both set `grace_started_at` the same way, §5 point 1's note) | `Usable` (with `graceEndsAt` hint) | No |
+| Yes | `Active` | irrelevant | set, **elapsed** 3+ days, `locked_at` still `NULL` | — | **Locked** (defensive/transitional — resolver computes this from elapsed time even if a scheduled job hasn't yet written `locked_at`, so a missed job run never silently leaves a delinquent account Usable) | `Locked` | Yes |
+| Yes | `Active` | irrelevant | any | set (non-`NULL`) | **Locked** | `Locked` | Yes |
+| Yes | `Inactive` | irrelevant | any | any | **Inactive** (unchanged meaning — terminal state after the 6-month recoverable window, or a direct legacy-path deactivation that never went through Grace/Locked) | `LockedInactive` (unchanged) | Yes |
+| Yes | `Suspended` | irrelevant | irrelevant (administrative, always wins) | irrelevant | **Suspended** | `LockedSuspended` (unchanged) | Yes |
+
+**Trial-expiry-without-conversion is not a seventh state or a parallel
+mechanism** — it is simply the ordinary Grace-entry trigger firing for a
+different underlying reason (trial ended vs. renewal failed); both funnel
+through the same `grace_started_at` column and the same downstream
+Grace→Locked→Inactive progression, matching the "one authority" principle
+this contract exists to uphold.
 
 **`Suspended` always wins over Grace/Locked timestamps** — the `match`
 checks `Suspended` first regardless of what `grace_started_at`/`locked_at`
@@ -177,6 +208,12 @@ grace/lock timestamps left over from before the suspension.
 ## 6. Authority / security contract
 
 This slice's own writes are narrow and specific:
+- **Who sets `trial_ends_at`:** `EntitlementManager::assignFirstPlan()`
+  only, at first-plan-assignment time (confirmed exact write site, §5) —
+  never mutated after that call; a trial's natural end is read purely from
+  the timestamp already being in the past, not from a separate clearing
+  write. Only when a trial ends *without* conversion does the (out-of-scope,
+  see below) renewal-failure path additionally set `grace_started_at`.
 - **Who sets `grace_started_at`:** the billing/renewal-failure code path
   (out of this contract's scope to locate precisely — flagged: confirm
   against the actual Stripe-webhook/renewal-check code before
@@ -215,8 +252,9 @@ renewal/payment code this contract did not inspect (§6).
 ## 8. Migration / backfill
 
 **Policy:** additive nullable columns, no backfill required — every
-existing row simply gets `NULL`/`NULL` (and `NULL` for `trial_ends_at` if
-added), which the truth table above already correctly resolves to
+existing row simply gets `NULL`/`NULL`/`NULL` (`trial_ends_at` included,
+per §5's final decision), which the truth table above already correctly
+resolves to
 "whatever `status` alone already implies" (i.e. behavior for every
 existing row is byte-for-byte unchanged until some future renewal event
 sets a timestamp for the first time). No preflight/dry-run/stop-condition
@@ -304,9 +342,9 @@ write path that actually sets/clears `grace_started_at`/`locked_at` (§6,
 §10 flag this as out-of-scope, requiring its own follow-up contract or
 inline discovery at implementation time). Does not implement Agency
 non-payment composition (Contract 05 — this slice is a hard prerequisite
-for it, not the same work). Does not resolve the `trial_ends_at` open
-point definitively (§5) — states the default recommendation and the
-condition under which it should not be taken.
+for it, not the same work). Does not modify the legacy
+`Subscription`/Cashier trial mechanism itself, only ensures
+`CustomerAccountAccessResolver` never reads it (§5 point 5).
 
 ## 16. Merge prerequisites
 
@@ -338,21 +376,27 @@ Before writing any code:
 4. Re-read the full contract, especially the SS5 truth table -- it is the
    authoritative specification for this slice's logic.
 5. Locate the actual renewal-failure and payment-confirmation code paths
-   this contract flagged as NOT inspected (SS6, SS15) -- confirm where
-   grace_started_at/locked_at should be written and cleared, and whether a
-   trial_ends_at column is warranted or would duplicate the legacy
-   Subscription/Cashier trial concept (SS5's open point). If the
-   reconciliation is unclear, STOP and report rather than inventing a
-   second trial authority.
+   this contract flags as NOT inspected (SS6) -- confirm where
+   grace_started_at/locked_at should be written and cleared, including the
+   trial-ends-without-conversion path setting grace_started_at (SS5's
+   canonical truth table). trial_ends_at itself is NOT an open point --
+   SS5 finalizes it: added, written only by EntitlementManager::
+   assignFirstPlan(), read (never written) by the resolver, and the legacy
+   Subscription/Cashier trial mechanism is explicitly never read by
+   CustomerAccountAccessResolver. Confirm assignFirstPlan()'s actual
+   current signature still matches this contract's evidence before adding
+   the parameter; if it has changed, STOP and report.
 6. Inspect CustomerAccountAccessResolver, CustomerAccountAccessState,
    CustomerAccountAccessDecision, and all five consumer files in their
    current actual state -- if anything has changed from this contract's
    evidence, STOP and report the contradiction.
 
-Implement exactly the scope in this contract: the new columns, the new
-Locked state, the resolver's extended branching per the truth table, and
-the graceEndsAt-style non-blocking signal for Grace. Do NOT implement
-Contract 05's Agency/Client composition -- that is a separate slice.
+Implement exactly the scope in this contract: the three new columns
+(trial_ends_at, grace_started_at, locked_at), the new Locked state, the
+resolver's extended branching per SS5's canonical truth table, the
+trial/graceEndsAt-style non-blocking signals, and assignFirstPlan()'s
+extended signature. Do NOT implement Contract 05's Agency/Client
+composition -- that is a separate slice.
 
 After implementing:
 - Run the new focused test file for this slice.
@@ -366,8 +410,8 @@ Do NOT create a pull request yourself if GitHub tooling is unavailable --
 ChatGPT will create it through GitHub.
 
 Return a full report: starting/final SHA, exact files changed, exact tests
-run and counts, what you found for the grace/locked write-path location
-and the trial_ends_at decision, and confirmation no existing consumer test
-changed its assertions on the pre-existing three states. Do NOT begin or
-authorize Contract 05 or any other later slice.
+run and counts, what you found for the grace/locked write-path location,
+and confirmation no existing consumer test changed its assertions on the
+pre-existing three states. Do NOT begin or authorize Contract 05 or any
+other later slice.
 ```

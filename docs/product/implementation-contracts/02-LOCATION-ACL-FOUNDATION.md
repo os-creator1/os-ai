@@ -190,7 +190,8 @@ codebase for safely adding a required column to a live table:**
    location_access_scope VARCHAR(16) NULL AFTER business_access_scope;`
 2. **Backfill (query-builder-only migration, mirroring
    `WorkspaceBackfillV1`/the M2 payer backfill's own no-Eloquent-dependency
-   convention):** every existing active `WorkspaceMembership` row is set to
+   convention):** every existing `WorkspaceMembership` row — **active OR
+   inactive, no `WHERE is_active` filter** — is set to
    `location_access_scope = 'all'` — **not** `'selected'` — because
    defaulting to `All` preserves each membership's *current effective
    Location reach* (before this slice, a Selected-Business-scope staff
@@ -202,12 +203,47 @@ codebase for safely adding a required column to a live table:**
    `Selected` with zero grants would silently **revoke** everyone's access
    the moment Contract 08B wires enforcement — the opposite of the "never
    silently widen or narrow" instruction.
+
+   **Correction: the backfill must cover inactive rows too, explicitly.**
+   An earlier draft of this contract scoped the backfill to active
+   memberships only, which is a real bug: an *inactive* membership left
+   `NULL` would make step 3's `NOT NULL` migration fail outright (it
+   cannot satisfy the constraint for that row), and — separately —
+   **reactivating** an old inactive membership later (via the existing
+   `WorkspaceMembershipRepository::setActive()`, confirmed by full
+   signature read to touch only `is_active`, never `business_access_scope`
+   or any other column) must land the member back with the **same**
+   deterministic `location_access_scope` value it already had, not a
+   freshly-`NULL`/freshly-guessed one. Backfilling every row up front,
+   regardless of `is_active`, is what makes that guarantee hold — there is
+   no separate "on reactivation" code path needed, because by the time
+   reactivation can occur, every row (active or not) already has a
+   deterministic value from this backfill, and `setActive()` never
+   touches it.
 3. **Migration C (later, only once the backfill above is verified
-   complete for 100% of existing rows):** `ALTER TABLE
-   workspace_memberships MODIFY COLUMN location_access_scope VARCHAR(16)
-   NOT NULL;` — mirroring the exact zero-violation-assertion discipline
+   complete for 100% of existing rows, active and inactive alike):**
+   `ALTER TABLE workspace_memberships MODIFY COLUMN
+   location_access_scope VARCHAR(16) NOT NULL;` — mirroring the exact
+   zero-violation-assertion discipline
    `2026_07_30_120006_enforce_business_workspace_constraint.php` already
-   uses for `businesses.workspace_id`.
+   uses for `businesses.workspace_id`. The precondition query must be
+   `SELECT COUNT(*) FROM workspace_memberships WHERE location_access_scope
+   IS NULL` with **no** `is_active` filter, for the same reason.
+
+**Full writer inventory (deep-dive requirement — every path that creates a
+`WorkspaceMembership` row, mechanically enumerated via `git grep
+"WorkspaceMembership::create(" -- app tests`, not assumed):**
+
+| Writer | Path type | Current default handling | Required fix |
+|---|---|---|---|
+| `WorkspaceManager::addMember()` → `WorkspaceMembershipRepository::create()` | **Production** (the only one) | `create(Workspace, int, WorkspaceMembershipRole, WorkspaceBusinessAccessScope)` — `$scope` already required, no default (confirmed by full interface read) | Extend the signature to also require `LocationAccessScope $locationScope` (no default), mirroring the existing `$scope` parameter exactly — every production caller of `addMember()` must be updated to pass one explicitly |
+| `tests/Feature/Workspace/Concerns/CreatesWorkspaceTestData.php::createMembership()` | Shared test fixture trait (confirmed, full method read) | `array_merge([..., 'business_access_scope' => WorkspaceBusinessAccessScope::All, ...], $overrides)` — bypasses the repository entirely, calls `WorkspaceMembership::create()` directly | Add `'location_access_scope' => LocationAccessScope::All` to the same default array |
+| `tests/Feature/Workspace/WorkspaceModelTest.php` (line ~33) | Local `array_merge`-based helper, same shape as above | Same pattern | Same fix, same file |
+| `tests/Feature/Workspace/WorkspaceOwnershipTransferTest.php` (line ~82) | Local `array_merge`-based helper | Same pattern | Same fix, same file |
+| **27 further test files, each with one or more *literal* (non-`array_merge`) `WorkspaceMembership::create([...])` calls** — confirmed by exhaustive `git grep`, not sampled: `AgencyProspectingRuntimeTest.php`, `AgencyProspectingTest.php`, `CreatesAnalyticsFixtures.php`, `CreatesAutomationFixtures.php`, `InternalNotificationExecutorTest.php`, `WorkflowHttpAuthorizationTest.php`, `MessagingChannelsTest.php`, `WorkspaceBusinessExistingBehaviorPreservedTest.php`, `EntitlementManagerBusinessToggleTest.php` (5 call sites), `EntitlementManagerConcurrencyTest.php` (2 call sites), `CreatesGoogleBusinessProfileFixtures.php`, `OutreachCorrection1Test.php` (3 call sites), `RequestScopedCacheQueueLifecycleTest.php`, `MessagingProviderAuthorizationTest.php` (2 call sites), `OutreachSecurityTest.php` (3 call sites), `RelocatedAdvancedProviderAuthorizationTest.php` (2 call sites), `PayerAssignmentTransitionScenariosTest.php`, `UsageWalletManagerSpendCapTest.php`, `CreatesWebsiteFixtures.php`, `WorkspaceManagerTest.php`, `WorkspaceOwnershipTransferHttpTest.php` | Each constructs its attribute array inline, literally — none share a common default | **Each literal array individually needs `'location_access_scope' => LocationAccessScope::All'` added** — there is no single shared default to patch for this group; §12's allowlist lists every one of these files explicitly so none is discovered missing only when the `NOT NULL` migration (step 3 above, actually landing in this same slice's own migration set) fails CI |
+
+This inventory is exhaustive as of this contract's writing — re-run the
+same `git grep` at implementation time to catch any file added since.
 
 **`workspace_membership_locations` table itself:** no backfill — starts
 empty; every membership is `All`-scoped by the backfill above, so no
@@ -259,8 +295,23 @@ this slice.
 **Existing files modified:**
 - `app/Models/WorkspaceMembership.php` — add `location_access_scope` to `$fillable`/`$casts`.
 - `app/Providers/AppServiceProvider.php` — one new binding line.
+- `app/Repositories/Contracts/WorkspaceMembershipRepository.php` + `EloquentWorkspaceMembershipRepository.php` — extend `create()`'s signature with a required `LocationAccessScope $locationScope` parameter, mirroring the existing `$scope` parameter exactly.
+- `app/Library/Workspace/WorkspaceManager.php` — `addMember()` gains the same new required parameter and passes it through to `create()`.
+- Every production caller of `WorkspaceManager::addMember()` — updated to supply an explicit `LocationAccessScope` (the exact call sites must be re-enumerated via `git grep "addMember("` at implementation time, since this contract's own evidence pass focused on the repository/manager layer, not every controller invoking it).
 
-**No existing controller, route, migration, or test modified.**
+**This slice DOES modify existing test files — 30 of them, per §8's full
+writer inventory**, correcting the original "no existing test modified"
+framing, which was wrong for this slice specifically (Location ACL is the
+one contract in this factory whose NOT NULL column addition has a real,
+large existing-writer surface, unlike every other additive slice):
+`CreatesWorkspaceTestData.php`, `WorkspaceModelTest.php`,
+`WorkspaceOwnershipTransferTest.php`, and the 27 further files §8 lists by
+name — each gets exactly one line added (`'location_access_scope' =>
+LocationAccessScope::All`) to its existing `WorkspaceMembership::create()`
+call(s), no other change.
+
+**No existing controller, route, or non-test-fixture file modified beyond
+what's listed above.**
 
 **Central-file flag:** `app/Providers/AppServiceProvider.php` also touched
 by Contract 01 — see §17.
@@ -284,20 +335,41 @@ Workspace.
 `assign()` idempotency, `syncForMembership()` all-or-nothing, `unassign()`
 grant-only deletion, cross-Workspace rejection.
 
-Migration tests: backfill sets every existing active membership to `All`;
-the NOT NULL enforcement migration fails loudly if any row is still null
-at run time (mirroring `WorkspaceEnforcementMigrationTest.php`'s own
-pattern for the analogous `businesses.workspace_id` enforcement).
+Migration tests: backfill sets every existing membership — **active and
+inactive alike** — to `All`; the NOT NULL enforcement migration fails
+loudly if any row (active or inactive) is still null at run time
+(mirroring `WorkspaceEnforcementMigrationTest.php`'s own pattern for the
+analogous `businesses.workspace_id` enforcement).
+
+**Reactivation preserves deterministic Location access (explicit test,
+per this remediation):** create a membership with `location_access_scope
+= Selected` and a specific grant, deactivate it via
+`WorkspaceMembershipRepository::setActive(false)`, reactivate via
+`setActive(true)`, then assert `location_access_scope` and its grant
+row(s) are byte-for-byte unchanged throughout — proving `setActive()`
+never touches this column (confirmed by its own signature read, §8) and
+that no separate "on reactivation" reset logic was accidentally
+introduced.
+
+**Writer-inventory regression (explicit, per this remediation):** every
+one of the 30 test files in §8's inventory table is run as part of this
+slice's own verification pass, confirming each still passes after its
+`WorkspaceMembership::create()` call(s) gain the new required attribute —
+not merely that the *new* Location ACL tests pass, but that the NOT NULL
+migration does not break any *existing* test.
 
 ## 14. Acceptance criteria
 
 1. Migrations run clean in the documented three-step order.
-2. Every existing active `WorkspaceMembership` has `location_access_scope
-   = 'all'` after backfill, verified by test.
+2. Every existing `WorkspaceMembership` row — active and inactive —
+   has `location_access_scope = 'all'` after backfill, verified by test.
 3. `LocationAccessGuard` passes every §13 test.
-4. Zero existing controller/route behavior changes (nothing consumes this
+4. Reactivation-preserves-access test (§13) passes.
+5. All 30 files in §8's writer inventory pass after their one-line fix,
+   individually confirmed, not assumed from a partial sample.
+6. Zero existing controller/route behavior changes (nothing consumes this
    yet).
-5. `git diff --check` clean; diff matches §12's allowlist exactly.
+7. `git diff --check` clean; diff matches §12's allowlist exactly.
 
 ## 15. Non-goals
 
@@ -342,16 +414,30 @@ Before writing any code:
    the contradiction rather than guessing.
 
 Implement exactly the scope in this contract -- the new column, pivot
-table, enum, repository, and LocationAccessGuard class, with the exact
-three-step migration sequence in SS8. Do NOT wire any controller to consume
-this yet, do NOT touch business_access_scope, and do NOT implement the
-enforce-NOT-NULL migration until you have verified (in your own test run)
-that the backfill left zero null rows -- if it did not, STOP and report
-rather than forcing the constraint.
+table, enum, repository, LocationAccessGuard class, and the extended
+WorkspaceMembershipRepository::create()/WorkspaceManager::addMember()
+signatures, with the exact three-step migration sequence in SS8 (backfill
+covers active AND inactive rows -- no is_active filter). Do NOT wire any
+controller to consume this yet, do NOT touch business_access_scope, and
+do NOT implement the enforce-NOT-NULL migration until you have verified
+(in your own test run) that the backfill left zero null rows, counting
+inactive rows too -- if it did not, STOP and report rather than forcing
+the constraint.
+
+Before touching any test file, re-run `git grep "WorkspaceMembership::
+create(" -- app tests` yourself and reconcile the result against SS8's
+30-file inventory -- if the count or file list differs (a file added or
+removed since this contract was written), STOP and report the
+discrepancy rather than silently using either list. Update every file
+the reconciled list names, each with exactly the one-line fix SS8/SS12
+describe -- no broader test refactor.
 
 After implementing:
-- Run the new focused test files for this slice.
-- Run the broader Workspace-domain regression (tests/Feature/Workspace/).
+- Run the new focused test files for this slice, including the
+  reactivation-preserves-access test.
+- Run the broader Workspace-domain regression (tests/Feature/Workspace/)
+  AND every one of the 30 writer-inventory files individually, confirming
+  each passes after its one-line fix.
 - Run git diff --check.
 - Verify the diff touches only the contract's allowlisted files.
 - Commit and push.

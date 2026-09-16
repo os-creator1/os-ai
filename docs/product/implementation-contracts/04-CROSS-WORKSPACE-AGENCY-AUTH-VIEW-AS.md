@@ -15,10 +15,22 @@ not merely conventionally so.
 
 ## 2. Governing authority
 
-- Addendum §2 (relationship as the authorization link), §6 (View As must
-  preserve normal tenancy/security/wallet/STOP/DND rules).
+**Corrected citations (the original draft cited a stale "Addendum §6" for
+the View-As-preserves-tenancy/wallet/STOP-DND guarantee — §6 is actually
+"Location downgrade/archive," unrelated; re-verified against the merged
+Addendum's real section list below):**
+- Addendum §2 (Agency↔Client Workspace relationship — the authorization
+  link this slice's cross-Workspace path is built on).
+- Addendum §3 (Global User identity — "authorization belongs to the active
+  Workspace context... never leaks or inherits across Workspaces," the
+  isolation guarantee View As must not violate).
+- Blueprint §28 (Agency Product — states the View As product guarantee:
+  "preserves the viewed client's normal tenancy, security, wallet, and
+  STOP/DND rules exactly as if the client were using it themselves") and
+  §32 (Security and Audit — restates the same guarantee as a cross-cutting
+  security rule, and "real acting person" audit requirement).
 - Blueprint §2 (corrected: View As is not owner-only — any Agency team
-  member with Agency-management permission qualifies), §28, §32.
+  member with Agency-management permission qualifies).
 - Roadmap Slice 2 (as corrected in the Phase A pass).
 - Contract 01 (the relationship this slice consumes).
 
@@ -103,12 +115,20 @@ built entirely from the Contract 01 relationship, not from
 |---|---|---|---|---|
 | `viewing_agency_workspace_id` | `unsignedBigInteger`, FK → `workspaces.id`, `restrictOnDelete()` (deliberately not `cascadeOnDelete`, unlike the table's other two FKs — an Agency Workspace being deleted must not silently cascade-delete audit history) | Yes | `NULL` | `NULL` for the existing same-Workspace path (unchanged meaning); set to the Agency Workspace's ID for the new cross-Workspace path. `workspace_id` continues to mean "the Workspace being viewed" in both cases — never redefined. |
 
-**New `END_REASON_RELATIONSHIP_ENDED = 'relationship_ended'`** constant on
-`ViewAsSession`, for the case where the Contract 01 relationship is
-terminated mid-session (distinct from `ACCESS_LOST`, which already exists
-for the ordinary tenancy-revoked case, so reporting/audit can distinguish
-"the Agency relationship itself ended" from "ordinary access was revoked
-within a still-active relationship").
+**Two new `END_REASON_*` constants on `ViewAsSession`, kept distinct
+because they have different root causes and different operational
+responses** (relationship termination is an Agency-initiated or
+Platform-Owner-initiated action; entitlement loss is a billing/plan
+event):
+- `END_REASON_RELATIONSHIP_ENDED = 'relationship_ended'` — the Contract 01
+  relationship itself is terminated mid-session.
+- `END_REASON_AGENCY_ENTITLEMENT_LOST = 'agency_entitlement_lost'` — the
+  relationship is still `Active`, but the Agency Workspace's plan tier is
+  no longer `WorkspacePlanTier::Agency` (§6's entitlement check).
+
+Both are distinct from `ACCESS_LOST`, which remains for the ordinary
+same-Workspace tenancy-revoked case, so reporting/audit can distinguish
+all three root causes.
 
 **`ViewAsContext` — one new nullable field:** `viewingAgencyWorkspaceId`
 and `viewingAgencyWorkspaceUid` (mirroring the existing
@@ -147,6 +167,7 @@ every other existence-disclosure-safe failure in this class already does).
 | Actor supplies an `agencyWorkspaceUid` they don't belong to | New `assertActorMayManageAgencyRelationships()`-equivalent check (reusing Contract 01's own authority method, not a duplicate — see below) must pass first; a Workspace the actor has no standing in fails here, before the relationship lookup even runs. |
 | Actor is Agency Staff without the Agency-management permission | Same check as above — Contract 01's authority method already excludes unpermitted Staff; this slice must call that **exact** method, not reimplement a looser version of it, to avoid two authority definitions drifting apart. |
 | Actor's relationship existed at session start but was terminated mid-session | `accessChainStillHolds()`'s cross-Workspace variant (below) re-checks relationship status as `Active` on **every** `current()` read, exactly matching the existing same-Workspace path's own "re-validate on every read, never trust row existence alone" discipline. |
+| **Agency Workspace's relationship is still `Active`, but the Agency has since lost Agency-tier entitlement** (downgraded, per Contract 01's own explicit note that relationship existence is structural, never entitlement proof) | **A distinct, separate check from relationship status** — `startAgencyView()` additionally asserts `EntitlementManager::getWorkspaceEntitlementSummary($agencyWorkspace)->tier === WorkspacePlanTier::Agency` at session start, and `agencyAccessChainStillHolds()` re-asserts the same fact on **every** `current()` read alongside the relationship check — not once at start only. Losing either the relationship **or** current Agency entitlement independently ends the session (`END_REASON_RELATIONSHIP_ENDED` for the former; a new `END_REASON_AGENCY_ENTITLEMENT_LOST` for the latter, so audit/reporting can distinguish the two root causes) — both fail closed, neither substitutes for the other. |
 | Actor tries to use `startAgencyView()` to reach a Business belonging to their *own* Agency Workspace (self-targeting to bypass the ordinary same-Workspace `actorMayView()` Admin-only rule via a looser path) | Rejected structurally — a relationship row can never have `agency_workspace_id === client_workspace_id` (Contract 01's own self-link prevention), so `startAgencyView()` cannot resolve a relationship where the "client" is the actor's own Agency Workspace. |
 | Actor uses View As to reach AgencyRebill/payer-consent actions | **Never granted by View As at all** — `ViewAsContext` carries no payer authority, and Contract 09's AgencyRebill consent check is keyed to `Workspace.owner_user_id` directly (never to "is currently viewing via an active `ViewAsContext`"), so a View As session structurally cannot escalate into financial consent, independent of any check this contract adds. Stated here as an explicit non-goal boundary, verified again in Contract 09's own authority contract. |
 | A terminated relationship's stale `viewing_agency_workspace_id` is reused to forge a session row directly at the DB layer (out-of-band, not through the API) | Out of scope for application-layer authorization (this is a database-integrity/access concern, not a `ViewAsManager` concern) — noted for completeness, not mitigated by this contract. |
@@ -240,7 +261,7 @@ structurally (by omission — no payer-related method is added to
 
 **Existing files modified:**
 - `app/Library/ViewAs/ViewAsManager.php` — add `startAgencyView()`, `agencyAccessChainStillHolds()` (both new methods; no existing method body changes).
-- `app/Models/ViewAsSession.php` — add `viewing_agency_workspace_id` to `$fillable`; add `END_REASON_RELATIONSHIP_ENDED` constant.
+- `app/Models/ViewAsSession.php` — add `viewing_agency_workspace_id` to `$fillable`; add `END_REASON_RELATIONSHIP_ENDED` and `END_REASON_AGENCY_ENTITLEMENT_LOST` constants.
 - `app/Library/ViewAs/ViewAsContext.php` — add the two new nullable fields; constructor signature grows (additive, default-null-safe at every existing call site since `start()`'s own construction of `ViewAsContext` in `current()` simply passes `null` for the new fields on the old path).
 - `app/Library/Workspace/AgencyClientRelationshipManager.php` (from Contract 01) — add the public authority-check method this slice needs (§6's "reuse, not duplication" note), if Contract 01 did not already expose one in the needed shape.
 
@@ -251,12 +272,17 @@ actual HTTP entry point), not this one.
 
 ## 13. Required tests
 
-`AgencyViewAsTest.php`: every §6 threat-model row as an explicit test;
-happy path (Agency owner starts a cross-Workspace session, `current()`
-resolves it correctly with the new fields populated); permitted-Staff
-happy path; relationship-terminated-mid-session forces
-`END_REASON_RELATIONSHIP_ENDED` on the next `current()` read; the existing
-same-Workspace `ViewAsClientTest.php`/`ViewAsAccessLossTest.php`/
+`AgencyViewAsTest.php`: every §6 threat-model row as an explicit test
+(including the entitlement-loss row, as its own dedicated test, distinct
+from the relationship-termination test — an Active relationship with a
+downgraded Agency tier must fail exactly like a terminated relationship,
+via a different, distinguishable `END_REASON`); happy path (Agency owner
+starts a cross-Workspace session, `current()` resolves it correctly with
+the new fields populated); permitted-Staff happy path;
+relationship-terminated-mid-session forces `END_REASON_RELATIONSHIP_ENDED`
+on the next `current()` read; Agency-downgraded-mid-session (relationship
+still `Active`) forces `END_REASON_AGENCY_ENTITLEMENT_LOST` on the next
+`current()` read; the existing same-Workspace `ViewAsClientTest.php`/`ViewAsAccessLossTest.php`/
 `ViewAsRouteBoundaryTest`-style coverage re-run unmodified to confirm zero
 regression.
 
@@ -266,9 +292,13 @@ regression.
 2. Every existing View As test still passes with zero assertion changes.
 3. A terminated relationship ends an in-progress cross-Workspace session
    on its very next request, not merely on a future one.
-4. View As never grants AgencyRebill/payer authority, proven by a test
+4. An Agency Workspace losing Agency-tier entitlement — with its Contract
+   01 relationship still `Active` — independently ends an in-progress
+   cross-Workspace session on its very next request, with a distinct
+   `END_REASON` from relationship termination.
+5. View As never grants AgencyRebill/payer authority, proven by a test
    that attempts exactly that and expects refusal.
-5. `git diff --check` clean; diff matches §12's allowlist.
+6. `git diff --check` clean; diff matches §12's allowlist.
 
 ## 15. Non-goals
 

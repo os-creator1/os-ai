@@ -39,13 +39,58 @@ the first consumer of that table beyond Contract 01/04's own scope.
 
 ## 4. Delta from current state to target
 
-**Changes:** `CustomerAccountAccessResolver::resolve()` gains one new,
-optional composition step — after computing the Client Workspace's own
-decision (unchanged, per Contract 03), if that Workspace has an **Active**
-Contract 01 relationship, additionally resolve the managing Agency
-Workspace's own decision (a plain recursive `resolve()` call on the Agency
-Workspace — reusing the exact same method, not a new one) and combine per
-the truth table in §5.
+**Corrected design — no resolver recursion.** The original draft had
+`resolve()` call `resolve($agencyWorkspace)` on itself to get the Agency's
+own decision — a structurally recursive public method, safe only because
+of a *data-model* argument (Contract 01 forbids multi-agency chains), not
+because the *code* itself is incapable of recursing. This is fixed by
+introducing an explicit, non-composing primitive:
+
+1. **Extract** `CustomerAccountAccessResolver`'s existing per-Workspace
+   truth-table logic (Contract 03's `match`/derivation — the pure, non-
+   composing "what does this one Workspace's own status/timestamps mean"
+   computation) into a new **private** method:
+   ```php
+   private function resolveOwnWorkspaceDecision(Workspace $workspace): CustomerAccountAccessDecision
+   ```
+   This is a pure refactor of Contract 03's own logic — same behavior,
+   new method boundary, zero output change. It never calls `resolve()`,
+   never calls itself, and never looks at any Agency relationship — it
+   answers exactly one question: "what does *this* Workspace's own
+   `workspace_plan_assignments` row mean," nothing upstream.
+2. **`resolve(?Workspace $workspace): CustomerAccountAccessDecision`**
+   becomes a thin orchestrator with no recursive call anywhere in its own
+   body:
+   ```php
+   public function resolve(?Workspace $workspace): CustomerAccountAccessDecision
+   {
+       if ($workspace === null) {
+           return CustomerAccountAccessDecision::usable();
+       }
+
+       $ownDecision = $this->resolveOwnWorkspaceDecision($workspace);
+
+       $relationship = $this->relationshipRepository->findActiveForClient($workspace);
+
+       if ($relationship === null) {
+           return $ownDecision;
+       }
+
+       $agencyWorkspace = $this->workspaceRepository->findById($relationship->agency_workspace_id);
+       $agencyDecision = $agencyWorkspace === null
+           ? CustomerAccountAccessDecision::usable()
+           : $this->resolveOwnWorkspaceDecision($agencyWorkspace);
+
+       return $this->compose($ownDecision, $agencyDecision);
+   }
+   ```
+   The Agency lookup calls `resolveOwnWorkspaceDecision()` — **never**
+   `resolve()`. There is no code path, anywhere in this class, by which
+   `resolve()` can call itself, directly or indirectly — this is now a
+   structural guarantee, not a data-model assumption. `resolveAmbiguous()`
+   and `resolveForContext()` are unaffected — they still call the public
+   `resolve()` per candidate, exactly as before, and get the composed
+   result automatically.
 
 **Explicitly does NOT change:** the Client Workspace's own
 `workspace_plan_assignments` row — never written by this slice, only read
@@ -88,15 +133,17 @@ completely unchanged; only when the Client's own decision is `Usable` does
 this slice construct a **new**, Agency-caused decision object (never
 mutating the Client's own).
 
-**One-hop only, no chained composition:** the Agency Workspace's own
-`resolve()` call in this slice does **not** itself recurse into checking
-whether the *Agency* has some further upstream dependency — Addendum §2
-explicitly forbids multi-agency chains (a Client has 0-or-1 managing
-Agency, and nothing in the locked architecture allows an Agency to itself
-be "managed" by another Agency), so recursion depth is structurally capped
-at exactly one hop. This slice's implementation should assert this rather
-than write an accidentally-recursive general algorithm — call
-`resolve($agencyWorkspace)` directly, never `resolve()` on whatever the
+**One-hop only, no chained composition, structurally guaranteed (§4):**
+the Agency Workspace's own decision is computed via
+`resolveOwnWorkspaceDecision($agencyWorkspace)`, a method that has no
+awareness of Contract 01 relationships at all and therefore cannot itself
+trigger a second composition step — recursion is not merely unlikely
+given Addendum §2's data-model rule (a Client has 0-or-1 managing Agency,
+and nothing allows an Agency to itself be "managed"), it is **impossible
+by construction**, since `resolveOwnWorkspaceDecision()` never calls
+`resolve()` or itself. This slice's implementation must call
+`resolveOwnWorkspaceDecision($agencyWorkspace)` directly, never `resolve()`
+on whatever the
 Agency's own relationship (if any, which should not exist) might imply.
 
 ## 6. Authority / security contract
@@ -162,11 +209,16 @@ is implemented, not merely before it is merged.
 - `tests/Feature/Entitlement/AgencyNonPaymentCompositionTest.php`
 
 **Existing files modified:**
-- `app/Library/Entitlement/CustomerAccountAccessResolver.php` — add the
-  composition step inside `resolve()` (or a small private helper it calls),
-  reusing Contract 01's relationship lookup and Contract 03's own states —
-  no new public method signature change (`resolve(?Workspace)` still
-  returns `CustomerAccountAccessDecision`).
+- `app/Library/Entitlement/CustomerAccountAccessResolver.php` —
+  (a) extract Contract 03's existing per-Workspace truth-table logic into
+  a new **private** `resolveOwnWorkspaceDecision(Workspace): CustomerAccountAccessDecision`
+  (pure refactor, zero behavior change); (b) rewrite `resolve()`'s body
+  per §4's non-recursive orchestration, calling
+  `resolveOwnWorkspaceDecision()` for both the target and (when an Active
+  relationship exists) the Agency Workspace — never calling `resolve()`
+  on itself. No new **public** method signature change
+  (`resolve(?Workspace)` still returns `CustomerAccountAccessDecision`);
+  `resolveOwnWorkspaceDecision()` itself is private/internal.
 - `app/Library/Entitlement/CustomerAccountAccessDecision.php` — no
   structural change needed (existing `reason`/`heading`/`message` fields
   already accommodate the new Agency-caused reason strings); confirm at
@@ -182,10 +234,12 @@ is implemented, not merely before it is merged.
 an explicit test with a real Contract 01 relationship fixture; proves the
 Client's own `workspace_plan_assignments` row is never written by this
 slice (read-only assertion — snapshot before/after, must be identical);
-proves exactly one hop of composition (a synthetic/malformed attempt to
-chain a second relationship must not recurse — if the data model somehow
-allowed it, which Contract 01's own self-link/uniqueness rules should
-prevent, this test documents the defense-in-depth expectation anyway);
+**proves `resolveOwnWorkspaceDecision()` never calls `resolve()`** — a
+direct unit-level test of that private method (via reflection or a
+protected-visibility test seam, matching this codebase's existing testing
+conventions) confirming it produces the correct per-Workspace decision
+with **no** relationship lookup performed at all, i.e. it is provably the
+non-composing primitive §4 requires, not merely asserted to be one;
 Client B unaffected when Client A or the Agency is locked (explicit
 isolation test, directly citing Addendum §8's own core guarantee).
 
@@ -242,15 +296,24 @@ Before writing any code:
    differs from this contract's assumptions, STOP and report the
    contradiction rather than guessing.
 
-Implement exactly the scope in this contract: the composition step inside
-resolve(), reusing the exact same method recursively for the one-hop
-Agency lookup, per SS5's precise rule (Client's own locked state is never
-overwritten; an Agency-caused lock is only constructed when the Client
-would otherwise be Usable). Do NOT write to any workspace_plan_assignments
-row. Do NOT implement Contract 09 (AgencyRebill).
+Implement exactly the scope in this contract: extract the existing
+per-Workspace truth-table logic into a new private
+resolveOwnWorkspaceDecision(Workspace) method (pure refactor, zero
+behavior change on its own), then rewrite resolve()'s body per SS4's
+non-recursive orchestration -- resolve() must NEVER call itself, directly
+or indirectly; the Agency lookup calls resolveOwnWorkspaceDecision()
+only. Verify this yourself by reading your own final diff for any
+`$this->resolve(` occurring inside resolve()'s own body before
+committing -- if you find one, it is a defect, not an acceptable
+implementation of this contract. Per SS5's precise composition rule:
+Client's own locked state is never overwritten; an Agency-caused lock is
+only constructed when the Client would otherwise be Usable. Do NOT write
+to any workspace_plan_assignments row. Do NOT implement Contract 09
+(AgencyRebill).
 
 After implementing:
-- Run the new focused test file, covering every SS5 truth-table row.
+- Run the new focused test file, covering every SS5 truth-table row and
+  the direct resolveOwnWorkspaceDecision() non-recursion test.
 - Re-run Contract 03's own existing test suite to confirm zero regression
   for Workspaces without an Active relationship.
 - Run git diff --check.

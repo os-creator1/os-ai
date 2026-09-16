@@ -69,21 +69,22 @@ responsibly paper over by inventing a design unsupported by evidence.
 
 ## 4. Delta from current state to target
 
-**Changes:** one new Agency-facing provisioning flow
-(`AgencyClientProvisioningManager` or similar, a new class — not more
-methods bolted onto `WorkspaceManager`, to keep it from growing further
-and to keep Agency-specific orchestration separate from general Workspace
-mechanics) that: (a) resolves or creates the client's User/Customer
-identity (§5 — the flagged gap, requiring a decision before
-implementation), (b) calls `WorkspaceManager::createWorkspace()` unchanged,
-(c) calls `BusinessManager`-equivalent Business creation (not
-`createOrUpdateOnboardingBusiness()`, since there's no pre-existing
-Customer session context — needs its own creation path taking the new
-Customer directly, mirroring `applyIdentity()`'s CREATE branch's shape but
-without its onboarding-session assumptions), (d) calls
-`BusinessLocationManager::upsertPrimaryLocation()` unchanged, (e) calls
-Contract 01's `AgencyClientRelationshipManager::create()` unchanged — all
-five inside one transaction with rollback-on-any-failure (§7).
+**Changes — now two coordinated flows, not one, per §5's final design:**
+(1) a new `ClientInvitationManager` handling invitation
+create/send/revoke against the new `client_workspace_invitations` table
+(no Workspace/Business touched); (2) a new
+`AgencyClientProvisioningManager` (a new class — not more methods bolted
+onto `WorkspaceManager`) invoked only at **acceptance** time, once a real
+authenticated `User`/`Customer` exists, that: (a) calls
+`WorkspaceManager::createWorkspace()` unchanged, with the real User's ID;
+(b) calls a Business-creation path taking that Customer directly
+(mirroring `applyIdentity()`'s CREATE branch's shape but without its
+onboarding-session assumptions — `createOrUpdateOnboardingBusiness()`
+itself is still not reusable, for the same reason as before); (c) calls
+`BusinessLocationManager::upsertPrimaryLocation()` unchanged; (d) calls
+Contract 01's `AgencyClientRelationshipManager::create()` unchanged; (e)
+marks the invitation `Accepted` — all inside one transaction with
+rollback-on-any-failure (§7).
 
 **Explicitly does NOT change:** `createWorkspace()`,
 `resolveLegacyOnboardingWorkspace()` (untouched, still serving its
@@ -93,59 +94,109 @@ Contract-01 primitives, not a modification of any of them.
 
 ## 5. Data model contract
 
-No new table beyond what Contracts 01 and the standard
-Workspace/Business/BusinessLocation schema already provide — this slice
-is pure orchestration. The one open data-model question, **flagged, not
-invented (§3's gap):**
+**Canonical V1 decision (no open option remains — invitation-based,
+resolved against the evidence in §3):**
 
-**How does the new client get a User/Customer row?** Three candidate
-designs, presented without silently picking one:
-1. **Agency-created credential**: the provisioning flow creates a new
-   `User`/`Customer` row directly with a system-generated temporary
-   password, and the client is expected to reset it on first login (needs
-   a password-reset-token flow — confirm one already exists generically
-   in this Laravel app, likely yes via the framework's own
-   `Password::sendResetLink()`, but not confirmed in this evidence pass).
-2. **Email invitation with claim link**: the provisioning flow creates the
-   Workspace/Business/Location/relationship rows **before** any User
-   exists, with the Workspace's `owner_user_id` pointing at a placeholder
-   or left in a state requiring a new "pending owner" concept — a larger
-   schema change (`workspaces.owner_user_id` is `NOT NULL` per RFC-003;
-   accepting a not-yet-real owner would require either a nullable owner
-   during a pending state, which the existing schema does not support, or
-   a genuinely new small "invite" table separate from `Workspace` itself
-   that only creates the real Workspace once the client claims it).
-3. **Existing-account attach**: the Agency enters the prospective client's
-   email; if a `User` already exists with that email, attach directly (no
-   new identity created); if not, fall back to option 1 or 2.
-**This contract does not choose between these** — doing so would be
-inventing product/security behavior no cited evidence resolves. Recommend
-a short, explicit product decision before implementation begins (out of
-this contract's own authority to make, consistent with this whole
-contract-factory task's "do not manufacture decisions" instruction).
+**`config/auth.php`** (checked in this remediation pass): the framework's
+own password-reset broker is configured at `table: 'password_resets',
+expire: 60 (minutes), throttle: 60 (seconds)` — the closest existing
+secure precedent this codebase has for "a hashed, expiring, single-use
+token tied to an email," reused as the template below rather than
+inventing a new token scheme.
+
+**New table `client_workspace_invitations`:**
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | `bigint unsigned` (PK) | No | |
+| `uid` | `uuid` | No | `HasUid`, matching every other entity's convention |
+| `agency_workspace_id` | FK → `workspaces.id`, `restrictOnDelete()` | No | |
+| `invited_by_user_id` | `unsignedBigInteger`, no FK (actor-column precedent) | No | |
+| `email` | `string` | No | The prospective client's email — **not** a `user_id` FK, since no User need exist yet |
+| `token_hash` | `string` | No | `Hash::make()` of a random token, mirroring `password_resets`' own hashed-at-rest convention — the plaintext token exists only in the emailed link, never stored |
+| `intended_business_name` | `string` | Yes | The Agency's provisioning intent — what Business the invitation will create on acceptance |
+| `status` | `string(16)`, enum-backed | No | `ClientInvitationStatus`: `Pending \| Accepted \| Expired \| Revoked` |
+| `expires_at` | `timestamp` | No | Mirrors the 60-minute precedent above, or a longer client-appropriate window (a business decision, not an architecture one — flagged, not invented, matching this contract's own posture elsewhere) |
+| `accepted_at` | `timestamp` | Yes | `NULL` until claimed |
+| `created_client_workspace_id` | `unsignedBigInteger`, nullable FK → `workspaces.id` | Yes | Set only on successful acceptance — the durable link from the invitation record to the Workspace it produced |
+| `created_at`/`updated_at` | `timestamp` | No | |
+
+**This is the "durable pre-consent/migration-intent record"** the
+remediation calls for: it exists, and is fully reviewable/revocable,
+**before** any Workspace, Business, Location, or Contract 01 relationship
+is created — which is exactly what resolves the original three-option
+dilemma's hardest problem. `workspaces.owner_user_id` stays `NOT NULL` and
+**no placeholder/fake owner is ever created**, because the Workspace
+itself is not created at invitation time at all — only this intent
+record is.
+
+**Acceptance flow (the atomic creation moment):**
+1. Agency enters the prospective client's email + `intended_business_name`
+   → this slice's manager creates one `client_workspace_invitations` row
+   (`Pending`) and sends an email containing the plaintext token in a
+   claim link. No Workspace/Business/User is touched yet.
+2. The recipient opens the link. The acceptance page **requires
+   authentication before completing anything** — same behavior whether or
+   not `email` already matches an existing `User`, to avoid unnecessary
+   account-existence disclosure (mirroring this codebase's own established
+   existence-disclosure discipline from this session's PR #302 work): a
+   generic "sign in or create an account to continue" screen, never "this
+   email is already registered" or "no account found."
+   - **New email:** the person registers a new account through this
+     codebase's ordinary registration path, choosing their **own**
+     password — the Agency never sees or sets it.
+   - **Existing email:** the person must **explicitly log in** (prove
+     account ownership via their own password) — acceptance is never
+     completed merely because the invitation's `email` field matches an
+     existing account; that would silently attach a real person's
+     existing account to an Agency relationship they never confirmed.
+3. **Only once a real, authenticated `User`/`Customer` exists** does this
+   slice's orchestrator run (§4's five-step atomic transaction), with
+   `owner_user_id` set to that real, already-existing User's ID from the
+   very first `createWorkspace()` call — the `NOT NULL` constraint is
+   satisfied naturally, never worked around.
+4. On success: `client_workspace_invitations.status = Accepted`,
+   `accepted_at` set, `created_client_workspace_id` recorded. The Contract
+   01 relationship is established in the same transaction, actor =
+   `invited_by_user_id` (the Agency actor who sent the invitation, not the
+   accepting client — the Agency is who established the management
+   relationship's authority side, per Contract 01 §6).
+5. **The same global User may accept while retaining independent
+   memberships elsewhere** (Addendum §3, Blueprint §3) — nothing in this
+   flow touches any of that User's other Workspace memberships; ownership
+   of the new Client Workspace is simply one more fact about that User,
+   exactly like any other Workspace they already own or belong to.
+
+**Expiry/revocation:** an `expires_at`-past or `Revoked` invitation's
+claim link fails closed (generic "this invitation is no longer valid," no
+further disclosure); the Agency may revoke a still-`Pending` invitation
+before acceptance (updates `status = Revoked`, no Workspace side effect
+since none was ever created).
 
 ## 6. Authority / security contract
 
-| Actor | May provision a new client |
-|---|---|
-| Agency Workspace owner | Yes |
-| Active Agency Admin/Staff with Agency-management permission (Contract 01's authority method) | Yes — per the corrected Blueprint §2 rule (A1): provisioning is **not** owner-only, since Addendum §2 restricts only *termination* to the owner, not creation |
-| Agency Admin/Staff without the permission | No |
-| Anyone outside the Agency Workspace | No |
+| Actor | May send/revoke a client invitation | May accept an invitation |
+|---|---|---|
+| Agency Workspace owner | Yes | N/A — not the accepting party |
+| Active Agency Admin/Staff with Agency-management permission (Contract 01's authority method) | Yes — per the corrected Blueprint §2 rule (A1): provisioning is **not** owner-only, since Addendum §2 restricts only *termination* to the owner, not creation | N/A |
+| Agency Admin/Staff without the permission | No | N/A |
+| Anyone outside the Agency Workspace | No | N/A |
+| The invited person (any authenticated User, new or existing) | N/A | Yes, once authenticated per §5's flow — this is the **only** actor who can complete acceptance; the Agency cannot complete it on the client's behalf |
 
-This slice's manager calls Contract 01's own authority-check method
-directly (the same one Contract 01's `create()` already uses internally)
-— **not** a duplicate check, since provisioning a client and establishing
-the relationship are, in this design, two steps of one atomic operation
-that share the same authority gate.
+`ClientInvitationManager::send()`/`revoke()` call Contract 01's own
+authority-check method directly (the same one Contract 01's `create()`
+already uses internally) — **not** a duplicate check.
+`AgencyClientProvisioningManager`'s acceptance-time step requires no
+Agency-side authority check at all (the Agency already acted, at
+invitation time); it requires only that the accepting User is
+authenticated (§5).
 
-**If option 2 (§5) or a resold SaaS plan assignment is part of
-provisioning:** any sub-step that commits the Agency to a financial
-obligation on the client's behalf (money lane C, Addendum §12) may carry
-its own narrower authority requirement — flagged here as a dependency on
-whatever Blueprint §28's SaaS Plans surface eventually specifies, not
-resolved by this contract (matches the equivalent flag already placed in
-the Roadmap's own corrected Slice 7 text).
+**A resold SaaS plan assignment, if bundled into provisioning:** any
+sub-step that commits the Agency to a financial obligation on the
+client's behalf (money lane C, Addendum §12) may carry its own narrower
+authority requirement — flagged here as a dependency on whatever
+Blueprint §28's SaaS Plans surface eventually specifies, not resolved by
+this contract.
 
 ## 7. Transaction / concurrency boundary
 
@@ -191,10 +242,16 @@ Reuses existing events unchanged: `WorkspaceCreated` (from
 path this slice's orchestrator calls — mirroring
 `createOrUpdateOnboardingBusiness()`'s own dispatch, per §4(c)), and
 Contract 01's `AgencyClientRelationshipEstablished`. No new event type is
-needed — the orchestration is fully described by the sequence of these
-three existing/Contract-01 events firing together. Real actor
-(the Agency user who initiated provisioning) is preserved throughout, per
-every prior contract's same discipline.
+needed for the acceptance-time creation step — the orchestration is fully
+described by the sequence of these three existing/Contract-01 events
+firing together. **Two distinct real actors are preserved, never
+conflated:** `WorkspaceCreated`'s `owner_user_id` and
+`AgencyClientRelationshipEstablished`'s target are the accepting client;
+the relationship's `established_by_user_id` (Contract 01) is the Agency
+user who originally sent the invitation (`invited_by_user_id` on the
+invitation row) — the Agency initiated the relationship, the client
+initiated their own Workspace's existence, and both facts are recorded
+accurately rather than attributing everything to one actor.
 
 ## 11. Billing/provider safety
 
@@ -209,44 +266,60 @@ itself.
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `app/Library/Workspace/AgencyClientProvisioningManager.php`
-- A Business-creation method usable without an existing session-scoped `Customer` (either a new method on `BusinessManager` or a small new class — **flagged for implementation-time judgment**, since this contract's evidence pass did not find a clean existing seam for it)
+- `database/migrations/2026_09_2x_100013_create_client_workspace_invitations_table.php`
+- `app/Models/ClientWorkspaceInvitation.php`
+- `app/Enums/Workspace/ClientInvitationStatus.php`
+- `app/Repositories/Contracts/ClientWorkspaceInvitationRepository.php` + `app/Repositories/Eloquent/EloquentClientWorkspaceInvitationRepository.php`
+- `app/Library/Workspace/ClientInvitationManager.php` (send/revoke, §5)
+- `app/Library/Workspace/AgencyClientProvisioningManager.php` (acceptance-time atomic creation, §4/§5)
+- A Business-creation method usable without an existing session-scoped `Customer` (either a new method on `BusinessManager` or a small new class — **flagged for implementation-time judgment**, since this contract's evidence pass did not find a clean existing seam for it; used only inside `AgencyClientProvisioningManager`'s acceptance-time step, §5)
+- Standard registration/login controller wiring for the acceptance page (reuses this codebase's existing registration/login controllers per §5 — new route(s)/thin controller only, not a new auth system)
+- A `ClientInvitationNotification` mailable, mirroring Laravel's own password-reset notification pattern (§5)
+- `tests/Feature/Workspace/ClientInvitationManagerTest.php`
 - `tests/Feature/Workspace/AgencyClientProvisioningTest.php`
 
 **Existing files NOT modified:** `WorkspaceManager.php`,
 `BusinessLocationManager.php`, `RegisterController.php` — all read-only
-precedents for this slice, none altered.
-
-**Flagged, not allowlisted (§5's open decision):** any User/Customer-
-identity-creation code path is **not** listed here as a specific file,
-because which design (§5's three options) is chosen determines which
-files are actually touched — implementation must not proceed past this
-point without that decision being made explicitly, per §15.
+precedents for this slice, none altered (the acceptance flow reuses
+registration/login as existing entry points, not by modifying
+`RegisterController` itself).
 
 ## 13. Required tests
 
-`AgencyClientProvisioningTest.php`: happy path (once §5 is resolved) —
-provisioning produces a Workspace/Business/Location indistinguishable in
-shape from organic signup, plus one active relationship; authorization
-matrix per §6; **atomicity**: force a failure at the relationship-creation
+`ClientInvitationManagerTest.php`: authorization matrix per §6 (send/
+revoke); token hashed at rest, never logged in plaintext; expiry enforced;
+generic failure response for expired/revoked/invalid tokens (no
+existence disclosure).
+
+`AgencyClientProvisioningTest.php`: full acceptance flow — new-email case
+(registration then atomic creation) and existing-email case (explicit
+login then atomic creation) both produce a Workspace/Business/Location
+indistinguishable in shape from organic signup, plus one active Contract
+01 relationship; **existing-email case specifically asserts acceptance
+never completes without the person proving account ownership via login**
+(a crafted request merely naming a matching email, with no valid session,
+must fail); **atomicity**: force a failure at the relationship-creation
 step (e.g. a concurrent duplicate) and assert the Workspace/Business/
-Location rows do **not** persist (transaction rolled back, no orphan).
+Location rows do **not** persist (transaction rolled back, no orphan);
+the same global User accepting one invitation retains their other,
+unrelated Workspace memberships untouched.
 
 ## 14. Acceptance criteria
 
-1. The §5 identity-creation design question is explicitly resolved (by a
-   human decision, not invented) before this slice is implemented.
-2. Provisioning is atomic — proven by the rollback test in §13.
-3. Provisioning authority matches §6 exactly (not owner-only).
-4. `git diff --check` clean; diff matches §12's allowlist once §5 is
-   resolved and the actual identity-creation files are known.
+1. Invitation send/accept/expire/revoke all pass §13's tests.
+2. Acceptance never completes without real authentication — proven by the
+   existing-email adversarial test.
+3. Provisioning (the acceptance-time creation step) is atomic — proven by
+   the rollback test in §13.
+4. Provisioning/invitation authority matches §6 exactly (not owner-only
+   for sending; accepting-User-only for acceptance).
+5. `git diff --check` clean; diff matches §12's allowlist.
 
 ## 15. Non-goals
 
 Does not build the Agency "Clients" **UI** (Contract 08A — this slice is
-its prerequisite, not the same work). Does not resolve §5's identity-
-creation design — states the options, does not choose. Does not implement
-SaaS Plan assignment or any Agency-Stripe billing step. Does not migrate
+its prerequisite, not the same work). Does not implement SaaS Plan
+assignment or any Agency-Stripe billing step. Does not migrate
 any existing Agency data (Contract 10).
 
 ## 16. Merge prerequisites
@@ -275,39 +348,40 @@ Before writing any code:
 1. Fetch latest origin/main.
 2. Verify Contracts 01 and 04 are merged to main -- hard prerequisites. If
    either is missing, STOP and report.
-3. STOP AND REPORT BACK before writing any identity-creation code: this
-   contract's SS5 explicitly flags that how a new client's User/Customer
-   identity gets created is an unresolved product/security decision among
-   three options, and states that implementation must not proceed past
-   that point without an explicit human decision. Do not silently pick
-   one of the three options yourself.
-4. Once that decision is provided, create a fresh branch for this slice
-   only (e.g. agent/v1-slice-07-client-workspace-provisioning).
-5. Re-read the full contract end to end.
-6. Inspect the actual current state of WorkspaceManager::createWorkspace(),
-   BusinessLocationManager::upsertPrimaryLocation(), and Contract 01's
-   actual merged shape -- if anything differs from this contract's
-   evidence, STOP and report the contradiction.
+3. Create a fresh branch for this slice only (e.g.
+   agent/v1-slice-07-client-workspace-provisioning).
+4. Re-read the full contract end to end -- SS5's invitation-based design
+   is final, not an open question; implement it as specified, not a
+   variant of it.
+5. Inspect the actual current state of WorkspaceManager::createWorkspace(),
+   BusinessLocationManager::upsertPrimaryLocation(), config/auth.php's
+   password-reset broker settings, and Contract 01's actual merged shape
+   -- if anything differs from this contract's evidence, STOP and report
+   the contradiction.
 
-Implement exactly the scope in this contract: the new orchestrator class,
-calling the existing primitives unmodified, inside one atomic transaction
-per SS7. Do NOT modify WorkspaceManager, BusinessLocationManager, or
+Implement exactly the scope in this contract: the invitation table/model/
+manager, the acceptance-time provisioning orchestrator, both inside their
+own correct transaction boundaries per SS7, reusing existing registration/
+login entry points rather than building a new auth system. The Agency
+must never see or set the client's password. Acceptance for an existing
+email must require real login, never complete merely because the email
+matches. Do NOT modify WorkspaceManager, BusinessLocationManager, or
 RegisterController. Do NOT build the Clients UI (Contract 08A). Do NOT
 implement SaaS Plan assignment or Agency billing.
 
 After implementing:
-- Run the new focused test file, including the atomicity/rollback test.
+- Run the new focused test files, including the atomicity/rollback test
+  and the existing-email-requires-login adversarial test.
 - Run the broader Workspace-domain regression.
 - Run git diff --check.
-- Verify the diff touches only files consistent with the identity-creation
-  decision that was provided plus this contract's allowlist.
+- Verify the diff touches only this contract's allowlisted files.
 - Commit and push.
 
 Do NOT create a pull request yourself if GitHub tooling is unavailable --
 ChatGPT will create it through GitHub.
 
 Return a full report: starting/final SHA, exact files changed, exact tests
-run and counts, which identity-creation option was implemented and why,
-and explicit proof of atomicity from your rollback test. Do NOT begin or
+run and counts, and explicit proof of atomicity from your rollback test
+and of the existing-email-requires-login guarantee. Do NOT begin or
 authorize Contract 08A or any other later slice.
 ```
