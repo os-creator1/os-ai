@@ -457,7 +457,7 @@ billing safety becomes load-bearing.)
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `database/migrations/2026_09_2x_100001_create_agency_client_workspace_relationships_table.php`
+- `database/migrations/2026_09_20_100006_create_agency_client_workspace_relationships_table.php` (final merged V1 sequence position: after Contract 02's `2026_09_20_100001`–`100004` and Contract 03's `100005`)
 - `app/Models/AgencyClientWorkspaceRelationship.php`
 - `app/Enums/Workspace/AgencyClientRelationshipStatus.php`
 - `app/Repositories/Contracts/AgencyClientWorkspaceRelationshipRepository.php`
