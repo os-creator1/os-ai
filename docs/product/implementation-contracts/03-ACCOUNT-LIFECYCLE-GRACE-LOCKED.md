@@ -231,7 +231,7 @@ option remains):**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `trial_ends_at` | `timestamp` | Yes | `NULL` | Set once, at first-plan-assignment time, by `EntitlementManager::assignFirstPlan()`, extended with one new **optional, trailing** parameter: `assignFirstPlan(Workspace $workspace, WorkspacePlanTier $tier, int $actorUserId, string $reason, bool $isComplimentary = false, int $additionalBusinessSlots = 0, ?\Carbon\CarbonInterface $trialEndsAt = null)`. **Backward compatibility, mechanically proven, not assumed:** `git grep -c "assignFirstPlan(" -- app tests` returns 181 total occurrences (1 production call site, `WorkspaceEntitlementController::assignPlan()`; 180 test call sites across ~20 files) — every one uses positional arguments matching the *current* six-parameter signature, so a seventh, optional, trailing parameter requires **zero** modification to any existing call site; only new tests exercising the trial case are added (§13). Set only when the signup/plan-selection flow grants a trial (Blueprint §6: "Plan selection → Payment method + trial start"). `NULL` means **not currently trialing** — either no trial was granted, or the trial has already ended and been resolved (converted or otherwise) — never "currently in Trial." |
+| `trial_ends_at` | `timestamp` | Yes | `NULL` | **Meaning: current outstanding trial expiry only — never a historical marker.** Set at first-plan-assignment time by `EntitlementManager::assignFirstPlan()`, extended with one new **optional, trailing** parameter: `assignFirstPlan(Workspace $workspace, WorkspacePlanTier $tier, int $actorUserId, string $reason, bool $isComplimentary = false, int $additionalBusinessSlots = 0, ?\Carbon\CarbonInterface $trialEndsAt = null)`. **Backward compatibility, mechanically proven, not assumed:** `git grep -c "assignFirstPlan(" -- app tests` returns 181 total occurrences (1 production call site, `WorkspaceEntitlementController::assignPlan()`; 180 test call sites across ~20 files) — every one uses positional arguments matching the *current* six-parameter signature, so a seventh, optional, trailing parameter requires **zero** modification to any existing call site; only new tests exercising the trial case are added (§13). Set only when the signup/plan-selection flow grants a trial (Blueprint §6: "Plan selection → Payment method + trial start"). **`NULL` means "not currently in an outstanding trial"** — either no trial was ever granted, or a trial was granted and has since been **explicitly cleared** by `recoverAccess()` (§5 below) on successful conversion — **never** left as a past timestamp once resolved. A non-`NULL`, future value means actively trialing; a non-`NULL`, past value means a trial has expired but has not yet been processed by either the scheduled sweep (§6/§7) or a conversion — this is a real, brief, transitional window, not a bug, and is read identically to the future case (§5's truth table). |
 | `grace_started_at` | `timestamp` | Yes | `NULL` | Set when a renewal failure first occurs while `status = Active` — **including** a trial ending without a successful conversion, which reuses this exact same field rather than a separate trial-expiry mechanism (see the canonical truth table below). Cleared (`NULL`) on successful payment. |
 | `locked_at` | `timestamp` | Yes | `NULL` | Set when Grace's 3-day window elapses without payment. Cleared on successful payment (a payment resolves straight back to `Active`/`NULL`/`NULL`, skipping back through Grace — matches Blueprint §27's "immediate unlock on confirmed payment"). |
 
@@ -253,11 +253,27 @@ remains — this is final):**
    plans/paths may skip a trial entirely — that is a product/commercial
    configuration decision outside this contract's scope, not something
    this contract invents a rule for).
-4. **The resolver derives Trial as Usable + trial metadata** — Trial is
+4. **On confirmed successful trial conversion — whether before natural
+   expiry or after the Workspace has already progressed into Grace/Locked
+   — `trial_ends_at` MUST be cleared to `NULL` in the same write that
+   confirms the conversion.** This is the one rule this remediation adds:
+   an earlier draft left `trial_ends_at` "untouched" after a successful
+   Grace/Locked recovery, reasoning it "already reads as in the past" and
+   therefore harmless — that reasoning was mechanically wrong. A past,
+   uncleared `trial_ends_at` continues to satisfy the scheduled
+   trial-expiry sweep's predicate (§6/§7) indefinitely, so a converted,
+   paying Workspace whose `grace_started_at` is later cleared (by this
+   same conversion) would become eligible, on the *next* sweep run, to be
+   incorrectly moved back into Grace for a trial that already, correctly,
+   ended in payment. Clearing `trial_ends_at` to `NULL` at conversion time
+   is what makes that Workspace **permanently ineligible** for the
+   trial-expiry sweep, exactly as a Workspace that was never on a trial
+   already is — this is the single unambiguous rule, not a special case.
+5. **The resolver derives Trial as Usable + trial metadata** — Trial is
    not a new blocking state, exactly like Grace; it surfaces via the same
    kind of optional, non-blocking `CustomerAccountAccessDecision` hint
    (§5 below), never a new `CustomerAccountAccessState` case.
-5. **The legacy `Subscription`/Cashier trial mechanism (`onTrial()`-style
+6. **The legacy `Subscription`/Cashier trial mechanism (`onTrial()`-style
    methods, `app/Models/Subscription.php` lines ~330/~350) is explicitly
    NOT a second access authority.** It continues to govern whatever it
    already governs on the legacy Stripe-subscription/billing side (money
@@ -305,8 +321,8 @@ Suspended) with zero remaining TBD (§4 deep-dive requirement, resolved):**
 | Assignment row? | `status` | `trial_ends_at` | `grace_started_at` | `locked_at` | Effective lifecycle | `CustomerAccountAccessState` | `isLocked()` |
 |---|---|---|---|---|---|---|---|
 | **No row at all** | — | — | — | — | **Unassigned / Pre-Plan-Selection** — explicitly *not* Trial (§5's canonical decision, point 2) | `Usable` | No |
-| Yes | `Active` | set, in the **future** | `NULL` | `NULL` | **Trial** | `Usable` (with trial metadata — days remaining) | No |
-| Yes | `Active` | `NULL`, or set and already **past** with a successful conversion | `NULL` | `NULL` | **Active** | `Usable` | No |
+| Yes | `Active` | set (non-`NULL`) — future **or** past-but-not-yet-processed | `NULL` | `NULL` | **Trial** — a past-but-uncleared value is the real, brief window between natural expiry and either the scheduled sweep (§6/§7) or a conversion; it reads identically to an actively-running trial until one of those occurs | `Usable` (with trial metadata) | No |
+| Yes | `Active` | `NULL` | `NULL` | `NULL` | **Active** — this is the **only** state that produces `NULL`: never trialed, **or** a trial that was explicitly cleared by `recoverAccess()` on successful conversion (§5 point 4) — a past, uncleared timestamp is never read as "Active," only `NULL` is | `Usable` | No |
 | Yes | `Active` | irrelevant (past or null) | set, within 3 days | `NULL` | **Grace** — reached either from an ordinary renewal failure, or from a trial ending without conversion (both set `grace_started_at` the same way, §5 point 1's note) | `Usable` (with `graceEndsAt` hint) | No |
 | Yes | `Active` | irrelevant | set, **elapsed** 3+ days, `locked_at` still `NULL` | — | **Locked** (defensive/transitional — resolver computes this from elapsed time even if a scheduled job hasn't yet written `locked_at`, so a missed job run never silently leaves a delinquent account Usable) | `Locked` | Yes |
 | Yes | `Active` | irrelevant | any | set (non-`NULL`) | **Locked** | `Locked` | Yes |
@@ -343,9 +359,13 @@ against its own already-applied state (calling `enterGracePeriod()` on an
 assignment that already has `grace_started_at` set is a no-op returning
 the existing row unchanged, mirroring `changePlanStatus()`'s own
 same-status no-op precedent) — never a duplicate transition row for the
-same fact. `recoverAccess()` sets both `grace_started_at` and `locked_at`
-to `NULL` in one write (Blueprint §27's "immediate unlock," both cleared
-together, never one without the other).
+same fact. `recoverAccess()` is idempotent against **all three** columns
+already being `NULL` (a true no-op, e.g. calling it on an already-clean
+Active Workspace). It sets `trial_ends_at`, `grace_started_at`, **and**
+`locked_at` all to `NULL` in one write (§5 point 4; Blueprint §27's
+"immediate unlock," all three cleared together, never a partial clear) —
+this is the single method covering both an early trial conversion and a
+Grace/Locked recovery (§6 case E), never two separate write behaviors.
 
 **`WorkspaceEntitlementTransitionType` — three new cases**, added to the
 existing nine-case enum (§3), following its own established naming
@@ -367,10 +387,10 @@ list) now has a named, implementable writer:
 | Case | Trigger | Writer | Actor |
 |---|---|---|---|
 | **A. Trial granted** | Signup/plan-selection flow grants a trial | `assignFirstPlan(..., trialEndsAt: ...)` (§4/§5) | Whoever legitimately calls `assignFirstPlan()` today — currently platform-administrator-only (§3); an organic self-service signup call site, if/when Blueprint §6's own onboarding flow is built, calls the same method the same way — no new authority model invented here. |
-| **B. Trial expires without conversion** | Time-based: `trial_ends_at` has passed and `grace_started_at` is still `NULL` | `enterGracePeriod(Workspace, actorUserId: null, reason: 'Trial ended without conversion')` | **System** — called by the new `AdvanceWorkspaceAccountLifecycle` scheduled command (§4/§7/§12), with `actorUserId = null` per §3's `ReconcileSlotAgreementAllocation` precedent. This is the one transition this table's own data can detect automatically without a payment-provider signal. |
+| **B. Trial expires without conversion** | Time-based, exact predicate (§7): `status = Active` **and** `trial_ends_at IS NOT NULL` **and** `trial_ends_at <= now` **and** `grace_started_at IS NULL` **and** `locked_at IS NULL` | `enterGracePeriod(Workspace, actorUserId: null, reason: 'Trial ended without conversion')` | **System** — called by the new `AdvanceWorkspaceAccountLifecycle` scheduled command (§4/§7/§12), with `actorUserId = null` per §3's `ReconcileSlotAgreementAllocation` precedent. This is the one transition this table's own data can detect automatically without a payment-provider signal. **`trial_ends_at IS NOT NULL` is the exact condition that makes this sweep permanently skip an already-converted Workspace** (§5 point 4) — the predicate is never satisfied again once conversion clears the column. |
 | **C. Renewal/payment failure** | An actual recurring-payment failure (requires a real payment-provider signal this codebase's new entitlement layer does not yet receive, §3) | `enterGracePeriod(Workspace, actorUserId: <platform admin>, reason: ...)` | **Platform administrator**, via `assertPlatformAdministrator()` (existing, unchanged) — the same manual-action model every other mutation on this table already uses (§3). Wiring a real payment-provider webhook to call this method automatically is a distinct, separate integration task (money lane A), not a gap in this contract's own authority design: the mutation itself is fully defined, authorized, and callable today. |
 | **D. Grace's 3 days elapse** | Time-based: `grace_started_at` is more than 3 days old and `locked_at` is still `NULL` | `lockForNonPayment(Workspace, actorUserId: null, reason: 'Grace period elapsed without payment')` | **System** — the same scheduled command's second sweep (§4/§7/§12). The resolver's own defensive elapsed-time derivation (§5 truth table) remains a second, independent safety net for a missed job run — never the *only* mechanism, per this remediation's own instruction that a durable writer must still exist. |
-| **E. Successful payment during Grace or Locked** | A real payment success signal (same provider-integration caveat as case C) | `recoverAccess(Workspace, actorUserId: <platform admin>, reason: ...)` | **Platform administrator** today, same reasoning as case C. Clears `grace_started_at`/`locked_at` together; `trial_ends_at` is left untouched (it already reads as "in the past," which is exactly and only what `Active` needs — recovery from Grace/Locked never re-triggers a trial). |
+| **E. Successful payment/conversion — during Grace or Locked, or directly from an active Trial before expiry** | A real payment success or trial-conversion signal (same provider-integration caveat as case C) | `recoverAccess(Workspace, actorUserId: <platform admin>, reason: ...)` — the **single canonical writer** for every "this Workspace is now confirmed, clean Active" fact, not two separate cases | **Platform administrator** today, same reasoning as case C. **Clears all three columns together, atomically, in one write: `trial_ends_at = NULL`, `grace_started_at = NULL`, `locked_at = NULL`** — corrected in this remediation from an earlier draft that left `trial_ends_at` "untouched," which was mechanically wrong (a past, uncleared value would satisfy case B's predicate again on the very next scheduled sweep, since `grace_started_at` is now `NULL` too — this is exactly the contradiction this remediation exists to close). This single method now legitimately covers **both** an early conversion straight out of an active Trial (where `grace_started_at`/`locked_at` were already `NULL`, so clearing them is a harmless no-op) **and** a recovery from Grace/Locked — there is no second method and no second writer behavior. |
 | **F. Transition to Inactive** | Per this remediation's own instruction: "use the canonical base status authority" | `changePlanStatus(Workspace, WorkspacePlanAssignmentStatus::Inactive, actorUserId, reason)` — **existing, unchanged** | **Platform administrator**, exactly as this method already requires today (§3) — no new method needed for this case. |
 
 **No customer, staff, or Agency action reads or writes these columns
@@ -398,6 +418,35 @@ Workspace being processed when it occurred, not the whole run (mirroring
 write method's own idempotency guard (§5: a no-op if the target state is
 already applied) makes the command safely re-runnable on its own schedule
 without double-processing a Workspace an earlier run already advanced.
+
+**The exact, final, two-sweep predicate this command runs — the single
+canonical statement of its query logic, matching §6's case B/D rows
+exactly:**
+```sql
+-- Sweep 1: trial expired without conversion -> enterGracePeriod()
+SELECT * FROM workspace_plan_assignments
+WHERE status = 'active'
+  AND trial_ends_at IS NOT NULL
+  AND trial_ends_at <= NOW()
+  AND grace_started_at IS NULL
+  AND locked_at IS NULL;
+
+-- Sweep 2: Grace's 3 days elapsed -> lockForNonPayment()
+SELECT * FROM workspace_plan_assignments
+WHERE status = 'active'
+  AND grace_started_at IS NOT NULL
+  AND grace_started_at <= NOW() - INTERVAL 3 DAY
+  AND locked_at IS NULL;
+```
+**Sweep 1's `trial_ends_at IS NOT NULL` clause is the entire fix this
+remediation makes executable:** once `recoverAccess()` (§5/§6 case E)
+clears `trial_ends_at` to `NULL` on any successful conversion, that row
+can never again satisfy Sweep 1 — permanently, not merely until the next
+run — closing the exact contradiction this remediation was opened to
+resolve. Sweep 1 is not reordered relative to Sweep 2 in a way that
+matters: a Workspace can only ever match one of the two (Sweep 1 requires
+`grace_started_at IS NULL`; Sweep 2 requires it `IS NOT NULL`), so running
+both in the same invocation, in either order, produces no double-processing.
 
 ## 8. Migration / backfill
 
@@ -482,9 +531,11 @@ pass did not find one, but the five consumer files were not read in full.
 ## 13. Required tests
 
 `CustomerAccountAccessResolverGraceLockedTest.php`: every row of the §5
-truth table, as an isolated resolver-level test; `Suspended` wins
-regardless of stale Grace/Locked timestamps; the elapsed-time defensive
-Locked computation fires correctly even with `locked_at` still `NULL`.
+truth table, as an isolated resolver-level test — including the merged
+Trial row (future **and** past-but-unprocessed both read as Trial) and
+the corrected Active row (`NULL` only); `Suspended` wins regardless of
+stale Grace/Locked timestamps; the elapsed-time defensive Locked
+computation fires correctly even with `locked_at` still `NULL`.
 
 `EntitlementManagerLifecycleTransitionTest.php`: each of
 `enterGracePeriod()`/`lockForNonPayment()`/`recoverAccess()` — happy path
@@ -492,24 +543,63 @@ with a real platform-administrator actor; happy path with `actorUserId =
 null` (system path); idempotency (calling a method whose target state is
 already applied is a no-op, no duplicate transition row); each method
 rejects a non-`Active` target (`Suspended`/`Inactive`) with the correct
-exception; `recoverAccess()` clears both timestamps together in one
-write; each write lands the correct new `WorkspaceEntitlementTransitionType`
-row and dispatches the correct new event; **end-to-end lifecycle walk**:
-a single test driving one Workspace through
+exception; `recoverAccess()` clears **all three** columns
+(`trial_ends_at`/`grace_started_at`/`locked_at`) together in one write;
+each write lands the correct new `WorkspaceEntitlementTransitionType` row
+and dispatches the correct new event.
+
+**`AdvanceWorkspaceAccountLifecycleTest.php` — the five tests this
+remediation requires explicitly, each its own test method, each directly
+exercising the exact predicate in §7:**
+1. **Trial still active** (`trial_ends_at` in the future) — the sweep
+   makes zero calls to `enterGracePeriod()` for that Workspace; its
+   `trial_ends_at`/`grace_started_at`/`locked_at` are unchanged after the
+   command runs.
+2. **Trial expires unpaid** (`trial_ends_at` in the past,
+   `grace_started_at` still `NULL`) — the sweep calls `enterGracePeriod()`
+   exactly **once**; a second command run in the same test does **not**
+   call it again (idempotency, proven by asserting the transition-row
+   count stays at one and `grace_started_at` is unchanged by the second
+   run).
+3. **Trial converts successfully before expiry** — call `recoverAccess()`
+   directly (simulating a successful conversion) while `trial_ends_at` is
+   still in the future; assert `trial_ends_at` becomes `NULL`
+   immediately; then advance the clock **past** the original
+   `trial_ends_at` value and run the scheduled command; assert
+   `enterGracePeriod()` is **never** called for that Workspace, on this
+   run or any subsequent run — this is the test that directly proves the
+   contradiction this remediation fixes is closed.
+4. **Trial expires → Grace → payment succeeds** — drive a Workspace
+   through `enterGracePeriod()` (trial-originated), then call
+   `recoverAccess()`; assert `trial_ends_at`, `grace_started_at`, and
+   `locked_at` are **all** `NULL` immediately after; then run the
+   scheduled command again (both sweeps) and assert it makes **zero**
+   calls of any kind for that Workspace — proving the same old,
+   already-resolved trial can never re-trigger Grace after a full
+   recovery, not merely immediately after but on every subsequent run.
+5. **Re-running the scheduler is idempotent** — run the full command
+   twice in immediate succession against a mixed set of Workspaces
+   (some eligible for Sweep 1, some for Sweep 2, some for neither);
+   assert the second run produces zero additional writes, zero
+   additional transition rows, and zero additional events for every
+   Workspace the first run already advanced.
+
+Additional coverage beyond the five required tests: the trial-expired
+sweep calls `enterGracePeriod()` for exactly the correct Workspaces and
+none other; the Grace-elapsed sweep calls `lockForNonPayment()` for
+exactly the correct Workspaces and none other (mirroring the
+`ReconcileSlotAgreementAllocation` precedent's own per-item loop, §7).
+
+**End-to-end lifecycle walk** (unchanged from the prior draft, still
+required): a single test driving one Workspace through
 `assignFirstPlan(trialEndsAt: ...)` → (time-travel) `enterGracePeriod()`
 → `lockForNonPayment()` → `recoverAccess()` → `changePlanStatus(Inactive)`,
 asserting `CustomerAccountAccessResolver::resolve()` returns the correct
-`CustomerAccountAccessState` at every step — this is the test that proves
-Contract 03 is genuinely implementable end-to-end, not merely that its
-pieces exist in isolation.
-
-`AdvanceWorkspaceAccountLifecycleTest.php`: the trial-expired sweep calls
-`enterGracePeriod()` for exactly the correct Workspaces (trial past, not
-yet in Grace) and none other; the Grace-elapsed sweep calls
-`lockForNonPayment()` for exactly the correct Workspaces (Grace started
-3+ days ago, not yet locked) and none other; a Workspace already advanced
-by an earlier run is not reprocessed (resumability, mirroring the
-`ReconcileSlotAgreementAllocation` precedent's own per-item loop, §7).
+`CustomerAccountAccessState` at every step, **and** that a scheduled-
+command run inserted anywhere after the `recoverAccess()` step makes zero
+further writes for that Workspace — this is the test that proves Contract
+03 is genuinely implementable end-to-end, including the trial-conversion
+correction, not merely that its pieces exist in isolation.
 
 Per-consumer regression (existing test files, re-run not rewritten,
 confirming §9): `CustomerAccountAccessGateTest`, `CustomerAccountAccessApiGateTest`,
@@ -528,7 +618,14 @@ if it exists as a named file.
    named writer method, including the end-to-end lifecycle walk.
 6. The new scheduled command correctly advances exactly the Workspaces
    its own time-based conditions target, and is safely re-runnable.
-7. `git diff --check` clean; diff matches §12's allowlist.
+7. `recoverAccess()` is proven, by test, to clear **all three** lifecycle
+   columns (`trial_ends_at`/`grace_started_at`/`locked_at`) in one write —
+   never `trial_ends_at` alone left uncleared.
+8. All five of §13's explicitly-required trial-conversion tests pass,
+   including test 3 (early conversion) and test 4 (Grace recovery),
+   each proving the scheduled sweep never re-enters Grace for an
+   already-resolved trial on any subsequent run.
+9. `git diff --check` clean; diff matches §12's allowlist.
 
 ## 15. Non-goals
 
@@ -602,19 +699,36 @@ proceeding), the three new EntitlementManager writer methods
 (enterGracePeriod/lockForNonPayment/recoverAccess) per SS5/SS6 exactly
 (nullable actor/reason, idempotent, Active-only target, correct event +
 transition-type per write), and the new AdvanceWorkspaceAccountLifecycle
-scheduled command per SS4/SS6/SS7 (two time-based sweeps only -- do not
+scheduled command per SS4/SS6/SS7's exact two-sweep SQL predicate (do not
 attempt to detect an actual payment-provider event, since no such signal
-exists in this codebase yet, per SS3). Keep CustomerAccountAccessResolver
-strictly read-only -- every write lives in EntitlementManager. Do NOT
-implement Contract 05's Agency/Client composition -- that is a separate
-slice. Do NOT integrate Stripe or any payment provider -- SS15 explicitly
-excludes this.
+exists in this codebase yet, per SS3).
+
+**Critical, get this exactly right: `recoverAccess()` MUST clear all
+three columns -- `trial_ends_at`, `grace_started_at`, AND `locked_at` --
+to NULL in the same write, every time it is called, with no exception for
+an early trial conversion.** An earlier draft of this contract left
+trial_ends_at unmodified by recovery, which is a real bug this
+remediation exists to fix: a past, uncleared trial_ends_at would make an
+already-converted, paying Workspace eligible for Sweep 1 again the moment
+grace_started_at is cleared. Sweep 1's `trial_ends_at IS NOT NULL` clause
+depends entirely on recoverAccess() clearing that column correctly --
+verify this with the specific test in SS13 (test 3: convert before
+expiry, then advance the clock past the original expiry and run the
+scheduler, asserting zero calls) before considering this slice done.
+
+Keep CustomerAccountAccessResolver strictly read-only -- every write
+lives in EntitlementManager. Do NOT implement Contract 05's Agency/Client
+composition -- that is a separate slice. Do NOT integrate Stripe or any
+payment provider -- SS15 explicitly excludes this.
 
 After implementing:
-- Run the new focused test files for this slice, including the
-  end-to-end lifecycle-walk test (SS13) that drives one Workspace through
-  every state this contract defines and asserts the resolver's output at
-  each step -- this is the test that proves the contract is genuinely
+- Run the new focused test files for this slice, including all five of
+  SS13's explicitly-required trial-conversion tests (trial still active;
+  trial expires unpaid; trial converts before expiry; trial expires ->
+  Grace -> payment succeeds; scheduler re-run is idempotent) and the
+  end-to-end lifecycle-walk test that drives one Workspace through every
+  state this contract defines and asserts the resolver's output at each
+  step -- this is the test that proves the contract is genuinely
   implementable end-to-end, not merely that its pieces exist in
   isolation.
 - Re-run every existing test file for the five consumers to confirm zero
@@ -629,7 +743,9 @@ Do NOT create a pull request yourself if GitHub tooling is unavailable --
 ChatGPT will create it through GitHub.
 
 Return a full report: starting/final SHA, exact files changed, exact tests
-run and counts, confirmation the end-to-end lifecycle-walk test passed,
+run and counts, explicit confirmation that recoverAccess() clears all
+three lifecycle columns (not just two) proven by test, confirmation the
+end-to-end lifecycle-walk and all five trial-conversion tests passed,
 confirmation no existing assignFirstPlan() or five-consumer test changed
 its assertions, and confirmation CustomerAccountAccessResolver remains
 read-only (zero writes anywhere in that file). Do NOT begin or authorize
