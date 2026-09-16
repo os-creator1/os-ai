@@ -618,6 +618,7 @@ class MessagingProviderAuthorizationTest extends TestCase
                 'user_id' => $staff->user_id,
                 'role' => 'staff',
                 'business_access_scope' => 'all',
+                'location_access_scope' => 'all',
                 'is_active' => true,
             ]);
         } else {
@@ -626,6 +627,7 @@ class MessagingProviderAuthorizationTest extends TestCase
                 'user_id' => $staff->user_id,
                 'role' => 'staff',
                 'business_access_scope' => 'selected',
+                'location_access_scope' => 'all',
                 'is_active' => true,
             ]);
             // No per-Business assignment row links $staff to $business at

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -456,6 +457,7 @@ class WorkspaceManagerTest extends TestCase
             'user_id' => $owner->id,
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ]);
 

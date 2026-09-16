@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Workspace\WorkspaceMembershipBusinessAssigned;
@@ -65,8 +66,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
             $workspace,
             $newMember->id,
             WorkspaceMembershipRole::Admin,
-            WorkspaceBusinessAccessScope::All,
-        );
+            WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->assertSame(WorkspaceMembershipRole::Admin, $membership->role);
         $this->assertTrue($membership->is_active);
@@ -84,8 +84,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
             $workspace,
             $newMember->id,
             WorkspaceMembershipRole::Staff,
-            WorkspaceBusinessAccessScope::All,
-        );
+            WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
     }
@@ -104,8 +103,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
             $workspace,
             $newMember->id,
             WorkspaceMembershipRole::Staff,
-            WorkspaceBusinessAccessScope::All,
-        );
+            WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
     }
@@ -120,7 +118,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $this->createMembership($workspace, $admin, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
-        $this->manager()->addMember($admin->id, $workspace, $newMember->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($admin->id, $workspace, $newMember->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 5. Staff cannot add a member.
@@ -133,7 +131,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $this->createMembership($workspace, $staff, ['role' => WorkspaceMembershipRole::Staff, 'is_active' => true]);
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
-        $this->manager()->addMember($staff->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($staff->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 6. Inactive Admin cannot add a member.
@@ -146,7 +144,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $this->createMembership($workspace, $admin, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => false]);
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
-        $this->manager()->addMember($admin->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($admin->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 7. Unrelated User cannot add a member.
@@ -158,7 +156,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $workspace = $this->createWorkspace($owner);
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
-        $this->manager()->addMember($unrelated->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($unrelated->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 8. Cannot add Workspace owner as member.
@@ -168,7 +166,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $workspace = $this->createWorkspace($owner);
 
         $this->expectException(OwnerCannotBeMemberException::class);
-        $this->manager()->addMember($owner->id, $workspace, $owner->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $owner->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 9. Cannot add to inactive Workspace.
@@ -179,7 +177,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $workspace = $this->createWorkspace($owner, ['is_active' => false]);
 
         $this->expectException(InactiveWorkspaceMutationException::class);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 10. All + nonempty IDs is rejected.
@@ -191,7 +189,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $this->expectException(InvalidBusinessAccessScopeAssignmentException::class);
-        $this->manager()->addMember($owner->user_id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, [$business->id]);
+        $this->manager()->addMember($owner->user_id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All, [$business->id]);
     }
 
     // 11. Selected + empty IDs succeeds.
@@ -201,7 +199,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
 
-        $membership = $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, []);
+        $membership = $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, []);
 
         $this->assertSame(WorkspaceBusinessAccessScope::Selected, $membership->business_access_scope);
         $this->assertSame(0, WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->count());
@@ -221,9 +219,8 @@ class WorkspaceMembershipLifecycleTest extends TestCase
             $workspace,
             $newMember->id,
             WorkspaceMembershipRole::Staff,
-            WorkspaceBusinessAccessScope::Selected,
-            [$businessA->id, $businessB->id],
-        );
+            WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All,
+            [$businessA->id, $businessB->id]);
 
         $assignedIds = app(WorkspaceMembershipBusinessRepository::class)->assignedBusinessIds($membership)->sort()->values()->all();
         $this->assertSame([$businessA->id, $businessB->id], collect($assignedIds)->sort()->values()->all());
@@ -246,9 +243,8 @@ class WorkspaceMembershipLifecycleTest extends TestCase
                 $workspace,
                 $newMember->id,
                 WorkspaceMembershipRole::Staff,
-                WorkspaceBusinessAccessScope::Selected,
-                [$validBusiness->id, $foreignBusiness->id],
-            );
+                WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All,
+                [$validBusiness->id, $foreignBusiness->id]);
             $this->fail('Expected CrossWorkspaceAssignmentException was not thrown.');
         } catch (CrossWorkspaceAssignmentException $e) {
             // expected
@@ -269,15 +265,13 @@ class WorkspaceMembershipLifecycleTest extends TestCase
 
         $first = $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         Event::fake(self::ALL_MEMBERSHIP_EVENTS);
 
         $second = $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $this->assertTrue($first->is($second));
         Event::assertNotDispatched(WorkspaceMembershipCreated::class);
@@ -290,10 +284,10 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $owner = $this->createCustomer()->user;
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->expectException(WorkspaceMembershipAlreadyExistsException::class);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 17. Active membership with differing scope throws.
@@ -302,10 +296,10 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $owner = $this->createCustomer()->user;
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->expectException(WorkspaceMembershipAlreadyExistsException::class);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, []);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, []);
     }
 
     // 18. Active membership with differing selected IDs throws.
@@ -318,14 +312,12 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessA->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id]);
 
         $this->expectException(WorkspaceMembershipAlreadyExistsException::class);
         $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessB->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessB->id]);
     }
 
     // 19. Existing inactive membership throws.
@@ -337,7 +329,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $this->createMembership($workspace, $newMember, ['role' => WorkspaceMembershipRole::Staff, 'is_active' => false]);
 
         $this->expectException(WorkspaceMembershipAlreadyExistsException::class);
-        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
     }
 
     // 20. MembershipCreated fires once on creation.
@@ -348,7 +340,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
 
-        $membership = $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership = $this->manager()->addMember($owner->id, $workspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         Event::assertDispatched(WorkspaceMembershipCreated::class, 1);
         Event::assertDispatched(WorkspaceMembershipCreated::class, function (WorkspaceMembershipCreated $event) use ($membership, $workspace, $newMember, $owner) {
@@ -374,7 +366,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
 
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected,
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All,
             [$orderedIds[1], $orderedIds[0]], // supplied out of order
         );
 
@@ -401,8 +393,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         try {
             $this->manager()->addMember(
                 $owner->user_id, $workspace, $newMember->id,
-                WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$foreignBusiness->id],
-            );
+                WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$foreignBusiness->id]);
         } catch (CrossWorkspaceAssignmentException) {
             // expected
         }
@@ -676,8 +667,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $staff->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $this->manager()->deactivateMember($owner->user_id, $membership);
 
@@ -841,8 +831,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $staff->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $this->manager()->deactivateMember($owner->user_id, $membership);
 
         $this->assertFalse($this->manager()->userCanAccessBusiness($staff->id, $business));
@@ -907,7 +896,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
 
         // The real owner still succeeds even though the passed-in object
         // claims a different owner and an inactive Workspace.
-        $membership = $this->manager()->addMember($owner->id, $staleWorkspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $membership = $this->manager()->addMember($owner->id, $staleWorkspace, $newMember->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, LocationAccessScope::All);
 
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
     }
@@ -922,8 +911,7 @@ class WorkspaceMembershipLifecycleTest extends TestCase
 
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $staff->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $this->manager()->changeMemberRole($owner->user_id, $membership, WorkspaceMembershipRole::Admin);
         $this->manager()->deactivateMember($owner->user_id, $membership);
         $this->manager()->reactivateMember($owner->user_id, $membership);

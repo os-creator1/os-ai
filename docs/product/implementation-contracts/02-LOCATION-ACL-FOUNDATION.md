@@ -147,10 +147,45 @@ scoped:
 |---|---|
 | Workspace owner | Always full access, every Location, unconditionally (matches the existing owner-bypass precedent) |
 | Direct Business owner (`business.customer_id === userId`) | Full access to that Business's Locations (matches the existing `customer_id` bypass) |
-| Active membership, `location_access_scope = All` | Full access to every Location of every Business the membership can already reach (composed with §5's transitional check) |
-| Active membership, `location_access_scope = Selected` | Only Locations with an explicit `workspace_membership_locations` grant row |
+| Active membership, current Business reach confirmed, `location_access_scope = All` | Full access to every Location of that Business |
+| Active membership, current Business reach confirmed, `location_access_scope = Selected` | Only Locations with an explicit `workspace_membership_locations` grant row |
+| Active membership, current Business reach NOT confirmed | No access, regardless of `location_access_scope` or any `workspace_membership_locations` grant row that may exist |
 | Inactive membership | No access — fails closed identically to the existing `! $membership->is_active` check |
 | No membership at all | No access |
+
+**Correction (post-implementation security finding): Business reach is
+re-checked at authorization time, for BOTH `location_access_scope` values,
+on every single call — not only when the Location grant was created.**
+An earlier draft of this contract only composed the §5 transitional check
+into the `All` branch, leaving the `Selected` branch to return whatever
+`workspace_membership_locations` said with no re-check of current Business
+reach. That is a real defect: a membership's `workspace_membership_locations`
+grant row is not deleted when its Business-level access is later narrowed
+or removed (§7/§8 deliberately do not add that cleanup — see below), so a
+`Selected`-scope membership whose Business grant is subsequently narrowed
+or unassigned would otherwise keep silently authorizing that Location
+forever, via the now-stale grant row. `userCanAccessLocation()` therefore
+computes Business reach exactly once per call —
+`$membership->business_access_scope === WorkspaceBusinessAccessScope::All
+|| $membershipBusinessRepository->isAssigned($membership, $business->id)`
+— denies immediately if that is false, and only then branches on
+`location_access_scope`. Grant-time validation (the same check already
+enforced inside `assign()`/`syncForMembership()` when a Location grant is
+created) remains a real, useful defense-in-depth layer, but it is **not**
+a substitute for this runtime composition check: it can only ever prove
+Business reach existed at the moment the grant was written, never that it
+still holds at the moment access is requested. **This guard's
+continuous, per-call check is the load-bearing protection for the §5
+invariant**, exactly the same relationship grant-time validation already
+has to runtime authorization on the Business axis itself. No cleanup was
+added to `changeMemberBusinessAccessScope()`/`unassignBusinessFromMember()`
+to delete now-unreachable `workspace_membership_locations` rows when
+Business access narrows — the stale row is intentionally left in place,
+inert, and the guard's own re-check is what keeps it from ever being
+honored while it cannot be reached; the row is available for a later
+scope-widening or Business-re-grant to seamlessly resume from exactly
+where it left off (§13 tests both the immediate denial and this later
+resumption).
 
 `userCanAccessLocation(int $userId, BusinessLocation $location): bool` on
 the new `LocationAccessGuard` class: re-derives `$location` fresh from its
@@ -230,20 +265,43 @@ codebase for safely adding a required column to a live table:**
    `SELECT COUNT(*) FROM workspace_memberships WHERE location_access_scope
    IS NULL` with **no** `is_active` filter, for the same reason.
 
-**Full writer inventory (deep-dive requirement — every path that creates a
-`WorkspaceMembership` row, mechanically enumerated via `git grep
-"WorkspaceMembership::create(" -- app tests`, not assumed):**
+**Full writer inventory — corrected to the actual, mechanically-verified
+result at implementation time (originally enumerated via `git grep
+"WorkspaceMembership::create(" -- app tests`; that grep alone proved
+insufficient, see the two corrections below the table):**
 
 | Writer | Path type | Current default handling | Required fix |
 |---|---|---|---|
-| `WorkspaceManager::addMember()` → `WorkspaceMembershipRepository::create()` | **Production** (the only one) | `create(Workspace, int, WorkspaceMembershipRole, WorkspaceBusinessAccessScope)` — `$scope` already required, no default (confirmed by full interface read) | Extend the signature to also require `LocationAccessScope $locationScope` (no default), mirroring the existing `$scope` parameter exactly — every production caller of `addMember()` must be updated to pass one explicitly |
+| `WorkspaceManager::addMember()` → `WorkspaceMembershipRepository::create()` | **Production** | `create(Workspace, int, WorkspaceMembershipRole, WorkspaceBusinessAccessScope)` — `$scope` already required, no default (confirmed by full interface read) | Extend the signature to also require `LocationAccessScope $locationScope` (no default), mirroring the existing `$scope` parameter exactly — every production caller of `addMember()` must be updated to pass one explicitly |
+| `WorkspaceManager::reconcileConvertToAdminDisposition()` → `WorkspaceMembershipRepository::create()` | **Production — second, previously undocumented caller**, discovered by mechanically re-running `git grep "membershipRepository->create(" -- app` rather than trusting this table's original "the only one" claim | Same signature, called from the ownership-transfer reconciliation flow | Pass `LocationAccessScope::All` explicitly, with an inline comment noting this is a second, mechanically-discovered production caller |
 | `tests/Feature/Workspace/Concerns/CreatesWorkspaceTestData.php::createMembership()` | Shared test fixture trait (confirmed, full method read) | `array_merge([..., 'business_access_scope' => WorkspaceBusinessAccessScope::All, ...], $overrides)` — bypasses the repository entirely, calls `WorkspaceMembership::create()` directly | Add `'location_access_scope' => LocationAccessScope::All` to the same default array |
 | `tests/Feature/Workspace/WorkspaceModelTest.php` (line ~33) | Local `array_merge`-based helper, same shape as above | Same pattern | Same fix, same file |
 | `tests/Feature/Workspace/WorkspaceOwnershipTransferTest.php` (line ~82) | Local `array_merge`-based helper | Same pattern | Same fix, same file |
-| **27 further test files, each with one or more *literal* (non-`array_merge`) `WorkspaceMembership::create([...])` calls** — confirmed by exhaustive `git grep`, not sampled: `AgencyProspectingRuntimeTest.php`, `AgencyProspectingTest.php`, `CreatesAnalyticsFixtures.php`, `CreatesAutomationFixtures.php`, `InternalNotificationExecutorTest.php`, `WorkflowHttpAuthorizationTest.php`, `MessagingChannelsTest.php`, `WorkspaceBusinessExistingBehaviorPreservedTest.php`, `EntitlementManagerBusinessToggleTest.php` (5 call sites), `EntitlementManagerConcurrencyTest.php` (2 call sites), `CreatesGoogleBusinessProfileFixtures.php`, `OutreachCorrection1Test.php` (3 call sites), `RequestScopedCacheQueueLifecycleTest.php`, `MessagingProviderAuthorizationTest.php` (2 call sites), `OutreachSecurityTest.php` (3 call sites), `RelocatedAdvancedProviderAuthorizationTest.php` (2 call sites), `PayerAssignmentTransitionScenariosTest.php`, `UsageWalletManagerSpendCapTest.php`, `CreatesWebsiteFixtures.php`, `WorkspaceManagerTest.php`, `WorkspaceOwnershipTransferHttpTest.php` | Each constructs its attribute array inline, literally — none share a common default | **Each literal array individually needs `'location_access_scope' => LocationAccessScope::All'` added** — there is no single shared default to patch for this group; §12's allowlist lists every one of these files explicitly so none is discovered missing only when the `NOT NULL` migration (step 3 above, actually landing in this same slice's own migration set) fails CI |
+| **21 further test files, each with one or more *literal* (non-`array_merge`) `WorkspaceMembership::create([...])` calls** — confirmed by exhaustive `git grep`, not sampled: `AgencyProspectingRuntimeTest.php`, `AgencyProspectingTest.php`, `CreatesAnalyticsFixtures.php`, `CreatesAutomationFixtures.php`, `InternalNotificationExecutorTest.php`, `WorkflowHttpAuthorizationTest.php`, `MessagingChannelsTest.php`, `WorkspaceBusinessExistingBehaviorPreservedTest.php`, `EntitlementManagerBusinessToggleTest.php` (**6** call sites — see correction below), `EntitlementManagerConcurrencyTest.php` (2 call sites), `CreatesGoogleBusinessProfileFixtures.php`, `OutreachCorrection1Test.php` (3 call sites), `RequestScopedCacheQueueLifecycleTest.php`, `MessagingProviderAuthorizationTest.php` (2 call sites), `OutreachSecurityTest.php` (3 call sites), `RelocatedAdvancedProviderAuthorizationTest.php` (2 call sites), `PayerAssignmentTransitionScenariosTest.php`, `UsageWalletManagerSpendCapTest.php`, `CreatesWebsiteFixtures.php`, `WorkspaceManagerTest.php`, `WorkspaceOwnershipTransferHttpTest.php` | Each constructs its attribute array inline, literally — none share a common default | **Each literal array individually needs `'location_access_scope' => LocationAccessScope::All'` added** — there is no single shared default to patch for this group |
+| `tests/Feature/Workspace/WorkspaceMembershipRepositoryTest.php` | **Discovered only during implementation testing, invisible to the `WorkspaceMembership::create(` grep** — calls `WorkspaceMembershipRepository::create(...)` (the repository method, resolved via `app(WorkspaceMembershipRepository::class)`) directly and positionally, never through the Eloquent model | 4-positional-arg calls, no `location_access_scope` concept | Add `LocationAccessScope::All` as the 5th positional argument at each call site |
+| `WorkspaceMembershipLifecycleTest.php`, `WorkspaceBusinessOrchestrationTest.php`, `WorkspaceMembershipBusinessAccessTest.php`, and 2 further call sites in `WorkspaceOwnershipTransferTest.php` | **Discovered only during implementation testing, invisible to the `WorkspaceMembership::create(` grep** — call `WorkspaceManager::addMember(...)` directly and positionally (bypassing `CreatesWorkspaceTestData::createMembership()` entirely), so the manager's own signature change breaks them independently of the model/repository grep | Positional `addMember($actor, $workspace, $member, $role, $scope, [$businessIds])` calls | Insert `LocationAccessScope::All` as the new 6th positional argument, before the pre-existing (optional) `$businessIds` argument, at every call site |
 
-This inventory is exhaustive as of this contract's writing — re-run the
-same `git grep` at implementation time to catch any file added since.
+**Correction 1 (mechanical re-check, reported per this contract's own §8
+closing instruction rather than silently used): `EntitlementManagerBusinessToggleTest.php`
+has exactly 6 literal `WorkspaceMembership::create(` call sites at
+implementation time, not the 5 this contract originally documented. The
+file list itself is otherwise unchanged. The freshly-verified count (6) is
+authoritative; all 6 sites were fixed.**
+
+**Correction 2: the precheck's `git grep "WorkspaceMembership::create(" --
+app tests` command, run literally, only finds writers that call the
+Eloquent model's own static `create()`. It structurally cannot see a
+writer that goes through `WorkspaceManager::addMember()` or
+`WorkspaceMembershipRepository::create()` by name — both of which
+mechanically turned out to have additional callers (see the table above).
+Re-running the precheck at any future implementation time must also grep
+for `->addMember(` and `membershipRepository->create(`/
+`WorkspaceMembershipRepository::class)->create(` to be exhaustive.**
+
+This inventory (24 files matching the original literal-grep scope, plus 2
+production call sites and 4 test files found only by the broader greps
+above) is exhaustive as of this correction — re-run all three greps at any
+future implementation time to catch a file added since.
 
 **`workspace_membership_locations` table itself:** no backfill — starts
 empty; every membership is `All`-scoped by the backfill above, so no
@@ -289,6 +347,9 @@ this slice.
 - `app/Events/Workspace/WorkspaceMembershipLocationAssigned.php`
 - `app/Events/Workspace/WorkspaceMembershipLocationUnassigned.php`
 - `app/Exceptions/Workspace/CrossBusinessLocationAssignmentException.php` (mirrors `CrossWorkspaceAssignmentException`)
+- `app/Models/WorkspaceMembershipLocation.php` (**added by this correction** — structurally necessary: `EloquentBaseRepository`'s constructor requires a concrete `Model` for the repository pattern to work at all, exactly as `WorkspaceMembershipBusiness` already exists for the sibling pivot; this contract's original allowlist omitted it)
+- `app/Exceptions/Workspace/LocationAccessDeniedException.php` (**added by this correction** — mirrors `WorkspaceAccessDeniedException(userId, businessId)` as `(userId, locationId)`; reusing the Business-scoped exception for a Location denial would mislabel the denied resource)
+- `app/Exceptions/Workspace/WorkspaceMembershipLocationAccessScopeBackfillIncompleteException.php` (**added by this correction** — mirrors `WorkspaceBackfillIncompleteException`; reusing it here would produce a misleading error message referencing the wrong table/column)
 - `tests/Feature/Workspace/LocationAccessGuardTest.php`
 - `tests/Feature/Workspace/WorkspaceMembershipLocationRepositoryTest.php`
 
@@ -296,19 +357,28 @@ this slice.
 - `app/Models/WorkspaceMembership.php` — add `location_access_scope` to `$fillable`/`$casts`.
 - `app/Providers/AppServiceProvider.php` — one new binding line.
 - `app/Repositories/Contracts/WorkspaceMembershipRepository.php` + `EloquentWorkspaceMembershipRepository.php` — extend `create()`'s signature with a required `LocationAccessScope $locationScope` parameter, mirroring the existing `$scope` parameter exactly.
-- `app/Library/Workspace/WorkspaceManager.php` — `addMember()` gains the same new required parameter and passes it through to `create()`.
-- Every production caller of `WorkspaceManager::addMember()` — updated to supply an explicit `LocationAccessScope` (the exact call sites must be re-enumerated via `git grep "addMember("` at implementation time, since this contract's own evidence pass focused on the repository/manager layer, not every controller invoking it).
+- `app/Library/Workspace/WorkspaceManager.php` — `addMember()` gains the same new required parameter and passes it through to `create()`, and its second, previously undocumented `membershipRepository->create()` call site (inside `reconcileConvertToAdminDisposition()`) is updated too — see §8 Correction 2.
+- Every production caller of `WorkspaceManager::addMember()` — updated to supply an explicit `LocationAccessScope`.
 
-**This slice DOES modify existing test files — 30 of them, per §8's full
-writer inventory**, correcting the original "no existing test modified"
+**This slice DOES modify existing test files — 28 of them, per §8's
+corrected full writer inventory** (24 files matching the original
+`WorkspaceMembership::create(` literal grep, plus 4 more found only by
+broader `->addMember(`/repository-`->create(` greps run during
+implementation), correcting the original "no existing test modified"
 framing, which was wrong for this slice specifically (Location ACL is the
 one contract in this factory whose NOT NULL column addition has a real,
 large existing-writer surface, unlike every other additive slice):
 `CreatesWorkspaceTestData.php`, `WorkspaceModelTest.php`,
-`WorkspaceOwnershipTransferTest.php`, and the 27 further files §8 lists by
-name — each gets exactly one line added (`'location_access_scope' =>
-LocationAccessScope::All`) to its existing `WorkspaceMembership::create()`
-call(s), no other change.
+`WorkspaceOwnershipTransferTest.php`, `WorkspaceOwnershipTransferHttpTest.php`,
+the 21 further literal-`create()` files §8 lists by name (each gets exactly
+one line added — `'location_access_scope' => LocationAccessScope::All'`
+— to its existing `WorkspaceMembership::create()` call(s), no other
+change), `WorkspaceMembershipRepositoryTest.php` (direct
+`WorkspaceMembershipRepository::create()` calls, one new positional
+argument each), and `WorkspaceMembershipLifecycleTest.php` /
+`WorkspaceBusinessOrchestrationTest.php` /
+`WorkspaceMembershipBusinessAccessTest.php` (direct
+`WorkspaceManager::addMember()` calls, one new positional argument each).
 
 **No existing controller, route, or non-test-fixture file modified beyond
 what's listed above.**
@@ -329,6 +399,18 @@ transitional cross-check (§5) — a `Selected`-scope-on-Business membership
 attempting to gain a Location grant for a Business it isn't Business-level-
 granted for is refused even though the Location itself belongs to the same
 Workspace.
+
+**Stale-grant vs. current-Business-reach composition (added by this
+correction, §6):** a Selected Location grant made while Business access
+was reachable, then denied the instant Business-level access is removed
+or narrowed to exclude that Business — with the `workspace_membership_locations`
+row left untouched throughout; the same membership re-allowed the moment
+Business-level access is restored, proving the row was never deleted, only
+correctly shadowed while unreachable; and a Location grant force-inserted
+directly at the DB layer for a membership that cannot reach that
+same-Workspace Business through any Business-level grant, denied outright
+— proving the runtime composition check, not grant-time validation, is
+the load-bearing protection.
 
 `WorkspaceMembershipLocationRepositoryTest.php`: mirrors
 `WorkspaceMembershipBusinessRepositoryTest.php`'s own test shape —
@@ -352,21 +434,25 @@ that no separate "on reactivation" reset logic was accidentally
 introduced.
 
 **Writer-inventory regression (explicit, per this remediation):** every
-one of the 30 test files in §8's inventory table is run as part of this
-slice's own verification pass, confirming each still passes after its
-`WorkspaceMembership::create()` call(s) gain the new required attribute —
-not merely that the *new* Location ACL tests pass, but that the NOT NULL
-migration does not break any *existing* test.
+one of the 28 existing test files in §8's corrected inventory is run as
+part of this slice's own verification pass, confirming each still passes
+after its `WorkspaceMembership::create()`/`WorkspaceMembershipRepository::
+create()`/`WorkspaceManager::addMember()` call(s) gain the new required
+attribute or positional argument — not merely that the *new* Location ACL
+tests pass, but that the NOT NULL migration and the manager/repository
+signature changes do not break any *existing* test.
 
 ## 14. Acceptance criteria
 
 1. Migrations run clean in the documented three-step order.
 2. Every existing `WorkspaceMembership` row — active and inactive —
    has `location_access_scope = 'all'` after backfill, verified by test.
-3. `LocationAccessGuard` passes every §13 test.
+3. `LocationAccessGuard` passes every §13 test, including the stale-grant
+   composition tests added by this correction.
 4. Reactivation-preserves-access test (§13) passes.
-5. All 30 files in §8's writer inventory pass after their one-line fix,
-   individually confirmed, not assumed from a partial sample.
+5. All 28 existing files in §8's corrected writer inventory pass after
+   their required fix, individually confirmed, not assumed from a partial
+   sample.
 6. Zero existing controller/route behavior changes (nothing consumes this
    yet).
 7. `git diff --check` clean; diff matches §12's allowlist exactly.

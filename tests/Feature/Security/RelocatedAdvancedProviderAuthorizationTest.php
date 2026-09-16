@@ -352,6 +352,7 @@ class RelocatedAdvancedProviderAuthorizationTest extends TestCase
             'user_id' => $admin->user_id,
             'role' => 'admin',
             'business_access_scope' => 'all',
+            'location_access_scope' => 'all',
             'is_active' => true,
         ]);
 
@@ -374,6 +375,7 @@ class RelocatedAdvancedProviderAuthorizationTest extends TestCase
             'user_id' => $staff->user_id,
             'role' => 'staff',
             'business_access_scope' => $scope,
+            'location_access_scope' => 'all',
             'is_active' => true,
         ]);
 

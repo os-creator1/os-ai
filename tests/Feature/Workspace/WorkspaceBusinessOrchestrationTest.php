@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\Workspace\WorkspaceTransitionType;
@@ -582,9 +583,9 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $otherBusinessInA = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes(['name' => 'Other In A']));
         $businessInC = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceC, $this->businessAttributes(['name' => 'In C']));
 
-        $membershipInA1 = $this->manager()->addMember($owner->user_id, $workspaceA, $member1->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id]);
-        $membershipInA2 = $this->manager()->addMember($owner->user_id, $workspaceA, $member2->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$otherBusinessInA->id]);
-        $membershipInC = $this->manager()->addMember($owner->user_id, $workspaceC, $member3->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$businessInC->id]);
+        $membershipInA1 = $this->manager()->addMember($owner->user_id, $workspaceA, $member1->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
+        $membershipInA2 = $this->manager()->addMember($owner->user_id, $workspaceA, $member2->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$otherBusinessInA->id]);
+        $membershipInC = $this->manager()->addMember($owner->user_id, $workspaceC, $member3->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessInC->id]);
 
         $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
 
@@ -607,8 +608,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
 
         // Created out of ascending-membership-ID order, to prove the
         // dispatch order is sorted rather than insertion order.
-        $membershipY = $this->manager()->addMember($owner->user_id, $workspaceA, $memberY->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id]);
-        $membershipX = $this->manager()->addMember($owner->user_id, $workspaceA, $memberX->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+        $membershipY = $this->manager()->addMember($owner->user_id, $workspaceA, $memberY->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
+        $membershipX = $this->manager()->addMember($owner->user_id, $workspaceA, $memberX->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $expectedOrder = collect([$membershipY->id, $membershipX->id])->sort()->values()->all();
 
@@ -696,7 +697,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $workspaceB = $this->entitledWorkspace($owner->user);
         $member = $this->createCustomer()->user;
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
-        $membership = $this->manager()->addMember($owner->user_id, $workspaceA, $member->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+        $membership = $this->manager()->addMember($owner->user_id, $workspaceA, $member->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $failingTransitionRepository = \Mockery::mock(WorkspaceTransitionRepository::class);
         $failingTransitionRepository->shouldReceive('create')
@@ -853,7 +854,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $workspaceA = $this->entitledWorkspace($ownerA->user);
         $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
-        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
 
         $result = $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceB);
@@ -872,7 +873,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $workspaceA = $this->entitledWorkspace($ownerA->user);
         $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
-        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
+        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, []);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
 
         $this->expectException(WorkspaceAccessDeniedException::class);
@@ -902,7 +903,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $admin = $this->createCustomer();
         $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
-        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $result = $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceA);
 
@@ -919,7 +920,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $admin = $this->createCustomer();
         $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
-        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
+        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, []);
 
         $this->expectException(WorkspaceAccessDeniedException::class);
         $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceA);

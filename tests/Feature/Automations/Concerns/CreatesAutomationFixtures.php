@@ -6,6 +6,7 @@ use App\Enums\Automation\AutomationActionType;
 use App\Enums\Automation\AutomationTriggerType;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
@@ -84,6 +85,7 @@ trait CreatesAutomationFixtures
             'user_id' => $user->id,
             'role' => $role->value,
             'business_access_scope' => WorkspaceBusinessAccessScope::All->value,
+            'location_access_scope' => LocationAccessScope::All->value,
             'is_active' => $isActive,
         ]);
     }

@@ -3,6 +3,7 @@
 namespace Tests\Feature\Workspace;
 
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\Workspace\WorkspaceTransitionType;
@@ -84,6 +85,7 @@ class WorkspaceOwnershipTransferTest extends TestCase
             'user_id' => $userId,
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
             'is_active' => true,
         ], $overrides));
     }
@@ -310,8 +312,7 @@ class WorkspaceOwnershipTransferTest extends TestCase
         $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $incomingMembership = $this->manager()->addMember(
             $owner->user_id, $workspace, $newOwner->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
 
         $this->manager()->transferOwnership($owner->user_id, $workspace, $newOwner->id, WorkspaceOwnershipTransferDisposition::deactivate());
 
@@ -925,8 +926,7 @@ class WorkspaceOwnershipTransferTest extends TestCase
         $unrelatedBusiness = $this->createBusinessForCustomer($owner->user_id, $unrelatedWorkspace->id);
         $unrelatedMembership = $this->manager()->addMember(
             $owner->user_id, $unrelatedWorkspace, $unrelatedMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$unrelatedBusiness->id],
-        );
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$unrelatedBusiness->id]);
 
         $this->manager()->transferOwnership($owner->user_id, $workspace, $newOwner->id, WorkspaceOwnershipTransferDisposition::deactivate());
 

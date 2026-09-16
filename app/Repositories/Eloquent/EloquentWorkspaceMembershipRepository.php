@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\Workspace;
@@ -82,12 +83,13 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
         Workspace $workspace,
         int $userId,
         WorkspaceMembershipRole $role,
-        WorkspaceBusinessAccessScope $scope
+        WorkspaceBusinessAccessScope $scope,
+        LocationAccessScope $locationScope
     ): WorkspaceMembership {
         /** @var WorkspaceMembership $membership */
         $membership = $this->query()->firstOrCreate(
             ['workspace_id' => $workspace->id, 'user_id' => $userId],
-            ['role' => $role, 'business_access_scope' => $scope, 'is_active' => true]
+            ['role' => $role, 'business_access_scope' => $scope, 'location_access_scope' => $locationScope, 'is_active' => true]
         );
         $this->forgetRequestCache("membership:find:{$workspace->id}:{$userId}");
 
