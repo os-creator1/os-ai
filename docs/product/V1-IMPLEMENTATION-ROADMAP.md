@@ -39,7 +39,7 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Complexity:** M. **Risk:** Low. **Lane:** A.
 
 ### Slice 2 — Cross-Workspace Agency authorization + View As extension
-- **Objective:** extend authorization so any authorized Agency team member (owner, admin, or a permitted staff member — Blueprint §2, §28; View As is not owner-only) can act on a linked Client Workspace via the Slice 1 relationship; extend `ViewAsManager` to resolve a viewed Business across Workspaces through that relationship instead of only `businessesForWorkspace($workspace)`.
+- **Objective:** extend authorization so any authorized Agency team member (owner, or an active admin or staff member of that Agency Workspace — Blueprint §2, §28; View As is not owner-only) can act on a linked Client Workspace via the Slice 1 relationship; extend `ViewAsManager` to resolve a viewed Business across Workspaces through that relationship instead of only `businessesForWorkspace($workspace)`.
 - **Why here:** the Blueprint's View As guarantee (§28, §32) and every later Agency-facing slice need this before any client-facing Agency UI is safe to build.
 - **Sections:** Blueprint §2, §28, §32; Addendum §2, §6 (View As).
 - **Code domains:** `app/Library/ViewAs/ViewAsManager.php`, `WorkspaceManager::userCanAccessBusiness()` (add an explicit second entry point rather than changing its existing single-Workspace contract).
@@ -50,7 +50,7 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Blocks:** Slices 4, 5, 7.
 - **Concurrent with:** Slice 3 (different subsystem), not with Slice 1 (hard dependency).
 - **Migration/backfill:** none.
-- **Adversarial test themes:** an Agency actor without an active relationship row must be refused, not merely unlisted; an Agency team member without ordinary Agency-management permission (e.g. a permission-less Staff row) must be refused even with an active relationship, proving the check composes normal Agency-Workspace authorization *with* the relationship rather than substituting for it; a terminated relationship must immediately lose View As and management authority while historical audit stays intact (Addendum §2); an Agency Admin/Staff member must be independently proven unable to reach AgencyRebill consent/payer actions through the View As session (Addendum §10 — View As is a lens, never an escalation path); the pre-existing same-Workspace View As path must still work unchanged for Core/Growth.
+- **Adversarial test themes:** an Agency actor without an active relationship row must be refused, not merely unlisted; an Agency actor without an ACTIVE Admin/Staff membership of that exact Agency Workspace (an inactive, removed or cross-Agency membership) must be refused even with an active relationship, proving the check composes normal Agency-Workspace authorization *with* the relationship rather than substituting for it (no separate Agency-management permission exists — Contract 04 authority correction); a terminated relationship must immediately lose View As and management authority while historical audit stays intact (Addendum §2); an Agency Admin/Staff member must be independently proven unable to reach AgencyRebill consent/payer actions through the View As session (Addendum §10 — View As is a lens, never an escalation path); the pre-existing same-Workspace View As path must still work unchanged for Core/Growth.
 - **Acceptance criteria:** both View As paths pass their respective test suites; no regression in `ViewAsRouteBoundaryTest`-style coverage.
 - **Complexity:** L. **Risk:** Critical. **Lane:** A (serial after Slice 1).
 
@@ -124,13 +124,13 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Sections:** Blueprint §6, §28; Addendum §1, §2.
 - **Code domains:** new Agency-facing controller/flow; reuses existing signup provisioning logic (`BusinessOnboardingController`/`WorkspaceManager::createWorkspace()`) rather than duplicating it.
 - **Schema impact:** none new.
-- **Tenancy/security impact:** Medium — provisioning requires ordinary Agency-management permission (owner, admin, or permitted staff — Blueprint §2, §28; not owner-only, per Addendum §2's silence on who *creates* a relationship versus its explicit owner/Platform-Owner-only *termination* rule) plus the actor's own Agency Workspace authority (Slice 2); an Agency team member with no Agency-management permission at all must still be refused.
+- **Tenancy/security impact:** Medium — provisioning requires ordinary Agency-management authority (owner, or an active admin or staff member of the Agency Workspace, by membership alone — Blueprint §2, §28; not owner-only, per Addendum §2's silence on who *creates* a relationship versus its explicit owner/Platform-Owner-only *termination* rule) plus the actor's own Agency Workspace authority (Slice 2); an actor without an active Admin/Staff membership of the Agency Workspace must still be refused.
 - **Billing impact:** Low — client's own plan/trial starts per §6/§27, independent of the Agency; if provisioning also assigns a resold SaaS plan billed through money lane C (Addendum §12), that specific sub-step may carry its own narrower authority rule to be confirmed against SaaS Plans (§28) when that surface is specified — provisioning the Workspace/Business/Location itself is not owner-only.
 - **Prerequisites:** Slices 1, 2.
 - **Blocks:** Slice 8.
 - **Concurrent with:** Slices 3, 4, 6 if not already merged; otherwise Slice 11/13 (independent product modules).
 - **Migration/backfill:** none.
-- **Adversarial test themes:** an Agency team member with no Agency-management permission cannot provision a client even though they belong to the Agency Workspace; an actor from an unrelated Agency Workspace cannot provision a client under an Agency it has no relationship with.
+- **Adversarial test themes:** an inactive or cross-Agency member cannot provision a client under an Agency Workspace they are not an active member of; an actor from an unrelated Agency Workspace cannot provision a client under an Agency it has no relationship with.
 - **Acceptance criteria:** provisioning a client produces a Workspace indistinguishable in shape from an organic Core/Growth signup, plus one active relationship row.
 - **Complexity:** M. **Risk:** Medium. **Lane:** A (serial after Slice 2).
 
@@ -147,7 +147,7 @@ architecture rules already in the Addendum — both are cited, not repeated.
 - **Concurrent with:** these two efforts can run as separate lanes (different files) within the same wave.
 - **Migration/backfill:** for (b), existing staff `business_access_scope = Selected` memberships need an equivalent Location grant seeded so nobody's access silently widens or narrows on cutover.
 - **Adversarial test themes:** (b) is exactly the repeat of the Task-3-style multi-resource-route ID-mismatch defense already proven necessary once this session for Business tenancy — the same class of test must be written per Location-bound controller.
-- **Acceptance criteria:** (a) any authorized Agency team member (owner, admin, or permitted staff) can list/open/View-As every linked client, while an Agency team member without Agency-management permission is refused; (b) every Location-bound controller has an adversarial cross-Location-ID test.
+- **Acceptance criteria:** (a) any authorized Agency team member (owner, or an active admin or staff member of that Agency Workspace, by membership alone) can list/open/View-As every linked client, while an inactive or cross-Agency member is refused; (b) every Location-bound controller has an adversarial cross-Location-ID test.
 - **Complexity:** XL (b is the larger share). **Risk:** High. **Lane:** A for (a), B for (b) — run concurrently as two lanes.
 
 ### Slice 9 — AgencyRebill activation

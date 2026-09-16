@@ -301,7 +301,8 @@ from the relationship-termination test — an Active relationship with a
 downgraded Agency tier must fail exactly like a terminated relationship,
 via a different, distinguishable `END_REASON`); happy path (Agency owner
 starts a cross-Workspace session, `current()` resolves it correctly with
-the new fields populated); permitted-Staff happy path;
+the new fields populated); active-Admin and active-Staff happy paths (by
+membership alone);
 relationship-terminated-mid-session forces `END_REASON_RELATIONSHIP_ENDED`
 on the next `current()` read; Agency-downgraded-mid-session (relationship
 still `Active`) forces `END_REASON_AGENCY_ENTITLEMENT_LOST` on the next

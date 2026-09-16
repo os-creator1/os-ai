@@ -57,15 +57,16 @@ Mechanically confirmed on `origin/main`:
   OR an active `WorkspaceMembership` with `role === WorkspaceMembershipRole::Admin`.
   **This check excludes Staff entirely** and is the wrong shape to reuse
   verbatim for this slice's authority (§6) — the corrected Blueprint §2
-  locked rule requires Staff-with-permission to also qualify for ordinary
+  locked rule requires active Staff to also qualify for ordinary
   Agency-management actions, which `assertActorIsOwnerOrActiveAdmin` cannot
   express.
 - **`app/Enums/Workspace/WorkspaceMembershipRole.php`**: `Admin | Staff`
-  only — no third role exists to represent "Agency-management-permitted
-  Staff"; that must be an ordinary feature permission (Gate-based, matching
-  the pattern `CrmOpportunitiesController::VIEW_PERMISSION` /
-  `CustomerMenuBuilder`'s `Gate::forUser($user)->any($permissions)` already
-  use elsewhere in this codebase), not a new role.
+  only — and no third role is needed. (This contract's original draft
+  proposed an additional Gate-based feature permission for "Agency-management
+  permitted Staff"; that is **superseded** by the Contract 04 authority
+  correction, §6: V1 ordinary Agency management belongs to active Admin
+  **and** Staff membership of the exact Agency Workspace itself, with no
+  additional permission and no new role.)
 - **`app/Events/Workspace/`**: flat event classes per transition
   (`WorkspaceCreated`, `WorkspaceRenamed`, `BusinessReassignedToWorkspace`,
   `WorkspaceMembershipBusinessUnassigned`, etc.) — one class per semantic
