@@ -737,9 +737,11 @@
                         // Orientation is the domain one: `from` is the
                         // Business's own sender identity, `to` the typed
                         // recipient.
+                        $conversationBusinessId = $input['business_id'] ?? $input['conversation_business_id'] ?? null;
+
                         $chatbox = ChatBox::firstOrNew([
                             'user_id'           => $user->id,
-                            'business_id'       => $input['business_id'] ?? $input['conversation_business_id'] ?? null,
+                            'business_id'       => $conversationBusinessId,
                             'from'              => $sender_id,
                             'to'                => $phone,
                             'sending_server_id' => $sending_server->id,
@@ -756,6 +758,19 @@
                             // blank uids the moment a two-way quick send runs.
                             $chatbox->uid = (string) Str::uuid();
                             $chatbox->reply_by_customer = false;
+
+                            // Contract 06 §5 — Location attribution for a
+                            // conversation this send is OPENING. Only the
+                            // Business the caller already supplied can yield
+                            // one, and only when it has exactly one active
+                            // Location; a caller that supplied no Business
+                            // gets NULL, and none is derived from the actor to
+                            // obtain a Location. An existing thread keeps the
+                            // Location it was opened with.
+                            $chatbox->location_id = ChatBox::singleActiveLocationIdFor(
+                                $conversationBusinessId === null ? null : (int) $conversationBusinessId,
+                            );
+
                             $chatbox->save();
                         }
 
@@ -1478,14 +1493,34 @@
                         // Contacts is deliberately not followed: it does not
                         // produce a valid UUID and it is not what a char(36)
                         // column is shaped for.
+                        // Contract 06 §5, site 4 — this branch runs ONLY while
+                        // `$outreachBusinessId === null`, so the insert writes
+                        // no `business_id` and there is no Business to resolve
+                        // a Location from. `location_id` is therefore written
+                        // as an explicit NULL: stated at the write site rather
+                        // than left implied by omission, because the honest
+                        // answer here is "unattributed", not "not yet
+                        // implemented".
+                        //
+                        // Nothing may stand in for the missing evidence — not
+                        // the user's primary Business, not a Business inferred
+                        // from the contact or its group, not a Location
+                        // borrowed from another Business this user owns. A
+                        // Business the user happens to own elsewhere is not
+                        // evidence about THIS conversation, and a wrong
+                        // Location would surface a legacy prospecting thread
+                        // inside a real Location's inbox once Contract 08B
+                        // lands. The column is nullable precisely so these
+                        // rows can stay unattributed.
                         $boxId = DB::table('chat_boxes')->insertGetId([
-                            'uid'        => (string) Str::uuid(),
-                            'user_id'    => $user->id,
-                            'to'         => $phone,
-                            'from'       => $sender_id[0] ?? null,
-                            'ai_stage'   => 1, // THIS is what makes "Stage 1" count
-                            'created_at' => now(),
-                            'updated_at' => now(),
+                            'uid'         => (string) Str::uuid(),
+                            'user_id'     => $user->id,
+                            'location_id' => null,
+                            'to'          => $phone,
+                            'from'        => $sender_id[0] ?? null,
+                            'ai_stage'    => 1, // THIS is what makes "Stage 1" count
+                            'created_at'  => now(),
+                            'updated_at'  => now(),
                         ]);
 
                         $boxIds[] = $boxId;

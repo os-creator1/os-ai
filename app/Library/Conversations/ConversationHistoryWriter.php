@@ -7,6 +7,7 @@ use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\BusinessMessagingNumber;
 use App\Models\ChatBox;
 use App\Models\ChatBoxMessage;
@@ -64,9 +65,30 @@ final class ConversationHistoryWriter
      * The canonical conversation between the Business's number and a person —
      * existing, or new and not yet saved. Null when either number normalizes to
      * nothing.
+     *
+     * LOCATION (Contract 06 §5). A new conversation is attributed to a Location
+     * when one can be proven: the caller's own `$location` when it supplies one
+     * — a caller that knows which Location is sending (a future Conversations
+     * UI honouring the Location switcher) knows better than any fallback — and
+     * otherwise the Business's single active Location, or NULL. A `$location`
+     * belonging to another Business, or one that is archived, is ignored
+     * rather than written: this parameter is a shortcut for evidence the
+     * caller already has, never a way to attribute a conversation across
+     * tenants or to a Location no longer in use.
+     *
+     * This method persists nothing. It sets `location_id` on the prepared
+     * model, so both writers that do save — recordManagedInbound() and
+     * recordManagedOutbound() — store it without either needing to know the
+     * rule. An EXISTING conversation keeps the Location it was opened with;
+     * re-resolving it here would re-file a live thread the day a Business
+     * activates a second Location.
      */
-    public function conversationFor(Business $business, string $businessNumber, string $contactNumber): ?ChatBox
-    {
+    public function conversationFor(
+        Business $business,
+        string $businessNumber,
+        string $contactNumber,
+        ?BusinessLocation $location = null,
+    ): ?ChatBox {
         $from = MessageReceivedTriggerSource::normalizePhone($businessNumber);
         $to = MessageReceivedTriggerSource::normalizePhone($contactNumber);
 
@@ -83,9 +105,30 @@ final class ConversationHistoryWriter
 
         if (! $conversation->exists) {
             $conversation->uid = (string) Str::uuid();
+            $conversation->location_id = $this->locationIdFor($business, $location);
         }
 
         return $conversation;
+    }
+
+    /**
+     * Contract 06 §5 — the caller's Location when it is a persisted, ACTIVE
+     * Location of this very Business, else the single-active-Location
+     * fallback, else NULL. A foreign or archived Location is ignored rather
+     * than written: the same "an archived Location is never chosen" rule the
+     * fallback applies.
+     */
+    private function locationIdFor(Business $business, ?BusinessLocation $location): ?int
+    {
+        if ($location !== null
+            && $location->exists
+            && (int) $business->id > 0
+            && (int) $location->business_id === (int) $business->id
+            && $location->isActive()) {
+            return (int) $location->id;
+        }
+
+        return ChatBox::singleActiveLocationIdFor((int) $business->id);
     }
 
     /**
