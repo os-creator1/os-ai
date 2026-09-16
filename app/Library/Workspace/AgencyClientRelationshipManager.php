@@ -4,6 +4,7 @@ namespace App\Library\Workspace;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Workspace\AgencyClientRelationshipEstablished;
 use App\Events\Workspace\AgencyClientRelationshipTerminated;
 use App\Exceptions\Workspace\AgencyClientSelfLinkException;
@@ -11,6 +12,7 @@ use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\ClientWorkspaceAlreadyManagedException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\User;
@@ -22,7 +24,6 @@ use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Gate;
 use InvalidArgumentException;
 
 /**
@@ -30,20 +31,22 @@ use InvalidArgumentException;
  * management relationship (V1 Architecture Decision Addendum §2,
  * Implementation Contract 01).
  *
- * WHAT THIS IS NOT. Nothing here grants access to anything yet. This slice
- * only records the link and its lifecycle; View As, the Agency Clients
- * surface, Location ACL and AgencyRebill are later contracts, and each one
- * authorizes itself at its own call site. In particular an Active row is
- * never proof that the Agency Workspace still holds Agency entitlement
- * (Contract 01 §6) — the tier is asserted once, when the relationship is
- * established, and a later downgrade leaves the row untouched.
+ * WHAT THIS IS NOT. Nothing here grants access to anything by itself. This
+ * class records the link and its lifecycle, and exposes the ONE definition
+ * of ordinary Agency-side authority (actorHasAgencyAuthority()) and of Agency
+ * management eligibility (agencyWorkspaceHasManagementEligibility()) that
+ * every Agency product action — establishing a relationship here, Contract
+ * 04's View As — asks. An Active row is never proof that the Agency Workspace
+ * is still eligible (Contract 01 §6): eligibility is asserted when the
+ * relationship is established, a later downgrade or lock leaves the row
+ * untouched, and each consuming capability re-asks it every time it acts.
  *
  * TWO WAYS IN, ONE RELATIONSHIP. create() is the product action an Agency
  * takes; createForMigration() is the operator-run primitive Contract 10's
  * legacy migration uses to record the REAL human operator who ran it. They
  * differ only in who may act. Every structural rule — self-link refusal, both
- * Workspace locks, the Agency-tier gate, the locking duplicate read, the row
- * write and its event — lives once, in establish(), so the two can never
+ * Workspace locks, the Agency eligibility gate, the locking duplicate read,
+ * the row write and its event — lives once, in establish(), so the two can never
  * drift into two different relationship implementations.
  *
  * Agency authority is never inferred from Client Workspace membership
@@ -54,22 +57,14 @@ use InvalidArgumentException;
 class AgencyClientRelationshipManager
 {
     /**
-     * The customer-side Gate an Agency team member must additionally hold to
-     * perform ordinary Agency-client management. Registered in
-     * config/customer-permissions.php and defined as a Gate by
-     * AuthServiceProvider's existing generic loop over that file.
-     */
-    public const MANAGE_PERMISSION = 'manage_agency_clients';
-
-    /**
      * The admin-side Role permission a platform actor must hold, alongside
      * is_admin, for the two acts reserved to the platform: terminating a
      * relationship on the platform's behalf, and establishing one through
      * the operator-run migration primitive. Registered in
-     * config/permissions.php — the ADMIN registry, distinct from the
-     * customer one above — and read directly from the acting account's admin
-     * Role permissions (Role/Permission/RoleUser), never through the generic
-     * mixed-account Gate; see isPlatformRelationshipOperator().
+     * config/permissions.php — the ADMIN registry — and read directly from
+     * the acting account's admin Role permissions (Role/Permission/RoleUser),
+     * never through the generic mixed-account Gate; see
+     * isPlatformRelationshipOperator().
      */
     public const PLATFORM_RELATIONSHIP_PERMISSION = 'manage agency relationships';
 
@@ -78,13 +73,17 @@ class AgencyClientRelationshipManager
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly AgencyClientWorkspaceRelationshipRepository $relationshipRepository,
         private readonly EntitlementManager $entitlementManager,
+        // Contract 03/05's one authority for "is this account usable right
+        // now" — read, never re-derived here from lifecycle columns.
+        private readonly CustomerAccountAccessResolver $accountAccessResolver,
     ) {
     }
 
     /**
      * The product action: $agencyWorkspace begins managing $clientWorkspace,
-     * at the request of that Agency's own owner or a permitted, active Agency
-     * team member.
+     * at the request of that Agency's own owner or an active Agency Admin or
+     * Staff member (actorHasAgencyAuthority()), while the Agency holds
+     * management eligibility (agencyWorkspaceHasManagementEligibility()).
      *
      * Authorized ONLY through Agency-side authority. Platform status grants
      * nothing here: is_admin and admin Role permissions — including
@@ -92,7 +91,7 @@ class AgencyClientRelationshipManager
      * the platform never originates a management relationship on a
      * customer's behalf (Addendum §10's posture, applied to creation). One
      * global User can, however, legitimately be both a platform account and
-     * the real owner or a permitted member of an Agency Workspace; being an
+     * the real owner or an active member of an Agency Workspace; being an
      * admin does not erase that Agency-side authority, so such a User may
      * create exactly when they independently qualify on the Agency side. The
      * operator-run legacy migration is the one sanctioned platform-originated
@@ -139,7 +138,7 @@ class AgencyClientRelationshipManager
      *
      * Every structural guarantee is create()'s own, because both run through
      * establish(): self-link refusal, both Workspace row locks in ascending
-     * id order, the Agency-tier gate, the locking duplicate read, the
+     * id order, the Agency eligibility gate, the locking duplicate read, the
      * generated-column unique backstop, the same row shape and the same
      * AgencyClientRelationshipEstablished event.
      *
@@ -272,19 +271,36 @@ class AgencyClientRelationshipManager
     }
 
     /**
-     * Read-only: may this actor act for $agencyWorkspace as the Agency?
+     * Read-only: may this actor act for $agencyWorkspace as the Agency, for
+     * ORDINARY, non-financial Agency management?
      *
-     * THE one definition of Agency-side authority (Contract 04 §6, "reuse,
-     * not duplication"): the Agency Workspace owner, or an ACTIVE Agency
-     * Admin/Staff member holding manage_agency_clients. create() asserts
-     * exactly this through assertActorMayManageAgencyRelationships(), and
-     * ViewAsManager::startAgencyView() — and its per-read revalidation —
-     * ask exactly this, so the two can never drift into two authority
-     * definitions.
+     * THE one definition (Contract 04 §6, "reuse, not duplication"), derived
+     * ONLY from $agencyWorkspace's own rows:
+     *  - the exact Agency Workspace owner (owner_user_id), or
+     *  - an ACTIVE WorkspaceMembership of the actor in exactly this Agency
+     *    Workspace, whose role is Admin or Staff.
      *
-     * Platform status adds nothing: is_admin and admin Role permissions
-     * are never read. Nor is Client Workspace membership: only the AGENCY
-     * Workspace's owner and membership rows count (Addendum §2).
+     * V1 rule (Contract 04 authority correction): active Agency membership IS
+     * the ordinary-management grant. There is deliberately no customer
+     * permission on top — the customer permission list is User-global, never
+     * Workspace-scoped, so it could only leak authority from one Agency
+     * Workspace into another (Addendum §3). Nothing here reads the Gate,
+     * customers.permissions, session permissions, is_admin, admin Roles,
+     * user-id-1 conventions, another Workspace's membership, or Client
+     * Workspace membership (Addendum §2).
+     *
+     * The membership is read through the repository on every call; its
+     * memo lives for one request only and every membership write
+     * invalidates it, so a deactivated or removed membership is seen by the
+     * next request.
+     *
+     * The owner-only exceptions are NOT this method: relationship
+     * termination (assertActorMayTerminateAgencyRelationship()) and every
+     * AgencyRebill consent/payer/funding authority (Contract 09) stay
+     * owner-only regardless of membership.
+     *
+     * create() asserts exactly this, and ViewAsManager::startAgencyView() —
+     * and its per-read revalidation — ask exactly this.
      */
     public function actorHasAgencyAuthority(int $actorUserId, Workspace $agencyWorkspace): bool
     {
@@ -294,28 +310,38 @@ class AgencyClientRelationshipManager
 
         $membership = $this->membershipRepository->findByWorkspaceAndUser($agencyWorkspace, $actorUserId);
 
-        if ($membership === null || ! $membership->is_active) {
-            return false;
-        }
-
-        $user = User::query()->find($actorUserId);
-
-        return $user !== null && Gate::forUser($user)->allows(self::MANAGE_PERMISSION);
+        return $membership !== null
+            && (int) $membership->workspace_id === (int) $agencyWorkspace->id
+            && (int) $membership->user_id === $actorUserId
+            && $membership->is_active
+            && in_array($membership->role, [WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff], true);
     }
 
     /**
-     * Read-only: is $agencyWorkspace on the Agency plan tier right now?
+     * Read-only: may $agencyWorkspace perform Agency management right now?
      *
-     * The one definition of "currently holds Agency entitlement" for this
-     * relationship: create() asserts it once, at establishment
-     * (assertAgencyWorkspaceIsOnTheAgencyTier()), and every Agency-only
-     * capability that consumes an Active relationship — Contract 04's View
-     * As first — re-asks it each time it acts, because relationship
-     * existence is never entitlement proof (Contract 01 §6).
+     * THE one definition of Agency management eligibility, requiring BOTH:
+     *  1. its current plan tier is Agency; and
+     *  2. its effective account access is usable, as decided by
+     *     CustomerAccountAccessResolver — Contract 03/05's single authority —
+     *     never re-derived here from status or lifecycle timestamps.
+     *
+     * Trial, Active and Grace are usable (Blueprint §27 keeps full access
+     * through Grace); Locked, Inactive and Suspended are not.
+     *
+     * Asserted when a relationship is established (every Agency product
+     * action that creates a managed client), and re-asked by every
+     * Agency-only capability that consumes an Active relationship — Contract
+     * 04's View As on start and on every read — because relationship
+     * existence is never eligibility proof (Contract 01 §6).
      */
-    public function agencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): bool
+    public function agencyWorkspaceHasManagementEligibility(Workspace $agencyWorkspace): bool
     {
-        return $this->entitlementManager->getWorkspaceEntitlementSummary($agencyWorkspace)->tier === WorkspacePlanTier::Agency;
+        if ($this->entitlementManager->getWorkspaceEntitlementSummary($agencyWorkspace)->tier !== WorkspacePlanTier::Agency) {
+            return false;
+        }
+
+        return ! $this->accountAccessResolver->resolve($agencyWorkspace)->isLocked();
     }
 
     /**
@@ -324,9 +350,10 @@ class AgencyClientRelationshipManager
      * relationship's integrity depends on is here, once.
      *
      * $assertAuthority runs at exactly the point the Agency authority check
-     * always has: after both Workspace rows are locked, and before the tier
-     * gate — so an actor who may not act never learns anything about the
-     * Agency's plan, whichever entry point they used.
+     * always has: after both Workspace rows are locked, and before the
+     * eligibility gate — so an actor who may not act never learns anything
+     * about the Agency's plan or account state, whichever entry point they
+     * used.
      *
      * Retried up to 3 attempts on a genuine MySQL deadlock, the same remedy
      * WorkspaceManager::transferOwnership() already uses: this method takes
@@ -375,7 +402,7 @@ class AgencyClientRelationshipManager
             $lockedAgencyWorkspace = $locked[$agencyWorkspaceId];
 
             $assertAuthority($lockedAgencyWorkspace);
-            $this->assertAgencyWorkspaceIsOnTheAgencyTier($lockedAgencyWorkspace);
+            $this->assertAgencyWorkspaceHasManagementEligibility($lockedAgencyWorkspace);
 
             // A locking read, not a snapshot one: an Active row committed by
             // another connection while this transaction waited for its
@@ -414,18 +441,18 @@ class AgencyClientRelationshipManager
 
     /**
      * Ordinary Agency-client management authority (Blueprint §2, corrected:
-     * Agency team members, not only the owner). Used by create() only.
+     * Agency team members, not only the owner). Used by create() only, and
+     * defined entirely by actorHasAgencyAuthority().
      *
      * Deliberately NOT WorkspaceManager::assertActorIsOwnerOrActiveAdmin():
-     * that helper excludes Staff entirely and cannot express "any active
-     * member holding the permission", which is exactly the rule here. The
-     * permission is necessary but never sufficient — it only counts for an
-     * ACTIVE member of the AGENCY Workspace. Nothing here reads is_admin or
-     * admin Role permissions: a platform account qualifies only if it is
-     * independently the Agency Workspace's owner or a permitted active
-     * member, and is refused otherwise, whatever Role permissions it holds.
-     * There is deliberately no "if is_admin, deny" branch either — platform
-     * status neither grants nor erases Agency-side authority.
+     * that helper excludes Staff entirely, while V1 grants ordinary Agency
+     * management to active Admin AND Staff members of the Agency Workspace.
+     * Nothing here reads is_admin or admin Role permissions: a platform
+     * account qualifies only if it is independently the Agency Workspace's
+     * owner or an active member, and is refused otherwise, whatever Role
+     * permissions it holds. There is deliberately no "if is_admin, deny"
+     * branch either — platform status neither grants nor erases Agency-side
+     * authority.
      */
     private function assertActorMayManageAgencyRelationships(int $actorUserId, Workspace $agencyWorkspace): void
     {
@@ -500,8 +527,8 @@ class AgencyClientRelationshipManager
      * grant could be ignored. So this reads the admin Role permissions
      * directly, through User::getPermissions() (roles -> permissions), and
      * never consults the session, customers.permissions, or any customer-side
-     * permission such as manage_agency_clients. The generic Gate itself is
-     * left unchanged for everything else.
+     * permission. The generic Gate itself is left unchanged for everything
+     * else.
      *
      * User id 1 keeps the repository's existing "first user is always super
      * admin" convention (hasPermission()'s own short-circuit), but only while
@@ -520,22 +547,26 @@ class AgencyClientRelationshipManager
     }
 
     /**
-     * A one-time gate on ESTABLISHING the link, never a standing guarantee
-     * (Contract 01 §6).
-     *
-     * Reuses EntitlementManager's own public summary rather than repeating
-     * its workspace_plan_assignments -> workspace_plan_catalog read, the
-     * same way WorkspaceController already asks whether a Workspace is on
-     * the Agency tier.
+     * The gate on ESTABLISHING the link — a one-time check, never a standing
+     * guarantee (Contract 01 §6). Establishing a managed-client relationship
+     * is an Agency product action, so it needs the same management
+     * eligibility every other one does: Agency tier AND a usable account (a
+     * Grace Agency may; a Locked, Inactive or Suspended one may not).
      */
-    private function assertAgencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): void
+    private function assertAgencyWorkspaceHasManagementEligibility(Workspace $agencyWorkspace): void
     {
-        if ($this->agencyWorkspaceIsOnTheAgencyTier($agencyWorkspace)) {
+        if ($this->agencyWorkspaceHasManagementEligibility($agencyWorkspace)) {
             return;
         }
 
         $tier = $this->entitlementManager->getWorkspaceEntitlementSummary($agencyWorkspace)->tier;
 
-        throw new AgencyWorkspaceNotEligibleException((int) $agencyWorkspace->id, $tier?->value);
+        throw new AgencyWorkspaceNotEligibleException(
+            (int) $agencyWorkspace->id,
+            $tier?->value,
+            $tier === WorkspacePlanTier::Agency
+                ? $this->accountAccessResolver->resolve($agencyWorkspace)->state->value
+                : null,
+        );
     }
 }

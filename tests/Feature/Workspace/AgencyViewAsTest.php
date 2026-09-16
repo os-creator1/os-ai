@@ -3,12 +3,16 @@
 namespace Tests\Feature\Workspace;
 
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\CustomerAccountAccessState;
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\PayerType;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Usage\UnauthorizedPayerAssignmentException;
 use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Support\RequestScopedCache;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\ViewAs\ViewAsContext;
@@ -121,20 +125,77 @@ class AgencyViewAsTest extends TestCase
     }
 
     /**
-     * A customer User who is a member of $workspace with exactly the given
-     * customer permissions.
-     *
-     * @param  array<int, string>  $permissions
+     * A customer User who is a member of $workspace and holds NO customer
+     * permissions at all: under the V1 rule, active Agency membership alone
+     * is the ordinary-management grant, so nothing in a permission list may
+     * be what makes a test pass.
      */
-    private function memberWith(Workspace $workspace, WorkspaceMembershipRole $role, array $permissions, bool $active = true): User
+    private function memberOf(Workspace $workspace, WorkspaceMembershipRole $role, bool $active = true, ?User $user = null): User
     {
-        $customer = $this->createCustomer();
-        $customer->permissions = json_encode($permissions);
-        $customer->save();
+        if ($user === null) {
+            $customer = $this->createCustomer();
+            $customer->permissions = json_encode([]);
+            $customer->save();
+            $user = $customer->user;
+        }
 
-        $this->member($workspace, $customer->user, $role, active: $active);
+        $this->member($workspace, $user, $role, active: $active);
 
-        return $customer->user->fresh();
+        return $user->fresh();
+    }
+
+    /**
+     * The repository's user-id-1 super admin. setUp() normally claims id 1
+     * for the platform administrator, but auto-increment ids are not reset
+     * between RefreshDatabase tests, so the row is created with id 1
+     * explicitly when this test's transaction does not already hold it.
+     */
+    private function superAdmin(): User
+    {
+        $existing = User::query()->find(1);
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $user = new User([
+            'first_name' => 'Super',
+            'last_name' => 'Admin',
+            'email' => 'super-admin-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+        $user->id = 1;
+        $user->save();
+
+        return $user->fresh();
+    }
+
+    /**
+     * Drives the Agency Workspace's account into a lifecycle state through
+     * EntitlementManager's own writers — never by poking lifecycle columns —
+     * so the state the resolver reads is exactly the production shape.
+     */
+    private function putAgencyInto(string $state, Workspace $agency): void
+    {
+        $entitlements = app(EntitlementManager::class);
+
+        match ($state) {
+            'grace' => $entitlements->enterGracePeriod($agency),
+            'locked' => [$entitlements->enterGracePeriod($agency), $entitlements->lockForNonPayment($agency)],
+            'inactive' => $entitlements->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'Test: plan made inactive.'),
+            'suspended' => $entitlements->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Test: plan suspended.'),
+        };
+
+        $this->nextRequest();
+    }
+
+    private function assertAgencyAccountState(Workspace $agency, CustomerAccountAccessState $expected): void
+    {
+        $this->nextRequest();
+        $this->assertSame($expected, app(CustomerAccountAccessResolver::class)->resolve($agency->fresh())->state);
     }
 
     private function downgradeToCore(Workspace $agency): void
@@ -213,10 +274,11 @@ class AgencyViewAsTest extends TestCase
         $this->assertSame($pair['agency']->uid, $context->viewingAgencyWorkspaceUid);
     }
 
-    public function test_a_permitted_agency_admin_starts_a_linked_client_view(): void
+    /** Security regression 1: an active Admin of Agency A views A's linked Client — by membership alone. */
+    public function test_an_active_agency_admin_starts_a_linked_client_view(): void
     {
         $pair = $this->linkedPair();
-        $admin = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $admin = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Admin);
 
         $session = $this->viewAs()->startAgencyView($admin, $pair['agency']->uid, $pair['client']->uid);
 
@@ -227,11 +289,11 @@ class AgencyViewAsTest extends TestCase
         $this->assertNotNull($this->viewAs()->current($admin));
     }
 
-    /** Blueprint §2 as corrected: View As is not owner- or Admin-only. */
-    public function test_permitted_agency_staff_starts_a_linked_client_view(): void
+    /** Security regression 2 / Blueprint §2: View As is not owner- or Admin-only — an active Staff member qualifies. */
+    public function test_active_agency_staff_starts_a_linked_client_view(): void
     {
         $pair = $this->linkedPair();
-        $staff = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $staff = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Staff);
 
         $session = $this->viewAs()->startAgencyView($staff, $pair['agency']->uid, $pair['client']->uid);
 
@@ -259,28 +321,64 @@ class AgencyViewAsTest extends TestCase
     // Authority — who may NOT (Contract 04 §6)
     // ------------------------------------------------------------------
 
-    public function test_an_agency_admin_without_the_permission_is_refused(): void
+    public function test_inactive_agency_admin_and_staff_memberships_are_refused(): void
     {
         $pair = $this->linkedPair();
-        $unpermittedAdmin = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Admin, ['access_backend']);
 
-        $this->assertStartRefused($unpermittedAdmin, $pair['agency']->uid, $pair['client']->uid);
+        foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
+            $inactive = $this->memberOf($pair['agency'], $role, active: false);
+            $this->assertStartRefused($inactive, $pair['agency']->uid, $pair['client']->uid);
+        }
     }
 
-    public function test_agency_staff_without_the_permission_is_refused(): void
+    /** A User with no membership at all in the Agency Workspace is nobody there. */
+    public function test_a_user_with_no_agency_membership_is_refused(): void
     {
         $pair = $this->linkedPair();
-        $unpermittedStaff = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Staff, ['access_backend']);
+        $stranger = $this->createCustomer()->user;
 
-        $this->assertStartRefused($unpermittedStaff, $pair['agency']->uid, $pair['client']->uid);
+        $this->assertStartRefused($stranger, $pair['agency']->uid, $pair['client']->uid);
     }
 
-    public function test_an_inactive_agency_member_holding_the_permission_is_refused(): void
+    /**
+     * Security regression 3: authority is per Agency Workspace. The same User
+     * being an active member of Agency A grants nothing in Agency B — neither
+     * through B's uid, nor by naming A as the Agency for B's Client.
+     */
+    public function test_membership_in_agency_a_grants_no_authority_in_agency_b(): void
+    {
+        $agencyA = $this->linkedPair('Agency A', 'Client of A');
+        $agencyB = $this->linkedPair('Agency B', 'Client of B');
+
+        $sharedUser = $this->memberOf($agencyA['agency'], WorkspaceMembershipRole::Admin);
+
+        $this->assertStartRefused($sharedUser, $agencyB['agency']->uid, $agencyB['client']->uid);
+        $this->assertStartRefused($sharedUser, $agencyA['agency']->uid, $agencyB['client']->uid);
+
+        // ...while the very same User still works in the Agency they belong to.
+        $this->assertSame(
+            (int) $agencyA['business']->id,
+            (int) $this->viewAs()->startAgencyView($sharedUser, $agencyA['agency']->uid, $agencyA['client']->uid)->business_id,
+        );
+    }
+
+    /**
+     * Security regression 6: user id 1 has no legacy super-admin bypass here.
+     * When it is neither the owner nor an active member of the Agency
+     * Workspace, it is refused like anyone else.
+     */
+    public function test_user_id_1_is_refused_when_not_owner_or_active_member_of_the_agency(): void
     {
         $pair = $this->linkedPair();
-        $inactive = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION], active: false);
+        $superAdmin = $this->superAdmin();
 
-        $this->assertStartRefused($inactive, $pair['agency']->uid, $pair['client']->uid);
+        $this->assertSame(1, (int) $superAdmin->id);
+        $this->assertNotSame(1, (int) $pair['agency']->owner_user_id);
+        $this->assertFalse(
+            DB::table('workspace_memberships')->where('workspace_id', $pair['agency']->id)->where('user_id', 1)->exists(),
+        );
+
+        $this->assertStartRefused($superAdmin, $pair['agency']->uid, $pair['client']->uid);
     }
 
     public function test_an_unrelated_agency_is_refused(): void
@@ -295,14 +393,13 @@ class AgencyViewAsTest extends TestCase
         $this->assertStartRefused($otherOwner, $pair['agency']->uid, $pair['client']->uid);
     }
 
-    /** Agency authority is never inferred from Client Workspace membership (Addendum §2). */
+    /** Security regression 8: Agency authority is never inferred from Client Workspace membership (Addendum §2). */
     public function test_client_side_actors_never_gain_agency_view_as(): void
     {
         $pair = $this->linkedPair();
 
-        $pair['clientOwner']->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
-        $clientAdmin = $this->memberWith($pair['client'], WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
-        $clientStaff = $this->memberWith($pair['client'], WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $clientAdmin = $this->memberOf($pair['client'], WorkspaceMembershipRole::Admin);
+        $clientStaff = $this->memberOf($pair['client'], WorkspaceMembershipRole::Staff);
 
         foreach ([$pair['clientOwner'], $clientAdmin, $clientStaff] as $clientActor) {
             $this->assertStartRefused($clientActor, $pair['agency']->uid, $pair['client']->uid);
@@ -312,7 +409,7 @@ class AgencyViewAsTest extends TestCase
         }
     }
 
-    /** Platform status alone never qualifies, even with the platform relationship Role permission. */
+    /** Security regression 7: platform status alone never qualifies, even with the platform relationship Role permission. */
     public function test_platform_admin_status_alone_does_not_qualify(): void
     {
         $pair = $this->linkedPair();
@@ -573,18 +670,162 @@ class AgencyViewAsTest extends TestCase
     }
 
     /** Losing the actor's own Agency authority is ordinary access loss — distinct from the two Agency-level causes. */
-    public function test_losing_agency_authority_mid_session_ends_it_as_access_lost(): void
+    /** Security regression 4: a membership deactivated mid-session ends the view as access_lost on the next read. */
+    public function test_agency_membership_deactivated_mid_session_ends_it_as_access_lost(): void
     {
         $pair = $this->linkedPair();
-        $staff = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $staff = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Staff);
         $session = $this->viewAs()->startAgencyView($staff, $pair['agency']->uid, $pair['client']->uid);
 
         $this->nextRequest();
         $this->assertNotNull($this->viewAs()->current($staff));
 
-        $staff->customer->update(['permissions' => json_encode(['access_backend'])]);
+        DB::table('workspace_memberships')
+            ->where('workspace_id', $pair['agency']->id)
+            ->where('user_id', $staff->id)
+            ->update(['is_active' => false]);
 
         $this->assertSessionEndedWith($session, $staff, ViewAsSession::END_REASON_ACCESS_LOST);
+    }
+
+    /** Security regression 5: a membership removed mid-session ends the view as access_lost on the next read. */
+    public function test_agency_membership_removed_mid_session_ends_it_as_access_lost(): void
+    {
+        $pair = $this->linkedPair();
+        $admin = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Admin);
+        $session = $this->viewAs()->startAgencyView($admin, $pair['agency']->uid, $pair['client']->uid);
+
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($admin));
+
+        $membershipId = DB::table('workspace_memberships')
+            ->where('workspace_id', $pair['agency']->id)
+            ->where('user_id', $admin->id)
+            ->value('id');
+        DB::table('workspace_membership_businesses')->where('workspace_membership_id', $membershipId)->delete();
+        DB::table('workspace_membership_locations')->where('workspace_membership_id', $membershipId)->delete();
+        DB::table('workspace_memberships')->where('id', $membershipId)->delete();
+
+        $this->assertSessionEndedWith($session, $admin, ViewAsSession::END_REASON_ACCESS_LOST);
+    }
+
+    /**
+     * Changing a member's User-global customer permission list — the old,
+     * rejected authority source — neither grants nor removes Agency authority:
+     * an active member with every permission removed keeps viewing.
+     */
+    public function test_customer_permission_changes_do_not_affect_agency_authority(): void
+    {
+        $pair = $this->linkedPair();
+        $staff = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Staff);
+        $session = $this->viewAs()->startAgencyView($staff, $pair['agency']->uid, $pair['client']->uid);
+
+        $staff->customer->update(['permissions' => json_encode(['manage_agency_clients'])]);
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($staff));
+
+        $staff->customer->update(['permissions' => json_encode([])]);
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($staff));
+
+        session()->put('permissions', collect([]));
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($staff));
+
+        $this->assertNull($session->refresh()->ended_at);
+    }
+
+    // ------------------------------------------------------------------
+    // Agency account lifecycle (Contract 04 correction 1): management
+    // eligibility = Agency tier AND a usable account, per
+    // CustomerAccountAccessResolver
+    // ------------------------------------------------------------------
+
+    public function test_an_active_agency_account_can_start_a_view(): void
+    {
+        $pair = $this->linkedPair();
+        $this->assertAgencyAccountState($pair['agency'], CustomerAccountAccessState::Usable);
+
+        $this->assertSame((int) $pair['agency']->id, (int) $this->viewAs()->startAgencyView($pair['owner'], $pair['agency']->uid, $pair['client']->uid)->viewing_agency_workspace_id);
+    }
+
+    public function test_an_agency_in_trial_can_start_a_view(): void
+    {
+        $owner = $this->createCustomer()->user;
+        $agency = $this->createWorkspace($owner, ['name' => 'Trialing Agency']);
+        app(EntitlementManager::class)->assignFirstPlan($agency, WorkspacePlanTier::Agency, $this->platformAdminId(), 'Trial fixture.', true, 0, now()->addDays(14));
+        [$client] = $this->clientAccount();
+        $this->link($agency->fresh(), $owner, $client);
+        $this->nextRequest();
+
+        $this->assertTrue(app(CustomerAccountAccessResolver::class)->resolve($agency->fresh())->isInTrial());
+        $this->assertNotNull($this->viewAs()->startAgencyView($owner, $agency->uid, $client->uid));
+    }
+
+    public function test_an_agency_in_grace_can_start_a_view_and_keep_it(): void
+    {
+        $pair = $this->linkedPair();
+        $this->putAgencyInto('grace', $pair['agency']);
+        $this->assertAgencyAccountState($pair['agency'], CustomerAccountAccessState::Usable);
+        $this->assertTrue(app(CustomerAccountAccessResolver::class)->resolve($pair['agency']->fresh())->isInGracePeriod());
+
+        $session = $this->viewAs()->startAgencyView($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
+
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($pair['owner']));
+        $this->assertNull($session->refresh()->ended_at);
+    }
+
+    public function test_a_locked_inactive_or_suspended_agency_cannot_start_a_view(): void
+    {
+        $expectations = [
+            'locked' => CustomerAccountAccessState::Locked,
+            'inactive' => CustomerAccountAccessState::LockedInactive,
+            'suspended' => CustomerAccountAccessState::LockedSuspended,
+        ];
+
+        foreach ($expectations as $state => $accessState) {
+            $pair = $this->linkedPair(ucfirst($state) . ' Agency', ucfirst($state) . ' Client');
+            $this->putAgencyInto($state, $pair['agency']);
+            $this->assertAgencyAccountState($pair['agency'], $accessState);
+
+            $this->assertSame(WorkspacePlanTier::Agency, app(EntitlementManager::class)->getWorkspaceEntitlementSummary($pair['agency']->fresh())->tier, 'Still on the Agency tier — only the account is unusable.');
+            $this->assertSame(AgencyClientRelationshipStatus::Active, $pair['relationship']->fresh()->status);
+            $this->assertStartRefused($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
+        }
+    }
+
+    public function test_an_agency_becoming_locked_mid_session_ends_it_as_agency_entitlement_lost(): void
+    {
+        $this->assertAgencyLifecycleEndsSession('locked');
+    }
+
+    public function test_an_agency_becoming_inactive_mid_session_ends_it_as_agency_entitlement_lost(): void
+    {
+        $this->assertAgencyLifecycleEndsSession('inactive');
+    }
+
+    public function test_an_agency_becoming_suspended_mid_session_ends_it_as_agency_entitlement_lost(): void
+    {
+        $this->assertAgencyLifecycleEndsSession('suspended');
+    }
+
+    private function assertAgencyLifecycleEndsSession(string $state): void
+    {
+        $pair = $this->linkedPair();
+        $session = $this->viewAs()->startAgencyView($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
+
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($pair['owner']));
+
+        $this->putAgencyInto($state, $pair['agency']);
+
+        $this->assertSessionEndedWith($session, $pair['owner'], ViewAsSession::END_REASON_AGENCY_ENTITLEMENT_LOST);
+        $this->assertSame(
+            AgencyClientRelationshipStatus::Active,
+            $pair['relationship']->fresh()->status,
+            'The relationship itself is untouched — only the Agency account became unusable.'
+        );
     }
 
     public function test_the_viewed_client_workspace_becoming_inactive_mid_session_ends_it(): void
@@ -676,7 +917,7 @@ class AgencyViewAsTest extends TestCase
     public function test_no_client_workspace_membership_is_created(): void
     {
         $pair = $this->linkedPair();
-        $staff = $this->memberWith($pair['agency'], WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $staff = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Staff);
 
         $clientMembershipsBefore = DB::table('workspace_memberships')->where('workspace_id', $pair['client']->id)->get()->toArray();
         $membershipRowsBefore = DB::table('workspace_memberships')->count();
@@ -697,33 +938,62 @@ class AgencyViewAsTest extends TestCase
     }
 
     /** Contract 04 acceptance 5: View As never grants AgencyRebill / payer / funding authority. */
+    /**
+     * Security regression 9 / Contract 04 acceptance 5: View As grants no
+     * AgencyRebill, payer or funding authority.
+     *
+     * Since Contract 09, AgencyRebill payer authority legitimately belongs to
+     * the managing Agency's OWNER — through the relationship and ownership,
+     * never through View As. So the proof is twofold: an active Agency
+     * Admin with a live View As session of the Client gains none of it, and
+     * the owner's payer-control answer is exactly the same with or without a
+     * live session (View As adds nothing to anyone).
+     */
     public function test_agency_view_as_confers_no_financial_authority_over_the_client(): void
     {
         $pair = $this->linkedPair();
+        $billing = app(BillingProfileManager::class);
+
+        // The owner: authority is identical before and during View As.
+        $ownerId = (int) $pair['owner']->id;
+        $ownerBefore = $billing->actorManagesPayerControls($pair['business'], $ownerId);
+
         $this->viewAs()->startAgencyView($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
         $this->nextRequest();
-        $this->assertNotNull($this->viewAs()->current($pair['owner']), 'Precondition: the Agency View As session is live.');
+        $this->assertNotNull($this->viewAs()->current($pair['owner']), 'Precondition: the owner\'s Agency View As session is live.');
 
-        $billing = app(BillingProfileManager::class);
-        $agencyActorId = (int) $pair['owner']->id;
+        $this->assertSame($ownerBefore, $billing->actorManagesPayerControls($pair['business'], $ownerId), 'View As must not change the owner\'s payer authority.');
 
-        $this->assertFalse($billing->actorManagesPayerControls($pair['business'], $agencyActorId));
+        // A non-owner Agency team member viewing the Client gains nothing.
+        $admin = $this->memberOf($pair['agency'], WorkspaceMembershipRole::Admin);
+        $adminId = (int) $admin->id;
+
+        $this->viewAs()->startAgencyView($admin, $pair['agency']->uid, $pair['client']->uid);
+        $this->nextRequest();
+        $this->assertNotNull($this->viewAs()->current($admin), 'Precondition: the Agency Admin\'s View As session is live.');
+
+        $this->assertFalse($billing->actorManagesPayerControls($pair['business'], $adminId));
 
         try {
-            $billing->assertActorManagesPayerControls($pair['business'], $agencyActorId);
+            $billing->assertActorManagesPayerControls($pair['business'], $adminId);
             $this->fail('An Agency View As actor must not manage the client\'s payer controls.');
         } catch (UnauthorizedUsageBillingManagementException) {
             $this->addToAssertionCount(1);
         }
 
+        $payerBefore = DB::table('business_payer_assignments')->where('business_id', $pair['business']->id)->first();
+
         foreach ([PayerType::AgencyRebill, PayerType::Business, PayerType::Workspace] as $payerType) {
             try {
-                $billing->assignPayer($pair['business'], $payerType, $agencyActorId, 'Attempted through View As.');
+                $billing->assignPayer($pair['business'], $payerType, $adminId, 'Attempted through View As.');
                 $this->fail('An Agency View As actor must not assign the ' . $payerType->value . ' payer.');
             } catch (UnauthorizedPayerAssignmentException) {
                 $this->addToAssertionCount(1);
             }
         }
+
+        $payerAfter = DB::table('business_payer_assignments')->where('business_id', $pair['business']->id)->first();
+        $this->assertEquals($payerBefore, $payerAfter, 'No refused attempt may have changed the Client\'s payer.');
 
         // Structurally, the context carries no financial authority at all.
         $properties = array_map(

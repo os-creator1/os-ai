@@ -29,8 +29,8 @@ Addendum's real section list below):**
   STOP/DND rules exactly as if the client were using it themselves") and
   §32 (Security and Audit — restates the same guarantee as a cross-cutting
   security rule, and "real acting person" audit requirement).
-- Blueprint §2 (corrected: View As is not owner-only — any Agency team
-  member with Agency-management permission qualifies).
+- Blueprint §2 (corrected: View As is not owner-only — any active Agency
+  team member qualifies; see §6's implementation-time authority correction).
 - Roadmap Slice 2 (as corrected in the Phase A pass).
 - Contract 01 (the relationship this slice consumes).
 
@@ -123,8 +123,11 @@ event):
 - `END_REASON_RELATIONSHIP_ENDED = 'relationship_ended'` — the Contract 01
   relationship itself is terminated mid-session.
 - `END_REASON_AGENCY_ENTITLEMENT_LOST = 'agency_entitlement_lost'` — the
-  relationship is still `Active`, but the Agency Workspace's plan tier is
-  no longer `WorkspacePlanTier::Agency` (§6's entitlement check).
+  relationship is still `Active`, but the Agency Workspace has lost
+  management eligibility: its plan tier is no longer
+  `WorkspacePlanTier::Agency`, **or** its effective account is Locked,
+  Inactive or Suspended per `CustomerAccountAccessResolver` (§6's
+  eligibility check). No separate lifecycle end reason exists.
 
 Both are distinct from `ACCESS_LOST`, which remains for the ordinary
 same-Workspace tenancy-revoked case, so reporting/audit can distinguish
@@ -165,9 +168,9 @@ every other existence-disclosure-safe failure in this class already does).
 |---|---|
 | Actor supplies an arbitrary `clientWorkspaceUid` hoping any Workspace works | `startAgencyView()` requires an **Active** Contract 01 relationship between the resolved Agency Workspace and the resolved Client Workspace — no relationship, no access, same `abort(404)` existence-disclosure-safe failure the existing `start()` already uses (never a 403 that confirms the Workspace exists). |
 | Actor supplies an `agencyWorkspaceUid` they don't belong to | New `assertActorMayManageAgencyRelationships()`-equivalent check (reusing Contract 01's own authority method, not a duplicate — see below) must pass first; a Workspace the actor has no standing in fails here, before the relationship lookup even runs. |
-| Actor is Agency Staff without the Agency-management permission | Same check as above — Contract 01's authority method already excludes unpermitted Staff; this slice must call that **exact** method, not reimplement a looser version of it, to avoid two authority definitions drifting apart. |
+| Actor is not an ACTIVE Admin/Staff member of exactly this Agency Workspace (inactive, removed, a member of a different Agency only, or no membership), or relies on a customer permission, platform status or user id 1 | Same check as above — Contract 01's `actorHasAgencyAuthority()` derives authority only from the exact owner or an active Admin/Staff membership of that Agency Workspace; this slice calls that **exact** method, never a looser or parallel one, so the two authority definitions cannot drift apart. |
 | Actor's relationship existed at session start but was terminated mid-session | `accessChainStillHolds()`'s cross-Workspace variant (below) re-checks relationship status as `Active` on **every** `current()` read, exactly matching the existing same-Workspace path's own "re-validate on every read, never trust row existence alone" discipline. |
-| **Agency Workspace's relationship is still `Active`, but the Agency has since lost Agency-tier entitlement** (downgraded, per Contract 01's own explicit note that relationship existence is structural, never entitlement proof) | **A distinct, separate check from relationship status** — `startAgencyView()` additionally asserts `EntitlementManager::getWorkspaceEntitlementSummary($agencyWorkspace)->tier === WorkspacePlanTier::Agency` at session start, and `agencyAccessChainStillHolds()` re-asserts the same fact on **every** `current()` read alongside the relationship check — not once at start only. Losing either the relationship **or** current Agency entitlement independently ends the session (`END_REASON_RELATIONSHIP_ENDED` for the former; a new `END_REASON_AGENCY_ENTITLEMENT_LOST` for the latter, so audit/reporting can distinguish the two root causes) — both fail closed, neither substitutes for the other. |
+| **Agency Workspace's relationship is still `Active`, but the Agency has since lost Agency management eligibility** — downgraded off the Agency tier, **or** its account became Locked, Inactive or Suspended (per Contract 01's own explicit note that relationship existence is structural, never entitlement proof) | **A distinct, separate check from relationship status** — `startAgencyView()` additionally asserts Contract 01's `agencyWorkspaceHasManagementEligibility($agencyWorkspace)` at session start (Agency tier **and** a usable account per `CustomerAccountAccessResolver`: Trial/Active/Grace eligible, Locked/Inactive/Suspended not), and the per-read chain re-asserts the same fact on **every** `current()` read alongside the relationship check — not once at start only. Losing either the relationship **or** eligibility independently ends the session (`END_REASON_RELATIONSHIP_ENDED` for the former; `END_REASON_AGENCY_ENTITLEMENT_LOST` for the latter, so audit/reporting can distinguish the two root causes) — both fail closed, neither substitutes for the other. |
 | Actor tries to use `startAgencyView()` to reach a Business belonging to their *own* Agency Workspace (self-targeting to bypass the ordinary same-Workspace `actorMayView()` Admin-only rule via a looser path) | Rejected structurally — a relationship row can never have `agency_workspace_id === client_workspace_id` (Contract 01's own self-link prevention), so `startAgencyView()` cannot resolve a relationship where the "client" is the actor's own Agency Workspace. |
 | Actor uses View As to reach AgencyRebill/payer-consent actions | **Never granted by View As at all** — `ViewAsContext` carries no payer authority, and Contract 09's AgencyRebill consent check is keyed to `Workspace.owner_user_id` directly (never to "is currently viewing via an active `ViewAsContext`"), so a View As session structurally cannot escalate into financial consent, independent of any check this contract adds. Stated here as an explicit non-goal boundary, verified again in Contract 09's own authority contract. |
 | A terminated relationship's stale `viewing_agency_workspace_id` is reused to forge a session row directly at the DB layer (out-of-band, not through the API) | Out of scope for application-layer authorization (this is a database-integrity/access concern, not a `ViewAsManager` concern) — noted for completeness, not mitigated by this contract. |
@@ -177,11 +180,28 @@ every other existence-disclosure-safe failure in this class already does).
 | Actor | May start cross-Workspace View As |
 |---|---|
 | Agency Workspace owner | Yes, if an Active relationship exists to the target Client Workspace |
-| Active Agency Admin/Staff with the Agency-management permission (Contract 01's `manage_agency_clients`-equivalent) | Yes, same condition |
-| Active Agency Admin/Staff without the permission | No |
+| Active Agency Admin/Staff member of exactly that Agency Workspace | Yes, same condition — by active membership alone (no customer permission; see the correction note below) |
+| Inactive member, a member of a different Agency Workspace only, a User with no membership, or user id 1 that neither owns nor belongs to the Agency | No |
 | Anyone from an unrelated Workspace | No (relationship lookup fails) |
 | The Client Workspace's own owner/staff | No — this method is Agency-side only; a client never "views as" themselves through this path |
 | Platform Owner/Administrator | **Not via this method** — Platform-level impersonation/support access, if it exists, is a distinct, separately authorized concern (out of scope here; do not extend this method to cover it) |
+
+**Implementation-time authority correction (decided before PR).** Two
+rules supersede this contract's original wording wherever it mentioned an
+"Agency-management permission" or a tier-only entitlement check:
+1. **No customer permission.** The original `manage_agency_clients`
+   customer Gate is User-global, not Workspace-specific, so it cannot be V1
+   cross-Workspace Agency authority; it is removed. Ordinary Agency
+   management (including View As) belongs to the exact Agency Workspace
+   owner and its ACTIVE Admin/Staff members, derived only from that
+   Workspace's owner and membership rows. Owner-only rules — relationship
+   termination and every AgencyRebill consent/payer/funding authority — are
+   unchanged.
+2. **Eligibility is tier AND a usable account.** The Agency must be on the
+   Agency tier and its effective account must be usable per
+   `CustomerAccountAccessResolver` (Trial/Active/Grace yes;
+   Locked/Inactive/Suspended no), both at start and on every read. Contract
+   01's relationship establishment applies the same eligibility.
 
 **Reuse, not duplication:** this slice's authority check **must** call
 Contract 01's `AgencyClientRelationshipManager`'s own authority method
@@ -263,7 +283,10 @@ structurally (by omission — no payer-related method is added to
 - `app/Library/ViewAs/ViewAsManager.php` — add `startAgencyView()` and the cross-Workspace revalidation chain (implemented as `agencyAccessChainEndReason()`, returning the distinct end reason rather than a bare boolean so `relationship_ended` / `agency_entitlement_lost` / `access_lost` can be recorded), plus two small private helpers (`activeRelationshipLinks()`, `soleBusinessOf()`). `start()`, `actorMayView()` and `accessChainStillHolds()` are unchanged; `current()` gains only the branch that sends a session with a non-null `viewing_agency_workspace_id` through the new chain and fills the two new `ViewAsContext` fields (same-Workspace sessions take exactly their existing path).
 - `app/Models/ViewAsSession.php` — add `viewing_agency_workspace_id` to `$fillable`; add `END_REASON_RELATIONSHIP_ENDED` and `END_REASON_AGENCY_ENTITLEMENT_LOST` constants.
 - `app/Library/ViewAs/ViewAsContext.php` — add the two new nullable fields; constructor signature grows (additive, default-null-safe at every existing call site since `start()`'s own construction of `ViewAsContext` in `current()` simply passes `null` for the new fields on the old path).
-- `app/Library/Workspace/AgencyClientRelationshipManager.php` (from Contract 01) — add the public authority-check method this slice needs (§6's "reuse, not duplication" note), if Contract 01 did not already expose one in the needed shape. As implemented: two read-only primitives, `actorHasAgencyAuthority(int $actorUserId, Workspace $agencyWorkspace): bool` (the one definition of Agency-side authority — owner, or active Admin/Staff holding `manage_agency_clients`; Contract 01's private create-authority assertion now delegates to it) and `agencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): bool` (the one current-Agency-tier check; Contract 01's establishment gate now delegates to it). Behaviour of `create()`, `createForMigration()` and `terminate()` is unchanged.
+- `app/Library/Workspace/AgencyClientRelationshipManager.php` (from Contract 01) — add the public authority-check method this slice needs (§6's "reuse, not duplication" note), if Contract 01 did not already expose one in the needed shape. As implemented: two read-only primitives, `actorHasAgencyAuthority(int $actorUserId, Workspace $agencyWorkspace): bool` (the one definition of ordinary Agency-side authority — the exact owner, or an ACTIVE Admin/Staff membership of exactly that Agency Workspace, with no Gate or customer permission; Contract 01's private create-authority assertion delegates to it) and `agencyWorkspaceHasManagementEligibility(Workspace $agencyWorkspace): bool` (Agency tier AND a usable account per `CustomerAccountAccessResolver`; Contract 01's establishment gate delegates to it). `terminate()` and `createForMigration()` authority are unchanged; `create()` now follows the corrected authority and eligibility rules (§6 correction note).
+- `app/Exceptions/Workspace/AgencyWorkspaceNotEligibleException.php` (from Contract 01) — gains an optional `accessState`, so a refusal for an unusable Agency account is distinguishable from a wrong tier.
+- `config/customer-permissions.php` — the obsolete `manage_agency_clients` entry Contract 01 added is removed (no remaining runtime consumer).
+- `tests/Feature/Workspace/AgencyClientRelationshipManagerTest.php` (from Contract 01) — updated to the corrected authority and eligibility rules.
 
 **No existing controller/route/middleware changed** — this slice adds
 library-layer capability only; wiring a controller/route to

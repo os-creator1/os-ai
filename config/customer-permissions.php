@@ -70,27 +70,6 @@
             'category'     => 'Messaging',
             'default'      => false,
         ],
-        /*
-         * V1 Implementation Contract 01 §6 — ordinary Agency-client
-         * management for an Agency team member (Blueprint §2: Admin OR
-         * Staff, not only the owner).
-         *
-         * Conservative default of false, following the
-         * manage_google_business_profile / manage_advanced_provider
-         * precedent above, and registered as a Gate automatically by
-         * AuthServiceProvider's existing generic loop over this file.
-         *
-         * Necessary but never sufficient: it only counts for an ACTIVE
-         * member of the AGENCY Workspace, and it never grants the two
-         * owner-only Agency acts — terminating an Agency<->Client
-         * relationship (Addendum §2) and AgencyRebill financial consent
-         * (Addendum §10).
-         */
-        'manage_agency_clients' => [
-            'display_name' => 'manage_agency_clients',
-            'category'     => 'Agency',
-            'default'      => false,
-        ],
         //contacts module
         'view_contact_group'        => [
             'display_name' => 'read_contact_group',

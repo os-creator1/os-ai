@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Entitlement\CustomerAccountAccessState;
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -12,6 +14,9 @@ use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\ClientWorkspaceAlreadyManagedException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
+use App\Library\Entitlement\CustomerAccountAccessResolver;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Support\RequestScopedCache;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Role;
@@ -106,18 +111,17 @@ class AgencyClientRelationshipManagerTest extends TestCase
 
     /**
      * A customer User who is an active (or deliberately inactive) member of
-     * $workspace, holding exactly $permissions on the customer side.
-     *
-     * @param  array<int, string>  $permissions
+     * $workspace and holds NO customer permissions: under the V1 rule active
+     * Agency membership alone is the ordinary-management grant, so nothing in
+     * a permission list may be what makes a test pass.
      */
     private function memberOf(
         Workspace $workspace,
         WorkspaceMembershipRole $role,
-        array $permissions = [],
         bool $active = true,
     ): User {
         $customer = $this->createCustomer();
-        $customer->permissions = json_encode($permissions);
+        $customer->permissions = json_encode([]);
         $customer->save();
 
         $this->createMembership($workspace, $customer->user, [
@@ -159,16 +163,15 @@ class AgencyClientRelationshipManagerTest extends TestCase
     }
 
     /**
-     * A customer (non-admin) User whose own customer permission list carries
-     * BOTH the Agency management permission and, by name, the admin-side
-     * platform permission — the strongest non-admin impersonation of a
-     * migration operator a permission list alone can produce.
+     * A customer (non-admin) User whose own customer permission list carries,
+     * by name, the admin-side platform permission — the strongest non-admin
+     * impersonation of a migration operator a permission list alone can
+     * produce.
      */
     private function customerNamingThePlatformPermission(): User
     {
         $customer = $this->createCustomer();
         $customer->permissions = json_encode([
-            AgencyClientRelationshipManager::MANAGE_PERMISSION,
             AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION,
         ]);
         $customer->save();
@@ -240,14 +243,28 @@ class AgencyClientRelationshipManagerTest extends TestCase
         return $user->fresh();
     }
 
-    /** A customer User owning nothing relevant, holding the management permission anyway. */
-    private function outsiderHoldingThePermission(): User
+    /** A customer User who owns nothing relevant and belongs to no relevant Workspace. */
+    private function outsider(): User
     {
-        $customer = $this->createCustomer();
-        $customer->permissions = json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION]);
-        $customer->save();
+        return $this->createCustomer()->user->fresh();
+    }
 
-        return $customer->user->fresh();
+    /**
+     * Drives a Workspace's account into a lifecycle state through
+     * EntitlementManager's own writers — never by poking lifecycle columns.
+     */
+    private function putWorkspaceInto(string $state, Workspace $workspace): void
+    {
+        $entitlements = app(EntitlementManager::class);
+
+        match ($state) {
+            'grace' => $entitlements->enterGracePeriod($workspace),
+            'locked' => [$entitlements->enterGracePeriod($workspace), $entitlements->lockForNonPayment($workspace)],
+            'inactive' => $entitlements->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'Test: plan made inactive.'),
+            'suspended' => $entitlements->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Test: plan suspended.'),
+        };
+
+        app(RequestScopedCache::class)->flush();
     }
 
     private function established(?Workspace $agency = null, ?User $owner = null, ?Workspace $client = null): AgencyClientWorkspaceRelationship
@@ -314,14 +331,18 @@ class AgencyClientRelationshipManagerTest extends TestCase
         );
     }
 
-    /** Blueprint §2 as corrected: an Agency team member, not only the owner. */
-    public function test_an_agency_admin_or_staff_member_holding_the_permission_may_establish_a_relationship(): void
+    /**
+     * Blueprint §2 as corrected, V1 rule: an active Agency Admin or Staff
+     * member establishes a relationship by membership alone — no customer
+     * permission is involved.
+     */
+    public function test_an_active_agency_admin_or_staff_member_may_establish_a_relationship(): void
     {
         foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
             [$agency] = $this->agency('Agency for ' . $role->value);
             [$client] = $this->workspaceOn(null, 'Client for ' . $role->value);
 
-            $member = $this->memberOf($agency, $role, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+            $member = $this->memberOf($agency, $role);
 
             $relationship = $this->manager()->create((int) $member->id, $agency, $client);
 
@@ -334,31 +355,55 @@ class AgencyClientRelationshipManagerTest extends TestCase
     // Authority matrix — creation (Contract 01 §6)
     // ------------------------------------------------------------------
 
-    public function test_an_agency_member_without_the_permission_cannot_establish_a_relationship(): void
+    /** Authority is per Agency Workspace: active membership in Agency A grants nothing in Agency B. */
+    public function test_membership_in_another_agency_workspace_grants_no_authority(): void
     {
         foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
-            [$agency] = $this->agency('Agency for bare ' . $role->value);
-            [$client] = $this->workspaceOn(null, 'Client for bare ' . $role->value);
+            [$agencyA] = $this->agency('Agency A for ' . $role->value);
+            [$agencyB] = $this->agency('Agency B for ' . $role->value);
+            [$client] = $this->workspaceOn(null, 'Client of B for ' . $role->value);
 
-            $member = $this->memberOf($agency, $role);
+            $memberOfA = $this->memberOf($agencyA, $role);
+
+            $this->assertRefusesToCreate($memberOfA, $agencyB, $client);
+        }
+    }
+
+    public function test_an_inactive_agency_member_cannot_establish_a_relationship(): void
+    {
+        foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
+            [$agency] = $this->agency('Agency for inactive ' . $role->value);
+            [$client] = $this->workspaceOn(null, 'Client for inactive ' . $role->value);
+
+            $member = $this->memberOf($agency, $role, active: false);
 
             $this->assertRefusesToCreate($member, $agency, $client);
         }
     }
 
-    public function test_an_inactive_agency_member_holding_the_permission_cannot_establish_a_relationship(): void
+    /** No legacy super-admin bypass: user id 1 that neither owns nor belongs to the Agency is refused. */
+    public function test_user_id_1_without_agency_ownership_or_membership_cannot_establish_a_relationship(): void
     {
         [$agency] = $this->agency();
         [$client] = $this->workspaceOn();
 
-        $member = $this->memberOf(
-            $agency,
-            WorkspaceMembershipRole::Admin,
-            [AgencyClientRelationshipManager::MANAGE_PERMISSION],
-            active: false,
-        );
+        $superAdmin = User::query()->find(1) ?? tap(new User([
+            'first_name' => 'Super',
+            'last_name' => 'Admin',
+            'email' => 'super-admin-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]), function (User $user): void {
+            $user->id = 1;
+            $user->save();
+        });
 
-        $this->assertRefusesToCreate($member, $agency, $client);
+        $this->assertSame(1, (int) $superAdmin->id);
+        $this->assertNotSame(1, (int) $agency->owner_user_id);
+
+        $this->assertRefusesToCreate($superAdmin, $agency, $client);
     }
 
     public function test_the_client_workspace_owner_cannot_establish_the_relationship(): void
@@ -366,27 +411,21 @@ class AgencyClientRelationshipManagerTest extends TestCase
         [$agency] = $this->agency();
         [$client, $clientOwner] = $this->workspaceOn();
 
-        $clientOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
-
         $this->assertRefusesToCreate($clientOwner, $agency, $client);
     }
 
     /**
      * Addendum §2's own sentence, asserted: Agency authority is never
      * inferred from ordinary membership in the CLIENT Workspace. This actor
-     * is an active Admin of the client, holding the management permission,
-     * and is still nobody on the Agency side.
+     * is an active Admin of the client and is still nobody on the Agency
+     * side.
      */
     public function test_membership_in_the_client_workspace_grants_no_agency_authority(): void
     {
         [$agency] = $this->agency();
         [$client] = $this->workspaceOn();
 
-        $clientAdmin = $this->memberOf(
-            $client,
-            WorkspaceMembershipRole::Admin,
-            [AgencyClientRelationshipManager::MANAGE_PERMISSION],
-        );
+        $clientAdmin = $this->memberOf($client, WorkspaceMembershipRole::Admin);
 
         $this->assertRefusesToCreate($clientAdmin, $agency, $client);
     }
@@ -396,7 +435,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
         [$agency] = $this->agency();
         [$client] = $this->workspaceOn();
 
-        $this->assertRefusesToCreate($this->outsiderHoldingThePermission(), $agency, $client);
+        $this->assertRefusesToCreate($this->outsider(), $agency, $client);
     }
 
     /**
@@ -488,6 +527,59 @@ class AgencyClientRelationshipManagerTest extends TestCase
     }
 
     /**
+     * Contract 04 correction — management eligibility is Agency tier AND a
+     * usable account (CustomerAccountAccessResolver). A Grace Agency still
+     * establishes relationships; a Locked, Inactive or Suspended one — still
+     * on the Agency tier — does not, through either entry point.
+     */
+    public function test_a_grace_agency_can_establish_a_relationship(): void
+    {
+        [$agency, $agencyOwner] = $this->agency('Grace Agency');
+        [$client] = $this->workspaceOn(null, 'Client of a Grace Agency');
+        $this->putWorkspaceInto('grace', $agency);
+
+        $this->assertTrue(app(CustomerAccountAccessResolver::class)->resolve($agency->fresh())->isInGracePeriod());
+
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency->fresh(), $client);
+
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $relationship->status);
+    }
+
+    public function test_a_locked_inactive_or_suspended_agency_cannot_establish_a_relationship(): void
+    {
+        $expectations = [
+            'locked' => CustomerAccountAccessState::Locked,
+            'inactive' => CustomerAccountAccessState::LockedInactive,
+            'suspended' => CustomerAccountAccessState::LockedSuspended,
+        ];
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        foreach ($expectations as $state => $accessState) {
+            [$agency, $agencyOwner] = $this->agency(ucfirst($state) . ' Agency');
+            [$client] = $this->workspaceOn(null, 'Client of a ' . $state . ' Agency');
+            $this->putWorkspaceInto($state, $agency);
+
+            $this->assertSame(WorkspacePlanTier::Agency, app(EntitlementManager::class)->getWorkspaceEntitlementSummary($agency->fresh())->tier);
+
+            foreach ([
+                'create' => fn () => $this->manager()->create((int) $agencyOwner->id, $agency->fresh(), $client),
+                'createForMigration' => fn () => $this->manager()->createForMigration((int) $operator->id, $agency->fresh(), $client),
+            ] as $entryPoint => $attempt) {
+                try {
+                    $attempt();
+                    $this->fail('A ' . $state . ' Agency must not establish a relationship through ' . $entryPoint . '().');
+                } catch (AgencyWorkspaceNotEligibleException $e) {
+                    $this->assertSame((int) $agency->id, $e->workspaceId);
+                    $this->assertSame(WorkspacePlanTier::Agency->value, $e->tier);
+                    $this->assertSame($accessState->value, $e->accessState);
+                }
+            }
+        }
+
+        $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    /**
      * Authority is asserted before entitlement, so an actor who may not
      * manage this Agency never learns anything about its plan.
      */
@@ -496,7 +588,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
         [$notAnAgency] = $this->workspaceOn(WorkspacePlanTier::Core, 'Core Workspace');
         [$client] = $this->workspaceOn();
 
-        $this->assertRefusesToCreate($this->outsiderHoldingThePermission(), $notAnAgency, $client);
+        $this->assertRefusesToCreate($this->outsider(), $notAnAgency, $client);
     }
 
     public function test_a_missing_workspace_is_refused_rather_than_linked(): void
@@ -679,21 +771,19 @@ class AgencyClientRelationshipManagerTest extends TestCase
         [$agency, $agencyOwner] = $this->agency();
         [$client, $clientOwner] = $this->workspaceOn();
 
-        $agencyOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
-
         $this->assertRefusesToCreateForMigration($agencyOwner, $agency, $client);
         $this->assertRefusesToCreateForMigration(
-            $this->memberOf($agency, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $this->memberOf($agency, WorkspaceMembershipRole::Admin),
             $agency,
             $client,
         );
         $this->assertRefusesToCreateForMigration(
-            $this->memberOf($agency, WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $this->memberOf($agency, WorkspaceMembershipRole::Staff),
             $agency,
             $client,
         );
         $this->assertRefusesToCreateForMigration($clientOwner, $agency, $client);
-        $this->assertRefusesToCreateForMigration($this->outsiderHoldingThePermission(), $agency, $client);
+        $this->assertRefusesToCreateForMigration($this->outsider(), $agency, $client);
 
         // The owner remains fully able to act through the product path.
         $this->assertSame(
@@ -834,7 +924,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $first = $this->manager()->createForMigration((int) $operator->id, $agency, $firstClient);
 
         $this->assertRefusesToTerminate(
-            $this->memberOf($agency, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $this->memberOf($agency, WorkspaceMembershipRole::Admin),
             $first,
         );
         $this->assertRefusesToTerminate($this->adminPanelUser(withPlatformPermission: false), $first);
@@ -1013,7 +1103,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
     {
         $dual = $this->dualAdminCustomer(
             roleHoldsPlatformPermission: true,
-            customerPermissions: [AgencyClientRelationshipManager::MANAGE_PERMISSION],
+            customerPermissions: [],
         );
 
         // Genuine Agency owner.
@@ -1098,14 +1188,15 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $this->assertRefusesToTerminate($this->adminPanelUser(withPlatformPermission: false), $relationship);
     }
 
-    public function test_no_agency_team_member_may_terminate_however_permitted(): void
+    /** Termination stays owner-only: active Admin and Staff — who may create — may not terminate. */
+    public function test_no_agency_team_member_may_terminate(): void
     {
         foreach ([WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff] as $role) {
             [$agency, $agencyOwner] = $this->agency('Agency for terminating ' . $role->value);
             [$client] = $this->workspaceOn(null, 'Client for terminating ' . $role->value);
 
             $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
-            $member = $this->memberOf($agency, $role, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+            $member = $this->memberOf($agency, $role);
 
             $this->assertRefusesToTerminate($member, $relationship);
         }
@@ -1118,10 +1209,9 @@ class AgencyClientRelationshipManagerTest extends TestCase
 
         $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
 
-        $clientOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
         $this->assertRefusesToTerminate($clientOwner, $relationship);
 
-        $clientAdmin = $this->memberOf($client, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]);
+        $clientAdmin = $this->memberOf($client, WorkspaceMembershipRole::Admin);
         $this->assertRefusesToTerminate($clientAdmin, $relationship);
     }
 
@@ -1129,7 +1219,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
     {
         $relationship = $this->established();
 
-        $this->assertRefusesToTerminate($this->outsiderHoldingThePermission(), $relationship);
+        $this->assertRefusesToTerminate($this->outsider(), $relationship);
     }
 
     public function test_termination_requires_a_reason(): void
@@ -1193,7 +1283,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
         $terminated = $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'Ended.');
 
-        $this->assertRefusesToTerminate($this->outsiderHoldingThePermission(), $terminated);
+        $this->assertRefusesToTerminate($this->outsider(), $terminated);
     }
 
     // ------------------------------------------------------------------

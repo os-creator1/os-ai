@@ -117,13 +117,18 @@ final class ViewAsManager
      * Starts only when ALL hold:
      *  1. the Agency Workspace exists and is active, and the actor has
      *     Agency authority in it — AgencyClientRelationshipManager::
-     *     actorHasAgencyAuthority(), the one definition (owner, or an active
-     *     Admin/Staff holding manage_agency_clients; platform status and
-     *     Client Workspace membership count for nothing);
+     *     actorHasAgencyAuthority(), the one definition (the exact owner, or
+     *     an ACTIVE Admin/Staff membership in exactly that Agency Workspace;
+     *     customer permissions, platform status, other Workspaces'
+     *     memberships and Client Workspace membership count for nothing);
      *  2. the Client Workspace exists, is active, and is not the Agency
      *     Workspace itself;
      *  3. an ACTIVE relationship links exactly this Agency to this Client;
-     *  4. the Agency Workspace is on the Agency tier right now;
+     *  4. the Agency Workspace has management eligibility right now —
+     *     AgencyClientRelationshipManager::agencyWorkspaceHasManagementEligibility():
+     *     Agency tier AND a usable account per CustomerAccountAccessResolver
+     *     (Trial, Active and Grace qualify; Locked, Inactive and Suspended
+     *     do not);
      *  5. the Client Workspace holds exactly one Business, and it is active.
      *     No businessUid is accepted: the Business is the Client Workspace's
      *     sole Business by construction, and zero or more than one is a
@@ -154,7 +159,7 @@ final class ViewAsManager
             || ! $clientWorkspace->is_active
             || (int) $clientWorkspace->id === (int) $agencyWorkspace->id
             || ! $this->activeRelationshipLinks($agencyWorkspace, $clientWorkspace)
-            || ! $this->agencyRelationships->agencyWorkspaceIsOnTheAgencyTier($agencyWorkspace)) {
+            || ! $this->agencyRelationships->agencyWorkspaceHasManagementEligibility($agencyWorkspace)) {
             abort(404);
         }
 
@@ -360,9 +365,11 @@ final class ViewAsManager
      *
      *  1. an ACTIVE relationship still links the session's Agency Workspace
      *     to the viewed Client Workspace — else relationship_ended;
-     *  2. the Agency Workspace is still on the Agency tier — else
-     *     agency_entitlement_lost (the relationship alone is never
-     *     entitlement proof; the two causes are reported separately);
+     *  2. the Agency Workspace still has management eligibility — Agency
+     *     tier AND a usable account (a Locked, Inactive or Suspended Agency
+     *     is not eligible) — else agency_entitlement_lost (the relationship
+     *     alone is never eligibility proof; the two causes are reported
+     *     separately, and no separate lifecycle end reason is invented);
      *  3. the actor still has Agency authority in that Agency Workspace
      *     (AgencyClientRelationshipManager::actorHasAgencyAuthority(), the
      *     same definition start used) — else access_lost;
@@ -390,7 +397,7 @@ final class ViewAsManager
             return ViewAsSession::END_REASON_RELATIONSHIP_ENDED;
         }
 
-        if (! $this->agencyRelationships->agencyWorkspaceIsOnTheAgencyTier($agencyWorkspace)) {
+        if (! $this->agencyRelationships->agencyWorkspaceHasManagementEligibility($agencyWorkspace)) {
             return ViewAsSession::END_REASON_AGENCY_ENTITLEMENT_LOST;
         }
 
