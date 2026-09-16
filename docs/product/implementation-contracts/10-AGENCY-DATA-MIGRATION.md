@@ -121,13 +121,19 @@ case — a `business_payer_assignments` update per §5's corrected design.
 
 ## 5. Payer migration matrix (executable, consent-preserving — corrected in this remediation)
 
-**New schema addition, shared with Contract 09 (a small, necessary
-addendum to that contract's own schema, noted there too): two nullable
-columns on `business_payer_assignments` — `agency_rebill_consented_at`
-and `agency_rebill_consented_by_user_id`** — mirroring the exact standing-
+**Schema prerequisite, owned exclusively by Contract 09 — Contract 10
+creates no migration of its own for it.** `business_payer_assignments`
+gains two nullable columns — `agency_rebill_consented_at` and
+`agency_rebill_consented_by_user_id` — mirroring the exact standing-
 consent pattern `auto_recharge_consented_at`/`_by_user_id` already
-establishes elsewhere in this codebase (Contract 09 §3's own citation).
-**Meaning:** for any row with `payer_type = 'agency_rebill'`, `NULL` means
+establishes elsewhere in this codebase. **Contract 09 alone owns this
+schema change** (it already owns `managing_agency_relationship_id` on
+the same table, and these two columns are added in that same migration,
+per Contract 09 §12); Contract 10 only **writes** to these already-
+existing columns as part of its own cutover (§4 step 6 below), and its
+own preflight (§8) verifies they exist before executing — there is
+exactly one schema owner for `business_payer_assignments` across both
+contracts. **Meaning:** for any row with `payer_type = 'agency_rebill'`, `NULL` means
 *provisionally* AgencyRebill-typed but **not yet consented by the real
 Agency owner** — every charge-causing check must treat a `NULL` here
 identically to "no provider customer found" (the existing, already-safe
@@ -198,10 +204,15 @@ theme.
 **Full preflight/dry-run/execution/verification/resumability/rollback
 posture, exactly as required:**
 
-1. **Preflight report** (read-only, no writes): per Agency Workspace —
-   Business count, primary-less Business count (§3's `BusinessLocation`
-   check), and §5's payer-matrix classification per Business. Output as a
-   structured report a human reviews before any execution run.
+1. **Preflight report** (read-only, no writes): **first**, a schema
+   check — confirm `business_payer_assignments.managing_agency_relationship_id`,
+   `.agency_rebill_consented_at`, and `.agency_rebill_consented_by_user_id`
+   all exist (Contract 09's migration, §5/§12/§16) — fail the preflight
+   immediately, before any per-Agency reporting, if any is missing; **then**
+   per Agency Workspace — Business count, primary-less Business count
+   (§3's `BusinessLocation` check), and §5's payer-matrix classification
+   per Business. Output as a structured report a human reviews before any
+   execution run.
 2. **Dry-run mode**: executes every read and every decision branch (§4's
    corrected six-step sequence) without committing writes, reporting
    exactly what *would* happen per Business, including which Businesses
@@ -256,17 +267,27 @@ Business-keyed needs no provider-side change at all, since the Business
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `database/migrations/2026_09_2x_100014_add_agency_rebill_consent_columns_to_business_payer_assignments_table.php` (the two new columns §5 requires — shared with, and must be coordinated against, Contract 09's own migration to the same table)
 - `app/Console/Commands/MigrateAgencyClientBusinesses.php` (or equivalent Artisan command — the operator entry point, supporting `--dry-run`)
 - `app/Library/Workspace/Migration/AgencyBusinessMigrationV1.php` (the actual logic class, mirroring `WorkspaceBackfillV1`'s own "versioned, immutable, invoked by a thin wrapper" pattern)
 - `tests/Feature/Workspace/AgencyBusinessMigrationV1Test.php`
 
+**No migration file in this contract's allowlist.** `managing_agency_relationship_id`,
+`agency_rebill_consented_at`, and `agency_rebill_consented_by_user_id` are
+all created by **Contract 09's** migration exclusively (§5) — Contract 10
+never creates or duplicates that schema. This contract's own preflight
+(§8) includes an explicit check that all three columns already exist on
+`business_payer_assignments` before any migration write runs, failing the
+preflight (not silently proceeding) if Contract 09's migration has not
+actually been applied to the target database — this is how Contract 10
+verifies its hard prerequisite on Contract 09 (§16) mechanically, not
+merely by documentation cross-reference.
+
 **Existing files NOT modified:** `WorkspaceManager.php` (its existing
 `reassignBusiness()` is called, not changed), `WorkspaceMembershipBusinessRepository.php`
-(its existing `removeAllForBusinessInWorkspace()` is called, not changed).
-**Existing file consumed, not modified, but its own consent-column write
-path (§5) must already exist by the time this migration runs** —
-`app/Library/Usage/BillingProfileManager.php` (Contract 09's dependency).
+(its existing `removeAllForBusinessInWorkspace()` is called, not changed),
+`app/Library/Usage/BillingProfileManager.php` (Contract 09's file —
+consumed as a schema/consent-flow prerequisite only, never modified by
+this contract).
 
 **Flagged, not allowlisted:** whatever file holds the connected-Stripe-
 account reference (§3) — confirm at implementation time before assuming
