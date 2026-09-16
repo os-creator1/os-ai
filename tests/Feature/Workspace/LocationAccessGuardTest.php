@@ -227,6 +227,176 @@ class LocationAccessGuardTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Stale Location grant vs. current Business reach (§5 transitional
+    // invariant, enforced continuously — not only at grant-creation
+    // time). A Selected Location grant must never outlive the Business
+    // access it was made under.
+    // -----------------------------------------------------------------
+
+    /**
+     * (A) Selected Location scope + explicit Location grant + Business
+     * reachable via a Selected Business-level grant -> ALLOWED.
+     */
+    public function test_selected_location_grant_with_reachable_selected_business_is_allowed(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $location = $this->location($business);
+
+        $staff = $this->createCustomer();
+        $membership = $this->createMembership($workspace, $staff->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::Selected,
+        ]);
+        app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $business);
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $location);
+
+        $this->assertTrue($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+    }
+
+    /**
+     * (B) Same membership as (A): the Location grant row is left
+     * untouched, but the Business-level grant is removed -> DENIED
+     * immediately, on the very next authorization check. Proves the two
+     * axes are composed at authorization time, not only validated once
+     * when the Location grant was created.
+     */
+    public function test_removing_business_grant_immediately_denies_a_preexisting_location_grant(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $location = $this->location($business);
+
+        $staff = $this->createCustomer();
+        $membership = $this->createMembership($workspace, $staff->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::Selected,
+        ]);
+        $businessRepository = app(WorkspaceMembershipBusinessRepository::class);
+        $businessRepository->assign($membership, $business);
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $location);
+
+        $this->assertTrue($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+
+        $businessRepository->unassign($membership, $business->id);
+
+        $this->assertFalse($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+    }
+
+    /**
+     * (C) Continuation of (B): restoring the Business-level grant, with
+     * the Location grant row never having been touched, is ALLOWED
+     * again — proving the stale row was never deleted or corrupted, only
+     * shadowed by the (correctly) failing Business-reach check while it
+     * was absent.
+     */
+    public function test_restoring_business_grant_reallows_the_preserved_location_grant(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $location = $this->location($business);
+
+        $staff = $this->createCustomer();
+        $membership = $this->createMembership($workspace, $staff->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::Selected,
+        ]);
+        $businessRepository = app(WorkspaceMembershipBusinessRepository::class);
+        $businessRepository->assign($membership, $business);
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $location);
+
+        $businessRepository->unassign($membership, $business->id);
+        $this->assertFalse($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+
+        $businessRepository->assign($membership, $business);
+
+        $this->assertTrue($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+        $this->assertTrue(
+            app(WorkspaceMembershipLocationRepository::class)->isAssigned($membership, $location->id),
+            'The Location grant row must have been preserved untouched throughout, never re-created.'
+        );
+    }
+
+    /**
+     * (D) A membership starts with Business scope All (so an explicit
+     * Location grant is meaningful and reachable), then Business scope
+     * narrows to Selected excluding this exact Business, while the old
+     * explicit Location grant row is left in place -> DENIED.
+     */
+    public function test_narrowing_business_scope_to_exclude_this_business_denies_the_old_location_grant(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $otherBusiness = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $location = $this->location($business);
+
+        $staff = $this->createCustomer();
+        $membership = $this->createMembership($workspace, $staff->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::Selected,
+        ]);
+        app(WorkspaceMembershipLocationRepository::class)->assign($membership, $location);
+
+        $this->assertTrue($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+
+        $this->manager()->changeMemberBusinessAccessScope(
+            (int) $owner->user_id,
+            $membership,
+            WorkspaceBusinessAccessScope::Selected,
+            [$otherBusiness->id],
+        );
+
+        $this->assertFalse($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+        $this->assertTrue(
+            app(WorkspaceMembershipLocationRepository::class)->isAssigned($membership, $location->id),
+            'Narrowing Business scope must not delete the Location grant row — the guard denies it at read time.'
+        );
+    }
+
+    /**
+     * (E) A stale Location grant is force-inserted directly at the DB
+     * layer (bypassing assign()'s own grant-time validation entirely)
+     * for a membership that cannot reach that same-Workspace Business
+     * through any Business-level grant -> DENIED. Proves the runtime
+     * composition check, not grant-time validation, is the load-bearing
+     * protection.
+     */
+    public function test_a_force_inserted_stale_grant_for_an_unreachable_business_is_denied(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
+        $location = $this->location($business);
+
+        $staff = $this->createCustomer();
+        $membership = $this->createMembership($workspace, $staff->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'location_access_scope' => LocationAccessScope::Selected,
+        ]);
+
+        // Force-inserted directly at the DB layer — assign() itself would
+        // refuse this (CrossBusinessLocationAssignmentException, since the
+        // membership has no Business-level grant for $business at all).
+        DB::table('workspace_membership_locations')->insert([
+            'workspace_membership_id' => $membership->id,
+            'business_location_id' => $location->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->assertFalse($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));
+    }
+
+    private function manager(): \App\Library\Workspace\WorkspaceManager
+    {
+        return app(\App\Library\Workspace\WorkspaceManager::class);
+    }
+
+    // -----------------------------------------------------------------
     // assertUserCanAccessLocation() — delegates entirely, no second
     // algorithm.
     // -----------------------------------------------------------------

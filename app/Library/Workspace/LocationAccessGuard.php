@@ -41,15 +41,19 @@ class LocationAccessGuard
      *
      *  - Workspace owner: always full access, unconditionally.
      *  - Direct Business owner (business.customer_id === userId): full access.
-     *  - Active membership, location_access_scope = All: full access to
-     *    every Location of every Business the membership can already
-     *    reach — composed with the §5 transitional check (never wider
-     *    than the still-live business_access_scope grant).
-     *  - Active membership, location_access_scope = Selected: only
+     *  - Active membership: Business reach is re-checked on every call —
+     *    business_access_scope = All, or an explicit
+     *    workspace_membership_businesses grant for this Business — and
+     *    denied immediately if that reach no longer holds. This is the
+     *    §5 transitional invariant enforced continuously, not only at
+     *    Location-grant creation time: a Location axis can never be wider
+     *    than the still-live Business axis, even if the Business grant is
+     *    narrowed or removed after the Location grant was made.
+     *  - Business reach confirmed, location_access_scope = All: full
+     *    access to every Location of that Business.
+     *  - Business reach confirmed, location_access_scope = Selected: only
      *    Locations with an explicit workspace_membership_locations grant
-     *    row (the transitional check is already enforced at grant-
-     *    creation time by the repository's own assign()/syncForMembership(),
-     *    so it is not re-derived a second time here).
+     *    row.
      *  - Inactive membership, or no membership at all: no access.
      *
      * Re-derives $location fresh from its own repository — never trusts
@@ -94,12 +98,22 @@ class LocationAccessGuard
             return false;
         }
 
-        if ($membership->location_access_scope === LocationAccessScope::All) {
-            return $membership->business_access_scope === WorkspaceBusinessAccessScope::All
-                || $this->membershipBusinessRepository->isAssigned($membership, $business->id);
+        $canReachBusiness = $membership->business_access_scope === WorkspaceBusinessAccessScope::All
+            || $this->membershipBusinessRepository->isAssigned($membership, $business->id);
+
+        if (! $canReachBusiness) {
+            return false;
         }
 
-        return $this->membershipLocationRepository->isAssigned($membership, $currentLocation->id);
+        if ($membership->location_access_scope === LocationAccessScope::All) {
+            return true;
+        }
+
+        if ($membership->location_access_scope === LocationAccessScope::Selected) {
+            return $this->membershipLocationRepository->isAssigned($membership, $currentLocation->id);
+        }
+
+        return false;
     }
 
     /**
