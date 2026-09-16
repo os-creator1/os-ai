@@ -272,6 +272,53 @@ class AgencyClientRelationshipManager
     }
 
     /**
+     * Read-only: may this actor act for $agencyWorkspace as the Agency?
+     *
+     * THE one definition of Agency-side authority (Contract 04 §6, "reuse,
+     * not duplication"): the Agency Workspace owner, or an ACTIVE Agency
+     * Admin/Staff member holding manage_agency_clients. create() asserts
+     * exactly this through assertActorMayManageAgencyRelationships(), and
+     * ViewAsManager::startAgencyView() — and its per-read revalidation —
+     * ask exactly this, so the two can never drift into two authority
+     * definitions.
+     *
+     * Platform status adds nothing: is_admin and admin Role permissions
+     * are never read. Nor is Client Workspace membership: only the AGENCY
+     * Workspace's owner and membership rows count (Addendum §2).
+     */
+    public function actorHasAgencyAuthority(int $actorUserId, Workspace $agencyWorkspace): bool
+    {
+        if ((int) $agencyWorkspace->owner_user_id === $actorUserId) {
+            return true;
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($agencyWorkspace, $actorUserId);
+
+        if ($membership === null || ! $membership->is_active) {
+            return false;
+        }
+
+        $user = User::query()->find($actorUserId);
+
+        return $user !== null && Gate::forUser($user)->allows(self::MANAGE_PERMISSION);
+    }
+
+    /**
+     * Read-only: is $agencyWorkspace on the Agency plan tier right now?
+     *
+     * The one definition of "currently holds Agency entitlement" for this
+     * relationship: create() asserts it once, at establishment
+     * (assertAgencyWorkspaceIsOnTheAgencyTier()), and every Agency-only
+     * capability that consumes an Active relationship — Contract 04's View
+     * As first — re-asks it each time it acts, because relationship
+     * existence is never entitlement proof (Contract 01 §6).
+     */
+    public function agencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): bool
+    {
+        return $this->entitlementManager->getWorkspaceEntitlementSummary($agencyWorkspace)->tier === WorkspacePlanTier::Agency;
+    }
+
+    /**
      * The single implementation of establishing a relationship. create() and
      * createForMigration() differ ONLY in $assertAuthority; everything else a
      * relationship's integrity depends on is here, once.
@@ -382,18 +429,8 @@ class AgencyClientRelationshipManager
      */
     private function assertActorMayManageAgencyRelationships(int $actorUserId, Workspace $agencyWorkspace): void
     {
-        if ((int) $agencyWorkspace->owner_user_id === $actorUserId) {
+        if ($this->actorHasAgencyAuthority($actorUserId, $agencyWorkspace)) {
             return;
-        }
-
-        $membership = $this->membershipRepository->findByWorkspaceAndUser($agencyWorkspace, $actorUserId);
-
-        if ($membership !== null && $membership->is_active) {
-            $user = User::query()->find($actorUserId);
-
-            if ($user !== null && Gate::forUser($user)->allows(self::MANAGE_PERMISSION)) {
-                return;
-            }
         }
 
         throw new UnauthorizedAgencyRelationshipManagementException($actorUserId, (int) $agencyWorkspace->id);
@@ -493,10 +530,12 @@ class AgencyClientRelationshipManager
      */
     private function assertAgencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): void
     {
+        if ($this->agencyWorkspaceIsOnTheAgencyTier($agencyWorkspace)) {
+            return;
+        }
+
         $tier = $this->entitlementManager->getWorkspaceEntitlementSummary($agencyWorkspace)->tier;
 
-        if ($tier !== WorkspacePlanTier::Agency) {
-            throw new AgencyWorkspaceNotEligibleException((int) $agencyWorkspace->id, $tier?->value);
-        }
+        throw new AgencyWorkspaceNotEligibleException((int) $agencyWorkspace->id, $tier?->value);
     }
 }

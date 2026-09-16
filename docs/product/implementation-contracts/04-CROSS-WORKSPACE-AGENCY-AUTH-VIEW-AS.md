@@ -256,14 +256,14 @@ structurally (by omission — no payer-related method is added to
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `database/migrations/2026_09_2x_100006_add_viewing_agency_workspace_id_to_view_as_sessions_table.php`
+- `database/migrations/2026_09_20_100009_add_viewing_agency_workspace_id_to_view_as_sessions_table.php` (final merged V1 sequence position: after Contract 01's `100006` and Contract 06's `100007`/`100008`)
 - `tests/Feature/Workspace/AgencyViewAsTest.php`
 
 **Existing files modified:**
-- `app/Library/ViewAs/ViewAsManager.php` — add `startAgencyView()`, `agencyAccessChainStillHolds()` (both new methods; no existing method body changes).
+- `app/Library/ViewAs/ViewAsManager.php` — add `startAgencyView()` and the cross-Workspace revalidation chain (implemented as `agencyAccessChainEndReason()`, returning the distinct end reason rather than a bare boolean so `relationship_ended` / `agency_entitlement_lost` / `access_lost` can be recorded), plus two small private helpers (`activeRelationshipLinks()`, `soleBusinessOf()`). `start()`, `actorMayView()` and `accessChainStillHolds()` are unchanged; `current()` gains only the branch that sends a session with a non-null `viewing_agency_workspace_id` through the new chain and fills the two new `ViewAsContext` fields (same-Workspace sessions take exactly their existing path).
 - `app/Models/ViewAsSession.php` — add `viewing_agency_workspace_id` to `$fillable`; add `END_REASON_RELATIONSHIP_ENDED` and `END_REASON_AGENCY_ENTITLEMENT_LOST` constants.
 - `app/Library/ViewAs/ViewAsContext.php` — add the two new nullable fields; constructor signature grows (additive, default-null-safe at every existing call site since `start()`'s own construction of `ViewAsContext` in `current()` simply passes `null` for the new fields on the old path).
-- `app/Library/Workspace/AgencyClientRelationshipManager.php` (from Contract 01) — add the public authority-check method this slice needs (§6's "reuse, not duplication" note), if Contract 01 did not already expose one in the needed shape.
+- `app/Library/Workspace/AgencyClientRelationshipManager.php` (from Contract 01) — add the public authority-check method this slice needs (§6's "reuse, not duplication" note), if Contract 01 did not already expose one in the needed shape. As implemented: two read-only primitives, `actorHasAgencyAuthority(int $actorUserId, Workspace $agencyWorkspace): bool` (the one definition of Agency-side authority — owner, or active Admin/Staff holding `manage_agency_clients`; Contract 01's private create-authority assertion now delegates to it) and `agencyWorkspaceIsOnTheAgencyTier(Workspace $agencyWorkspace): bool` (the one current-Agency-tier check; Contract 01's establishment gate now delegates to it). Behaviour of `create()`, `createForMigration()` and `terminate()` is unchanged.
 
 **No existing controller/route/middleware changed** — this slice adds
 library-layer capability only; wiring a controller/route to

@@ -20,12 +20,32 @@ class ViewAsSession extends Model
     public const END_REASON_REPLACED = 'replaced';
     public const END_REASON_ACCESS_LOST = 'access_lost';
 
+    /**
+     * V1 Contract 04 §5 — a cross-Workspace Agency session whose Contract 01
+     * Agency<->Client relationship was terminated mid-session. Distinct from
+     * ACCESS_LOST (ordinary tenancy revoked) and from
+     * AGENCY_ENTITLEMENT_LOST, because the root cause and the operational
+     * response differ: termination is an Agency or Platform Owner action.
+     */
+    public const END_REASON_RELATIONSHIP_ENDED = 'relationship_ended';
+
+    /**
+     * V1 Contract 04 §5 — the relationship is still Active, but the Agency
+     * Workspace is no longer on the Agency plan tier: a billing/plan event,
+     * reported separately from relationship termination.
+     */
+    public const END_REASON_AGENCY_ENTITLEMENT_LOST = 'agency_entitlement_lost';
+
     protected $table = 'view_as_sessions';
 
     protected $fillable = [
         'uid',
         'actor_user_id',
         'workspace_id',
+        // V1 Contract 04 §5 — NULL for the same-Workspace path; the Agency
+        // Workspace's id for a cross-Workspace Agency session. workspace_id
+        // keeps meaning "the Workspace being viewed" in both.
+        'viewing_agency_workspace_id',
         'business_id',
         'reason',
         'started_at',
