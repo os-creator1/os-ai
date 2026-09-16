@@ -164,7 +164,7 @@ addressed as a table, not an assumption):**
 | Site | Business already known? | Location resolution (this slice's rule) |
 |---|---|---|
 | 1. `DLRController` (inbound) | **Sometimes** — from the receiving number's `business_id`, and only when that Business belongs to this customer; otherwise `NULL` (existing rule, unchanged) | **Single-Active-Location fallback**, applied only when a Business was actually resolved: if that Business has exactly one `BusinessLocationLifecycleState::Active` Location, use it; if zero or more than one — or if `business_id` is `NULL` — `location_id = NULL` (mirrors the existing Business-resolution's own "ambiguous → NULL" discipline, never a guess) |
-| 2. `ConversationHistoryWriter::conversationFor()` (managed inbound + outbound) | Yes, passed in by the caller | Same single-Active-Location fallback **by default**, but the method signature gains an **optional** `?BusinessLocation $location = null` parameter so a caller that already knows the sending Location (e.g. a future Conversations UI honoring Blueprint §7's Location switcher) can supply it directly rather than relying on the fallback — additive, backward-compatible parameter. A supplied Location belonging to another Business is **ignored** (falls back), never written. The value is set on the prepared model, so **both** persistence points (`recordManagedInbound()`'s save and `recordManagedOutbound()`'s in-transaction save) store it |
+| 2. `ConversationHistoryWriter::conversationFor()` (managed inbound + outbound) | Yes, passed in by the caller | Same single-Active-Location fallback **by default**, but the method signature gains an **optional** `?BusinessLocation $location = null` parameter so a caller that already knows the sending Location (e.g. a future Conversations UI honoring Blueprint §7's Location switcher) can supply it directly rather than relying on the fallback — additive, backward-compatible parameter. A supplied Location belonging to another Business, or one that is not `Active`, is **ignored** (falls back), never written. The value is set on the prepared model, so **both** persistence points (`recordManagedInbound()`'s save and `recordManagedOutbound()`'s in-transaction save) store it |
 | 3. `EloquentCampaignRepository::quickSend()` (Business-aware two-way conversation) | Only when the caller supplied one: `$input['business_id'] ?? $input['conversation_business_id'] ?? null` (existing) | Same single-Active-Location fallback when a Business **is** supplied; when none is supplied the row keys on `business_id IS NULL` and `location_id` is `NULL` too. A Business is **never** derived merely to obtain a Location. A genuinely multi-Location campaign-targeting concept does not exist yet and is **not invented by this slice** (flagged, §15) |
 | 4. `EloquentCampaignRepository::campaignBuilder()` (legacy Agency AI-Prospecting raw insert) | **No — by construction.** The branch runs only while `$outreachBusinessId === null`, and the insert writes no `business_id` | **`business_id = NULL` and `location_id = NULL`, written explicitly.** There is no Business to resolve a Location from, and none may be invented: not the user's primary Business, not a Business derived from the contact or its group, not a Location borrowed from another Business the user happens to own, not a campaign Business that is absent on this branch. The insert gains a literal `'location_id' => null` so the intent is visible at the write site rather than implied by omission. This is an intentional transitional legacy path; the column is nullable precisely so unprovable legacy rows stay unattributed instead of being misfiled |
 
@@ -276,7 +276,12 @@ independent of `location_id` and is not touched by this slice.)
 
 ## 13. Required tests
 
-`ChatBoxLocationScopingTest.php`: each of the **four** creation sites.
+`ChatBoxLocationScopingTest.php`: each of the **four** creation sites,
+each driven through its **real production entry point**
+(`DLRController::inboundDLR()`, `recordManagedInbound()` /
+`recordManagedOutbound()`, `quickSend()`, `campaignBuilder()`) — never a
+test-side copy of the writer's code, which would stay green if the
+production change were reverted. Only the external provider may be stubbed.
 
 - **Site 1 — `DLRController` inbound:** single-Active-Location Business →
   `location_id` set; multi-Location Business → `NULL`; zero-Location
@@ -291,7 +296,8 @@ independent of `location_id` and is not touched by this slice.)
   parameter: an explicit Location is used directly, bypassing the
   fallback (proven by passing a Location of a Business that has several,
   where the fallback would yield `NULL`); a Location belonging to another
-  Business is ignored rather than written.
+  Business, or an archived Location of the same Business, is ignored
+  rather than written.
 - **Site 3 — `quickSend()`:** known Business + exactly one Active Location
   → assigned; known Business + zero or several Active Locations → `NULL`;
   no Business supplied → `business_id` and `location_id` both `NULL`.
@@ -312,12 +318,6 @@ NULL` legacy row stays `NULL`, an archived-only Location resolves to
 `NULL`, an already-resolved row is never overwritten, idempotent rerun
 touches zero already-resolved rows, aggregate-only logging — no
 content/number in log output, asserted).
-
-`ChatBoxLocationBackfillV1Test.php`: mirrors the structure a
-`ChatBoxBusinessBackfillV1` test would have (single-Location resolves,
-multi-Location leaves `NULL`, idempotent rerun touches zero already-
-resolved rows, aggregate-only logging — no content/number in log output,
-asserted).
 
 ## 14. Acceptance criteria
 
