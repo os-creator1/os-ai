@@ -174,6 +174,28 @@ never causes a conversation to acquire a Business or a Location it cannot
 prove. This is the same discipline `ChatBoxBusinessBackfillV1` already
 applies to historical rows, restated here for live writes.
 
+**`conversation_business_id` is internal-only (site 3).** It is a
+secondary conversation-identity channel set solely by `DLRController`'s
+keyword/welcome auto-replies, from the Business the receiving number
+proved, so an auto-reply joins the inbound thread without `business_id`'s
+transport, blacklist and sending-server consequences. Because site 3 keys
+the conversation — and derives its Location — from it, it is exactly as
+tenancy-bearing as `business_id`, and a Location can only ever be derived
+from it **after** that Business has passed the check below:
+
+- Ordinary customer HTTP payloads may not supply it:
+  `CampaignController::tenantSafeInput()` strips it alongside `business_id`
+  and `user_id`.
+- `EloquentCampaignRepository` validates it independently of any
+  controller. When present (non-null), it must name a real Business; the
+  send's own `user` must be a persisted User that **owns** that Business
+  (`businesses.customer_id`), which holds for the legitimate auto-reply
+  even with no authenticated actor; an authenticated actor, if any, must
+  pass `WorkspaceManager::userCanAccessBusiness()`; and alongside
+  `business_id` both must name the same Business (`business_id` stays
+  canonical). Any failure is the tenancy-safe 404, before anything is sent
+  or written.
+
 **Why "single-Active-Location fallback" and not a hard requirement to
 resolve the true originating number's Location:** because
 `BusinessMessagingNumber` has no Location column (§3's flagged gap), there
@@ -271,6 +293,9 @@ independent of `location_id` and is not touched by this slice.)
 - `app/Http/Controllers/Customer/DLRController.php` — site 1: add the single-Active-Location resolution alongside the existing `business_id` resolution at line ~942.
 - `app/Library/Conversations/ConversationHistoryWriter.php` — site 2: extend `conversationFor()`'s signature with the optional `?BusinessLocation $location` parameter and the fallback resolution, setting `location_id` on the prepared model **before** it is returned, so both persistence points (`recordManagedInbound()` ~113 and `recordManagedOutbound()` ~222) save it.
 - `app/Repositories/Eloquent/EloquentCampaignRepository.php` — site 3 (`quickSend()`, ~740): the same fallback resolution. Site 4 (`campaignBuilder()`, ~1481): an explicit `'location_id' => null` in the raw insert, with a comment recording why nothing may be resolved there. No new production file is needed for site 4 — the file is already allowlisted.
+- `app/Repositories/Eloquent/EloquentCampaignRepository.php` (tenancy) — `assertSuppliedTenancyIsAuthorized()` also validates `conversation_business_id` (§5), with `business_id`'s own check unchanged.
+- `app/Http/Controllers/Customer/CampaignController.php` — `tenantSafeInput()` also strips `conversation_business_id` (§5).
+- `tests/Feature/Security/ChatBoxSecurityTest.php`, `tests/Feature/Outreach/OutreachCorrection1Test.php` — the adversarial `conversation_business_id` tests (§13), extending the existing tenant-escape coverage.
 
 **No `ChatBoxMessage` file changed. No migration to `business_messaging_numbers`. No change to the legacy AI-Prospecting path beyond the explicit NULL column and its comment.**
 
@@ -301,6 +326,14 @@ production change were reverted. Only the external provider may be stubbed.
 - **Site 3 — `quickSend()`:** known Business + exactly one Active Location
   → assigned; known Business + zero or several Active Locations → `NULL`;
   no Business supplied → `business_id` and `location_id` both `NULL`.
+  Adversarial (`ChatBoxSecurityTest`, `OutreachCorrection1Test`): a
+  customer HTTP payload's `conversation_business_id` is stripped and opens
+  nothing under the foreign Business or its Location; direct repository
+  forgery is refused with no side effect — authenticated foreign actor,
+  unauthenticated non-owner user, unsaved forged user, and `business_id` /
+  `conversation_business_id` disagreement; the real DLR auto-reply (owner
+  user, proven Business, no actor) still joins its thread and keeps its
+  Location.
 - **Site 4 — legacy `campaignBuilder()` AI-Prospecting branch:** with
   `$outreachBusinessId === null`, the created rows have `business_id`
   `NULL` **and** `location_id` `NULL`; the rows are still created normally

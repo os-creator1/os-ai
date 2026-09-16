@@ -1189,6 +1189,152 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame((int) $legacyServer->id, (int) $box->sending_server_id);
     }
 
+    // -------------------------------------------------------------------
+    // Contract 06 — `conversation_business_id` is internal-only. It files the
+    // two-way conversation AND (since Contract 06) derives its Location, so it
+    // is exactly as tenancy-bearing as `business_id`. Every attempt below
+    // would open a thread inside the victim's Business — and stamp the
+    // victim's Location on it — if the controller strip or the repository
+    // guard were missing: the provider always delivers.
+    // -------------------------------------------------------------------
+
+    public function test_a_customer_http_quick_send_strips_a_forged_conversation_business_id(): void
+    {
+        $attacker = $this->sendableBusiness();
+        $victim = $this->sendableBusiness('14155550300');
+        $victimLocationId = $this->singleActiveLocation($victim['business']);
+        $this->coverPlainSms($attacker);
+        $this->stubProviderDelivers();
+
+        // A fresh Customer, so the actor carries the fixture's unlimited balance.
+        $this->authenticateAs($attacker['customer']->fresh(), ['sms_quick_send']);
+
+        $this->post('/sms/quick-send', [
+            'recipients' => '4155557801',
+            'delimiter' => ',',
+            'country_code' => $attacker['country']->id,
+            'message' => 'Forged conversation identity',
+            'sms_type' => 'plain',
+            'originator' => 'phone_number',
+            'phone_number' => $attacker['number']->number,
+            'sending_server' => $attacker['server']->id,
+            // The attack.
+            'conversation_business_id' => $victim['business']->id,
+        ])->assertRedirect();
+
+        // The send itself still went through — the key was STRIPPED, not
+        // refused (a refusal would have written nothing) — and the thread it
+        // opened belongs to no Business, exactly as any legacy quick send's.
+        $box = ChatBox::query()->sole();
+        $this->assertSame((int) $attacker['owner']->id, (int) $box->user_id);
+        $this->assertNull($box->business_id);
+        $this->assertNull($box->location_id);
+
+        $this->assertSame(0, ChatBox::query()->where('business_id', $victim['business']->id)->count(), 'No conversation under the foreign Business.');
+        $this->assertSame(0, ChatBox::query()->where('location_id', $victimLocationId)->count(), 'No conversation carries the foreign Business\'s Location.');
+    }
+
+    /**
+     * No authenticated actor — the auto-reply's own context — so only the
+     * ownership rule stands between a caller and a foreign Business.
+     */
+    public function test_an_unauthenticated_call_cannot_forge_another_tenants_conversation_business_id(): void
+    {
+        $attacker = $this->sendableBusiness();
+        $victim = $this->sendableBusiness('14155550300');
+        $victimLocationId = $this->singleActiveLocation($victim['business']);
+        $this->assertNull(auth()->id(), 'Precondition: no authenticated actor.');
+
+        $unsavedVictimOwner = new User();
+        $unsavedVictimOwner->id = $victim['owner']->id;
+
+        $forgeries = [
+            'the sender\'s own user' => $attacker['owner'],
+            'an unsaved model carrying the victim owner\'s id' => $unsavedVictimOwner,
+            'no user at all' => null,
+        ];
+
+        foreach ($forgeries as $label => $user) {
+            $this->assertConversationForgeryRefused($label, fn () => app(\App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend(
+                $this->deliveringProvider(),
+                $this->autoReplyPayload($attacker, $user, $victim['business']->id, '4155557802'),
+            ));
+        }
+
+        $this->assertSame(0, ChatBox::query()->where('location_id', $victimLocationId)->count());
+    }
+
+    /**
+     * An authenticated Tenant A actor that names Tenant B's owner as the
+     * send's user: ownership alone would pass, so the actor check must refuse.
+     */
+    public function test_an_authenticated_actor_cannot_borrow_another_tenants_owner_for_conversation_business_id(): void
+    {
+        $attacker = $this->sendableBusiness();
+        $victim = $this->sendableBusiness('14155550300');
+        $this->singleActiveLocation($victim['business']);
+
+        $this->actingAs($attacker['owner']);
+
+        $this->assertConversationForgeryRefused('the victim owner as the send\'s user', fn () => app(\App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend(
+            $this->deliveringProvider(),
+            $this->autoReplyPayload($attacker, $victim['owner'], $victim['business']->id, '4155557803'),
+        ));
+    }
+
+    public function test_business_id_and_conversation_business_id_that_disagree_fail_closed(): void
+    {
+        // Both Businesses belong to the SAME customer, and the send's user owns
+        // both: disagreement alone must refuse, not ownership.
+        $fx = $this->sendableBusinessPair();
+
+        $this->assertConversationForgeryRefused('business_id A with conversation_business_id B', fn () => app(\App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend(
+            $this->deliveringProvider(),
+            $this->autoReplyPayload($fx, $fx['owner'], (int) $fx['businessB']->id, '4155557804') + ['business_id' => (int) $fx['business']->id],
+        ));
+
+        // Positive control: the same two keys in agreement are admitted.
+        $agreed = app(\App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend(
+            $this->deliveringProvider(),
+            $this->autoReplyPayload($fx, $fx['owner'], (int) $fx['business']->id, '4155557804') + ['business_id' => (int) $fx['business']->id],
+        );
+
+        $this->assertSame('success', $agreed->getData()->status, (string) ($agreed->getData()->message ?? ''));
+        $this->assertSame((int) $fx['business']->id, (int) ChatBox::query()->sole()->business_id);
+    }
+
+    /**
+     * The legitimate producer, end to end on the inbound side: inboundDLR()
+     * proves the Business from the receiving number and opens the thread;
+     * the keyword auto-reply then goes out with exactly the payload DLR builds
+     * — the receiving number's own customer as the user, the proven Business
+     * as conversation_business_id, and no authenticated actor.
+     */
+    public function test_the_legitimate_dlr_auto_reply_still_joins_its_thread_and_keeps_its_location(): void
+    {
+        $fx = $this->sendableBusiness();
+        $locationId = $this->singleActiveLocation($fx['business']);
+
+        DLRController::inboundDLR('14155557805', 'JOIN', $fx['server'], 0, $fx['number']->number);
+        $inbound = ChatBox::query()->sole();
+        $this->assertSame((int) $locationId, (int) $inbound->location_id);
+
+        $this->assertNull(auth()->id(), 'A provider webhook has no authenticated actor.');
+        $receivingCustomer = User::find(PhoneNumbers::query()->where('number', $fx['number']->number)->value('user_id'));
+
+        $response = app(\App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend(
+            $this->deliveringProvider(),
+            $this->autoReplyPayload($fx, $receivingCustomer, (int) $inbound->business_id, '4155557805'),
+        );
+
+        $this->assertSame('success', $response->getData()->status, (string) ($response->getData()->message ?? ''));
+        $box = ChatBox::query()->sole();
+        $this->assertSame((int) $inbound->id, (int) $box->id, 'The auto-reply joins the inbound thread.');
+        $this->assertSame((int) $fx['business']->id, (int) $box->business_id);
+        $this->assertSame((int) $locationId, (int) $box->location_id, 'Location attribution from the proven Business is preserved.');
+        $this->assertSame(['incoming', 'outgoing'], ChatBoxMessage::where('box_id', $box->id)->pluck('direction')->sort()->values()->all());
+    }
+
     // ===================================================================
     // O. §12 — send_by
     // ===================================================================
@@ -2510,6 +2656,91 @@ class ChatBoxSecurityTest extends TestCase
      * The ONE stub: the provider accepts the message. Partial, so the
      * controller can still set business_id on the Campaigns instance.
      */
+    /** A partial Campaigns whose provider call always reports Delivered. */
+    private function deliveringProvider(): Campaigns
+    {
+        $campaign = \Mockery::mock(Campaigns::class)->makePartial();
+        $campaign->shouldReceive('sendPlainSMS')->andReturn((object) [
+            'id' => 1, 'uid' => (string) Str::uuid(), 'status' => 'Delivered', 'customer_status' => 'Delivered',
+            'cost' => 0, 'sms_count' => 1, 'media_url' => null,
+        ]);
+
+        return $campaign;
+    }
+
+    /**
+     * Exactly the payload DLRController::inboundDLR() builds for a keyword
+     * auto-reply, sent from $fx's own number and server.
+     */
+    private function autoReplyPayload(array $fx, ?User $user, int $conversationBusinessId, string $recipient): array
+    {
+        return [
+            'phone_number' => $fx['number']->number,
+            'sender_id' => $fx['number']->number,
+            'conversation_business_id' => $conversationBusinessId,
+            'originator' => 'phone_number',
+            'sms_type' => 'plain',
+            'message' => 'Thanks — keyword received.',
+            'recipient' => $recipient,
+            'user' => $user,
+            'country_code' => '1',
+            'sending_server' => $fx['server']->id,
+            'region_code' => 'US',
+        ];
+    }
+
+    /** One active Location for $business, through the real boundary. */
+    private function singleActiveLocation(Business $business): int
+    {
+        $location = app(\App\Library\Business\BusinessLocationManager::class)->createLocation($business, [
+            'name' => 'Main Street ' . uniqid(),
+            'service_mode' => 'storefront',
+            'address_line_1' => '1 Main Street',
+            'city' => 'Springfield',
+            'region' => 'IL',
+            'postal_code' => '62701',
+            'country_code' => 'US',
+            'public_address' => true,
+        ], (int) $business->customer_id);
+
+        $this->assertSame((int) $location->id, ChatBox::singleActiveLocationIdFor((int) $business->id), 'Precondition: exactly one active Location.');
+
+        return (int) $location->id;
+    }
+
+    /** The legacy SMS quick-send page refuses a country its plan does not cover. */
+    private function coverPlainSms(array $fx): void
+    {
+        \App\Models\PlansCoverageCountries::create([
+            'plan_id' => $fx['owner']->customer->activeSubscription()->plan_id,
+            'country_id' => $fx['country']->id,
+            'status' => true,
+            'options' => json_encode(['plain' => true, 'mms' => true, 'plain_sms' => 0.05, 'mms_sms' => 0.10]),
+        ]);
+    }
+
+    /**
+     * The attempt is refused with the tenancy-safe 404 before anything is
+     * sent or written.
+     */
+    private function assertConversationForgeryRefused(string $label, callable $attempt): void
+    {
+        $boxes = ChatBox::query()->count();
+        $messages = ChatBoxMessage::query()->count();
+        $reports = DB::table('reports')->count();
+
+        try {
+            $attempt();
+            $this->fail("Refusal expected ({$label}).");
+        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+            // Expected.
+        }
+
+        $this->assertSame($boxes, ChatBox::query()->count(), "No conversation written ({$label}).");
+        $this->assertSame($messages, ChatBoxMessage::query()->count(), "No message written ({$label}).");
+        $this->assertSame($reports, DB::table('reports')->count(), "Nothing sent ({$label}).");
+    }
+
     private function stubProviderDelivers(): void
     {
         $campaign = \Mockery::mock(Campaigns::class)->makePartial();

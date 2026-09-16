@@ -742,6 +742,101 @@ class OutreachCorrection1Test extends TestCase
         $this->assertTrue($refused, 'A supplied user_id may only ever be the supplied Business\'s own owner.');
     }
 
+    /**
+     * Contract 06 — `conversation_business_id` is internal conversation
+     * identity (only DLR keyword auto-replies set it), and it now also
+     * decides the conversation's Location. A browser must never be able to
+     * supply it: this captures exactly what the legacy routes forward.
+     */
+    public function test_the_quick_send_and_campaign_builder_routes_strip_a_forged_conversation_business_id(): void
+    {
+        [$attacker, , $victimBusiness, $extra] = $this->twoTenants();
+
+        $this->authenticateAsCustomer($attacker, ['sms_quick_send', 'sms_campaign_builder']);
+
+        $forwarded = [];
+        $repository = \Mockery::mock(CampaignRepository::class);
+        $repository->shouldReceive('checkQuickSendValidation')->andReturnUsing(function (array $input) use (&$forwarded, $attacker) {
+            $forwarded['checkQuickSendValidation'] = $input;
+
+            return response()->json(['status' => 'success', 'sender_id' => 'ATTACKER', 'sms_type' => 'plain', 'user_id' => $attacker->user_id]);
+        });
+        $repository->shouldReceive('quickSend')->andReturnUsing(function ($campaign, array $input) use (&$forwarded) {
+            $forwarded['quickSend'] = $input;
+
+            return response()->json(['status' => 'success', 'message' => 'sent']);
+        });
+        $repository->shouldReceive('campaignBuilder')->andReturnUsing(function ($campaign, array $input) use (&$forwarded) {
+            $forwarded['campaignBuilder'] = $input;
+
+            return response()->json(['status' => 'success', 'message' => 'created']);
+        });
+        $this->app->instance(CampaignRepository::class, $repository);
+
+        $this->post('/sms/quick-send', [
+            'recipients' => '4155558804',
+            'delimiter' => ',',
+            'country_code' => $extra['fixture']['country']->id,
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'originator' => 'phone_number',
+            // The attack.
+            'conversation_business_id' => $victimBusiness->id,
+        ]);
+
+        $this->post('/sms/campaign-builder', [
+            'name' => 'Forged Conversation Campaign',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$extra['group']->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['VICTIMSENDER'],
+            'plan_id' => $extra['fixture']['plan']->id,
+            // The attack.
+            'conversation_business_id' => $victimBusiness->id,
+        ]);
+
+        foreach (['checkQuickSendValidation', 'quickSend', 'campaignBuilder'] as $method) {
+            $this->assertArrayHasKey($method, $forwarded, "The request reached {$method}().");
+            $this->assertArrayNotHasKey('conversation_business_id', $forwarded[$method], "{$method}() never receives a browser-supplied conversation_business_id.");
+        }
+    }
+
+    /**
+     * The controller strips the key; the repository must refuse it anyway,
+     * so bypassing the controller cannot file a conversation — or derive a
+     * Location — inside another tenant's Business.
+     */
+    public function test_the_repository_itself_refuses_a_conversation_business_outside_the_actors_authority(): void
+    {
+        [$attacker, $victim, $victimBusiness] = $this->twoTenants();
+
+        $this->actingAs($attacker->user);
+
+        $refused = false;
+        try {
+            app(CampaignRepository::class)->quickSend(new Campaigns(), [
+                'user' => $attacker->user,
+                'sender_id' => '14155558805',
+                'phone_number' => '14155558805',
+                'originator' => 'phone_number',
+                'sms_type' => 'plain',
+                'message' => 'Hello',
+                'recipient' => '4155558806',
+                'country_code' => '1',
+                'region_code' => 'US',
+                'conversation_business_id' => $victimBusiness->id,
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+            $refused = true;
+        }
+
+        $this->assertTrue($refused, 'The repository must fail closed on a conversation Business outside the actor\'s authority.');
+        $this->assertVictimUntouched($victim, $victimBusiness);
+        $this->assertSame(0, DB::table('chat_boxes')->count(), 'No conversation at all.');
+        $this->assertSame(0, DB::table('chat_box_messages')->count(), 'No message at all.');
+    }
+
     public function test_a_legitimate_outreach_request_still_works_after_the_guard(): void
     {
         // The positive control. The Outreach controller legitimately sets
