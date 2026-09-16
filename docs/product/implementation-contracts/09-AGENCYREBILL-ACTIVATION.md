@@ -1,210 +1,188 @@
 # Implementation Contract 09 — AgencyRebill Activation
 
-**Status:** Planning contract only. Does not authorize implementation.
-Depends on Contract 01 **and Contract 05** (both now **hard**
-prerequisites — Contract 05 upgraded from "recommended" in this
-remediation, §16) being merged first.
+**Status:** Implementation contract, **corrected at implementation time**
+(see "Implementation-time correction" below). Depends on Contract 01 **and
+Contract 05** (both hard prerequisites, §16), both merged to `main`.
+
+## Implementation-time correction (authoritative)
+
+The first implementation attempt stopped before writing code: a mechanical
+re-inventory of `main` at `00377d7f` found payer-resolution and payer-
+authority branches this contract's original §3 did not list, one
+delegation target that did not exist, and one assumption about spend-time
+access checks that was false. The corrections below are approved and
+supersede the original text wherever they differ:
+
+1. **Missed sites.** Beyond the four sites originally named, `main`
+   contained: `PaymentInstrumentManager::resolveProviderCustomer()` (a second
+   binary provider-customer resolver that also lazily *creates* provider
+   customers); `UsageWalletManager::assertChargeCausingConsentForAutoRecharge()`
+   (a **third** consent copy, which let the **client** Business owner
+   configure Agency-funded automatic top-up); `BillingProfileManager::
+   actorManagesPayerControls()`, `billingResponsibilityFor()` and
+   `isCurrentPayer()` (binary payer authority/presentation facts);
+   `UsageWalletManager::reserve()`'s Workspace controls lock and its
+   `isWorkspacePaid()` aggregate-cap consumer (not in the original five);
+   `UsageBillingCheckoutManager::initiateAutoRecharge()`'s own direct
+   `payer_type` read; `UsageBillingPresenter::resolvePaymentMethod()`; and
+   the payer labels in `WorkspaceController` and `UsageBillingController`.
+2. **Non-existent delegation target.** `BillingProfileManager` has no
+   `assertChargeCausingConsent()`; `PaymentInstrumentManager`'s copy had
+   three callers, not one.
+3. **False spend-time assumption.** No money path consulted
+   `CustomerAccountAccessResolver` — only HTTP middleware/controllers did.
+   Automated effects (the auto-recharge job, background `reserve()` calls)
+   never checked account access. A spend-time access gate is therefore a
+   required **change** in this slice, not an existing check.
+4. **Removed statement.** The original claim that the underlying wallet/
+   cap/access checks need no change is withdrawn: payer-sensitive checks
+   (Workspace aggregate controls, the new access gate, the consent gate)
+   must change, as §5/§11 specify. The payer-independent checks (Business
+   cap, feature limits, Business pause, platform safety limit, balance,
+   debt, suspension, idempotency, provider readiness) are unchanged.
 
 ## 1. Objective
 
 Activate `PayerType::AgencyRebill` under the exact consent/authority rules
-Addendum §10 locks — extending a **single canonical payer-resolution
-helper** consumed by every existing money manager, never a parallel or
-duplicated 3-way branch. **Critical correction (this remediation):** the
-original draft only fixed `BillingProfileManager`; a full trace (§3) found
-the same unhandled/mishandled `PayerType` branch repeated across **four**
-classes, including one genuinely dangerous silent-misresolution site in
-`UsageBillingCheckoutManager` that would have charged the **client's own**
-instrument for what should be Agency-funded usage.
+Addendum §10 locks, with **one canonical answer to "who pays"**
+(`EffectivePayerResolver`) and **one canonical human payer/funding
+authority seam** (`BillingProfileManager`), consumed by every money
+manager — never a parallel or duplicated branch.
 
 ## 2. Governing authority
 
 - Addendum §10 (the full AgencyRebill rule set), §17 (RFC-005 §16 status update).
 - Blueprint §20, §28.
-- Roadmap Slice 9 (as corrected in Phase A's A3 — schema impact is real,
-  not none).
-- Contract 01 (the relationship this slice's authority check depends on).
+- Roadmap Slice 9.
+- Contract 01 (the relationship AgencyRebill resolves through).
+- Contract 03/05 (the effective account access every Agency-funded paid effect requires).
 
-## 3. Current repository reality
+## 3. Current repository reality (re-inventoried at `00377d7f`)
 
-**`app/Library/Usage/BillingProfileManager.php`** (relevant methods read
-in full): the complete, exact money-authority mechanism.
+`git grep "PayerType::" -- app` returns exactly ten files. The complete
+payer-branch inventory, every site read in full:
 
-- **`assignPayer(Business $business, PayerType $payerType, int
-  $actorUserId, string $reason): array`** — the real write path
-  (`changePayer()` is a thin wrapper returning only the assignment).
-  Contains **two separate points** that currently reject any `payerType`
-  outside `{Business, Workspace}`: a guard clause at the very top of the
-  method body, and a second, identical check inside
-  `assertBillingResponsibilityAuthority()` (called later in the same
-  method). **Both** must be extended — extending only one leaves a path
-  that still throws.
-- **`assertBillingResponsibilityAuthority(Business $business, PayerType
-  $payerType, int $actorUserId): void`** (full body read): after the
-  enum-membership guard, asserts the Business's Workspace is
-  `WorkspacePlanTier::Agency`, then calls `isAgencyWideManager()`.
-- **`isAgencyWideManager(Business $business, int $actorUserId): bool`**
-  (full body read): `$business->workspace->owner_user_id === $actorUserId`
-  **OR** an active membership with `role === Admin` **AND**
-  `business_access_scope === All`. **This checks authority against
-  `$business->workspace` — the Business's own Workspace.**
-- **Critical architectural finding, not previously stated this precisely
-  anywhere in this project's prior audits:** `isAgencyWideManager()`'s
-  entire design assumes the **pre-V1 model** — an Agency-tier Workspace
-  directly containing the Business, so "the Agency-wide manager" and "a
-  member of the Business's own Workspace" are the same check. **Under V1,
-  a Client Business's own Workspace is the Client Workspace — not the
-  Agency's.** The actor with legitimate `agency_rebill` authority (the
-  managing Agency Workspace's owner) is **never** a member of
-  `$business->workspace` at all (Addendum §2: authority must never be
-  inferred from Client-Workspace membership). **`isAgencyWideManager()`
-  cannot be reused, even extended, for the `agency_rebill` case** — it
-  checks the wrong Workspace entirely. A **new**, separate authority
-  check is required, resolving the managing Agency Workspace via Contract
-  01's relationship **first**, then checking ownership of *that*
-  Workspace — structurally the same "resolve the real authority Workspace
-  first, never assume it's the Business's own" lesson Contract 04 already
-  learned for View As's `userCanAccessBusiness()`.
-- **`assignPayer()`'s full transactional body** (read): locks the payer
-  assignment row (`findForUpdateByBusinessId`), self-heals a missing
-  assignment via `initializePayerAssignmentForBusiness()`, handles a
-  same-type "reaffirmation" as a no-op authorized for the current payer
-  or an Agency-wide manager, otherwise calls the authority assertion,
-  writes a `business_payer_transitions` row (**already** has exactly the
-  audit fields Addendum §10 requires: `from_payer_type`, `to_payer_type`,
-  `actor_user_id`, `reason`, timestamp — reused unchanged), updates the
-  assignment, dispatches `BusinessPayerChanged` (reused unchanged).
-- **`business_payer_assignments` schema** (re-confirmed from Phase A's
-  A3): `business_id` (unique FK), `payer_type`, `effective_payment_
-  instrument_id` (nullable, no FK yet) — **no column can record which
-  Agency is paying**, confirmed again here; Phase A's A3 fix (a new
-  nullable `managing_agency_relationship_id` FK to Contract 01's
-  relationship table, required exactly when `payer_type = agency_rebill`)
-  is the schema this slice implements.
-- **Standing consent precedent, confirmed** (Phase A/earlier session
-  evidence): `auto_recharge_consented_at`/`auto_recharge_consented_by_
-  user_id` columns already exist and already implement exactly the
-  "consent once, then automatic execution" pattern Addendum §10 wants
-  reused for AgencyRebill.
+**Payer resolution — which provider customer / instrument pays**
+1. `UsageBillingCheckoutManager::initiateCharge()` — binary ternary:
+   `Workspace` → the Business's own Workspace provider customer; anything
+   else, **including `AgencyRebill`**, → the **client Business's own**
+   provider customer and default instrument. The dangerous site.
+2. `UsageBillingCheckoutManager::initiateAutoRecharge()` — reads
+   `payer_type` directly and passes it into site 1.
+3. `PaymentInstrumentManager::resolveProviderCustomer()` — the same binary
+   shape for SetupIntent creation, attach, detach and set-default, and it
+   lazily **creates** the provider customer it resolves.
+4. `UsageBillingPresenter::resolvePaymentMethod()` — display-only `match`
+   (`business`/`workspace`, default `null`).
 
-**Full cross-manager `PayerType` branch inventory (this remediation's
-required trace — every site confirmed by direct read, not sampled):**
+**Payer authority — who may consent / configure / control**
+5. `UsageBillingCheckoutManager::assertChargeCausingConsent()` — top-up and
+   add-on consent (`Workspace` → Workspace owner, `Business` → direct owner,
+   otherwise refuse).
+6. `PaymentInstrumentManager::assertChargeCausingConsent()` — identical copy,
+   three callers.
+7. `UsageWalletManager::assertChargeCausingConsentForAutoRecharge()` — a
+   third copy, **binary**: anything other than `Workspace` → the client
+   Business's direct owner. Used by `configureAutoRecharge()`.
+8. `BillingProfileManager::actorManagesPayerControls()` — `Business` →
+   direct owner; everything else → `isAgencyWideManager()` (the **client**
+   Workspace). Governs `setSpendCap()`, `setFeatureLimit()`, pause/resume.
+9. `BillingProfileManager::billingResponsibilityFor()` / `isCurrentPayer()`
+   — binary presentation/authority facts.
+10. `BillingProfileManager::assignPayer()` / `assertBillingResponsibilityAuthority()`
+    — both reject every payer type outside `{Business, Workspace}`.
+    `isAgencyWideManager()` checks the Business's **own** Workspace, which
+    under V1 is the Client Workspace, so it can never express Agency
+    authority.
 
-`git grep "PayerType::" -- app` returns exactly ten files. Of these, **four
-contain independent `payer_type` branching logic** that must each be
-corrected or replaced — not just `BillingProfileManager`:
+**Payer-sensitive spend controls**
+11. `UsageWalletManager::isWorkspacePaid()` — binary, consumed by
+    `reserve()`'s Workspace aggregate spend cap and by
+    `autoRechargeCeilingAdmission()`. `reserve()` also locks and applies the
+    Business's own Workspace controls row (pause) for every payer.
+    `evaluateAutoRechargeAdmission()` applies the Workspace aggregate
+    recharge ceiling only for `Workspace`.
 
-1. **`app/Library/Usage/BillingProfileManager.php`** — already covered
-   above (`assignPayer()`'s guard, `assertBillingResponsibilityAuthority()`).
-2. **`app/Library/Usage/UsageBillingCheckoutManager.php`** — **the
-   dangerous one, confirmed by direct read of `initiateCharge()`
-   (private, called by every charge-causing path — manual top-up,
-   auto-recharge, add-on purchase):**
-   ```php
-   $providerCustomer = $payerType === PayerType::Workspace
-       ? $this->providerCustomerRepository->findActiveByWorkspaceId((int) $business->workspace->id)
-       : $this->providerCustomerRepository->findActiveByBusinessId($businessId);
-   ```
-   This is a **binary** ternary — `Workspace` gets the Workspace's
-   provider customer; **anything else, including `AgencyRebill`, silently
-   falls into `findActiveByBusinessId($businessId)`** — the **client's
-   own** instrument. If `PayerType::AgencyRebill` were merely added to
-   `BillingProfileManager`'s enum guard without fixing this method, every
-   AgencyRebill-configured client's usage would be silently charged to
-   the **client**, not the Agency — exactly the "wrong branch" the
-   remediation names, confirmed exact and reproducible from source, not
-   inferred. Separately, this same class's private
-   `assertChargeCausingConsent(Business $business, int $actorUserId):
-   PayerType` (used by `initiateAddonPurchase()`) has the same
-   explicit-`if`-`if`-`throw` shape as `BillingProfileManager`'s method of
-   the same name (confirmed: it **does** correctly throw for AgencyRebill
-   today — a safe rejection, not a silent misresolution, but still needs
-   the new branch added).
-3. **`app/Library/Usage/UsageWalletManager.php`** — a private
-   `isWorkspacePaid(int $businessId): bool` (line ~2698) returns `true`
-   only for `payer_type === Workspace`; **every one of its five
-   consumers** (confirmed by line-numbered read: auto-recharge
-   payer-type selection ~2378, an outstanding-amount aggregation branch
-   ~2404/2472/2497, and a `where('payer_type', ...)` query ~2733) treats
-   "not workspace-paid" as synonymous with "business-paid" — the same
-   binary collapse as site 2, independently implemented. `AgencyRebill`
-   usage would be silently aggregated/queried as if it were ordinary
-   client self-pay in wallet reporting and auto-recharge eligibility
-   checks.
-4. **`app/Library/Usage/PaymentInstrumentManager.php`** — contains its
-   **own, separate, near-identical copy** of `assertChargeCausingConsent()`
-   (confirmed by full read: same method name, same `if (Workspace) ...
-   if (Business) ... throw` shape as `BillingProfileManager`'s) —
-   **duplicated authority logic in a second file**, the exact
-   "3-way payer algorithm duplicated across managers" pattern the
-   remediation names. It already safely rejects AgencyRebill today (no
-   silent-misresolution risk here), but fixing only `BillingProfileManager`'s
-   copy and not this one would leave the two files' consent rules free to
-   drift apart the moment either is edited independently in the future.
+**Presentation labels**
+12. `WorkspaceController::billingResponsibilityViewData()` — `workspace` →
+    "agency", everything else → "client".
+13. `UsageBillingController::responsibilityMessageKey()` — the same binary
+    for flash messages (its input is request-limited to Business/Workspace).
+14. `resources/views/customer/business/usage-billing/show.blade.php` — two
+    `payer_type === 'workspace'` label branches.
 
-**A canonical resolution object already exists, unused.**
-`app/Library/Usage/EffectivePayer.php` (full file read, 21 lines) is a
-`final readonly class` DTO — `payerType`, `businessId`,
-`effectivePaymentInstrumentId` — with a docblock stating its purpose
-("who currently pays for a Business's usage, resolved from its
-business_payer_assignments row"). **`git grep "new EffectivePayer(\|
-EffectivePayer::" -- app` returns zero results** — this class is defined
-but **never constructed or consumed anywhere**. Every one of the four
-sites above independently re-reads `payerAssignmentRepository->
-findByBusinessId()` and re-derives its own local `$payerType` variable,
-rather than going through this shared type. This is exactly the seam the
-remediation's "prefer one canonical payer-resolution object/helper"
-instruction points at — the codebase already anticipated the need and
-left the DTO in place, but never wired a resolver around it.
+**Non-resolution references (unchanged, justified in §5):** the `PayerType`
+casts on `BusinessPayerAssignment`, `BusinessPayerTransition`,
+`BusinessFundingAttempt`, `AdditionalBusinessSlotRenewalCharge`; the
+historical `payer_type_snapshot` values; the Workspace-scoped additional-
+slot agreement flows (`payer_type_snapshot = workspace` by construction);
+`BillingProfileManager::initializePayerAssignmentForBusiness()`'s default;
+`UpdateBusinessPayerRequest` (accepts only `business`/`workspace`).
+
+**Schema.** `business_payer_assignments`: `business_id` (unique FK),
+`payer_type` string(16), `effective_payment_instrument_id` (nullable), no
+column recording which Agency pays. `business_payer_transitions`: from/to
+payer type, from/to instrument, actor, reason, `created_at` — no column
+recording the relationship or a consent change.
+
+**Consent precedent.** `business_usage_wallets.auto_recharge_consented_at`/
+`_by_user_id` are written by `configureAutoRecharge()` (who enabled it, when)
+and cleared on disable. They are not read at charge time;
+`auto_recharge_enabled` is the effective gate.
+
+**Account access.** Only HTTP middleware/controllers consume
+`CustomerAccountAccessResolver`. No money path does.
 
 ## 4. Delta from current state to target
 
-**Changes:** `business_payer_assignments` gains the new FK column
-(Phase A's A3 design); `EffectivePayer` (existing, unused DTO) is
-extended and a new `EffectivePayerResolver` service class is introduced
-as the **single** place `payer_type` is read and branched on (§5);
-`BillingProfileManager::assignPayer()`'s two guard clauses both extended
-to accept `PayerType::AgencyRebill`; `assertBillingResponsibilityAuthority()`
-restructured to branch by target payer type — `Business`/`Workspace`
-continue through the **existing, unchanged** `isAgencyWideManager()` path;
-`AgencyRebill` routes through a **new** `isManagingAgencyOwner()` check
-(§6) that resolves the relationship first; `UsageBillingCheckoutManager::
-initiateCharge()`'s dangerous binary ternary is replaced with a call to
-`EffectivePayerResolver`; `UsageWalletManager::isWorkspacePaid()` and its
-five consumers are replaced with `EffectivePayerResolver` calls;
-`PaymentInstrumentManager`'s duplicate `assertChargeCausingConsent()` is
-replaced with a call to `BillingProfileManager`'s **single** corrected
-version (§6) rather than maintaining its own copy; RFC-005 §16's
-documentation gains the two new consent-rule rows Phase A's original
-review already specified.
+- `business_payer_assignments` gains `managing_agency_relationship_id`,
+  `agency_rebill_consented_at`, `agency_rebill_consented_by_user_id`;
+  `business_payer_transitions` gains `managing_agency_relationship_id` and
+  `agency_rebill_consent` (§5).
+- `EffectivePayer` is extended; new `EffectivePayerResolver` is the single
+  place `payer_type` is interpreted for provider customer, instrument,
+  spend-control scope and Agency-funded spend admission.
+- `PayerType` gains two exhaustive semantic methods,
+  `isGovernedByOwnWorkspaceControls()` and
+  `countsTowardOwnWorkspaceAggregateLimits()` (§5.4).
+- `BillingProfileManager` becomes the single human payer/funding authority
+  seam: AgencyRebill assignment + standing consent grant, consent
+  revocation, funding authority, charge-origination authority, and the
+  tri-state `actorManagesPayerControls()`/`billingResponsibilityFor()`/
+  `isCurrentPayer()`. `isAgencyWideManager()` is unchanged.
+- Sites 1, 2, 3 resolve through `EffectivePayerResolver`; sites 5, 6, 7 are
+  **deleted** and replaced by `BillingProfileManager`'s authority methods.
+- `UsageWalletManager::isWorkspacePaid()` is **deleted**; its consumers use
+  the resolver and the two `PayerType` scope methods (§5.4).
+- New spend-time AgencyRebill gate (standing consent + effective account
+  access) at `UsageWalletManager::reserve()` and
+  `UsageBillingCheckoutManager::initiateCharge()`, plus the auto-recharge
+  pre-admission.
+- Sites 4, 12, 13, 14 present AgencyRebill truthfully.
+- RFC-005 §16 gains the AgencyRebill consent rows.
 
-**Explicitly does NOT change:** `isAgencyWideManager()` itself (still
-correct, unchanged, for its existing two payer types); `business_payer_
-transitions`, `BusinessPayerChanged`, or any other part of the existing
-audit/event mechanism — all reused verbatim; the standing-consent
-timestamp columns' own semantics; the underlying wallet/cap/entitlement/
-STOP-DND/idempotency/provider-readiness checks `UsageWalletManager`/
-`UsageBillingCheckoutManager` already perform — only *which provider
-customer/instrument* those checks resolve against changes, never the
-checks themselves.
+## 5. Data model and canonical payer resolution
 
-## 5. Data model contract
+### 5.1 Schema — migration `2026_09_20_100011_add_managing_agency_relationship_id_to_business_payer_assignments_table.php`
 
-**`business_payer_assignments` — one new column** (Phase A A3, restated
-precisely here as the authoritative design for this contract):
+`business_payer_assignments`:
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
-| `managing_agency_relationship_id` | `unsignedBigInteger`, FK → `agency_client_workspace_relationships.id` (Contract 01), `restrictOnDelete()` | Yes | `NULL` when `payer_type` is `business`/`workspace`; **required** and application-enforced-valid (must reference an **Active** relationship whose `client_workspace_id` resolves to this Business's own Workspace) when `payer_type = 'agency_rebill'`. Single source of truth for "which Agency is paying" — no code path may accept an arbitrary Workspace ID here. |
+| `managing_agency_relationship_id` | `unsignedBigInteger`, FK → `agency_client_workspace_relationships.id`, `restrictOnDelete()` | Yes | `NULL` for `business`/`workspace`. **Required** for `agency_rebill`: an Active relationship whose `client_workspace_id` is this Business's own Workspace. Written only by `BillingProfileManager::assignPayer()` from the server-resolved relationship — never from request input. |
+| `agency_rebill_consented_at` | `timestamp` | Yes | Standing consent. Set to `now()` by the managing Agency owner's `assignPayer(… AgencyRebill …)`; cleared by `revokeAgencyRebillConsent()`; `NULL` for other payer types. **No timestamp = no standing consent.** Never fabricated by migration or setup code. |
+| `agency_rebill_consented_by_user_id` | `unsignedBigInteger` | Yes | The real consenting user (no FK, matching `auto_recharge_consented_by_user_id`). |
 
-**No change** to `payer_type`'s own column definition (already
-`string(16)`, already accepts `'agency_rebill'` as a value per the
-existing enum — only the **application-layer** guard clauses currently
-reject it).
+`business_payer_transitions` (the existing audit, reused — no parallel audit):
 
-**Canonical payer-resolution object — `EffectivePayer` extended, plus a
-new `EffectivePayerResolver` service (the deep-dive's required single
-helper):**
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `managing_agency_relationship_id` | `unsignedBigInteger`, FK → relationships, `restrictOnDelete()` | Yes | The relationship an AgencyRebill grant/revoke/assignment concerned. |
+| `agency_rebill_consent` | `string(16)` | Yes | `granted` / `revoked` for consent changes; `NULL` otherwise. |
+
+No backfill: no row can hold `agency_rebill` today.
+
+### 5.2 `EffectivePayer`
 
 ```php
 final readonly class EffectivePayer
@@ -213,365 +191,341 @@ final readonly class EffectivePayer
         public PayerType $payerType,
         public int $businessId,
         public ?int $effectivePaymentInstrumentId,
-        public ?int $providerCustomerWorkspaceId,  // NEW — set for Workspace AND AgencyRebill
-        public ?int $providerCustomerBusinessId,    // NEW — set for Business only
-    ) {
-    }
-}
-```
-
-Exactly one of `providerCustomerWorkspaceId`/`providerCustomerBusinessId`
-is non-null, mirroring the exact two-branch shape
-`UsageBillingCheckoutManager::initiateCharge()`'s ternary already uses —
-the difference is that `AgencyRebill` now correctly sets
-`providerCustomerWorkspaceId` to the **managing Agency's** Workspace ID
-(resolved through Contract 01's relationship), not the client's own.
-
-```php
-final class EffectivePayerResolver
-{
-    public function __construct(
-        private readonly BusinessPayerAssignmentRepository $payerAssignmentRepository,
-        private readonly AgencyClientWorkspaceRelationshipRepository $relationshipRepository,
+        public ?int $providerCustomerWorkspaceId,   // Workspace: Business's own Workspace; AgencyRebill: relationship.agency_workspace_id
+        public ?int $providerCustomerBusinessId,    // Business only
+        public ?int $managingAgencyRelationshipId = null,  // AgencyRebill only
+        public ?CarbonInterface $agencyRebillConsentedAt = null, // AgencyRebill only
     ) {}
-
-    public function resolve(Business $business): EffectivePayer
-    {
-        $assignment = $this->payerAssignmentRepository->findByBusinessId((int) $business->id);
-        $payerType = $assignment?->payer_type ?? PayerType::Workspace;
-
-        return match ($payerType) {
-            PayerType::Workspace => new EffectivePayer($payerType, (int) $business->id, $assignment?->effective_payment_instrument_id, (int) $business->workspace_id, null),
-            PayerType::Business  => new EffectivePayer($payerType, (int) $business->id, $assignment?->effective_payment_instrument_id, null, (int) $business->id),
-            PayerType::AgencyRebill => $this->resolveAgencyRebill($business, $assignment),
-        };
-    }
-
-    private function resolveAgencyRebill(Business $business, BusinessPayerAssignment $assignment): EffectivePayer
-    {
-        $relationship = $this->relationshipRepository->findById((int) $assignment->managing_agency_relationship_id);
-
-        // Defense in depth, mirroring Contract 04's own re-verification
-        // discipline: never trust the FK alone -- confirm the relationship
-        // is still Active and genuinely targets this Business's own
-        // Workspace before resolving a provider customer from it.
-        if ($relationship === null
-            || $relationship->status !== AgencyClientRelationshipStatus::Active
-            || (int) $relationship->client_workspace_id !== (int) $business->workspace_id) {
-            throw new AgencyRebillRelationshipInvalidException((int) $business->id);
-        }
-
-        return new EffectivePayer(PayerType::AgencyRebill, (int) $business->id, null, (int) $relationship->agency_workspace_id, null);
-    }
 }
 ```
 
-**Every one of §3's four sites is rewritten to call
-`EffectivePayerResolver::resolve($business)` instead of independently
-reading `payer_type`:**
-- `UsageBillingCheckoutManager::initiateCharge()`'s ternary becomes:
-  `$providerCustomer = $effectivePayer->providerCustomerWorkspaceId !== null
-  ? $this->providerCustomerRepository->findActiveByWorkspaceId($effectivePayer->providerCustomerWorkspaceId)
-  : $this->providerCustomerRepository->findActiveByBusinessId($effectivePayer->providerCustomerBusinessId);`
-  — the **same two existing repository methods**
-  (`findActiveByWorkspaceId`/`findActiveByBusinessId`, confirmed exact
-  signatures via `PaymentProviderCustomerRepository`), now fed the
-  correctly-resolved Workspace ID for all three payer types instead of a
-  binary ternary that could only ever mean "the client's own Workspace."
-- `UsageWalletManager::isWorkspacePaid()` is deleted; its five consumers
-  are updated to call `EffectivePayerResolver::resolve()` and branch on
-  `$effectivePayer->payerType` (or `providerCustomerWorkspaceId !== null`)
-  directly.
-- `PaymentInstrumentManager`'s duplicate `assertChargeCausingConsent()` is
-  **deleted**; its one caller is updated to call
-  `BillingProfileManager`'s corrected version instead (dependency-inject
-  `BillingProfileManager`, or extract that one method to a shared trait/
-  class both already depend on — implementation-time judgment, but the
-  logic itself must exist in exactly one place, never two).
+Exactly one of `providerCustomerWorkspaceId`/`providerCustomerBusinessId` is
+non-null for every resolved payer.
 
-**Two further new columns on `business_payer_assignments` — required by
-Contract 10's migration cutover design, added here since this contract
-owns the table's schema:** `agency_rebill_consented_at` and
-`agency_rebill_consented_by_user_id`, both nullable, mirroring the exact
-`auto_recharge_consented_at`/`_by_user_id` standing-consent shape already
-established elsewhere in this codebase (§3). **`BillingProfileManager::
-assignPayer()`'s normal, owner-initiated write path MUST set both fields
-to `now()`/the authorized `$actorUserId` in the same write, whenever it
-successfully writes `payer_type = 'agency_rebill'`** — in the ordinary
-flow, `isManagingAgencyOwner()`'s authorization check passing *is*
-consent, synchronously, so the columns are never left `NULL` by this
-contract's own code path. They exist in `NULL` state only when Contract
-10's migration writes `payer_type = 'agency_rebill'` directly (bypassing
-`assignPayer()`, since no owner is present to authorize at migration
-time) — Contract 10's own contract specifies that case fully; this
-contract's job is only to (a) add the columns and (b) ensure its own
-normal write path always populates them. **Every charge-causing check
-downstream (§11) must additionally verify `agency_rebill_consented_at IS
-NOT NULL` before proceeding for an `agency_rebill`-typed assignment** —
-treating a `NULL` value identically to "no provider customer found"
-(the existing fail-closed path already confirmed in
-`UsageBillingCheckoutManager::initiateCharge()`).
+### 5.3 `EffectivePayerResolver`
 
-## 6. Authority / security contract — full money-authority matrix (deep-dive requirement)
+- `resolve(Business): EffectivePayer` — plain reads. Missing assignment →
+  `Workspace` (existing default). `Workspace` → own Workspace provider
+  customer. `Business` → the Business's provider customer. `AgencyRebill` →
+  **defense-in-depth revalidation**: relationship id present, relationship
+  exists, is Active, targets this Business's own Workspace, names a
+  different Workspace as the Agency, and that Agency Workspace **currently**
+  holds Agency-tier entitlement (`EntitlementManager`, resolved lazily —
+  Contract 01 §6: an Active relationship row is never proof of it);
+  otherwise throw `AgencyRebillRelationshipInvalidException`. Provider
+  customer = `relationship.agency_workspace_id`. **Never** falls back to the
+  client. Because every §6 authority and every paid effect resolves through
+  here, a downgraded Agency fails closed everywhere: nothing is charged and
+  nobody holds the payer's funding, controls or charge authority.
+- `resolveForPaidEffect(Business): EffectivePayer` — for use inside a
+  paid-effect transaction after its wallet lock: reads the assignment with a
+  **locking read for every payer type**, and for `AgencyRebill` the
+  relationship too, so a revocation/termination committed before the lock
+  can never authorize the effect. The assignment read must never be a plain
+  consistent read: under REPEATABLE READ that would fix the transaction
+  snapshot before `reserve()` / `claimAutoRechargeAdmissionUnderLock()` lock
+  the Workspace controls row, and the Workspace aggregate spend-cap and
+  recharge-ceiling sums would miss concurrently committed reservations and
+  attempts (implementation review correction).
+- `paidEffectRefusal(Business, EffectivePayer): ?string` — `null` for
+  `Business`/`Workspace` (no change). For `AgencyRebill`: missing standing
+  consent → `agency_rebill_consent_missing`;
+  `CustomerAccountAccessResolver::resolve($business->workspace)` locked →
+  `agency_rebill_account_access_locked`. One `resolve()` covers Client
+  Locked/Inactive/Suspended and, through Contract 05's composition, Agency
+  Locked/Inactive/Suspended; Grace stays usable. The Client/Agency states
+  are **not** recomputed here.
 
-| Actor | Set `payer_type = business`/`workspace` | Set `payer_type = agency_rebill` | Revoke `agency_rebill` | Configure Agency funding instrument/auto-recharge |
-|---|---|---|---|---|
-| Managing Agency Workspace owner | Yes (existing `isAgencyWideManager()`, unchanged, if the Business's own Workspace happens to still be Agency-tier — legacy path) | **Yes** — via new `isManagingAgencyOwner()` | **Yes** | **Yes** |
-| Managing Agency Workspace Admin (`business_access_scope = All`) | Yes (existing, unchanged) | **No** | **No** | **No** |
-| Managing Agency Workspace Staff (any permission) | No (existing, unchanged) | **No** | **No** | **No** |
-| Client Workspace owner | Yes, for `business` only, as today's `isCurrentPayer()` already allows (existing, unchanged) | **No** | **No** | **No** |
-| Client Workspace staff | No | **No** | **No** | **No** |
-| Platform Owner/Administrator | No (existing — `assertBillingResponsibilityAuthority` never grants platform-admin bypass today) | **No** — never originates on a customer's behalf (Addendum §10) | **No** | **No** |
-| An Agency Workspace owner with **no** active relationship to this Business's Client Workspace | N/A (would already fail the Agency-tier check on the legacy path) | **No** — relationship lookup fails first, before ownership is even checked |
+### 5.4 Spend-control scope — two exhaustive `PayerType` methods
 
-**New `isManagingAgencyOwner(Business $business, int $actorUserId): bool`**
-(replacing `isAgencyWideManager()` for the `agency_rebill` branch only):
-1. Resolve the Business's own Workspace (as today).
-2. Look up Contract 01's **Active** relationship where
-   `client_workspace_id` equals that Workspace's ID — no relationship,
-   return `false` immediately (never throw a "no relationship" error that
-   discloses more than a plain refusal — matches this codebase's existing
-   existence-disclosure discipline, e.g. `ViewAsManager`'s `abort(404)`
-   pattern, adapted here to a boolean refusal rather than an HTTP abort
-   since this is a library-layer check, not a controller).
-3. Only then check `relationship.agency_workspace_id`'s `owner_user_id ===
-   $actorUserId` — **owner only, no Admin/Staff bypass**, unlike every
-   other authority check in `BillingProfileManager`.
+- `isGovernedByOwnWorkspaceControls()`: `Business`, `Workspace` → `true`;
+  `AgencyRebill` → `false`. Whether the Business's own Workspace controls row
+  is locked at spend time and its Workspace-wide pause applies.
+- `countsTowardOwnWorkspaceAggregateLimits()`: `Workspace` → `true`;
+  `Business`, `AgencyRebill` → `false`. Whether spend and automatic top-ups
+  count toward that Workspace's aggregate spend cap and recharge ceiling.
 
-**`assertBillingResponsibilityAuthority()`'s corrected shape:**
-```php
-private function assertBillingResponsibilityAuthority(Business $business, PayerType $payerType, int $actorUserId): void
-{
-    if ($payerType === PayerType::AgencyRebill) {
-        if (! $this->isManagingAgencyOwner($business, $actorUserId)) {
-            throw new UnauthorizedPayerAssignmentException(...);
-        }
-        return;
-    }
-    // existing Business/Workspace branch, byte-for-byte unchanged below
-    ...
-}
-```
+Together:
+
+- `Workspace`: unchanged — own Workspace aggregate cap, pause and recharge
+  ceiling apply.
+- `Business`: unchanged — no aggregate cap/recharge ceiling; the Workspace
+  pause still applies as today.
+- `AgencyRebill`: the **Client** Workspace's aggregate cap, pause and
+  recharge ceiling do **not** apply, and **no** Agency-wide cross-client
+  aggregation is created. The Client Business wallet's own Business spend
+  cap, feature limits, Business pause, per-Business recharge cap/policy and
+  non-negative balance **always** apply.
+
+Agency-wide cross-client ceilings are not part of this contract.
+
+## 6. Authority / security contract
+
+### 6.1 Money-authority matrix
+
+| Actor | Set `business`/`workspace` | Grant AgencyRebill (assign + standing consent) | Revoke AgencyRebill consent | Funding configuration (instruments, auto-recharge) while AgencyRebill | Payer controls (Business cap, feature limits, Business pause) while AgencyRebill | Originate an Agency-funded charge |
+|---|---|---|---|---|---|---|
+| Managing Agency Workspace owner | Existing rule, unchanged (only if the Business's own Workspace is Agency-tier) | **Yes** | **Yes** | **Yes** | **Yes** | **Yes, with standing consent** |
+| Managing Agency Admin / Staff | Existing rule, unchanged | No | No | No | No | No |
+| Client Workspace owner / staff, client Business owner | Existing rule, unchanged | No | No | No | No | No |
+| Platform Owner / Administrator | No | No | No | No | No | No |
+| Owner of an unrelated Agency Workspace | — | No (relationship resolved first) | No | No | No | No |
+
+Business and Workspace payer authority is byte-for-byte preserved:
+funding/charge authority = Workspace owner (Workspace payer) or direct
+Business owner (Business payer); payer controls = `isAgencyWideManager()`
+(Workspace payer) or direct Business owner (Business payer).
+
+View As grants no consent authority: every method takes the real acting
+user id; nothing resolves authority from an impersonated context.
+
+### 6.2 `BillingProfileManager` — the single human authority seam
+
+- `assignPayer(Business, PayerType, int $actorUserId, string $reason)` —
+  both guards accept `AgencyRebill`. `AgencyRebill` routes through
+  `isManagingAgencyOwner()` (resolve the Active relationship for the
+  Business's own Workspace **first**, then require that relationship's
+  Agency Workspace owner, which must currently be Agency-tier — Contract 01
+  requires Agency-only capabilities to re-check entitlement). Inside the
+  existing assignment row lock, the relationship is **re-read with a locking
+  read** immediately before the write (§7). The write sets `payer_type`,
+  `managing_agency_relationship_id`, `agency_rebill_consented_at = now()`,
+  `agency_rebill_consented_by_user_id = actor`, records a transition with
+  the relationship and `agency_rebill_consent = granted`, and dispatches
+  `BusinessPayerChanged`. Re-granting the same relationship while consent is
+  present is a true no-op; re-granting after revocation writes a new grant.
+  Switching **away** from AgencyRebill uses the unchanged Business/Workspace
+  rule and clears all three AgencyRebill columns.
+- `revokeAgencyRebillConsent(Business, int $actorUserId, string $reason)` —
+  managing Agency owner of the **recorded** (still valid) relationship only.
+  Clears the two consent columns, keeps `payer_type = agency_rebill` and the
+  relationship (no silent client fallback), records a transition with
+  `agency_rebill_consent = revoked`. Revoking already-revoked consent is an
+  authorized no-op.
+- `authorizedFundingPayer(Business, int): ?EffectivePayer` — funding
+  configuration authority (instrument setup/attach/detach/default,
+  auto-recharge configuration). AgencyRebill: owner of the recorded
+  relationship's Agency Workspace; **no consent required**, so the Agency
+  can attach its funding instrument before any charge, and locked account
+  access does not block configuration.
+- `authorizedChargePayer(Business, int): ?EffectivePayer` — funding
+  authority **plus**, for AgencyRebill, standing consent. Used by top-up and
+  add-on purchase.
+- `actorManagesPayerControls()` — tri-state per §6.1.
+- `billingResponsibilityFor()`, `isCurrentPayer()` — tri-state; the facts
+  gain `who_pays` (`agency`/`business`).
+
+Callers keep their existing exception types
+(`UnauthorizedPayerAssignmentException` for top-up/add-on/instruments,
+`UnauthorizedUsageBillingManagementException` for auto-recharge and payer
+controls).
 
 ## 7. Transaction / concurrency boundary
 
-Reuses `assignPayer()`'s existing transaction and row-lock
-(`findForUpdateByBusinessId`) unchanged — the new
-`managing_agency_relationship_id` write happens inside the same lock, no
-new lock ordering introduced. One addition: within the same transaction,
-after resolving the relationship in `isManagingAgencyOwner()`, the write
-itself must **re-verify** the relationship is still `Active` immediately
-before writing (not merely at the start of the authority check) — a
-relationship terminated in the narrow window between the check and the
-write must not leave a stale `agency_rebill` assignment referencing a
-now-inactive relationship. This mirrors Contract 01 §7's own "re-check
-under lock" discipline.
+- `assignPayer()`/`revokeAgencyRebillConsent()`: the existing assignment row
+  lock (`findForUpdateByBusinessId`), then a locking read of the
+  relationship row before writing. Lock order assignment → relationship; no
+  path locks the reverse.
+- `reserve()`: wallet row lock first (unchanged); the assignment is then
+  read with a locking read for every payer type (`resolveForPaidEffect`) —
+  never a plain read before the Workspace controls lock — and for
+  AgencyRebill the relationship too, with the consent/access gate under
+  those locks; the Client Workspace controls row is not locked for
+  AgencyRebill. Lock order wallet → assignment → (Workspace controls |
+  relationship); payer changes lock only assignment → relationship and no
+  listener takes a wallet or controls lock, so no cycle exists.
+- `initiateCharge()`: provider customer is resolved before the transaction
+  (unchanged shape); inside the wallet-locked transaction that creates the
+  attempt, the payer is re-resolved for the paid effect and the attempt is
+  refused (`payer_changed`) if the funding source changed, or if consent/
+  access now refuses; for an actor-originated AgencyRebill charge the
+  owner authority is re-checked there too. Provider I/O stays outside every
+  transaction. An attempt created before a revocation commits is already the
+  durable claim; revocation stops **new** effects.
 
 ## 8. Migration / backfill
 
-None — `agency_rebill` has never been assignable, so no existing row uses
-it; the new column starts `NULL` for every existing row (both meanings —
-"not applicable" for `business`/`workspace` rows, and "not yet used" for
-what will eventually be `agency_rebill` rows).
+None beyond §5.1's additive nullable columns. `agency_rebill` has never
+been assignable, so every existing row keeps `NULL`.
 
 ## 9. Backwards compatibility
 
-Every existing `business`/`workspace` payer-change call is unaffected —
-`isAgencyWideManager()` is untouched, and the `in_array` guards are
-widened (superset), never narrowed. Existing tests for
-`assignPayer()`/`changePayer()`/`billingResponsibilityFor()` must all
-still pass unmodified.
+Every `business`/`workspace` behavior is preserved: authority rules,
+provider customer and instrument selection, Workspace aggregate controls
+and pause, auto-recharge admission. `isAgencyWideManager()` is untouched.
+`UpdateBusinessPayerRequest` still rejects `agency_rebill` — AgencyRebill is
+never selectable through the existing Client/legacy payer selector.
 
 ## 10. Events / audit
 
-Reuses `business_payer_transitions` and `BusinessPayerChanged` unchanged
-(§3) — both already carry every field Addendum §10 requires (actor,
-timestamp, Business/old payer/new payer, mandatory reason). No new event
-type is needed. The new `managing_agency_relationship_id` column itself
-is the durable record of "which Agency," queryable directly from the
-assignment row — no separate audit table needed for that specific fact.
+`business_payer_transitions` (with the two §5.1 columns) and
+`BusinessPayerChanged` are reused. Every grant/revoke records the real
+actor, timestamp, relationship, consent change and mandatory reason.
+Historical ledger, funding attempts, receipts and transitions are never
+rewritten by revocation or relationship termination.
 
-## 11. Billing/provider safety
+## 11. Billing / provider safety and the spend-time access gate
 
-This is the slice where billing safety is the entire point. Every
-existing check `UsageBillingCheckoutManager`/`UsageWalletManager` already
-perform for `business`/`workspace` payers (wallet, cap, entitlement,
-STOP/DND, idempotency, provider readiness — confirmed present in this
-codebase from earlier session evidence) must apply **identically** when
-`payer_type = agency_rebill`, with two additions per Addendum §10: (a) the
-Client Workspace's own effective account access (Contract 03) **and** (b)
-the managing Agency's effective account access (Contract 05's
-composition) must both gate every automated Agency-funded effect — this
-slice's job is to ensure the payer-resolution layer correctly identifies
-`agency_rebill` and its funding instrument; the actual spend-time checks
-themselves are `UsageWalletManager`'s existing responsibility, not
-re-implemented here.
+For `payer_type = agency_rebill`, every new paid effect requires, in order:
+a valid relationship (fail closed), standing consent, and usable effective
+account access via `CustomerAccountAccessResolver::resolve($clientBusiness->workspace)`
+— enforced at `UsageWalletManager::reserve()`,
+`UsageBillingCheckoutManager::initiateCharge()` (and the auto-recharge
+pre-admission), in addition to every existing Business-wallet check
+(Business cap, feature limits, Business pause, platform safety limit,
+balance, debt, suspension, idempotency, provider readiness), which apply
+unchanged. The provider customer is always
+`relationship.agency_workspace_id`'s Workspace provider customer — never
+`business.id`, never `business.workspace_id`, never a guessed or requested
+Workspace. A missing Agency provider customer or instrument fails closed.
+Read/display paths are never gated.
+
+Consent refusals and account-access refusals are **policy refusals** for
+automatic top-up (they never count as payment failures).
 
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `database/migrations/2026_09_2x_100011_add_managing_agency_relationship_id_to_business_payer_assignments_table.php` — also adds `agency_rebill_consented_at`/`agency_rebill_consented_by_user_id` in the same migration (three new nullable columns total).
+- `database/migrations/2026_09_20_100011_add_managing_agency_relationship_id_to_business_payer_assignments_table.php`
 - `app/Library/Usage/EffectivePayerResolver.php`
 - `app/Exceptions/Usage/AgencyRebillRelationshipInvalidException.php`
-- `tests/Feature/Usage/AgencyRebillAuthorityTest.php`
 - `tests/Feature/Usage/EffectivePayerResolverTest.php`
+- `tests/Feature/Usage/AgencyRebillAuthorityTest.php`
+- `tests/Feature/Usage/AgencyRebillPaidEffectTest.php`
+- `tests/Feature/Usage/AgencyRebillPresentationTest.php`
+- `tests/Feature/Usage/Concerns/AgencyRebillFixtures.php` — shared fixtures for the four files above.
 
 **Existing files modified:**
-- `app/Library/Usage/EffectivePayer.php` — add the two new
-  `providerCustomer*` fields (§5).
-- `app/Library/Usage/BillingProfileManager.php` — extend both `in_array`
-  guards; add `isManagingAgencyOwner()`; restructure
-  `assertBillingResponsibilityAuthority()`'s branching per §6; `assignPayer()`
-  sets `agency_rebill_consented_at`/`_by_user_id` in the same write
-  whenever it successfully writes `payer_type = 'agency_rebill'` (§5).
-- `app/Library/Usage/UsageBillingCheckoutManager.php` — replace
-  `initiateCharge()`'s binary ternary with an `EffectivePayerResolver`
-  call (§5); add the `AgencyRebill` branch to its own
-  `assertChargeCausingConsent()`.
-- `app/Library/Usage/UsageWalletManager.php` — delete `isWorkspacePaid()`;
-  update its five confirmed consumers (§3) to use
-  `EffectivePayerResolver`.
-- `app/Library/Usage/PaymentInstrumentManager.php` — delete its duplicate
-  `assertChargeCausingConsent()`; its one caller now uses
-  `BillingProfileManager`'s corrected version.
-- `app/Models/BusinessPayerAssignment.php` — add `managing_agency_relationship_id` to `$fillable`.
-- `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` — add the two new §16 consent rows (documentation update, not a schema/behavior change to the RFC's other content).
+- `app/Enums/Usage/PayerType.php` — `isGovernedByOwnWorkspaceControls()`, `countsTowardOwnWorkspaceAggregateLimits()`.
+- `app/Library/Usage/EffectivePayer.php` — §5.2 fields.
+- `app/Library/Usage/BillingProfileManager.php` — §6.2.
+- `app/Library/Usage/UsageBillingCheckoutManager.php` — sites 1, 2, 5; spend gate.
+- `app/Library/Usage/PaymentInstrumentManager.php` — sites 3, 6.
+- `app/Library/Usage/UsageWalletManager.php` — sites 7, 11; spend gate; refusal reasons.
+- `app/Library/Usage/UsageBillingPresenter.php` — site 4.
+- `app/Models/BusinessPayerAssignment.php`, `app/Models/BusinessPayerTransition.php` — new columns.
+- `app/Http/Controllers/Customer/Workspace/WorkspaceController.php` — site 12.
+- `app/Http/Controllers/Customer/Business/UsageBillingController.php` — site 13.
+- `resources/views/customer/business/usage-billing/show.blade.php` — site 14.
+- `resources/views/customer/workspaces/show.blade.php` — AgencyRebill shown read-only, never as a selector option.
+- `resources/lang/en/locale.php` — AgencyRebill responsibility strings.
+- `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` — §16 AgencyRebill consent rows.
+- Existing tests whose asserted behavior this slice deliberately changes are
+  corrected in place, never deleted: `tests/Feature/Usage/PayerConsentAuthorizationTest.php`
+  (`test_agency_rebill_is_never_a_valid_target` becomes
+  `test_agency_rebill_is_refused_without_a_managing_agency_relationship` —
+  same assertion, corrected premise).
 
 ## 13. Required tests
 
-`EffectivePayerResolverTest.php`: all three `PayerType` cases resolve
-`providerCustomerWorkspaceId`/`providerCustomerBusinessId` correctly;
-`AgencyRebill` resolution fails closed (throws
-`AgencyRebillRelationshipInvalidException`) for a terminated relationship,
-a relationship pointing at a different Business's Workspace, and a
-missing `managing_agency_relationship_id`.
-
-`AgencyRebillAuthorityTest.php`: every §6 matrix row as an explicit test;
-the relationship-resolution-before-ownership-check order (an owner of an
-*unrelated* Agency Workspace, correctly resolved as "not the managing
-Agency," refused); mid-transaction relationship termination refused (§7);
-existing `assignPayer()`/`changePayer()` tests for `business`/`workspace`
-re-run unmodified to prove zero regression.
-
-**Cross-manager regression, explicit (per this remediation):** a
-dedicated end-to-end test proving `UsageBillingCheckoutManager::
-initiateCharge()` resolves the **Agency's** provider customer, not the
-client Business's own, for an `AgencyRebill`-configured Business — this
-is the single most important test in this contract, since it is the
-exact defect (§3) this remediation exists to prevent from ever being
-implemented silently wrong. Additional regression: `UsageWalletManager`'s
-five updated consumers produce identical output to their pre-change
-behavior for `Workspace`/`Business` payers (regression-proven), and
-correctly attribute `AgencyRebill` usage to the Agency in
-wallet/auto-recharge reporting (new coverage).
+- **`EffectivePayerResolverTest`** — all three payer types' provider-customer
+  fields; AgencyRebill fails closed for missing id, terminated relationship,
+  relationship targeting another Client Workspace, and a forged/mismatched
+  id; locking re-resolution; `paidEffectRefusal()` for missing consent and
+  each Client/Agency Locked/Inactive/Suspended state, with Agency Grace
+  usable.
+- **`AgencyRebillAuthorityTest`** — every §6.1 row (grant, revoke, funding
+  configuration, payer controls, charge origination) including Agency
+  Admin/Staff, client owner/staff, platform admin and unrelated Agency owner;
+  relationship resolved before ownership; mid-transaction termination
+  refused; Agency-tier re-check at grant **and** after a later downgrade
+  (no funding, controls or charge authority); idempotent grant/revoke; audit rows with
+  relationship, actor, consent change and reason; switching away clears the
+  AgencyRebill columns; Business/Workspace authority regressions.
+- **`AgencyRebillPaidEffectTest`** — the §3 site 1 regression (Client and
+  Agency provider customers both exist → Agency charged); Agency instrument
+  missing with a Client instrument present → fail closed; Agency owner
+  SetupIntent/attach/detach/default against the Agency Workspace provider
+  customer and refusal for everyone else; a client instrument can never be
+  detached/defaulted through the Agency payer; auto-recharge configuration
+  authority; reserve and charge refused for missing/revoked consent, each
+  locked access state, terminated/mismatched relationship; Agency Grace
+  proceeds; Business cap/feature limit/Business pause still apply; Client
+  Workspace aggregate cap/pause/recharge ceiling do not apply to AgencyRebill;
+  Workspace payer aggregate controls unchanged; auto-recharge Business
+  ceiling applies with no cross-client aggregation; a stale pre-revocation
+  payer cannot authorize a charge under the lock; consent/access refusals are
+  auto-recharge policy refusals, not payment failures; a downgraded Agency
+  stops funding at both boundaries; a Workspace-paid reservation reads the
+  assignment only with a locking read before the Workspace controls lock.
+- **`AgencyRebillPresentationTest`** — presenter shows the Agency's default
+  instrument; responsibility facts, the Usage & Billing page and the Agency
+  account frame never label AgencyRebill as client-paid and never offer it
+  in the legacy selector.
+- Mutation-style proof: reverting any AgencyRebill provider-customer
+  selection to the old binary makes the regression tests fail.
+- Every existing Billing/Wallet/Checkout/Instrument/payer/account-access test
+  re-run.
 
 ## 14. Acceptance criteria
 
-1. Every §6 matrix row passes.
-2. `isAgencyWideManager()` is provably untouched (diff shows zero lines
-   changed in that method).
-3. A relationship terminated mid-write correctly blocks the assignment
-   (§7 test).
-4. `EffectivePayerResolver` is the **only** place in the codebase that
-   reads `business_payer_assignments.payer_type` to decide which provider
-   customer to charge — verified by confirming `isWorkspacePaid()` and
-   `PaymentInstrumentManager`'s duplicate `assertChargeCausingConsent()`
-   no longer exist, and that `initiateCharge()`'s ternary is gone.
-5. The cross-manager regression test (§13) proves the Agency's, not the
-   client's, provider customer is charged for `AgencyRebill`.
-6. Zero regression on existing `business`/`workspace` payer tests.
-7. `git diff --check` clean; diff matches §12's allowlist.
+1. Every §6.1 row passes.
+2. `isAgencyWideManager()` diff is empty.
+3. Mid-write relationship termination blocks the assignment (§7).
+4. `EffectivePayerResolver` is the only place `payer_type` decides provider
+   customer, instrument, spend-control scope or Agency-funded admission, and
+   `BillingProfileManager` is the only human payer/funding authority:
+   `isWorkspacePaid()` and all three `assertChargeCausingConsent*()` copies
+   no longer exist, and `initiateCharge()`'s ternary is gone.
+5. The site 1 regression proves the Agency's provider customer is charged.
+6. The spend-time gate refuses every locked access state and missing consent
+   for AgencyRebill; Grace proceeds.
+7. Zero regression for Business/Workspace payers.
+8. Fresh migrate, focused rollback/reapply, no unexpected pending migrations.
+9. `git diff --check` clean; diff matches §12.
 
 ## 15. Non-goals
 
-Does not implement any UI for configuring AgencyRebill (Blueprint §28's
-own sub-surface, unscoped here). Does not change the underlying wallet/
-cap/entitlement/STOP-DND/idempotency/provider-readiness check *logic*
-itself (only which provider customer/instrument those checks resolve
-against). Does not migrate any existing data (Contract 10 — and per the
-Roadmap's own Phase-A-corrected ordering, Contract 10 depends on this
-slice, not the reverse).
+- No AgencyRebill configuration UI (Blueprint §28's own later surface); the
+  existing payer selector never offers AgencyRebill.
+- No Agency-wide cross-client spend/recharge ceiling or pause.
+- No data migration (Contract 10 depends on this slice).
+- No change to payer-independent wallet/provider checks.
 
 ## 16. Merge prerequisites
 
-Contract 01 (hard — the relationship this slice's authority check and
-`EffectivePayerResolver` both resolve). **Contract 05 (now hard, upgraded
-from "recommended" in this remediation)** — `EffectivePayerResolver`'s
-`AgencyRebill` branch resolves the managing Agency Workspace, and every
-spend-time check downstream (§11) needs Contract 05's composed effective-
-access to correctly gate that Agency-funded spend; treating it as merely
-"recommended" understated a real dependency.
+Contract 01 (hard) and Contract 05 (hard) — both merged.
 
 ## 17. Conflict map
 
 | Other contract | Shared file/table | Posture |
 |---|---|---|
 | Contract 01 | reads relationship table | Serialize (prerequisite) |
-| Contract 05 | consumed by spend-time checks (now hard, §16) | Serialize (prerequisite) |
-| Contract 10 | **depends on this slice** (Roadmap correction A4/A5 — the payer migration matrix requires `AgencyRebill` to already be a legal target) | Serialize — this slice must land first |
+| Contract 05 | `CustomerAccountAccessResolver` consumed at spend time | Serialize (prerequisite) |
+| Contract 08A | may touch `WorkspaceController` / `workspaces/show.blade.php` | Coordinate on those two files |
+| Contract 08B | none (merged while this slice was implemented, with migrations `2026_09_21_100001`–`100004` rather than the planned 100009/100010) | No shared file or table; Contract 09 keeps `2026_09_20_100011`, which sorts lexically before 08B's but touches independent tables |
+| Contract 10 | depends on this slice | Serialize — this slice first |
 | Contract 02, 03, 04, 06 | none | Safe concurrent |
 
 ## 18. Implementation prompt
 
 ```
-You are implementing Slice 9 of the V1 architecture migration for the
-os-creator1/os-ai repository: AgencyRebill activation, per docs/product/
-implementation-contracts/09-AGENCYREBILL-ACTIVATION.md.
+You are implementing Slice 9 of the V1 architecture migration for
+os-creator1/os-ai: AgencyRebill activation, per docs/product/
+implementation-contracts/09-AGENCYREBILL-ACTIVATION.md as corrected at
+implementation time.
 
-Before writing any code:
-1. Fetch latest origin/main.
-2. Verify Contracts 01 AND 05 are BOTH merged to main -- both are hard
-   prerequisites (Contract 05 was upgraded from "recommended" in this
-   remediation, SS16). If either is missing, STOP and report.
-3. Create a fresh branch for this slice only (e.g.
-   agent/v1-slice-09-agencyrebill-activation).
-4. Re-read the full contract, especially SS3's full cross-manager site
-   inventory (four classes, not one) and SS5's EffectivePayerResolver
-   design -- both are authoritative. SS3's UsageBillingCheckoutManager
-   finding is the most safety-critical: verify for yourself, before
-   changing anything, that initiateCharge()'s ternary really does
-   silently resolve AgencyRebill to the client's own provider customer
-   today, exactly as SS3 describes -- this is the defect you are fixing.
-5. Inspect the actual current state of BillingProfileManager,
-   UsageBillingCheckoutManager, UsageWalletManager,
-   PaymentInstrumentManager, and the existing (unused) EffectivePayer DTO
-   -- if any site's code has changed from this contract's evidence
-   (methods renamed, logic restructured), STOP and report the
-   contradiction rather than guessing which is authoritative.
+Before writing code: fetch origin/main; verify Contracts 01 and 05 are
+merged; create a fresh branch; re-read this contract in full, especially
+the implementation-time correction, §3's fourteen-site inventory and §5-§7;
+confirm no new payer-resolution site has appeared (git grep "PayerType::"
+and "payer_type" across app/). If one has, STOP and report.
 
-Implement exactly the scope in this contract: the new column,
-EffectivePayer's two new fields, the new EffectivePayerResolver class,
-and its adoption at all four sites SS3/SS5 name -- isWorkspacePaid() and
-PaymentInstrumentManager's duplicate assertChargeCausingConsent() are
-DELETED, not left alongside the new resolver. The new
-isManagingAgencyOwner() check (owner-only, no Admin/Staff bypass,
-resolving the relationship before checking ownership) and the
-restructured assertBillingResponsibilityAuthority(). Leave
-isAgencyWideManager() completely untouched -- verify this yourself before
-committing (zero diff lines in that method). Do NOT change any wallet/
-cap/entitlement/STOP-DND/idempotency/provider-readiness check's own
-logic -- only which provider customer/instrument it resolves against. Do
-NOT build any UI.
+Implement exactly this contract: the §5.1 migration (slot 100011), the
+EffectivePayer fields, EffectivePayerResolver (resolve, resolveForPaidEffect,
+paidEffectRefusal), the two PayerType scope methods (section 5.4), and
+BillingProfileManager as the single human authority seam. Delete
+isWorkspacePaid() and all three assertChargeCausingConsent*() copies. Add
+the AgencyRebill spend-time gate at reserve() and initiateCharge(). Keep
+isAgencyWideManager() byte-for-byte unchanged. Never charge, attach to, or
+fall back to a client provider customer for AgencyRebill. Keep
+UpdateBusinessPayerRequest rejecting agency_rebill. Build no configuration
+UI.
 
-After implementing:
-- Run the new focused test files, covering every SS6 matrix row and
-  EffectivePayerResolver's own test suite.
-- Run the cross-manager regression test proving initiateCharge() now
-  resolves the Agency's provider customer for an AgencyRebill-configured
-  Business -- this is the single most important test result to report.
-- Re-run every existing BillingProfileManager/UsageWalletManager/
-  UsageBillingCheckoutManager/PaymentInstrumentManager test to confirm
-  zero regression on the business/workspace payer types.
-- Run git diff --check.
-- Verify the diff touches only the contract's allowlisted files.
-- Commit and push.
-
-Do NOT create a pull request yourself if GitHub tooling is unavailable --
-ChatGPT will create it through GitHub.
-
-Return a full report: starting/final SHA, exact files changed, exact tests
-run and counts, explicit confirmation that isAgencyWideManager()'s diff is
-empty, and explicit proof (from your cross-manager regression test) that
-AgencyRebill usage now charges the Agency's provider customer, not the
-client's. Do NOT begin or authorize Contract 10 or any other later slice.
+After implementing: run the four new test files and every existing
+Usage/Entitlement/Workspace/account-access regression; prove any failure
+pre-exists on the starting main; run the mutation-style check; fresh migrate
+and rollback/reapply the new migration; git diff --check; rerun the payer
+inventory; commit and push. Do NOT create a pull request. Do NOT start
+Contract 10.
 ```

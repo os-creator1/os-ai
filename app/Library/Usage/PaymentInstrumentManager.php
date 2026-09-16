@@ -9,7 +9,6 @@ use App\Models\Business;
 use App\Models\BusinessPaymentInstrument;
 use App\Models\PaymentProviderCustomer;
 use App\Models\Workspace;
-use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Support\Facades\DB;
@@ -20,18 +19,22 @@ use Illuminate\Support\Str;
  * and business_payment_instruments. Every outbound PaymentProviderGateway
  * call happens strictly outside any database transaction/lock (§8/§16).
  * SetupIntent creation and instrument attach/detach are charge-adjacent
- * actions, gated by the identical payer-consent authority M2's
- * BillingProfileManager::assertPayerConsent() already established for
- * payer changes — evaluated against the wallet's CURRENT payer_type
- * (RFC-005 §16's "consent extended to every charge-causing action" rule),
- * never a broader non-payment authority.
+ * actions, gated by the payer's funding-configuration authority.
+ *
+ * Implementation Contract 09 — this class keeps no payer or authority
+ * algorithm of its own. WHO the provider customer belongs to comes from the
+ * canonical EffectivePayer (resolved by EffectivePayerResolver): the Client
+ * Business for a Business payer, the Business's own Workspace for a
+ * Workspace payer, and the MANAGING AGENCY's Workspace for AgencyRebill —
+ * never the Client Business or Client Workspace. WHO may configure it is
+ * BillingProfileManager::authorizedFundingPayer().
  */
 class PaymentInstrumentManager
 {
     public function __construct(
         private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
         private readonly BusinessPaymentInstrumentRepository $instrumentRepository,
-        private readonly BusinessPayerAssignmentRepository $payerAssignmentRepository,
+        private readonly BillingProfileManager $billingProfileManager,
         private readonly PaymentProviderGateway $gateway,
     ) {
     }
@@ -41,43 +44,47 @@ class PaymentInstrumentManager
      * that backs the Business's current payer. No migration/backfill ever
      * calls this — it is invoked only from an authorized payment-setup
      * action (M3 contract §22).
+     *
+     * For AgencyRebill this creates/fetches the managing Agency Workspace's
+     * Workspace provider customer — the same customer, under the same
+     * idempotency key, the Agency Workspace would use for its own
+     * Workspace-paid usage.
      */
     public function resolveProviderCustomer(Business $business, int $actorUserId): PaymentProviderCustomer
     {
-        $payerType = $this->assertChargeCausingConsent($business, $actorUserId);
+        $payer = $this->billingProfileManager->assertAuthorizedFundingPayer($business, $actorUserId);
 
-        if ($payerType === PayerType::Workspace) {
-            $business->loadMissing('workspace');
-            $existing = $this->providerCustomerRepository->findActiveByWorkspaceId((int) $business->workspace->id);
+        if ($payer->providerCustomerWorkspaceId !== null) {
+            $existing = $this->providerCustomerRepository->findActiveByWorkspaceId($payer->providerCustomerWorkspaceId);
 
             if ($existing !== null) {
                 return $existing;
             }
 
-            $idempotencyKey = 'provider-customer-workspace-'.$business->workspace->id;
+            $idempotencyKey = 'provider-customer-workspace-'.$payer->providerCustomerWorkspaceId;
             $result = $this->gateway->createOrRetrieveCustomer(null, $idempotencyKey);
 
             return $this->providerCustomerRepository->create([
                 'provider' => 'stripe',
-                'workspace_id' => $business->workspace->id,
+                'workspace_id' => $payer->providerCustomerWorkspaceId,
                 'business_id' => null,
                 'provider_customer_id' => $result->providerCustomerId,
                 'status' => 'active',
             ]);
         }
 
-        $existing = $this->providerCustomerRepository->findActiveByBusinessId((int) $business->id);
+        $existing = $this->providerCustomerRepository->findActiveByBusinessId((int) $payer->providerCustomerBusinessId);
 
         if ($existing !== null) {
             return $existing;
         }
 
-        $idempotencyKey = 'provider-customer-business-'.$business->id;
+        $idempotencyKey = 'provider-customer-business-'.$payer->providerCustomerBusinessId;
         $result = $this->gateway->createOrRetrieveCustomer(null, $idempotencyKey);
 
         return $this->providerCustomerRepository->create([
             'provider' => 'stripe',
-            'business_id' => $business->id,
+            'business_id' => $payer->providerCustomerBusinessId,
             'workspace_id' => null,
             'provider_customer_id' => $result->providerCustomerId,
             'status' => 'active',
@@ -141,7 +148,7 @@ class PaymentInstrumentManager
 
     public function detachInstrument(Business $business, int $actorUserId, BusinessPaymentInstrument $instrument): void
     {
-        $this->assertChargeCausingConsent($business, $actorUserId);
+        $this->assertInstrumentBelongsToPayer($business, $actorUserId, $instrument);
 
         $this->gateway->detachPaymentMethod($instrument->provider_payment_method_id);
 
@@ -155,7 +162,7 @@ class PaymentInstrumentManager
 
     public function setDefaultInstrument(Business $business, int $actorUserId, BusinessPaymentInstrument $instrument): void
     {
-        $this->assertChargeCausingConsent($business, $actorUserId);
+        $this->assertInstrumentBelongsToPayer($business, $actorUserId, $instrument);
 
         DB::transaction(function () use ($instrument) {
             $this->providerCustomerRepository->findForUpdateById((int) $instrument->provider_customer_id);
@@ -169,10 +176,11 @@ class PaymentInstrumentManager
      * M4 contract §15c — reconciles the actual Checkout Session
      * PaymentMethod into business_payment_instruments as the Workspace's
      * own current default usage-billing instrument. Workspace owner only,
-     * no platform-admin bypass — narrower than assertChargeCausingConsent()'s
-     * dual Business/Workspace-payer split, since M4's additional-slot flow
-     * is unconditionally Workspace-scoped. Reuses this class's own existing
-     * repository/gateway calls verbatim; no schema change.
+     * no platform-admin bypass — narrower than the Business-payer funding
+     * authority, since M4's additional-slot flow is unconditionally
+     * Workspace-scoped (it is not a Business payer decision). Reuses this
+     * class's own existing repository/gateway calls verbatim; no schema
+     * change.
      */
     public function syncWorkspaceCheckoutPaymentMethod(
         Workspace $workspace,
@@ -220,34 +228,24 @@ class PaymentInstrumentManager
     }
 
     /**
-     * RFC-005 §16's "consent extended to every charge-causing action" rule
-     * — evaluated against the wallet's CURRENT payer_type, mirroring
-     * BillingProfileManager::assertPayerConsent()'s exact authority split.
-     * No platform-administrator override exists for origination (§9/§17).
+     * Contract 09 — detach/set-default act only on an instrument of the
+     * payer's OWN provider customer. The actor must hold funding authority
+     * for the Business's current payer, and the instrument must belong to
+     * that payer's provider customer: an AgencyRebill payer can never reach
+     * a client's instrument, and a client can never reach the Agency's.
+     *
+     * @throws UnauthorizedPayerAssignmentException
      */
-    private function assertChargeCausingConsent(Business $business, int $actorUserId): PayerType
+    private function assertInstrumentBelongsToPayer(Business $business, int $actorUserId, BusinessPaymentInstrument $instrument): void
     {
-        $business->loadMissing('workspace');
+        $payer = $this->billingProfileManager->assertAuthorizedFundingPayer($business, $actorUserId);
 
-        $assignment = $this->payerAssignmentRepository->findByBusinessId((int) $business->id);
-        $payerType = $assignment?->payer_type ?? PayerType::Workspace;
+        $providerCustomer = $payer->providerCustomerWorkspaceId !== null
+            ? $this->providerCustomerRepository->findActiveByWorkspaceId($payer->providerCustomerWorkspaceId)
+            : $this->providerCustomerRepository->findActiveByBusinessId((int) $payer->providerCustomerBusinessId);
 
-        if ($payerType === PayerType::Workspace) {
-            if ((int) $business->workspace->owner_user_id === $actorUserId) {
-                return $payerType;
-            }
-
-            throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
+        if ($providerCustomer === null || (int) $instrument->provider_customer_id !== (int) $providerCustomer->id) {
+            throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payer->payerType->value);
         }
-
-        if ($payerType === PayerType::Business) {
-            if ((int) $business->customer_id === $actorUserId) {
-                return $payerType;
-            }
-
-            throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
-        }
-
-        throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
     }
 }

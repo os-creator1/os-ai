@@ -17,6 +17,7 @@ use App\Events\Usage\AdditionalBusinessSlotAgreementCompleted;
 use App\Events\Usage\AdditionalBusinessSlotAgreementLapsed;
 use App\Events\Usage\AdditionalBusinessSlotAgreementPaymentRecovered;
 use App\Events\Usage\AdditionalBusinessSlotAllocationFailed;
+use App\Exceptions\Usage\AgencyRebillRelationshipInvalidException;
 use App\Exceptions\Usage\FundingAttemptNotResumableException;
 use App\Exceptions\Usage\ProviderApiUnavailableException;
 use App\Exceptions\Usage\ProviderCardDeclinedException;
@@ -44,7 +45,6 @@ use App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeTransitionRepo
 use App\Repositories\Contracts\BusinessBillingContactRepository;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository;
-use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\BusinessUsageAddonCatalogRepository;
 use App\Repositories\Contracts\BusinessUsageAddonPurchaseRepository;
@@ -124,7 +124,11 @@ class UsageBillingCheckoutManager
         private readonly BusinessFundingAttemptRepository $attemptRepository,
         private readonly BusinessFundingAttemptTransitionRepository $transitionRepository,
         private readonly BusinessPaymentInstrumentRepository $instrumentRepository,
-        private readonly BusinessPayerAssignmentRepository $payerAssignmentRepository,
+        // Contract 09 — who pays is EffectivePayerResolver's and who may
+        // originate a charge is BillingProfileManager's; this class reads no
+        // payer_type of its own any more.
+        private readonly EffectivePayerResolver $effectivePayerResolver,
+        private readonly BillingProfileManager $billingProfileManager,
         private readonly BusinessBillingContactRepository $billingContactRepository,
         private readonly BusinessUsageWalletRepository $walletRepository,
         private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
@@ -152,22 +156,27 @@ class UsageBillingCheckoutManager
      */
     public function initiateTopUp(Business $business, int $actorUserId, int $amountMicro): FundingAttemptResult
     {
-        $payerType = $this->assertChargeCausingConsent($business, $actorUserId);
+        $payer = $this->billingProfileManager->assertAuthorizedChargePayer($business, $actorUserId);
 
-        return $this->initiateCharge($business, FundingAttemptPurpose::ManualTopUp, $payerType, $amountMicro, $actorUserId);
+        return $this->initiateCharge($business, FundingAttemptPurpose::ManualTopUp, $payer, $amountMicro, $actorUserId);
     }
 
     /**
      * System-initiated — no actor consent check, since EvaluateBusinessAutoRecharge
      * itself already revalidated payer/instrument/threshold/cap before
-     * calling this (M3 contract §15).
+     * calling this (M3 contract §15). For an AgencyRebill payer the standing
+     * consent and effective account access are still required, at
+     * initiateCharge()'s spend-time gate (Contract 09 §11).
      */
     public function initiateAutoRecharge(Business $business, int $amountMicro): FundingAttemptResult
     {
-        $wallet = $this->walletRepository->findByBusinessId((int) $business->id);
-        $payerType = $wallet !== null ? ($this->payerAssignmentRepository->findByBusinessId((int) $business->id)?->payer_type ?? PayerType::Workspace) : PayerType::Workspace;
+        try {
+            $payer = $this->effectivePayerResolver->resolve($business);
+        } catch (AgencyRebillRelationshipInvalidException) {
+            return new FundingAttemptResult(0, FundingAttemptState::Failed, EffectivePayerResolver::REFUSAL_AGENCY_REBILL_RELATIONSHIP_INVALID);
+        }
 
-        return $this->initiateCharge($business, FundingAttemptPurpose::AutoRecharge, $payerType, $amountMicro, null);
+        return $this->initiateCharge($business, FundingAttemptPurpose::AutoRecharge, $payer, $amountMicro, null);
     }
 
     /**
@@ -185,14 +194,14 @@ class UsageBillingCheckoutManager
             return new AddonPurchaseResult(0, 0, FundingAttemptState::Failed, 'addon_not_found');
         }
 
-        $payerType = $this->assertChargeCausingConsent($business, $actorUserId);
+        $payer = $this->billingProfileManager->assertAuthorizedChargePayer($business, $actorUserId);
 
         $createdPurchaseId = null;
 
         $fundingResult = $this->initiateCharge(
             $business,
             FundingAttemptPurpose::AddonPurchase,
-            $payerType,
+            $payer,
             (int) $catalogRow->price_micro,
             $actorUserId,
             function (BusinessFundingAttempt $attempt) use ($business, $addonKey, $catalogRow, $actorUserId, &$createdPurchaseId) {
@@ -236,7 +245,7 @@ class UsageBillingCheckoutManager
      * add-on catalog row's own truthful display_name (§7); ManualTopUp
      * always uses the fixed 'Wallet top-up' label.
      */
-    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, PayerType $payerType, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null, ?string $lineItemNameOverride = null): FundingAttemptResult
+    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, EffectivePayer $payer, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null, ?string $lineItemNameOverride = null): FundingAttemptResult
     {
         $businessId = (int) $business->id;
         $wallet = $this->walletRepository->findByBusinessId($businessId);
@@ -246,9 +255,26 @@ class UsageBillingCheckoutManager
         }
 
         $business->loadMissing('workspace');
-        $providerCustomer = $payerType === PayerType::Workspace
-            ? $this->providerCustomerRepository->findActiveByWorkspaceId((int) $business->workspace->id)
-            : $this->providerCustomerRepository->findActiveByBusinessId($businessId);
+
+        // Contract 09 §11 — the AgencyRebill spend-time gate (standing
+        // consent + usable effective account access), before any provider
+        // customer, instrument or attempt is touched. Business/Workspace
+        // payers are unaffected (paidEffectRefusal() returns null for them).
+        $refusal = $this->effectivePayerResolver->paidEffectRefusal($business, $payer);
+
+        if ($refusal !== null) {
+            return new FundingAttemptResult(0, FundingAttemptState::Failed, $refusal);
+        }
+
+        // Contract 09 §5.3 — the canonical payer names the provider customer:
+        // exactly one of the two ids is set. The old binary "Workspace, else
+        // the client Business" ternary is gone: an AgencyRebill payer carries
+        // the MANAGING AGENCY's Workspace here, so a client provider customer
+        // or instrument can never be charged for it, and a missing Agency
+        // provider customer fails closed below.
+        $providerCustomer = $payer->providerCustomerWorkspaceId !== null
+            ? $this->providerCustomerRepository->findActiveByWorkspaceId($payer->providerCustomerWorkspaceId)
+            : $this->providerCustomerRepository->findActiveByBusinessId((int) $payer->providerCustomerBusinessId);
 
         if ($providerCustomer === null) {
             return new FundingAttemptResult(0, FundingAttemptState::Failed, 'no_provider_customer');
@@ -302,15 +328,46 @@ class UsageBillingCheckoutManager
         // wallet row here, then the Workspace controls row inside
         // claimAutoRechargeAdmissionUnderLock() — identical to reserve().
         // All of this precedes the provider call below.
-        $claim = DB::transaction(function () use ($business, $businessId, $wallet, $purpose, $payerType, $contact, $providerCustomer, $paymentMethodDisplaySnapshot, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
+        $claim = DB::transaction(function () use ($business, $businessId, $wallet, $purpose, $payer, $contact, $providerCustomer, $paymentMethodDisplaySnapshot, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
             $lockedWallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            // Contract 09 §7 — the payer read above is only a pre-check. Under
+            // the wallet lock it is re-resolved for the paid effect (locking
+            // reads of the AgencyRebill assignment and relationship), so a
+            // consent revocation, relationship termination or payer change
+            // committed before this point can never authorize the attempt.
+            try {
+                $currentPayer = $this->effectivePayerResolver->resolveForPaidEffect($business);
+            } catch (AgencyRebillRelationshipInvalidException) {
+                return ['attempt' => null, 'denial' => EffectivePayerResolver::REFUSAL_AGENCY_REBILL_RELATIONSHIP_INVALID];
+            }
+
+            if (! $currentPayer->fundsFromSameSourceAs($payer)) {
+                return ['attempt' => null, 'denial' => EffectivePayerResolver::REFUSAL_PAYER_CHANGED];
+            }
+
+            $lockedRefusal = $this->effectivePayerResolver->paidEffectRefusal($business, $currentPayer);
+
+            if ($lockedRefusal !== null) {
+                return ['attempt' => null, 'denial' => $lockedRefusal];
+            }
+
+            // An actor-originated Agency-funded charge re-checks, against the
+            // locked payer, that the actor still owns the paying Agency
+            // Workspace (Business/Workspace charges keep their existing,
+            // pre-transaction authority check only).
+            if ($actorUserId !== null
+                && $currentPayer->payerType === PayerType::AgencyRebill
+                && ! $this->billingProfileManager->actorMayOriginateChargeFor($business, $currentPayer, $actorUserId)) {
+                throw new UnauthorizedPayerAssignmentException($actorUserId, $businessId, $currentPayer->payerType->value);
+            }
 
             if ($purpose === FundingAttemptPurpose::AutoRecharge) {
                 if ($this->attemptRepository->findOutstandingForBusiness($businessId, FundingAttemptPurpose::AutoRecharge->value) !== null) {
                     return ['attempt' => null, 'denial' => 'auto_recharge_already_in_flight'];
                 }
 
-                $admission = $this->walletManager->claimAutoRechargeAdmissionUnderLock($lockedWallet, $business, $payerType, $amountMicro);
+                $admission = $this->walletManager->claimAutoRechargeAdmissionUnderLock($lockedWallet, $business, $currentPayer->payerType, $amountMicro);
 
                 if (! $admission->allowed) {
                     return ['attempt' => null, 'denial' => $admission->denialReason];
@@ -321,7 +378,7 @@ class UsageBillingCheckoutManager
                 'business_id' => $businessId,
                 'wallet_id' => $wallet->id,
                 'purpose' => $purpose->value,
-                'payer_type_snapshot' => $payerType->value,
+                'payer_type_snapshot' => $currentPayer->payerType->value,
                 'billing_contact_name_snapshot' => $contact?->contact_name,
                 'billing_contact_email_snapshot' => $contact?->contact_email,
                 'provider_customer_external_id_snapshot' => $providerCustomer->provider_customer_id,
@@ -1426,32 +1483,6 @@ class UsageBillingCheckoutManager
         if ($minorUnits > self::MAXIMUM_MINOR_UNITS) {
             throw new ProviderInvalidRequestException("Amount {$minorUnits} exceeds Stripe's eight-digit maximum charge amount.");
         }
-    }
-
-    private function assertChargeCausingConsent(Business $business, int $actorUserId): PayerType
-    {
-        $business->loadMissing('workspace');
-
-        $assignment = $this->payerAssignmentRepository->findByBusinessId((int) $business->id);
-        $payerType = $assignment?->payer_type ?? PayerType::Workspace;
-
-        if ($payerType === PayerType::Workspace) {
-            if ((int) $business->workspace->owner_user_id === $actorUserId) {
-                return $payerType;
-            }
-
-            throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
-        }
-
-        if ($payerType === PayerType::Business) {
-            if ((int) $business->customer_id === $actorUserId) {
-                return $payerType;
-            }
-
-            throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
-        }
-
-        throw new UnauthorizedPayerAssignmentException($actorUserId, (int) $business->id, $payerType->value);
     }
 
     // ------------------------------------------------------------------

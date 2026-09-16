@@ -277,7 +277,16 @@ class UsageBillingController extends CustomerBaseController
             return 'responsibility_' . $state . '_owner';
         }
 
-        return 'responsibility_' . $state . '_' . ($to === PayerType::Workspace ? 'agency' : 'client');
+        // Implementation Contract 09 — exhaustive, never "Workspace, else
+        // client". UpdateBusinessPayerRequest only ever yields Business or
+        // Workspace, so AgencyRebill cannot reach this legacy selector's
+        // messages; if it ever did, that would be a defect to surface, not a
+        // message to mislabel as client-paid.
+        return 'responsibility_' . $state . '_' . match ($to) {
+            PayerType::Workspace => 'agency',
+            PayerType::Business => 'client',
+            PayerType::AgencyRebill => throw new \LogicException('AgencyRebill is never selected through the legacy billing-responsibility selector.'),
+        };
     }
 
     /**

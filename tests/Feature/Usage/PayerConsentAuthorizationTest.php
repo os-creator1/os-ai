@@ -126,7 +126,15 @@ class PayerConsentAuthorizationTest extends TestCase
         app(BillingProfileManager::class)->changePayer($s['business'], PayerType::Workspace, $s['unrelatedId'], 'Denied.');
     }
 
-    public function test_agency_rebill_is_never_a_valid_target(): void
+    /**
+     * Implementation Contract 09 corrected this test's premise: AgencyRebill is
+     * now a valid target, but ONLY for the owner of a managing Agency Workspace
+     * reached through an Active Contract 01 relationship. This Agency-tier
+     * Workspace's own owner manages its Businesses directly and has no such
+     * relationship, so it is still refused (full matrix:
+     * AgencyRebillAuthorityTest).
+     */
+    public function test_agency_rebill_is_refused_without_a_managing_agency_relationship(): void
     {
         $s = $this->agencyScenario();
 

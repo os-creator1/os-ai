@@ -21,6 +21,10 @@ class BusinessPayerTransition extends Model
         'to_payer_type',
         'from_instrument_id',
         'to_instrument_id',
+        // Implementation Contract 09 §5.1 — the relationship an AgencyRebill
+        // assignment/consent change concerned, and which consent change it was.
+        'managing_agency_relationship_id',
+        'agency_rebill_consent',
         'actor_user_id',
         'reason',
         'created_at',

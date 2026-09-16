@@ -564,8 +564,11 @@ Consent gates every charge-causing action, not only an explicit payer change (§
 |---|---|---|---|---|
 | `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, unique, `restrictOnDelete()` | No | — | plain FK, no `wallet_id` |
-| `payer_type` | `string(16)`, enum-backed (`PayerType`) | No | — | `business` \| `workspace` \| `agency_rebill` (never activated in v1) |
+| `payer_type` | `string(16)`, enum-backed (`PayerType`) | No | — | `business` \| `workspace` \| `agency_rebill` (activated by V1 Implementation Contract 09) |
 | `effective_payment_instrument_id` | `unsignedBigInteger`, FK `business_payment_instruments.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | starts null at creation regardless of `payer_type` default (§32) |
+| `managing_agency_relationship_id` | `unsignedBigInteger`, FK `agency_client_workspace_relationships.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | Contract 09: required for `agency_rebill` (an Active relationship targeting this Business's own Workspace); `NULL` otherwise |
+| `agency_rebill_consented_at` | `timestamp` | Yes | `NULL` | Contract 09: the managing Agency owner's standing consent; no timestamp = no consent |
+| `agency_rebill_consented_by_user_id` | `unsignedBigInteger`, no FK | Yes | `NULL` | Contract 09: the real consenting user |
 | `created_at` | `timestamp` | No | `now()` | |
 | `updated_at` | `timestamp` | No | `now()` | |
 
@@ -582,8 +585,15 @@ Consent gates every charge-causing action, not only an explicit payer change (§
 | `actor_user_id` | `unsigned bigint`, no FK | No | — | |
 | `reason` | `text` | No | — | mandatory |
 | `created_at` | `timestamp` | No | `now()` | |
+| `managing_agency_relationship_id` | `unsignedBigInteger`, FK `agency_client_workspace_relationships.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | Contract 09: the relationship an AgencyRebill assignment/consent change concerned |
+| `agency_rebill_consent` | `string(16)` | Yes | `NULL` | Contract 09: `granted` \| `revoked` for AgencyRebill standing-consent changes |
 
-**Payer-consent rules — unchanged:** setting `payer_type = 'workspace'` requires the Workspace owner or a platform administrator (mandatory reason); setting `payer_type = 'business'` requires the direct Business owner/customer or a platform administrator (mandatory reason); Active Workspace Admin and Staff can never change payer; no actor may select/charge an instrument owned by a different payer.
+**AgencyRebill consent rules (V1 Implementation Contract 09, Addendum §10):**
+
+- Setting `payer_type = 'agency_rebill'` — which is also the grant of standing consent — and revoking that consent require the **managing Agency Workspace owner only**, resolved through the Active Agency↔Client relationship targeting the Business's own Workspace. Agency Admin/Staff, the client Workspace/Business owner and staff, and platform administrators may never grant or revoke it; revocation keeps `payer_type = 'agency_rebill'` and never falls back to a client payer.
+- While `payer_type = 'agency_rebill'`: funding configuration (payment instruments, automatic top-up) and payer controls (Business spend cap, feature limits, Business pause) belong to the managing Agency Workspace owner only; originating a charge additionally requires standing consent; every automated or manual Agency-funded paid effect requires standing consent, a valid relationship whose Agency Workspace currently holds Agency-tier entitlement (re-checked each time, never inferred from the Active relationship row) and usable effective account access (Client and, through composition, Agency). The provider customer is always the managing Agency Workspace's, never the client's.
+
+**Payer-consent rules — unchanged for `workspace`/`business`:** setting `payer_type = 'workspace'` requires the Workspace owner or a platform administrator (mandatory reason); setting `payer_type = 'business'` requires the direct Business owner/customer or a platform administrator (mandatory reason); Active Workspace Admin and Staff can never change payer; no actor may select/charge an instrument owned by a different payer.
 
 ### Consent extended to every charge-causing action, and platform-administrator authority narrowed — corrected this round
 
