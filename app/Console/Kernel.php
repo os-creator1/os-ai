@@ -85,6 +85,14 @@
             $schedule->command('campaign:scheduled')->everyMinute();
             $schedule->command('sms:schedule-api-message')->everyMinute();
             $schedule->command('subscription:check')->hourly();
+            // Contract 03 §7 (Slice 4) — the two time-based account
+            // lifecycle sweeps: expired trials into Grace, elapsed Grace
+            // into Locked. Hourly, matching subscription:check's own
+            // billing-state cadence: an account should not sit an extra day
+            // in a state its data already left. Both sweeps are idempotent,
+            // so withoutOverlapping() is protection against a slow run
+            // stacking on the next tick, not a correctness requirement.
+            $schedule->command('workspaces:advance-account-lifecycle')->hourly()->withoutOverlapping();
             // Customer Experience Slice 3 §4.2 — retention/disposal for the
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();

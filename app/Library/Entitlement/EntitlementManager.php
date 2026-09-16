@@ -11,9 +11,12 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Entitlement\BusinessAdditionalLocationSlotsChanged;
 use App\Events\Entitlement\BusinessFeatureToggleChanged;
+use App\Events\Entitlement\WorkspaceAccessRestored;
 use App\Events\Entitlement\WorkspaceAdditionalBusinessSlotsChanged;
 use App\Events\Entitlement\WorkspaceComplimentaryStatusChanged;
+use App\Events\Entitlement\WorkspaceEnteredGracePeriod;
 use App\Events\Entitlement\WorkspaceEntitlementOverrideChanged;
+use App\Events\Entitlement\WorkspaceLocked;
 use App\Events\Entitlement\WorkspacePlanAssigned;
 use App\Events\Entitlement\WorkspacePlanCatalogPricingChanged;
 use App\Events\Entitlement\WorkspacePlanChanged;
@@ -62,6 +65,7 @@ use App\Repositories\Contracts\WorkspacePlanCatalogPricingChangeRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use App\Repositories\Contracts\WorkspacePlanFeatureRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
+use Carbon\CarbonInterface;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -88,6 +92,15 @@ final class EntitlementManager
      * own fixed reason string.
      */
     private const PAYMENT_VERIFIED_ALLOCATION_REASON_PREFIX = 'payment_verified_allocation';
+
+    /**
+     * Contract 03 §5/§7 (Blueprint §27) — how long Grace runs before an
+     * unpaid account locks. One constant, read by the scheduled sweep that
+     * writes `locked_at` AND by CustomerAccountAccessResolver's defensive
+     * elapsed-Grace derivation, so the writer and the reader can never drift
+     * to different windows.
+     */
+    public const GRACE_PERIOD_DAYS = 3;
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
@@ -989,6 +1002,11 @@ final class EntitlementManager
             $planFeatureKeys,
             $overrides,
             $capacity,
+            // Contract 03 §5 — the lifecycle timestamps travel with the
+            // summary so the read-only resolver never touches the table.
+            $assignment->trial_ends_at,
+            $assignment->grace_started_at,
+            $assignment->locked_at,
         );
     }
 
@@ -1036,6 +1054,13 @@ final class EntitlementManager
     // Plan assignment
     // =====================================================================
 
+    /**
+     * Contract 03 §5 — `$trialEndsAt` is optional and trailing: every one of
+     * the existing call sites uses positional arguments against the previous
+     * six-parameter signature, so none of them changes. Pass it only when the
+     * plan-selection flow actually grants a trial; `null` means this
+     * assignment is plain Active from the start.
+     */
     public function assignFirstPlan(
         Workspace $workspace,
         WorkspacePlanTier $tier,
@@ -1043,8 +1068,9 @@ final class EntitlementManager
         string $reason,
         bool $isComplimentary = false,
         int $additionalBusinessSlots = 0,
+        ?CarbonInterface $trialEndsAt = null,
     ): WorkspacePlanAssignment {
-        return DB::transaction(function () use ($workspace, $tier, $actorUserId, $reason, $isComplimentary, $additionalBusinessSlots) {
+        return DB::transaction(function () use ($workspace, $tier, $actorUserId, $reason, $isComplimentary, $additionalBusinessSlots, $trialEndsAt) {
             $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
 
             if ($lockedWorkspace === null) {
@@ -1092,6 +1118,7 @@ final class EntitlementManager
                 'complimentary_granted_by_user_id' => $isComplimentary ? $actorUserId : null,
                 'complimentary_granted_at' => $isComplimentary ? $now : null,
                 'additional_business_slots' => $additionalBusinessSlots,
+                'trial_ends_at' => $trialEndsAt,
             ]);
 
             $this->transitionRepository->create([
@@ -1290,6 +1317,333 @@ final class EntitlementManager
 
             return $updated;
         });
+    }
+
+    // =====================================================================
+    // Account lifecycle — Trial / Grace / Locked (Contract 03, Slice 4)
+    // =====================================================================
+    //
+    // The ONLY writers of trial_ends_at, grace_started_at and locked_at.
+    // CustomerAccountAccessResolver reads what these three produce and
+    // derives the customer-facing state from it; it never writes here, and
+    // there is deliberately no second lifecycle authority (Contract 03 §3).
+    //
+    // All three share one shape, and it is the shape changePlanStatus()
+    // already established: one transaction, the Workspace row locked first,
+    // an Active-only target, an idempotent no-op when the state is already
+    // what the caller asked for, and exactly one transition row plus one
+    // event when a write actually happens.
+    //
+    // Two deliberate differences from changePlanStatus(), both required by
+    // §5/§7: `$actorUserId` and `$reason` are nullable, because the
+    // scheduled sweep (AdvanceWorkspaceAccountLifecycle) is a trusted system
+    // path with no human actor — the same null-actor precedent
+    // performVerifiedAllocation() already sets for payment-driven writes. A
+    // non-null actor is still held to the platform-administrator check.
+
+    /**
+     * Contract 03 §6 cases B and C — start the Grace window, either because a
+     * trial ended without conversion (case B: the scheduled sweep, null
+     * actor, reached through advanceExpiredTrialIntoGrace()) or because a
+     * renewal payment failed (case C: a platform administrator today, a
+     * payment-provider integration later).
+     *
+     * Grace keeps FULL access (Blueprint §27); only the billing prompt
+     * changes. The base status stays Active throughout, so this writes no
+     * status and the transition row records no status change — because none
+     * happened.
+     *
+     * Idempotent: an assignment already in Grace, or already Locked, is
+     * returned unchanged. Re-entering Grace would silently extend the window
+     * every time a retry failed, which is exactly the bug that would let a
+     * delinquent account never lock.
+     */
+    public function enterGracePeriod(Workspace $workspace, ?int $actorUserId = null, ?string $reason = null): WorkspacePlanAssignment
+    {
+        return DB::transaction(function () use ($workspace, $actorUserId, $reason) {
+            $assignment = $this->lockedLifecycleAssignment($workspace, $actorUserId);
+
+            if ($assignment->grace_started_at !== null || $assignment->locked_at !== null) {
+                return $assignment;
+            }
+
+            $updated = $this->assignmentRepository->update($assignment, ['grace_started_at' => now()]);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $assignment->workspace_id,
+                'transition_type' => WorkspaceEntitlementTransitionType::GraceStarted,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+            ]);
+
+            WorkspaceEnteredGracePeriod::dispatch($assignment->workspace_id, $actorUserId, $reason);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Contract 03 §6 case D — Grace elapsed without payment: lock the
+     * account. This is the durable write behind the resolver's Locked state;
+     * the scheduled sweep reaches it through lockElapsedGracePeriod().
+     *
+     * `grace_started_at` is deliberately left in place: it is the audit of
+     * when the window opened, and clearing it would erase why this lock
+     * exists. recoverAccess() is the one thing that clears either column.
+     *
+     * Idempotent: an already-locked assignment is returned unchanged, so a
+     * re-run of the sweep can never move the lock timestamp forward.
+     */
+    public function lockForNonPayment(Workspace $workspace, ?int $actorUserId = null, ?string $reason = null): WorkspacePlanAssignment
+    {
+        return DB::transaction(function () use ($workspace, $actorUserId, $reason) {
+            $assignment = $this->lockedLifecycleAssignment($workspace, $actorUserId);
+
+            if ($assignment->locked_at !== null) {
+                return $assignment;
+            }
+
+            $updated = $this->assignmentRepository->update($assignment, ['locked_at' => now()]);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $assignment->workspace_id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AccountLocked,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+            ]);
+
+            WorkspaceLocked::dispatch($assignment->workspace_id, $actorUserId, $reason);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Contract 03 §6 case E — the account is paid up: return it to plain
+     * Active in ONE write (Blueprint §27's immediate unlock). (Case F, the
+     * move to Inactive, is changePlanStatus(), unchanged — not this method.)
+     *
+     * This clears all THREE lifecycle timestamps atomically, and that is the
+     * contract's central invariant, not a convenience:
+     *
+     *   `trial_ends_at` records an OUTSTANDING trial, never "this customer
+     *   once had a trial".
+     *
+     * A converted customer whose `trial_ends_at` survived would be selected
+     * by the trial-expiry sweep the moment that old date passed, and would be
+     * dropped into Grace — billing a paying customer for a trial they already
+     * converted out of. Clearing it here, in the same write as the other two,
+     * is what makes that impossible rather than merely unlikely. The sweep's
+     * own predicate is the second guard, not the only one.
+     *
+     * One writer covers both the early conversion (Trial -> Active, nothing
+     * else set) and the full recovery (Grace/Locked -> Active), because both
+     * mean the same thing: nothing is outstanding any more.
+     *
+     * Idempotent: an assignment with all three already null is returned
+     * unchanged, with no transition row and no event.
+     */
+    public function recoverAccess(Workspace $workspace, ?int $actorUserId = null, ?string $reason = null): WorkspacePlanAssignment
+    {
+        return DB::transaction(function () use ($workspace, $actorUserId, $reason) {
+            $assignment = $this->lockedLifecycleAssignment($workspace, $actorUserId);
+
+            if ($assignment->trial_ends_at === null && $assignment->grace_started_at === null && $assignment->locked_at === null) {
+                return $assignment;
+            }
+
+            $updated = $this->assignmentRepository->update($assignment, [
+                'trial_ends_at' => null,
+                'grace_started_at' => null,
+                'locked_at' => null,
+            ]);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $assignment->workspace_id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AccessRestored,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+            ]);
+
+            WorkspaceAccessRestored::dispatch($assignment->workspace_id, $actorUserId, $reason);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Contract 03 §7 sweep 1's candidate list: Workspaces whose OUTSTANDING
+     * trial has run out and that are not already in Grace or Locked.
+     *
+     * The sweep's query lives behind this method because RFC-004 §15/§20
+     * makes this class and its own repositories the only readers of
+     * workspace_plan_assignments — the scheduled command orchestrates, it
+     * does not query the entitlement tables itself.
+     *
+     * @return array<int, int> workspace ids
+     */
+    public function findWorkspaceIdsWithExpiredOutstandingTrial(): array
+    {
+        return $this->assignmentRepository->findWorkspaceIdsWithOutstandingTrialEndedBy(now());
+    }
+
+    /**
+     * Contract 03 §7 sweep 2's candidate list: Workspaces whose Grace window
+     * has fully elapsed and that are not locked yet.
+     *
+     * GRACE_PERIOD_DAYS is subtracted HERE rather than expressed as an
+     * interval inside the query, so the window's length stays one constant
+     * shared with the resolver's own defensive derivation.
+     *
+     * @return array<int, int> workspace ids
+     */
+    public function findWorkspaceIdsWithElapsedGracePeriod(): array
+    {
+        return $this->assignmentRepository->findWorkspaceIdsWithGraceStartedBy(now()->subDays(self::GRACE_PERIOD_DAYS));
+    }
+
+    /**
+     * Contract 03 §7 sweep 1, for ONE candidate Workspace: move it into Grace
+     * only if the sweep's exact predicate still holds under the row lock.
+     *
+     * The candidate list above is read before any lock, and a sweep over
+     * many Workspaces takes time. A trial that converts in between has had
+     * all three lifecycle columns cleared by recoverAccess() — including the
+     * two enterGracePeriod()'s own idempotency guard looks at, so that guard
+     * alone would PASS and push a paying customer into Grace from a stale
+     * list. Re-checking §7's whole predicate here, while holding the lock the
+     * nested enterGracePeriod() call re-takes in this same transaction, is
+     * what makes "a converted customer never re-enters Grace" true for a run
+     * already in flight, not merely for the next one.
+     *
+     * The write itself is still enterGracePeriod() — the contract's named
+     * writer, with its transition row and event — never a second copy of it.
+     *
+     * @return bool true when the Workspace was moved into Grace; false when it
+     *              no longer matches the sweep (converted, suspended, closed,
+     *              unassigned, or already advanced) and nothing was written.
+     */
+    public function advanceExpiredTrialIntoGrace(Workspace $workspace, string $reason): bool
+    {
+        return DB::transaction(function () use ($workspace, $reason): bool {
+            $assignment = $this->assignmentRepository->findByWorkspaceIdForUpdate($this->lockWorkspaceRow($workspace)->id);
+
+            // §7 sweep 1, clause for clause.
+            $stillEligible = $assignment !== null
+                && $assignment->status === WorkspacePlanAssignmentStatus::Active
+                && $assignment->trial_ends_at !== null
+                && ! $assignment->trial_ends_at->isFuture()
+                && $assignment->grace_started_at === null
+                && $assignment->locked_at === null;
+
+            if (! $stillEligible) {
+                return false;
+            }
+
+            $this->enterGracePeriod($workspace, null, $reason);
+
+            return true;
+        });
+    }
+
+    /**
+     * Contract 03 §7 sweep 2, for ONE candidate Workspace: lock it only if
+     * its Grace window has still fully elapsed under the row lock.
+     *
+     * Same stale-list problem as sweep 1, with a worse outcome: a customer
+     * who paid between the candidate query and this write has
+     * `locked_at = NULL` again, which is exactly what lockForNonPayment()'s
+     * own guard checks — so without this re-check they would be locked out
+     * seconds after paying, in a `grace_started_at = NULL, locked_at = set`
+     * state no §5 transition produces.
+     *
+     * @return bool true when the Workspace was locked; false when it no
+     *              longer matches the sweep and nothing was written.
+     */
+    public function lockElapsedGracePeriod(Workspace $workspace, string $reason): bool
+    {
+        return DB::transaction(function () use ($workspace, $reason): bool {
+            $assignment = $this->assignmentRepository->findByWorkspaceIdForUpdate($this->lockWorkspaceRow($workspace)->id);
+
+            // §7 sweep 2, clause for clause — the same instant the resolver's
+            // defensive derivation flips to Locked.
+            $stillEligible = $assignment !== null
+                && $assignment->status === WorkspacePlanAssignmentStatus::Active
+                && $assignment->grace_started_at !== null
+                && ! $assignment->grace_started_at->copy()->addDays(self::GRACE_PERIOD_DAYS)->isFuture()
+                && $assignment->locked_at === null;
+
+            if (! $stillEligible) {
+                return false;
+            }
+
+            $this->lockForNonPayment($workspace, null, $reason);
+
+            return true;
+        });
+    }
+
+    /**
+     * Locks the Workspace row every lifecycle mutation serializes on — the
+     * same first step changePlanStatus() takes.
+     */
+    private function lockWorkspaceRow(Workspace $workspace): Workspace
+    {
+        $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
+
+        if ($lockedWorkspace === null) {
+            throw new WorkspaceNotFoundException($workspace->id);
+        }
+
+        return $lockedWorkspace;
+    }
+
+    /**
+     * The shared preamble of all three lifecycle writers: lock the Workspace
+     * row, authorize a human actor if there is one, load the assignment, and
+     * refuse anything whose base status is not Active.
+     *
+     * The assignment is read with findByWorkspaceIdForUpdate() — a current,
+     * locking read — rather than the request-memoized findByWorkspaceId().
+     * §7 requires the state to be read AFTER the lock is taken; a memoized
+     * copy may have been read before it (earlier in the same request, or
+     * anywhere in a long-running console process), and every idempotency
+     * guard below would then decide on a snapshot another transaction has
+     * already changed.
+     *
+     * Suspended and Inactive throw rather than writing a lifecycle timestamp
+     * nobody would ever read: the resolver's §5 table only consults these
+     * columns for an Active assignment, so writing one onto a Suspended row
+     * would record an invisible state and quietly lose the caller's intent.
+     * Suspension in particular is administrative — only changePlanStatus()
+     * lifts it, and no payment event may override it (§5's precedence).
+     */
+    private function lockedLifecycleAssignment(Workspace $workspace, ?int $actorUserId): WorkspacePlanAssignment
+    {
+        $lockedWorkspace = $this->lockWorkspaceRow($workspace);
+
+        // A null actor is the trusted system path (the scheduled sweep). A
+        // non-null one is a human and is held to the same bar every other
+        // administrative entitlement write already applies.
+        if ($actorUserId !== null) {
+            $this->assertPlatformAdministrator($actorUserId);
+        }
+
+        $assignment = $this->assignmentRepository->findByWorkspaceIdForUpdate($lockedWorkspace->id);
+
+        if ($assignment === null) {
+            throw new WorkspacePlanUnassignedException($lockedWorkspace->id);
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
+            throw new SuspendedWorkspacePlanException($lockedWorkspace->id);
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
+            throw new InactiveWorkspacePlanException($lockedWorkspace->id);
+        }
+
+        return $assignment;
     }
 
     // =====================================================================

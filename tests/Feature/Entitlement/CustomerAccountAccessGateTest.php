@@ -11,6 +11,7 @@ use App\Models\ContactGroups;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -132,6 +133,86 @@ class CustomerAccountAccessGateTest extends TestCase
         // No truthful recovery route exists for a suspension — the CTA
         // Inactive shows must never appear here.
         $locked->assertDontSee('Continue to billing');
+    }
+
+    // =========================================================================
+    // Contract 03 (Slice 4) — the new lifecycle states through the SAME gate.
+    // No gate, middleware or locked-screen code changed for these: each one
+    // only proves the resolver's new decision flows through the existing
+    // generic isLocked()/reason/message surface.
+    // =========================================================================
+
+    public function test_a_customer_locked_for_non_payment_gets_the_product_lock_with_a_truthful_billing_recovery(): void
+    {
+        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->enterGracePeriod($workspace, null, 'Trial ended without conversion');
+        app(EntitlementManager::class)->lockForNonPayment($workspace, null, 'Grace period elapsed without payment');
+        $this->authenticateAs($customer);
+
+        $this->home()->assertRedirect(route('customer.account-locked.show'));
+
+        $this->get(route('customer.workspaces.show', $workspace->uid))
+            ->assertRedirect(route('customer.account-locked.show'));
+
+        $originalName = $workspace->name;
+        $this->postJson(route('customer.workspaces.rename', $workspace->uid), ['name' => 'Renamed While Locked'])
+            ->assertStatus(403)
+            ->assertJson(['status' => 'error', 'reason' => 'plan_locked']);
+        $this->assertSame($originalName, $workspace->fresh()->name);
+
+        $locked = $this->get(route('customer.account-locked.show'));
+        $locked->assertOk();
+        $locked->assertSee('Account locked');
+        // Unlike a suspension, paying genuinely restores access here.
+        $locked->assertSee('Continue to billing');
+
+        $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk();
+    }
+
+    public function test_an_elapsed_grace_period_locks_the_product_even_before_the_sweep_writes_the_lock(): void
+    {
+        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Core);
+        $this->storeLifecycle($workspace, ['grace_started_at' => now()->subDays(EntitlementManager::GRACE_PERIOD_DAYS + 1)]);
+        $this->authenticateAs($customer);
+
+        // A missed scheduled run must never leave a delinquent account usable.
+        $this->home()->assertRedirect(route('customer.account-locked.show'));
+    }
+
+    public function test_a_customer_in_grace_or_on_a_trial_keeps_full_product_access(): void
+    {
+        [$graceCustomer, , $graceWorkspace] = $this->tenant(WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->enterGracePeriod($graceWorkspace, null, 'Payment failed.');
+        $this->authenticateAs($graceCustomer);
+
+        // Blueprint §27: Grace keeps FULL access — only a billing prompt may change.
+        $this->home()->assertOk();
+        $this->assertReachesTheProductNormally(route('customer.workspaces.show', $graceWorkspace->uid));
+
+        [$trialCustomer, , $trialWorkspace] = $this->tenant(WorkspacePlanTier::Core);
+        // Expired but not yet swept: still a trial, still usable (§5).
+        $this->storeLifecycle($trialWorkspace, ['trial_ends_at' => now()->subHour()]);
+        $this->authenticateAs($trialCustomer);
+
+        $this->home()->assertOk();
+        $this->assertReachesTheProductNormally(route('customer.workspaces.show', $trialWorkspace->uid));
+    }
+
+    /**
+     * A Core account route legitimately redirects on to its Business (the
+     * single-Business Core/Growth behaviour), so "not blocked" means: the
+     * first hop is never the locked screen, and wherever the route normally
+     * lands renders successfully without any locked-screen copy.
+     */
+    private function assertReachesTheProductNormally(string $url): void
+    {
+        $firstHop = $this->get($url);
+        $this->assertNotSame(403, $firstHop->status());
+        $this->assertStringNotContainsString('account-locked', (string) $firstHop->headers->get('Location'));
+
+        $landed = $this->followingRedirects()->get($url);
+        $landed->assertOk();
+        $landed->assertDontSee('Account locked');
     }
 
     public function test_an_inactive_workspace_never_contaminates_a_different_active_workspace_for_the_same_actor(): void
@@ -356,6 +437,18 @@ class CustomerAccountAccessGateTest extends TestCase
     private function lockWorkspace(Workspace $workspace, WorkspacePlanAssignmentStatus $status): void
     {
         app(EntitlementManager::class)->changePlanStatus($workspace, $status, $this->platformAdminId(), 'Chat F fixture lock.');
+    }
+
+    /**
+     * Contract 03 fixture: stores a raw lifecycle timestamp combination the
+     * writers would not produce on their own (an already-elapsed Grace, an
+     * expired-but-unswept trial), through the repository so the request
+     * cache is invalidated exactly as a production write would.
+     */
+    private function storeLifecycle(Workspace $workspace, array $columns): void
+    {
+        $assignments = app(WorkspacePlanAssignmentRepository::class);
+        $assignments->update($assignments->findByWorkspaceIdForUpdate($workspace->id), $columns);
     }
 
     /**

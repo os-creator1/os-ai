@@ -12,9 +12,13 @@ use Tests\TestCase;
 
 /**
  * RFC-004 Milestone 1 Contract §13 — every case of all six Entitlement
- * enums round-trips its string value; WorkspaceEntitlementTransitionType
- * has exactly nine cases; PlatformFeature has exactly fifteen cases
- * matching RFC-004 §11's exact key list.
+ * enums round-trips its string value, and each enum's case list is pinned
+ * exactly: a case added without updating this test is a deliberate stop, not
+ * an oversight, because these values are persisted.
+ *
+ * WorkspacePlanAssignmentStatus stays at three cases after Contract 03's
+ * account lifecycle (Addendum §7): Trial, Grace and Locked are derived from
+ * timestamps, never a fourth status.
  */
 class EntitlementEnumsTest extends TestCase
 {
@@ -41,7 +45,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertCount(2, WorkspaceEntitlementOverrideState::cases());
     }
 
-    public function test_workspace_entitlement_transition_type_has_exactly_eleven_cases(): void
+    public function test_workspace_entitlement_transition_type_has_exactly_fourteen_cases(): void
     {
         $expected = [
             'plan_assigned',
@@ -56,11 +60,17 @@ class EntitlementEnumsTest extends TestCase
             // Customer Experience Slice 1A (RFC-004 §33.4) — physical-location capacity.
             'additional_location_slots_changed',
             'capacity_grandfathered',
+            // Contract 03 (Slice 4) — the account lifecycle's three durable
+            // audit facts. Appended, never reordered: these values are
+            // persisted in workspace_entitlement_transitions rows.
+            'grace_started',
+            'account_locked',
+            'access_restored',
         ];
 
         $actual = array_map(fn ($case) => $case->value, WorkspaceEntitlementTransitionType::cases());
 
-        $this->assertCount(11, WorkspaceEntitlementTransitionType::cases());
+        $this->assertCount(14, WorkspaceEntitlementTransitionType::cases());
         $this->assertSame($expected, $actual);
     }
 
