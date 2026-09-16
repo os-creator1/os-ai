@@ -103,9 +103,18 @@ original draft:**
    modification.
 4. **Create the Contract 01 relationship** (Agency Workspace → new Client
    Workspace) **immediately after reassignment**, via Contract 01's
-   manager, actor = the human operator running this migration (recorded
-   honestly as the actor, not a system user pretending to be the Agency
-   owner — see §10) — **before** the payer decision, fixing bug 2 above.
+   migration-only primitive
+   `AgencyClientRelationshipManager::createForMigration($operatorUserId,
+   $agencyWorkspace, $clientWorkspace)` — **not** the normal product
+   `create()`, which deliberately refuses every platform/admin-panel actor
+   (Contract 01 §6, "Migration-only establishment") — actor = the human
+   operator running this migration (recorded honestly as
+   `established_by_user_id` and as the event actor, not a system user
+   pretending to be the Agency owner — see §6/§10) — **before** the payer
+   decision, fixing bug 2 above. `createForMigration()` applies every
+   structural rule `create()` does (self-link refusal, both Workspace locks,
+   Agency-tier gate, locking active-relationship read, one-active-Agency
+   uniqueness), so this step inherits them rather than re-implementing any.
 5. Run the primary-location repair check (§3, `BusinessLocation` row —
    only if genuinely absent).
 6. Resolve the payer matrix (§5) — the relationship now exists (step 4),
@@ -178,7 +187,12 @@ the **real human operator** running the migration as
 `established_by_user_id` (§10) — never a fabricated "the Agency owner did
 this" actor, since the Agency owner did not, in fact, take this action;
 this is honest per Addendum's own "real acting User" discipline extended
-to a migration context.
+to a migration context. That relationship is created through Contract 01's
+migration-only `createForMigration()` (§4 step 4), which accepts the
+operator only when the operator is an admin-panel account (`is_admin`)
+**and** holds the dedicated admin-side `manage agency relationships` Role
+permission (Contract 01 §6) — an operator lacking either is refused at
+step 4 rather than silently recorded.
 
 ## 7. Transaction / concurrency boundary
 

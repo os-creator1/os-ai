@@ -17,11 +17,13 @@ use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Workspace;
+use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -128,10 +130,11 @@ class AgencyClientRelationshipManagerTest extends TestCase
 
     /**
      * An admin-panel User, optionally holding the dedicated admin-side
-     * termination Role permission. Never user id 1, so the assertion is
-     * about the Role permission and nothing else.
+     * platform relationship Role permission (termination and migration-only
+     * establishment). Never user id 1, so the assertion is about the Role
+     * permission and nothing else.
      */
-    private function adminPanelUser(bool $withTerminationPermission): User
+    private function adminPanelUser(bool $withPlatformPermission): User
     {
         $user = User::create([
             'first_name' => 'Support',
@@ -146,13 +149,31 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $role = Role::create(['name' => 'role-' . uniqid('', true), 'status' => 1]);
         $role->permissions()->create(['name' => 'view workspace']);
 
-        if ($withTerminationPermission) {
-            $role->permissions()->create(['name' => AgencyClientRelationshipManager::ADMIN_TERMINATE_PERMISSION]);
+        if ($withPlatformPermission) {
+            $role->permissions()->create(['name' => AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION]);
         }
 
         $user->roles()->attach($role->id);
 
         return $user->fresh();
+    }
+
+    /**
+     * A customer (non-admin) User whose own customer permission list carries
+     * BOTH the Agency management permission and, by name, the admin-side
+     * platform permission — the strongest non-admin impersonation of a
+     * migration operator a permission list alone can produce.
+     */
+    private function customerNamingThePlatformPermission(): User
+    {
+        $customer = $this->createCustomer();
+        $customer->permissions = json_encode([
+            AgencyClientRelationshipManager::MANAGE_PERMISSION,
+            AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION,
+        ]);
+        $customer->save();
+
+        return $customer->user->fresh();
     }
 
     /** A customer User owning nothing relevant, holding the management permission anyway. */
@@ -316,16 +337,17 @@ class AgencyClientRelationshipManagerTest extends TestCase
 
     /**
      * Addendum §10's posture — an administrator never originates on a
-     * customer's behalf — applied symmetrically to creation, including for
-     * the admin who may legitimately TERMINATE one.
+     * customer's behalf — applied symmetrically to normal product creation,
+     * including for the admin who may legitimately TERMINATE one or establish
+     * one through the separate operator-run migration entry point.
      */
     public function test_no_admin_panel_user_may_ever_establish_a_relationship(): void
     {
         [$agency] = $this->agency();
         [$client] = $this->workspaceOn();
 
-        $this->assertRefusesToCreate($this->adminPanelUser(withTerminationPermission: false), $agency, $client);
-        $this->assertRefusesToCreate($this->adminPanelUser(withTerminationPermission: true), $agency, $client);
+        $this->assertRefusesToCreate($this->adminPanelUser(withPlatformPermission: false), $agency, $client);
+        $this->assertRefusesToCreate($this->adminPanelUser(withPlatformPermission: true), $agency, $client);
     }
 
     // ------------------------------------------------------------------
@@ -483,28 +505,284 @@ class AgencyClientRelationshipManagerTest extends TestCase
         [$agency, $agencyOwner] = $this->agency();
         [$client] = $this->workspaceOn();
 
-        $locking = [];
+        $this->assertEstablishesUnderTheContractLockOrder(
+            fn () => $this->manager()->create((int) $agencyOwner->id, $agency, $client),
+            $agency,
+            $client,
+        );
+    }
 
-        DB::listen(function ($query) use (&$locking): void {
-            if (! str_contains(strtolower($query->sql), 'for update')) {
-                return;
+    // ------------------------------------------------------------------
+    // Migration-only establishment (Contract 01 §6/§9, consumed by
+    // Contract 10 step 4) — a distinct, non-surface entry point
+    // ------------------------------------------------------------------
+
+    public function test_a_migration_operator_establishes_the_relationship_and_is_recorded_as_the_real_actor(): void
+    {
+        Event::fake(self::ALL_RELATIONSHIP_EVENTS);
+
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn(WorkspacePlanTier::Core);
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        $relationship = $this->manager()->createForMigration((int) $operator->id, $agency, $client);
+
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $relationship->status);
+        $this->assertSame((int) $agency->id, (int) $relationship->agency_workspace_id);
+        $this->assertSame((int) $client->id, (int) $relationship->client_workspace_id);
+        $this->assertNotNull($relationship->established_at);
+        $this->assertTrue(Str::isUuid((string) $relationship->uid));
+
+        // The operator, never a fabricated Agency-owner actor.
+        $this->assertSame((int) $operator->id, (int) $relationship->established_by_user_id);
+        $this->assertNotSame((int) $agencyOwner->id, (int) $relationship->established_by_user_id);
+        $this->assertSame(
+            (int) $operator->id,
+            (int) DB::table('agency_client_workspace_relationships')->where('id', $relationship->id)->value('established_by_user_id'),
+        );
+
+        // The same event, with the same shape, as a product-created relationship.
+        Event::assertDispatched(AgencyClientRelationshipEstablished::class, 1);
+        Event::assertDispatched(
+            AgencyClientRelationshipEstablished::class,
+            fn (AgencyClientRelationshipEstablished $event): bool => $event->relationshipId === (int) $relationship->id
+                && $event->agencyWorkspaceId === (int) $agency->id
+                && $event->clientWorkspaceId === (int) $client->id
+                && $event->actorUserId === (int) $operator->id,
+        );
+    }
+
+    /**
+     * The exact actor createForMigration() accepts is still refused by the
+     * normal product create() — the migration entry point widens nothing.
+     */
+    public function test_the_same_platform_operator_is_still_refused_by_normal_create(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        $this->assertTrue(
+            Gate::forUser($operator)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: this operator genuinely holds the platform relationship permission.'
+        );
+
+        $this->assertRefusesToCreate($operator, $agency, $client);
+
+        // ...and the very same operator, on the very same pair, succeeds only
+        // through the migration entry point.
+        $relationship = $this->manager()->createForMigration((int) $operator->id, $agency, $client);
+        $this->assertSame((int) $operator->id, (int) $relationship->established_by_user_id);
+    }
+
+    public function test_an_admin_panel_user_without_the_dedicated_permission_cannot_migrate_a_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+
+        $this->assertRefusesToCreateForMigration($this->adminPanelUser(withPlatformPermission: false), $agency, $client);
+    }
+
+    /**
+     * is_admin is load-bearing, not decorative: a customer whose own
+     * permission list names the platform permission — and whom the Gate
+     * therefore genuinely allows it — is still not a migration operator.
+     */
+    public function test_a_non_admin_naming_the_platform_permission_cannot_migrate_a_relationship(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+        $impostor = $this->customerNamingThePlatformPermission();
+
+        $this->assertFalse((bool) $impostor->is_admin);
+        $this->assertTrue(
+            Gate::forUser($impostor)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the Gate itself allows this customer the permission by name, so only is_admin can refuse it.'
+        );
+
+        $this->assertRefusesToCreateForMigration($impostor, $agency, $client);
+    }
+
+    /**
+     * Agency actors act through create(); the migration entry point has no
+     * owner or team branch, so it can never become a second, unaudited
+     * create() for them.
+     */
+    public function test_no_agency_or_customer_actor_can_use_the_migration_entry_point(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client, $clientOwner] = $this->workspaceOn();
+
+        $agencyOwner->customer->update(['permissions' => json_encode([AgencyClientRelationshipManager::MANAGE_PERMISSION])]);
+
+        $this->assertRefusesToCreateForMigration($agencyOwner, $agency, $client);
+        $this->assertRefusesToCreateForMigration(
+            $this->memberOf($agency, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $agency,
+            $client,
+        );
+        $this->assertRefusesToCreateForMigration(
+            $this->memberOf($agency, WorkspaceMembershipRole::Staff, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $agency,
+            $client,
+        );
+        $this->assertRefusesToCreateForMigration($clientOwner, $agency, $client);
+        $this->assertRefusesToCreateForMigration($this->outsiderHoldingThePermission(), $agency, $client);
+
+        // The owner remains fully able to act through the product path.
+        $this->assertSame(
+            (int) $agencyOwner->id,
+            (int) $this->manager()->create((int) $agencyOwner->id, $agency, $client)->established_by_user_id,
+        );
+    }
+
+    public function test_migration_creation_refuses_a_self_link(): void
+    {
+        [$agency] = $this->agency();
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        $this->expectException(AgencyClientSelfLinkException::class);
+
+        try {
+            $this->manager()->createForMigration((int) $operator->id, $agency, $agency);
+        } finally {
+            $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+        }
+    }
+
+    public function test_migration_creation_refuses_a_workspace_not_on_the_agency_tier(): void
+    {
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, null] as $tier) {
+            [$notAnAgency] = $this->workspaceOn($tier, 'Migrating pretender ' . ($tier?->value ?? 'unassigned'));
+            [$client] = $this->workspaceOn(null, 'Migrating client of ' . ($tier?->value ?? 'unassigned'));
+
+            try {
+                $this->manager()->createForMigration((int) $operator->id, $notAnAgency, $client);
+                $this->fail('Migration must not let a ' . ($tier?->value ?? 'plan-less') . ' Workspace manage a Client Workspace.');
+            } catch (AgencyWorkspaceNotEligibleException $e) {
+                $this->assertSame((int) $notAnAgency->id, $e->workspaceId);
+                $this->assertSame($tier?->value, $e->tier);
             }
+        }
 
-            $locking[] = ['sql' => strtolower($query->sql), 'bindings' => $query->bindings];
-        });
+        $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+    }
 
-        $this->manager()->create((int) $agencyOwner->id, $agency, $client);
+    /** Authority first on this entry point too: a non-operator learns nothing about the plan. */
+    public function test_migration_authority_is_refused_before_the_plan_tier_is_ever_considered(): void
+    {
+        [$notAnAgency] = $this->workspaceOn(WorkspacePlanTier::Core, 'Core Workspace');
+        [$client] = $this->workspaceOn();
 
-        $this->assertGreaterThanOrEqual(3, count($locking), 'Expected two Workspace row locks and one locking relationship read.');
+        $this->assertRefusesToCreateForMigration($this->adminPanelUser(withPlatformPermission: false), $notAnAgency, $client);
+    }
 
-        $this->assertStringContainsString('from `workspaces`', $locking[0]['sql']);
-        $this->assertStringContainsString('from `workspaces`', $locking[1]['sql']);
-        $this->assertStringContainsString('from `agency_client_workspace_relationships`', $locking[2]['sql']);
+    /**
+     * One-active-Agency uniqueness is one rule across both entry points: a
+     * migrated relationship blocks a product one and vice versa, and the
+     * same Agency cannot be linked twice through either.
+     */
+    public function test_one_active_agency_uniqueness_is_shared_by_both_entry_points(): void
+    {
+        [$firstAgency, $firstOwner] = $this->agency('First Agency');
+        [$secondAgency, $secondOwner] = $this->agency('Second Agency');
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
 
-        $lockedIds = [(int) $locking[0]['bindings'][0], (int) $locking[1]['bindings'][0]];
+        // Migrated first, then an Agency tries the product path.
+        [$migratedClient] = $this->workspaceOn(null, 'Migrated Client');
+        $this->manager()->createForMigration((int) $operator->id, $firstAgency, $migratedClient);
 
-        $this->assertSame($lockedIds, collect($lockedIds)->sort()->values()->all(), 'The two Workspace rows must be locked in ascending id order.');
-        $this->assertEqualsCanonicalizing([(int) $agency->id, (int) $client->id], $lockedIds);
+        foreach ([
+            fn () => $this->manager()->create((int) $secondOwner->id, $secondAgency, $migratedClient),
+            fn () => $this->manager()->create((int) $firstOwner->id, $firstAgency, $migratedClient),
+            fn () => $this->manager()->createForMigration((int) $operator->id, $secondAgency, $migratedClient),
+            fn () => $this->manager()->createForMigration((int) $operator->id, $firstAgency, $migratedClient),
+        ] as $attempt) {
+            try {
+                $attempt();
+                $this->fail('An already-managed Client Workspace must not gain a second active relationship.');
+            } catch (ClientWorkspaceAlreadyManagedException $e) {
+                $this->assertSame((int) $firstAgency->id, $e->existingAgencyWorkspaceId);
+            }
+        }
+
+        // Product-created first, then the migration tries.
+        [$productClient] = $this->workspaceOn(null, 'Product Client');
+        $this->manager()->create((int) $firstOwner->id, $firstAgency, $productClient);
+
+        try {
+            $this->manager()->createForMigration((int) $operator->id, $secondAgency, $productClient);
+            $this->fail('The migration must not add a second active Agency to an already-managed Client Workspace.');
+        } catch (ClientWorkspaceAlreadyManagedException $e) {
+            $this->assertSame((int) $firstAgency->id, $e->existingAgencyWorkspaceId);
+        }
+
+        $this->assertSame(1, DB::table('agency_client_workspace_relationships')->where('client_workspace_id', $migratedClient->id)->count());
+        $this->assertSame(1, DB::table('agency_client_workspace_relationships')->where('client_workspace_id', $productClient->id)->count());
+    }
+
+    public function test_migration_creation_refuses_a_missing_workspace(): void
+    {
+        [$agency] = $this->agency();
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        $vanished = new Workspace();
+        $vanished->id = 99_999_999;
+
+        $this->expectException(WorkspaceNotFoundException::class);
+
+        try {
+            $this->manager()->createForMigration((int) $operator->id, $agency, $vanished);
+        } finally {
+            $this->assertSame(0, DB::table('agency_client_workspace_relationships')->count());
+        }
+    }
+
+    /** The same race safety as create(), structurally: the same locks, in the same order. */
+    public function test_migration_creation_takes_the_same_locks_in_the_same_order(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        $this->assertEstablishesUnderTheContractLockOrder(
+            fn () => $this->manager()->createForMigration((int) $operator->id, $agency, $client),
+            $agency,
+            $client,
+        );
+    }
+
+    /**
+     * How a relationship was established changes nothing about who may end
+     * it: the Agency owner and the platform operator may; an Agency team
+     * member may not.
+     */
+    public function test_termination_authority_is_unchanged_for_a_migrated_relationship(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $operator = $this->adminPanelUser(withPlatformPermission: true);
+
+        [$firstClient] = $this->workspaceOn(null, 'First migrated client');
+        $first = $this->manager()->createForMigration((int) $operator->id, $agency, $firstClient);
+
+        $this->assertRefusesToTerminate(
+            $this->memberOf($agency, WorkspaceMembershipRole::Admin, [AgencyClientRelationshipManager::MANAGE_PERMISSION]),
+            $first,
+        );
+        $this->assertRefusesToTerminate($this->adminPanelUser(withPlatformPermission: false), $first);
+
+        $endedByOwner = $this->manager()->terminate((int) $agencyOwner->id, $first, 'Agency ended a migrated client.');
+        $this->assertSame((int) $agencyOwner->id, (int) $endedByOwner->terminated_by_user_id);
+        $this->assertSame((int) $operator->id, (int) $endedByOwner->established_by_user_id);
+
+        [$secondClient] = $this->workspaceOn(null, 'Second migrated client');
+        $second = $this->manager()->createForMigration((int) $operator->id, $agency, $secondClient);
+
+        $endedByPlatform = $this->manager()->terminate((int) $operator->id, $second, 'Platform ended a migrated client.');
+        $this->assertSame(AgencyClientRelationshipStatus::Terminated, $endedByPlatform->status);
+        $this->assertSame((int) $operator->id, (int) $endedByPlatform->terminated_by_user_id);
     }
 
     // ------------------------------------------------------------------
@@ -544,7 +822,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
     public function test_an_admin_panel_actor_holding_the_dedicated_permission_may_terminate(): void
     {
         $relationship = $this->established();
-        $platform = $this->adminPanelUser(withTerminationPermission: true);
+        $platform = $this->adminPanelUser(withPlatformPermission: true);
 
         $terminated = $this->manager()->terminate((int) $platform->id, $relationship, 'Platform intervention.');
 
@@ -560,7 +838,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
     {
         $relationship = $this->established();
 
-        $this->assertRefusesToTerminate($this->adminPanelUser(withTerminationPermission: false), $relationship);
+        $this->assertRefusesToTerminate($this->adminPanelUser(withPlatformPermission: false), $relationship);
     }
 
     public function test_no_agency_team_member_may_terminate_however_permitted(): void
@@ -642,7 +920,7 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $client);
         $first = $this->manager()->terminate((int) $agencyOwner->id, $relationship, 'First and only reason.');
 
-        $platform = $this->adminPanelUser(withTerminationPermission: true);
+        $platform = $this->adminPanelUser(withPlatformPermission: true);
         $second = $this->manager()->terminate((int) $platform->id, $first, 'A different, later reason.');
 
         $this->assertSame('First and only reason.', $second->termination_reason);
@@ -756,6 +1034,52 @@ class AgencyClientRelationshipManagerTest extends TestCase
         }
 
         $this->assertSame($before, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    private function assertRefusesToCreateForMigration(User $actor, Workspace $agency, Workspace $client): void
+    {
+        $before = DB::table('agency_client_workspace_relationships')->count();
+
+        try {
+            $this->manager()->createForMigration((int) $actor->id, $agency, $client);
+            $this->fail('User [' . $actor->id . '] must not be able to establish a relationship through the migration entry point.');
+        } catch (UnauthorizedAgencyRelationshipManagementException $e) {
+            $this->assertSame((int) $actor->id, $e->actorUserId);
+            $this->assertSame((int) $agency->id, $e->agencyWorkspaceId);
+        }
+
+        $this->assertSame($before, DB::table('agency_client_workspace_relationships')->count());
+    }
+
+    /**
+     * Contract 01 §7's lock order, asserted structurally for whichever entry
+     * point $establish exercises: both Workspace rows locked, ascending by
+     * id, before the locking duplicate read of the relationships table.
+     */
+    private function assertEstablishesUnderTheContractLockOrder(Closure $establish, Workspace $agency, Workspace $client): void
+    {
+        $locking = [];
+
+        DB::listen(function ($query) use (&$locking): void {
+            if (! str_contains(strtolower($query->sql), 'for update')) {
+                return;
+            }
+
+            $locking[] = ['sql' => strtolower($query->sql), 'bindings' => $query->bindings];
+        });
+
+        $establish();
+
+        $this->assertGreaterThanOrEqual(3, count($locking), 'Expected two Workspace row locks and one locking relationship read.');
+
+        $this->assertStringContainsString('from `workspaces`', $locking[0]['sql']);
+        $this->assertStringContainsString('from `workspaces`', $locking[1]['sql']);
+        $this->assertStringContainsString('from `agency_client_workspace_relationships`', $locking[2]['sql']);
+
+        $lockedIds = [(int) $locking[0]['bindings'][0], (int) $locking[1]['bindings'][0]];
+
+        $this->assertSame($lockedIds, collect($lockedIds)->sort()->values()->all(), 'The two Workspace rows must be locked in ascending id order.');
+        $this->assertEqualsCanonicalizing([(int) $agency->id, (int) $client->id], $lockedIds);
     }
 
     private function assertRefusesToTerminate(User $actor, AgencyClientWorkspaceRelationship $relationship): void

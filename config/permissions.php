@@ -531,9 +531,12 @@
         /*
          * Agency Relationships Module (V1 Implementation Contract 01 §6).
          *
-         * The dedicated admin-side authority to terminate an Agency<->Client
-         * Workspace management relationship on the platform's behalf —
-         * Addendum §2's second owner-only exception.
+         * The dedicated admin-side authority for the two platform-reserved
+         * acts on an Agency<->Client Workspace management relationship:
+         * terminating one on the platform's behalf (Addendum §2's second
+         * owner-only exception), and establishing one through the
+         * operator-run migration primitive Contract 10 consumes. It never
+         * admits an admin to the ordinary product create() path.
          *
          * This is deliberately its own Role permission rather than a bare
          * is_admin check: this repository has no graduated Platform Owner

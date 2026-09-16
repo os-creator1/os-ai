@@ -35,7 +35,13 @@
  * itself took. A process that really queued behind the parent's row lock
  * cannot report an elapsed time shorter than the parent's remaining hold.
  *
- * Usage: php concurrent_agency_client_relationship_runner.php <agencyWorkspaceId> <clientWorkspaceId> <actorUserId>
+ * The optional <entryPoint> selects which of the manager's two ways in this
+ * process races through: "create" (the product action, the default) or
+ * "migration" (createForMigration(), the operator-run primitive). Both run
+ * through the same establishment code, and the parent can race one of each
+ * to prove the two entry points share one uniqueness rule under contention.
+ *
+ * Usage: php concurrent_agency_client_relationship_runner.php <agencyWorkspaceId> <clientWorkspaceId> <actorUserId> [create|migration]
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -66,6 +72,13 @@ try {
 
 [, $agencyWorkspaceId, $clientWorkspaceId, $actorUserId] = $argv;
 
+$entryPoint = $argv[4] ?? 'create';
+
+if (! in_array($entryPoint, ['create', 'migration'], true)) {
+    fwrite(STDERR, "Unknown entry point [{$entryPoint}]; expected create or migration.\n");
+    exit(1);
+}
+
 $agencyWorkspace = App\Models\Workspace::query()->find((int) $agencyWorkspaceId);
 $clientWorkspace = App\Models\Workspace::query()->find((int) $clientWorkspaceId);
 
@@ -82,13 +95,17 @@ fwrite(STDOUT, "WAITING\n");
 $startedAt = microtime(true);
 
 try {
-    $relationship = $app->make(App\Library\Workspace\AgencyClientRelationshipManager::class)
-        ->create((int) $actorUserId, $agencyWorkspace, $clientWorkspace);
+    $manager = $app->make(App\Library\Workspace\AgencyClientRelationshipManager::class);
+
+    $relationship = $entryPoint === 'migration'
+        ? $manager->createForMigration((int) $actorUserId, $agencyWorkspace, $clientWorkspace)
+        : $manager->create((int) $actorUserId, $agencyWorkspace, $clientWorkspace);
 
     fwrite(STDOUT, sprintf(
-        "OK relationship_id=%d agency_workspace_id=%d elapsed_ms=%d\n",
+        "OK relationship_id=%d agency_workspace_id=%d established_by_user_id=%d elapsed_ms=%d\n",
         $relationship->id,
         $agencyWorkspace->id,
+        $relationship->established_by_user_id,
         (int) round((microtime(true) - $startedAt) * 1000),
     ));
     exit(0);

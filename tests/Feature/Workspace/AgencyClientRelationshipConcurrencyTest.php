@@ -28,7 +28,10 @@ use Tests\TestCase;
  *   C. two independent OS processes racing for the same Client Workspace
  *      from two different Agencies leave exactly one Active relationship,
  *      the loser refused by the domain rule rather than by a raw
- *      unique-index violation.
+ *      unique-index violation;
+ *   D. the same race run through BOTH entry points at once — a product
+ *      create() against an operator's createForMigration() — obeys the same
+ *      single uniqueness rule, and records the real actor who won.
  *
  * Deliberately does NOT use RefreshDatabase — a genuinely separate process or
  * connection needs committed rows, which an open RefreshDatabase transaction
@@ -64,6 +67,8 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
 
     private array $createdWorkspaceIds = [];
 
+    private array $createdRoleIds = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -92,6 +97,14 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
             DB::table('workspaces')->whereIn('id', $this->createdWorkspaceIds)->delete();
 
             $this->createdWorkspaceIds = [];
+        }
+
+        if ($this->createdRoleIds !== []) {
+            DB::table('role_user')->whereIn('role_id', $this->createdRoleIds)->delete();
+            DB::table('permissions')->whereIn('role_id', $this->createdRoleIds)->delete();
+            DB::table('roles')->whereIn('id', $this->createdRoleIds)->delete();
+
+            $this->createdRoleIds = [];
         }
 
         if ($this->createdUserIds !== []) {
@@ -191,6 +204,50 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
     private function clientWorkspace(string $name): int
     {
         return $this->insertWorkspace($this->insertOwner('Client'), $name);
+    }
+
+    /**
+     * An admin-panel account holding the dedicated platform relationship Role
+     * permission — the only actor createForMigration() accepts — written
+     * through the same roles / permissions / role_user tables the admin RBAC
+     * reads.
+     */
+    private function platformOperator(): int
+    {
+        $userId = DB::table('users')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'first_name' => 'Migration',
+            'last_name' => 'Operator',
+            'email' => 'migration-operator-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->createdUserIds[] = $userId;
+
+        $roleId = DB::table('roles')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'name' => 'relationship-operator-' . uniqid('', true),
+            'status' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->createdRoleIds[] = $roleId;
+
+        DB::table('permissions')->insert([
+            'uid' => (string) Str::uuid(),
+            'role_id' => $roleId,
+            'name' => AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('role_user')->insert(['user_id' => $userId, 'role_id' => $roleId]);
+
+        return $userId;
     }
 
     private function activeRelationshipCountFor(int $clientWorkspaceId): int
@@ -335,6 +392,45 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
         [$secondAgencyId, $secondOwnerId] = $this->agencyWorkspace('Racing Agency Two');
         $clientWorkspaceId = $this->clientWorkspace('Contested Client');
 
+        $this->assertExactlyOneWinnerRacingFor(
+            $clientWorkspaceId,
+            ['agency' => $firstAgencyId, 'actor' => $firstOwnerId, 'entry' => 'create'],
+            ['agency' => $secondAgencyId, 'actor' => $secondOwnerId, 'entry' => 'create'],
+        );
+    }
+
+    /**
+     * D. The two entry points share one uniqueness rule under real
+     * contention, not only sequentially: an Agency owner's product create()
+     * and a migration operator's createForMigration() racing for the same
+     * Client Workspace still leave exactly one Active relationship, the loser
+     * refused cleanly, and the winner's row recording whichever real actor
+     * won.
+     */
+    public function test_a_product_create_racing_a_migration_create_leaves_exactly_one_active_relationship(): void
+    {
+        [$productAgencyId, $productOwnerId] = $this->agencyWorkspace('Racing Product Agency');
+        [$migratedAgencyId] = $this->agencyWorkspace('Racing Migrated Agency');
+        $operatorUserId = $this->platformOperator();
+        $clientWorkspaceId = $this->clientWorkspace('Contested Migration Client');
+
+        $this->assertExactlyOneWinnerRacingFor(
+            $clientWorkspaceId,
+            ['agency' => $productAgencyId, 'actor' => $productOwnerId, 'entry' => 'create'],
+            ['agency' => $migratedAgencyId, 'actor' => $operatorUserId, 'entry' => 'migration'],
+        );
+    }
+
+    /**
+     * Races two child processes for $clientWorkspaceId behind a row lock the
+     * parent holds, releases them together, and asserts the contracted
+     * outcome.
+     *
+     * @param  array{agency: int, actor: int, entry: string}  $firstRacer
+     * @param  array{agency: int, actor: int, entry: string}  $secondRacer
+     */
+    private function assertExactlyOneWinnerRacingFor(int $clientWorkspaceId, array $firstRacer, array $secondRacer): void
+    {
         $runnerScript = __DIR__ . '/Support/concurrent_agency_client_relationship_runner.php';
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
 
@@ -342,12 +438,12 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
         $probe->beginTransaction();
 
         $first = new Process(
-            [$phpBinary, $runnerScript, (string) $firstAgencyId, (string) $clientWorkspaceId, (string) $firstOwnerId],
+            [$phpBinary, $runnerScript, (string) $firstRacer['agency'], (string) $clientWorkspaceId, (string) $firstRacer['actor'], $firstRacer['entry']],
             null,
             $this->childEnvironment(),
         );
         $second = new Process(
-            [$phpBinary, $runnerScript, (string) $secondAgencyId, (string) $clientWorkspaceId, (string) $secondOwnerId],
+            [$phpBinary, $runnerScript, (string) $secondRacer['agency'], (string) $clientWorkspaceId, (string) $secondRacer['actor'], $secondRacer['entry']],
             null,
             $this->childEnvironment(),
         );
@@ -420,12 +516,21 @@ class AgencyClientRelationshipConcurrencyTest extends TestCase
         $this->assertNotEmpty($loserMatch, 'The refused process did not name the Agency that beat it: ' . $loser->getOutput());
         $this->assertSame($winnerMatch[1], $loserMatch[1], 'The refused process must name the winner as the existing managing Agency.');
 
-        $this->assertSame(
-            (int) $winnerMatch[1],
-            (int) DB::table('agency_client_workspace_relationships')
-                ->where('client_workspace_id', $clientWorkspaceId)
-                ->value('agency_workspace_id'),
-        );
+        $row = DB::table('agency_client_workspace_relationships')
+            ->where('client_workspace_id', $clientWorkspaceId)
+            ->first();
+
+        $this->assertSame((int) $winnerMatch[1], (int) $row->agency_workspace_id);
+
+        // The row records the REAL actor of whichever racer won — the Agency
+        // owner for a product create, the operator for a migration create.
+        $winningRacer = (int) $winnerMatch[1] === $firstRacer['agency'] ? $firstRacer : $secondRacer;
+
+        preg_match('/established_by_user_id=(\d+)/', $winner->getOutput(), $actorMatch);
+
+        $this->assertNotEmpty($actorMatch, 'The winning process did not report who established the relationship: ' . $winner->getOutput());
+        $this->assertSame($winningRacer['actor'], (int) $actorMatch[1]);
+        $this->assertSame($winningRacer['actor'], (int) $row->established_by_user_id);
     }
 
     /**
