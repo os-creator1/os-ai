@@ -66,8 +66,10 @@ relationship table and writes to it only via Contract 07's orchestrator
 ## 6. Authority / security contract
 
 Identical to Contract 01 §6 / Contract 07 §6 (reused, not reimplemented):
-Agency owner or Agency Admin/Staff with the Agency-management permission
-may list/open/provision/View-As; anyone else is refused. The controller's
+Agency owner or an active Agency Admin/Staff member of that exact Agency
+Workspace — by membership alone, with no additional Agency-management
+permission (Contract 04 authority correction) — may list/open/provision/
+View-As; anyone else is refused. The controller's
 own job is limited to: resolving the current actor and their Agency
 Workspace, then delegating every authorization decision to the already-
 built manager classes — **the controller must contain no independent
@@ -114,8 +116,9 @@ assignment, Agency billing, and AgencyRebill configuration are Blueprint
 ## 13. Required tests
 
 `AgencyClientsHttpTest.php`: authorization matrix (mirrors Contract 01/07
-§6 exactly, at the HTTP layer — Agency owner/permitted-Staff succeed,
-unpermitted Staff/unrelated actors/Client-side actors refused);
+§6 exactly, at the HTTP layer — Agency owner/active Admin/active Staff
+succeed; inactive or cross-Agency members/unrelated actors/Client-side
+actors refused);
 list-shows-only-this-Agency's-clients (cross-Agency isolation); the View
 As entry point correctly starts a Contract 04 session and redirects into
 it.

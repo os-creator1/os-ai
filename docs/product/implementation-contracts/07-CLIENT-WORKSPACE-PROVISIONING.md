@@ -178,8 +178,8 @@ since none was ever created).
 | Actor | May send/revoke a client invitation | May accept an invitation |
 |---|---|---|
 | Agency Workspace owner | Yes | N/A — not the accepting party |
-| Active Agency Admin/Staff with Agency-management permission (Contract 01's authority method) | Yes — per the corrected Blueprint §2 rule (A1): provisioning is **not** owner-only, since Addendum §2 restricts only *termination* to the owner, not creation | N/A |
-| Agency Admin/Staff without the permission | No | N/A |
+| Active Agency Admin/Staff member of the exact Agency Workspace, by membership alone (Contract 01's `actorHasAgencyAuthority()`; no additional Agency-management permission) | Yes — per the corrected Blueprint §2 rule (A1): provisioning is **not** owner-only, since Addendum §2 restricts only *termination* to the owner, not creation | N/A |
+| Inactive Agency member, or a member of a different Agency Workspace only | No | N/A |
 | Anyone outside the Agency Workspace | No | N/A |
 | The invited person (any authenticated User, new or existing) | N/A | Yes, once authenticated per §5's flow — this is the **only** actor who can complete acceptance; the Agency cannot complete it on the client's behalf |
 

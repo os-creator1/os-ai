@@ -602,8 +602,9 @@ Agency's own Workspace.
 §2): provisioning a new client (creating their Client Workspace + Business
 + Primary Location and establishing the management relationship in one
 flow), viewing a relationship, and the entry point for **View As** and
-ordinary support/client-management actions. Any Agency team member with
-Agency-management permissions (§2, §26) — not only the owner — may open the
+ordinary support/client-management actions. Any active Agency team member
+(Admin or Staff of that Agency Workspace, §2, §26, by membership alone — no
+additional Agency-management permission) — not only the owner — may open the
 Clients list, view a linked client, View As it, and perform ordinary
 non-financial client management, gated on the relationship being active;
 every action is attributed to the real acting Agency user, never the
