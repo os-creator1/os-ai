@@ -2,6 +2,7 @@
 
     namespace App\Models;
 
+    use App\Enums\Business\BusinessLocationLifecycleState;
     use App\Library\Traits\HasUid;
     use Illuminate\Database\Eloquent\Model;
     use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -29,6 +30,7 @@
         protected $fillable = [
             'customer_id',
             'business_id',
+            'location_id',
             'group_id',
             'phone',
             'status',
@@ -54,6 +56,46 @@
         public function business(): BelongsTo
         {
             return $this->belongsTo(Business::class);
+        }
+
+        /**
+         * Implementation Contract 08B — the Location this Contact belongs
+         * to, when one could be proven. Null is an ordinary, expected value.
+         */
+        public function location(): BelongsTo
+        {
+            return $this->belongsTo(BusinessLocation::class, 'location_id');
+        }
+
+        /**
+         * Implementation Contract 08B §5 — the ONE definition of the
+         * single-Active-Location rule, shared by every live writer that has
+         * already proven a Business, mirroring
+         * ChatBox::singleActiveLocationIdFor() exactly (Contract 06). Kept
+         * as its own per-model copy rather than a shared cross-model
+         * helper, matching this codebase's existing precedent.
+         *
+         * Exactly one ACTIVE Location: that Location. Zero, several, or no
+         * Business at all: null. An archived Location is never chosen.
+         *
+         * ContactsLocationBackfillV1 deliberately keeps its own set-based
+         * copy of this rule, for the same reason ChatBoxLocationBackfillV1
+         * does.
+         */
+        public static function singleActiveLocationIdFor(?int $businessId): ?int
+        {
+            if ($businessId === null || $businessId <= 0) {
+                return null;
+            }
+
+            $locations = BusinessLocation::query()
+                ->where('business_id', $businessId)
+                ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+                ->orderBy('id')
+                ->limit(2)
+                ->pluck('id');
+
+            return $locations->count() === 1 ? (int) $locations->first() : null;
         }
 
         /**

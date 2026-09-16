@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Crm\CrmContactStatus;
 use App\Enums\Crm\CrmContactStatusSource;
 use App\Enums\Crm\CrmOpportunityStatus;
@@ -43,6 +44,7 @@ class CrmOpportunity extends Model
 
     protected $fillable = [
         'business_id',
+        'location_id',
         'pipeline_id',
         'stage_id',
         'contact_id',
@@ -80,6 +82,46 @@ class CrmOpportunity extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    /**
+     * Implementation Contract 08B — the Location this deal belongs to,
+     * when one could be proven. Null is an ordinary, expected value.
+     */
+    public function location(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'location_id');
+    }
+
+    /**
+     * Implementation Contract 08B §5 — the ONE definition of the
+     * single-Active-Location rule for this model, mirroring
+     * ChatBox::singleActiveLocationIdFor() exactly (Contract 06). Never
+     * derives from the linked Contact's own Location: this stays a direct
+     * structural mirror of the established pattern rather than inventing
+     * a new inference rule.
+     *
+     * Exactly one ACTIVE Location: that Location. Zero, several, or no
+     * Business at all: null. An archived Location is never chosen.
+     *
+     * CrmOpportunityLocationBackfillV1 deliberately keeps its own
+     * set-based copy of this rule, for the same reason
+     * ChatBoxLocationBackfillV1 does.
+     */
+    public static function singleActiveLocationIdFor(?int $businessId): ?int
+    {
+        if ($businessId === null || $businessId <= 0) {
+            return null;
+        }
+
+        $locations = BusinessLocation::query()
+            ->where('business_id', $businessId)
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->orderBy('id')
+            ->limit(2)
+            ->pluck('id');
+
+        return $locations->count() === 1 ? (int) $locations->first() : null;
     }
 
     public function pipeline(): BelongsTo
