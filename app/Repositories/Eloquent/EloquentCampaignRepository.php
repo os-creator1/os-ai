@@ -121,8 +121,20 @@
          * Failure is a 404, matching the rest of this codebase's tenancy
          * boundary, so a probe learns nothing about whether the Business
          * exists.
+         *
+         * `conversation_business_id` is checked separately and more strictly
+         * — see assertConversationBusinessIsAuthorized().
          */
         private function assertSuppliedTenancyIsAuthorized(array $input): void
+        {
+            $this->assertSuppliedBusinessIsAuthorized($input);
+            $this->assertConversationBusinessIsAuthorized($input);
+        }
+
+        /**
+         * `business_id` — semantics unchanged from Customer Experience Slice 3.
+         */
+        private function assertSuppliedBusinessIsAuthorized(array $input): void
         {
             $businessId = $input['business_id'] ?? null;
 
@@ -149,6 +161,81 @@
             if ($suppliedUserId !== null) {
                 abort_unless(
                     (int) $suppliedUserId === (int) ($business->customer?->user_id),
+                    404,
+                );
+            }
+        }
+
+        /**
+         * Contract 06 — `conversation_business_id`, the INTERNAL secondary
+         * conversation-identity channel.
+         *
+         * Only DLRController's keyword/welcome auto-replies set it, from the
+         * Business the receiving number proved, so an auto-reply joins the
+         * inbound thread without `business_id`'s transport, blacklist and
+         * sending-server consequences. quickSend() keys the two-way
+         * conversation on it and derives the conversation's Location from
+         * it, so it is exactly as tenancy-bearing as `business_id` and is
+         * never trusted merely because the numeric id exists. Customer HTTP
+         * payloads cannot carry it (CampaignController::tenantSafeInput()
+         * strips it); this is the check that holds for every other caller.
+         *
+         * When present (non-null), ALL of:
+         *
+         *   1. it names a real Business;
+         *   2. the send's own `user` is a persisted User that OWNS that
+         *      Business (`businesses.customer_id`). DLR passes the receiving
+         *      number's customer, which it already proved owns the Business,
+         *      so the legitimate auto-reply passes — and unlike `business_id`
+         *      this holds with NO authenticated actor too, because the
+         *      auto-reply's normal context is an unauthenticated webhook;
+         *   3. an authenticated actor, if any, may access that Business
+         *      through WorkspaceManager — the same authority `business_id`
+         *      uses;
+         *   4. alongside `business_id`, both name the same Business.
+         *      `business_id` stays the canonical Business input; the secondary
+         *      key may never point somewhere else.
+         *
+         * Any failure is the same tenancy-safe 404, before anything is sent
+         * or written.
+         */
+        private function assertConversationBusinessIsAuthorized(array $input): void
+        {
+            $suppliedConversationBusinessId = $input['conversation_business_id'] ?? null;
+
+            if ($suppliedConversationBusinessId === null) {
+                return;
+            }
+
+            $conversationBusinessId = filter_var($suppliedConversationBusinessId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+            abort_if($conversationBusinessId === false, 404);
+
+            $businessId = $input['business_id'] ?? null;
+
+            if ($businessId !== null) {
+                abort_unless(
+                    filter_var($businessId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === $conversationBusinessId,
+                    404,
+                );
+            }
+
+            $business = \App\Models\Business::query()->find($conversationBusinessId);
+
+            abort_if($business === null, 404);
+
+            $user = $input['user'] ?? null;
+
+            abort_unless(
+                $user instanceof User && $user->exists && (int) $user->getKey() === (int) $business->customer_id,
+                404,
+            );
+
+            $actorId = Auth::id();
+
+            if ($actorId !== null) {
+                abort_unless(
+                    app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $actorId, $business),
                     404,
                 );
             }
@@ -737,9 +824,11 @@
                         // Orientation is the domain one: `from` is the
                         // Business's own sender identity, `to` the typed
                         // recipient.
+                        $conversationBusinessId = $input['business_id'] ?? $input['conversation_business_id'] ?? null;
+
                         $chatbox = ChatBox::firstOrNew([
                             'user_id'           => $user->id,
-                            'business_id'       => $input['business_id'] ?? $input['conversation_business_id'] ?? null,
+                            'business_id'       => $conversationBusinessId,
                             'from'              => $sender_id,
                             'to'                => $phone,
                             'sending_server_id' => $sending_server->id,
@@ -756,6 +845,19 @@
                             // blank uids the moment a two-way quick send runs.
                             $chatbox->uid = (string) Str::uuid();
                             $chatbox->reply_by_customer = false;
+
+                            // Contract 06 §5 — Location attribution for a
+                            // conversation this send is OPENING. Only the
+                            // Business the caller already supplied can yield
+                            // one, and only when it has exactly one active
+                            // Location; a caller that supplied no Business
+                            // gets NULL, and none is derived from the actor to
+                            // obtain a Location. An existing thread keeps the
+                            // Location it was opened with.
+                            $chatbox->location_id = ChatBox::singleActiveLocationIdFor(
+                                $conversationBusinessId === null ? null : (int) $conversationBusinessId,
+                            );
+
                             $chatbox->save();
                         }
 
@@ -1478,14 +1580,34 @@
                         // Contacts is deliberately not followed: it does not
                         // produce a valid UUID and it is not what a char(36)
                         // column is shaped for.
+                        // Contract 06 §5, site 4 — this branch runs ONLY while
+                        // `$outreachBusinessId === null`, so the insert writes
+                        // no `business_id` and there is no Business to resolve
+                        // a Location from. `location_id` is therefore written
+                        // as an explicit NULL: stated at the write site rather
+                        // than left implied by omission, because the honest
+                        // answer here is "unattributed", not "not yet
+                        // implemented".
+                        //
+                        // Nothing may stand in for the missing evidence — not
+                        // the user's primary Business, not a Business inferred
+                        // from the contact or its group, not a Location
+                        // borrowed from another Business this user owns. A
+                        // Business the user happens to own elsewhere is not
+                        // evidence about THIS conversation, and a wrong
+                        // Location would surface a legacy prospecting thread
+                        // inside a real Location's inbox once Contract 08B
+                        // lands. The column is nullable precisely so these
+                        // rows can stay unattributed.
                         $boxId = DB::table('chat_boxes')->insertGetId([
-                            'uid'        => (string) Str::uuid(),
-                            'user_id'    => $user->id,
-                            'to'         => $phone,
-                            'from'       => $sender_id[0] ?? null,
-                            'ai_stage'   => 1, // THIS is what makes "Stage 1" count
-                            'created_at' => now(),
-                            'updated_at' => now(),
+                            'uid'         => (string) Str::uuid(),
+                            'user_id'     => $user->id,
+                            'location_id' => null,
+                            'to'          => $phone,
+                            'from'        => $sender_id[0] ?? null,
+                            'ai_stage'    => 1, // THIS is what makes "Stage 1" count
+                            'created_at'  => now(),
+                            'updated_at'  => now(),
                         ]);
 
                         $boxIds[] = $boxId;

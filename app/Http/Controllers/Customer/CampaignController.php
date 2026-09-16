@@ -99,6 +99,14 @@
          * and the repository's own fail-closed check (added alongside this)
          * is what catches a caller that bypasses the controller entirely.
          *
+         * `conversation_business_id` is stripped for the same reason (Contract
+         * 06). It is INTERNAL conversation-identity metadata: only
+         * DLRController's keyword/welcome auto-replies set it, from the
+         * Business the receiving number already proved. quickSend() files the
+         * two-way conversation — and, since Contract 06, derives its Location
+         * — from it, so a browser that could supply it could open a thread
+         * inside another tenant's Business. No customer payload may carry it.
+         *
          * @param list<string> $except further keys this caller strips for its
          *                             own reasons, unrelated to tenancy
          *
@@ -106,7 +114,7 @@
          */
         private function tenantSafeInput(Request $request, array $except = []): array
         {
-            return $request->except(array_merge(['_token', 'business_id', 'user_id'], $except));
+            return $request->except(array_merge(['_token', 'business_id', 'user_id', 'conversation_business_id'], $except));
         }
 
         /**

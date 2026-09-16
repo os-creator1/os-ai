@@ -939,6 +939,11 @@
                 // receiving number and `to` the external sender, exactly as
                 // an outbound send writes them — so the contact's reply and
                 // the Business's send converge on one thread.
+                //
+                // `location_id` is deliberately NOT part of the match keys:
+                // the conversation's identity is (customer, Business, from,
+                // to), and adding Location to it would fork one real thread
+                // into two the day a Business's Location count changes.
                 $chatBox = ChatBox::firstOrNew([
                     'user_id'     => $user_id,
                     'business_id' => $conversationBusinessId,
@@ -948,6 +953,21 @@
 
                 if (! $chatBox->exists) {
                     $chatBox->uid = (string) Str::uuid();
+
+                    // Contract 06 §5 — Location attribution, alongside the
+                    // Business resolution above and never instead of it. Only
+                    // a Business that was actually proven above can yield
+                    // one, and only when it has exactly one active Location;
+                    // anything else stays NULL, the same discipline
+                    // `business_id` itself follows here. The receiving number
+                    // cannot narrow it further: `business_messaging_numbers`
+                    // carries no Location yet (contract §3).
+                    //
+                    // Decided only when the conversation is opened. An
+                    // existing thread keeps the Location it was opened with:
+                    // re-resolving here would silently re-file a live
+                    // conversation the day a second Location is activated.
+                    $chatBox->location_id = ChatBox::singleActiveLocationIdFor($conversationBusinessId);
                 }
 
                 $chatBox->reply_by_customer = true;

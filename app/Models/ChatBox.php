@@ -2,6 +2,7 @@
 
     namespace App\Models;
 
+    use App\Enums\Business\BusinessLocationLifecycleState;
     use App\Library\Business\Migration\ChatBoxBusinessBackfillV1;
     use App\Library\Traits\HasUid;
     use Illuminate\Database\Eloquent\Model;
@@ -26,6 +27,12 @@
      * route. Messages inherit tenancy from this row and carry no business_id
      * of their own.
      *
+     * LOCATION (Contract 06). `location_id` is nullable for exactly the same
+     * reason and follows the same discipline: it is set only where the
+     * evidence proves it, and stays NULL — never guessed — wherever it does
+     * not. See singleActiveLocationIdFor() for the one rule every live writer
+     * shares.
+     *
      * @method static where(string $string, string $uid)
      * @method static create(array $array)
      */
@@ -36,6 +43,7 @@
         protected $fillable = [
             'user_id',
             'business_id',
+            'location_id',
             'from',
             'to',
             'notification',
@@ -75,6 +83,55 @@
         public function business(): BelongsTo
         {
             return $this->belongsTo(Business::class);
+        }
+
+        /**
+         * Contract 06 — the Location this conversation belongs to, when one
+         * could be proven. Null is an ordinary, expected value.
+         */
+        public function location(): BelongsTo
+        {
+            return $this->belongsTo(BusinessLocation::class, 'location_id');
+        }
+
+        /**
+         * Contract 06 §5 — the ONE definition of the single-Active-Location
+         * rule, shared by every live writer that has already proven a Business
+         * (the inbound DLR path, the managed conversation writer, and
+         * quickSend()'s two-way path), so the three cannot drift apart.
+         *
+         * Exactly one ACTIVE Location: that Location. Zero, several, or no
+         * Business at all: null. An archived Location is never chosen — it is
+         * not somewhere a conversation can be happening now — and "several"
+         * is never resolved by picking the primary or the lowest id, because
+         * `business_messaging_numbers` carries no Location today (contract
+         * §3's flagged gap), so there is no evidence which of them a number
+         * belongs to. A wrong Location would show one Location's staff
+         * another's conversation once Contract 08B lands; NULL shows it to
+         * neither.
+         *
+         * The Business is never derived here: a caller that has not proven one
+         * passes null and gets null back.
+         *
+         * ChatBoxLocationBackfillV1 deliberately keeps its own set-based copy
+         * of this rule: a shipped backfill's behaviour is frozen at the
+         * version that ran, and it resolves whole chunks rather than one row
+         * at a time.
+         */
+        public static function singleActiveLocationIdFor(?int $businessId): ?int
+        {
+            if ($businessId === null || $businessId <= 0) {
+                return null;
+            }
+
+            $locations = BusinessLocation::query()
+                ->where('business_id', $businessId)
+                ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+                ->orderBy('id')
+                ->limit(2)
+                ->pluck('id');
+
+            return $locations->count() === 1 ? (int) $locations->first() : null;
         }
 
         public function boxMessages()
