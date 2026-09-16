@@ -71,6 +71,7 @@ class CrmOpportunityService
 
             $opportunity = CrmOpportunity::create([
                 'business_id' => $business->id,
+                'location_id' => CrmOpportunity::singleActiveLocationIdFor($business->id),
                 'pipeline_id' => $pipeline->id,
                 'stage_id' => $stage->id,
                 'contact_id' => $contact->id,

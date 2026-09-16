@@ -1224,9 +1224,12 @@ $chatBox->touch();
                             $blacklist?->delete();
 
                             if ( ! $exist) {
+                                $resolvedBusinessId = app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id;
+
                                 $data = Contacts::create([
                                     'customer_id' => $user_id,
-                                    'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
+                                    'business_id' => $resolvedBusinessId,
+                                    'location_id' => Contacts::singleActiveLocationIdFor($resolvedBusinessId),
                                     'group_id'    => $contact->id,
                                     'phone'       => $to,
                                     'status'      => 'subscribe',

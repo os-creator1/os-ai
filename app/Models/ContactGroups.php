@@ -845,10 +845,12 @@
                     // Insert new subscribers from temp table to the main table
                     // Use SUBSTRING(MD5(UUID()), 1, 13) to produce a UNIQUE ID which is similar to the output of PHP uniqid()
                     // @TODO LIMITATION: tags are not updated if subscribers already exist
+                    $locationId = Contacts::singleActiveLocationIdFor($this->business_id !== null ? (int) $this->business_id : null);
+
                     $insertToSubscribersSql = strtr(
                         '
-                    INSERT INTO %contacts (uid, customer_id, business_id ,group_id, phone, status, created_at, updated_at)
-                    SELECT SUBSTRING(MD5(UUID()), 1, 13), %customer_id, %business_id, %list_id, uniq.phone, %status, NOW(), NOW()
+                    INSERT INTO %contacts (uid, customer_id, business_id, location_id ,group_id, phone, status, created_at, updated_at)
+                    SELECT SUBSTRING(MD5(UUID()), 1, 13), %customer_id, %business_id, %location_id, %list_id, uniq.phone, %status, NOW(), NOW()
                     FROM (
                         SELECT tmp.%phone_field AS phone, tmp.tags
                         FROM %tmp tmp
@@ -858,6 +860,7 @@
                             '%contacts'    => Helper::table('contacts'),
                             '%customer_id' => $this->customer->id,
                             '%business_id' => $this->business_id !== null ? (int) $this->business_id : 'NULL',
+                            '%location_id' => $locationId !== null ? (int) $locationId : 'NULL',
                             '%list_id'     => $this->id,
                             '%status'      => Helper::db_quote('subscribe'),
                             '%tmp'         => $tmpTable,

@@ -15,6 +15,7 @@
     use App\Library\Navigation\CustomerContext;
     use App\Library\Timeline\ContactActivityTimeline;
     use App\Library\Tool;
+    use App\Library\Workspace\LocationAccessGuard;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
     use App\Models\Business;
@@ -1512,6 +1513,16 @@
          * A foreign conversation, a NULL-business legacy one and a uid that
          * does not exist are all the same 404. A numeric primary key cannot
          * stand in for the uid: it is compared against `uid` only.
+         *
+         * Implementation Contract 08B — Location ACL. A conversation with a
+         * proven `location_id` (Contract 06) is additionally re-checked
+         * against LocationAccessGuard, re-derived from persistence, never
+         * from a route/client-supplied value. A NULL `location_id` is never
+         * guessed and never gates access on its own — the actor's own
+         * Business-level access, already confirmed by resolveBusiness(),
+         * governs exactly as it did before this contract. A denial here
+         * folds into the same null-return, single 404 shape as every other
+         * tenancy failure in this chain.
          */
         private function resolveBusinessChatBox(Business $business, string $uid): ?ChatBox
         {
@@ -1520,9 +1531,21 @@
                 ->where('business_id', $business->id)
                 ->first();
 
+            if ($box === null) {
+                return null;
+            }
+
             // The Business is already resolved and authorised; set it on the
             // relation so callers never re-read it by a second route.
-            $box?->setRelation('business', $business);
+            $box->setRelation('business', $business);
+
+            if ($box->location_id !== null) {
+                $location = $box->location;
+
+                if ($location === null || ! app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location)) {
+                    return null;
+                }
+            }
 
             return $box;
         }

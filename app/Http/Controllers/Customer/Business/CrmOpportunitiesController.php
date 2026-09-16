@@ -12,6 +12,7 @@ use App\Library\Crm\CrmBoardFilters;
 use App\Library\Crm\CrmMoney;
 use App\Library\Crm\CrmOpportunityService;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\CrmOpportunity;
 use App\Models\CrmPipeline;
@@ -256,9 +257,29 @@ class CrmOpportunitiesController extends CustomerBaseController
         return $business;
     }
 
+    /**
+     * Implementation Contract 08B — Location ACL. A deal with a proven
+     * `location_id` is additionally re-checked against LocationAccessGuard,
+     * re-derived from persistence, never a route-supplied value. A NULL
+     * `location_id` is never guessed and never gates access on its own —
+     * the actor's own Business-level access, already confirmed by
+     * business(), governs exactly as it did before this contract. A denial
+     * folds into the same 404 every other tenancy failure in this
+     * controller already uses.
+     */
     private function opportunity(Business $business, string $uid): CrmOpportunity
     {
-        return CrmOpportunity::query()->where('business_id', $business->id)->where('uid', $uid)->first() ?? abort(404);
+        $opportunity = CrmOpportunity::query()->where('business_id', $business->id)->where('uid', $uid)->first() ?? abort(404);
+
+        if ($opportunity->location_id !== null) {
+            $location = $opportunity->location;
+
+            if ($location === null || ! app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location)) {
+                abort(404);
+            }
+        }
+
+        return $opportunity;
     }
 
     private function pipeline(Business $business, string $uid): CrmPipeline

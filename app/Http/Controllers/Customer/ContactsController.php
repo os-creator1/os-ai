@@ -14,6 +14,7 @@
     use App\Library\Entitlement\CustomerAccountAccessGuard;
     use App\Library\StringHelper;
     use App\Library\Tool;
+    use App\Library\Workspace\LocationAccessGuard;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
     use App\Models\Business;
@@ -150,6 +151,32 @@
             abort_if($decision->isLocked(), 403, $decision->message ?? 'Your account is not currently active.');
 
             return $contact;
+        }
+
+        /**
+         * Implementation Contract 08B — Location ACL for a single, already
+         * tenancy-verified Contact. A Contact with a proven `location_id`
+         * is re-checked against LocationAccessGuard, re-derived from
+         * persistence, never from a route/client-supplied value. A NULL
+         * `location_id` is never guessed and never denies on its own — the
+         * actor's existing Business/customer-level access, already
+         * confirmed by resolveOwnedContactGroup(), governs exactly as it
+         * did before this contract.
+         */
+        private function locationAccessible(?Contacts $subscriber): bool
+        {
+            if ($subscriber === null) {
+                return false;
+            }
+
+            if ($subscriber->location_id === null) {
+                return true;
+            }
+
+            $location = $subscriber->location;
+
+            return $location !== null
+                && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
         }
 
         /**
@@ -920,7 +947,15 @@
             $this->authorize('update_contact');
 
             $check_contact = Contacts::where('group_id', $contact->id)->where('uid', $request->input('id'))->first();
-            $blacklist     = Blacklists::where('user_id', Auth::user()->id)->where('number', $check_contact->phone)->first();
+
+            if (! $this->locationAccessible($check_contact)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ]);
+            }
+
+            $blacklist = Blacklists::where('user_id', Auth::user()->id)->where('number', $check_contact->phone)->first();
 
             if ($blacklist && $check_contact->status == 'unsubscribe') {
                 return response()->json([
@@ -962,6 +997,15 @@
 
             $this->authorize('delete_contact');
 
+            $subscriber = Contacts::where('group_id', $contact->id)->where('uid', $request->input('id'))->first();
+
+            if (! $this->locationAccessible($subscriber)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ]);
+            }
+
             $status = $this->contactGroups->contactDestroy($contact, $request->input('id'));
 
             if ($status) {
@@ -991,7 +1035,7 @@
             $this->authorize('update_contact');
 
             $subscriber = Contacts::where('group_id', $contact->id)->where('customer_id', Auth::user()->id)->where('uid', $request->input('contact_id'))->first();
-            if ($subscriber) {
+            if ($subscriber && $this->locationAccessible($subscriber)) {
 
                 $breadcrumbs = [
                     ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -1043,7 +1087,7 @@
 
             $subscriber = Contacts::where('group_id', $contact->id)->where('customer_id', Auth::user()->id)->where('uid', $request->input('contact_id'))->first();
 
-            if ( ! $subscriber) {
+            if ( ! $subscriber || ! $this->locationAccessible($subscriber)) {
                 return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.contact_not_found'),
@@ -1129,10 +1173,11 @@
                     ->pluck('number')
                     ->toArray();
                 $processed     = 0;
+                $locationId    = Contacts::singleActiveLocationIdFor($contact->business_id);
 
                 collect($recipients)->unique()
                     ->chunk('250')
-                    ->each(function ($lines) use ($contact, $phone_numbers, $blacklists, &$processed) {
+                    ->each(function ($lines) use ($contact, $phone_numbers, $blacklists, $locationId, &$processed) {
                         $list = [];
                         foreach ($lines as $line) {
                             $phone = str_replace(['(', ')', '+', '-', ' '], '', $line);
@@ -1153,6 +1198,7 @@
                                         'uid'         => uniqid(),
                                         'customer_id' => Auth::user()->id,
                                         'business_id' => $contact->business_id,
+                                        'location_id' => $locationId,
                                         'group_id'    => $contact->id,
                                         'status'      => 'subscribe',
                                         'phone'       => $phone,

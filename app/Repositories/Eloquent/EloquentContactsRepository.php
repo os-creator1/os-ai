@@ -251,6 +251,7 @@
                     $contact = Contacts::create([
                         'customer_id' => $contactGroups->customer_id,
                         'business_id' => $contactGroups->business_id,
+                        'location_id' => Contacts::singleActiveLocationIdFor($contactGroups->business_id),
                         'group_id'    => $contactGroups->id,
                         'phone'       => $phone,
                         'status'      => 'subscribe',
@@ -718,10 +719,21 @@
                 return [$validator, null];
             }
 
+            $isNewSubscriber = ! $subscriber->exists;
+
             $subscriber->group_id    = $contactGroups->id;
             $subscriber->customer_id = $contactGroups->customer_id;
             $subscriber->business_id = $contactGroups->business_id;
             $subscriber->status      = 'subscribe';
+
+            if ($isNewSubscriber) {
+                // firstOrNew() matched no existing row: a genuinely new
+                // Contact, so its Location is resolved now, once, from the
+                // group's own Business. An existing (re-saved) subscriber
+                // keeps whatever location_id it already has.
+                $subscriber->location_id = Contacts::singleActiveLocationIdFor($contactGroups->business_id);
+            }
+
             $subscriber->save();
 
             $subscriber->updateFields($input);
