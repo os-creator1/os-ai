@@ -36,8 +36,16 @@ class BusinessScopedRequestQueryBudgetTest extends TestCase
      * toward 29 means a duplicate shared read came back; a number lower
      * than this is a welcome surprise, never a failure — only growth is
      * pinned as a hard ceiling below.
+     *
+     * 18 -> 19 (Contract 05, Agency non-payment composition): the customer
+     * access gate's CustomerAccountAccessResolver::resolve() now makes ONE
+     * read of agency_client_workspace_relationships, to learn whether a
+     * managing Agency's own lock also applies to this Workspace. That is a
+     * new, necessary read on every gated request, not a duplicate of any
+     * existing one — the at-most-once test below still holds for every
+     * shared table.
      */
-    private const OBSERVED_QUERY_COUNT = 18;
+    private const OBSERVED_QUERY_COUNT = 19;
 
     /**
      * The ORIGINAL, pre-optimization observed cost, kept only as the
