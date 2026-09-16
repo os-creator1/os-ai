@@ -176,6 +176,70 @@ class AgencyClientRelationshipManagerTest extends TestCase
         return $customer->user->fresh();
     }
 
+    /**
+     * One global User that is BOTH an admin-panel account and a customer
+     * (is_admin and is_customer), with a customer permission list and an
+     * admin Role that are set independently — so a test can put the platform
+     * permission in exactly one of the two permission domains.
+     *
+     * @param  array<int, string>  $customerPermissions
+     */
+    private function dualAdminCustomer(bool $roleHoldsPlatformPermission, array $customerPermissions = []): User
+    {
+        $customer = $this->createCustomer();
+        $customer->permissions = json_encode($customerPermissions);
+        $customer->save();
+
+        $user = $customer->user;
+        $user->is_admin = true;
+        $user->save();
+
+        $role = Role::create(['name' => 'dual-role-' . uniqid('', true), 'status' => 1]);
+        $role->permissions()->create(['name' => 'view workspace']);
+
+        if ($roleHoldsPlatformPermission) {
+            $role->permissions()->create(['name' => AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION]);
+        }
+
+        $user->roles()->attach($role->id);
+
+        $user = $user->fresh();
+
+        $this->assertTrue($user->is_admin);
+        $this->assertTrue($user->is_customer);
+
+        return $user;
+    }
+
+    /**
+     * The repository's user-id-1 super admin. setUp() normally claims id 1
+     * for the platform administrator, but auto-increment ids are not reset
+     * between RefreshDatabase tests, so the row is created with id 1
+     * explicitly when this test's transaction does not already hold it.
+     */
+    private function superAdmin(): User
+    {
+        $existing = User::query()->find(1);
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $user = new User([
+            'first_name' => 'Super',
+            'last_name' => 'Admin',
+            'email' => 'super-admin-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+        $user->id = 1;
+        $user->save();
+
+        return $user->fresh();
+    }
+
     /** A customer User owning nothing relevant, holding the management permission anyway. */
     private function outsiderHoldingThePermission(): User
     {
@@ -337,11 +401,13 @@ class AgencyClientRelationshipManagerTest extends TestCase
 
     /**
      * Addendum §10's posture — an administrator never originates on a
-     * customer's behalf — applied symmetrically to normal product creation,
-     * including for the admin who may legitimately TERMINATE one or establish
-     * one through the separate operator-run migration entry point.
+     * customer's behalf — applied symmetrically to normal product creation:
+     * platform status alone grants nothing, including for the admin who may
+     * legitimately TERMINATE one or establish one through the separate
+     * operator-run migration entry point. (A User who is ALSO genuinely the
+     * Agency owner or a permitted member is covered separately.)
      */
-    public function test_no_admin_panel_user_may_ever_establish_a_relationship(): void
+    public function test_platform_status_alone_never_establishes_a_relationship_through_normal_create(): void
     {
         [$agency] = $this->agency();
         [$client] = $this->workspaceOn();
@@ -783,6 +849,197 @@ class AgencyClientRelationshipManagerTest extends TestCase
         $endedByPlatform = $this->manager()->terminate((int) $operator->id, $second, 'Platform ended a migrated client.');
         $this->assertSame(AgencyClientRelationshipStatus::Terminated, $endedByPlatform->status);
         $this->assertSame((int) $operator->id, (int) $endedByPlatform->terminated_by_user_id);
+    }
+
+    // ------------------------------------------------------------------
+    // Platform relationship authority reads ADMIN Role permissions directly
+    // (Contract 01 §6) — never the generic mixed-account Gate's choice of
+    // session, customer, or Role permission source
+    // ------------------------------------------------------------------
+
+    /**
+     * A. A dual admin+customer account whose admin Role genuinely holds the
+     * permission is a platform operator — even though the generic Gate,
+     * which resolves a customer account's own permission list first, says
+     * otherwise.
+     */
+    public function test_a_dual_admin_customer_whose_admin_role_holds_the_permission_may_migrate(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+        $operator = $this->dualAdminCustomer(roleHoldsPlatformPermission: true, customerPermissions: ['access_backend']);
+
+        $this->assertFalse(
+            Gate::forUser($operator)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the generic Gate reads this dual account\'s customer list and misses the genuine Role grant.'
+        );
+
+        $relationship = $this->manager()->createForMigration((int) $operator->id, $agency, $client);
+
+        $this->assertSame(AgencyClientRelationshipStatus::Active, $relationship->status);
+        $this->assertSame((int) $operator->id, (int) $relationship->established_by_user_id);
+    }
+
+    /**
+     * B. The same dual account shape, but the permission text lives only in
+     * the CUSTOMER's stored permission list — which the generic Gate would
+     * accept — and not in any admin Role: not a platform operator.
+     */
+    public function test_a_dual_admin_customer_with_the_permission_only_in_customer_permissions_cannot_migrate(): void
+    {
+        [$agency] = $this->agency();
+        [$client] = $this->workspaceOn();
+        $impostor = $this->dualAdminCustomer(
+            roleHoldsPlatformPermission: false,
+            customerPermissions: [AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION],
+        );
+
+        $this->assertTrue(
+            Gate::forUser($impostor)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the generic Gate would be satisfied by the customer list alone.'
+        );
+
+        $this->assertRefusesToCreateForMigration($impostor, $agency, $client);
+    }
+
+    /** C. The same customer-list-only dual account cannot terminate on the platform's behalf either. */
+    public function test_a_dual_admin_customer_with_the_permission_only_in_customer_permissions_cannot_terminate(): void
+    {
+        $relationship = $this->established();
+        $impostor = $this->dualAdminCustomer(
+            roleHoldsPlatformPermission: false,
+            customerPermissions: [AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION],
+        );
+
+        $this->assertTrue(Gate::forUser($impostor)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION));
+
+        $this->assertRefusesToTerminate($impostor, $relationship);
+    }
+
+    /**
+     * D. A session permission list naming the permission — which the generic
+     * Gate resolves before anything else — grants no platform relationship
+     * authority to an admin whose Role does not hold it.
+     */
+    public function test_session_permissions_naming_it_grant_no_platform_relationship_authority(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+        [$otherClient] = $this->workspaceOn(null, 'Other Client');
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $otherClient);
+        $admin = $this->adminPanelUser(withPlatformPermission: false);
+
+        session()->put('permissions', collect([AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION]));
+
+        $this->assertTrue(
+            Gate::forUser($admin)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the generic Gate would be satisfied by the session list alone.'
+        );
+
+        $this->assertRefusesToCreateForMigration($admin, $agency, $client);
+        $this->assertRefusesToTerminate($admin, $relationship);
+    }
+
+    /**
+     * E. The genuine admin Role grant is sufficient on its own, even when the
+     * session and customer permission lists — which the generic Gate would
+     * consult first — do not carry it.
+     */
+    public function test_the_admin_role_permission_grants_authority_when_session_and_customer_lists_lack_it(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+        [$otherClient] = $this->workspaceOn(null, 'Other Client');
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $otherClient);
+        $operator = $this->dualAdminCustomer(roleHoldsPlatformPermission: true, customerPermissions: ['access_backend']);
+
+        session()->put('permissions', collect(['access_backend', 'view workspace']));
+
+        $this->assertFalse(
+            Gate::forUser($operator)->allows(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the generic Gate reads the session list and misses the genuine Role grant.'
+        );
+
+        $migrated = $this->manager()->createForMigration((int) $operator->id, $agency, $client);
+        $this->assertSame((int) $operator->id, (int) $migrated->established_by_user_id);
+
+        $terminated = $this->manager()->terminate((int) $operator->id, $relationship, 'Platform intervention.');
+        $this->assertSame(AgencyClientRelationshipStatus::Terminated, $terminated->status);
+        $this->assertSame((int) $operator->id, (int) $terminated->terminated_by_user_id);
+    }
+
+    /**
+     * F. User id 1 keeps the repository's existing super-admin convention for
+     * platform relationship authority without holding any Role — but only
+     * while it is still an admin account.
+     */
+    public function test_user_id_1_keeps_super_admin_platform_authority_only_while_an_admin(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        [$client] = $this->workspaceOn();
+        [$terminableClient] = $this->workspaceOn(null, 'Terminable Client');
+        [$laterClient] = $this->workspaceOn(null, 'Later Client');
+        $relationship = $this->manager()->create((int) $agencyOwner->id, $agency, $terminableClient);
+
+        $superAdmin = $this->superAdmin();
+
+        $this->assertSame(1, (int) $superAdmin->id);
+        $this->assertTrue($superAdmin->is_admin);
+        $this->assertFalse(
+            $superAdmin->getPermissions()->contains(AgencyClientRelationshipManager::PLATFORM_RELATIONSHIP_PERMISSION),
+            'Precondition: the super admin holds no Role grant, so only the id-1 convention can authorize it.'
+        );
+
+        $migrated = $this->manager()->createForMigration(1, $agency, $client);
+        $this->assertSame(1, (int) $migrated->established_by_user_id);
+
+        $terminated = $this->manager()->terminate(1, $relationship, 'Super admin intervention.');
+        $this->assertSame(1, (int) $terminated->terminated_by_user_id);
+
+        // No longer an admin account: the id-1 convention no longer applies.
+        DB::table('users')->where('id', 1)->update(['is_admin' => false]);
+
+        $this->assertRefusesToCreateForMigration(User::query()->find(1), $agency, $laterClient);
+    }
+
+    /**
+     * Normal create() for a dual-role User: platform status adds nothing and
+     * erases nothing. The same admin+customer account — whose admin Role even
+     * holds the platform permission — creates through genuine Agency
+     * ownership, creates through genuine permitted Agency membership, and is
+     * refused on an Agency where it has neither.
+     */
+    public function test_a_dual_role_user_may_create_only_through_genuine_agency_authority(): void
+    {
+        $dual = $this->dualAdminCustomer(
+            roleHoldsPlatformPermission: true,
+            customerPermissions: [AgencyClientRelationshipManager::MANAGE_PERMISSION],
+        );
+
+        // Genuine Agency owner.
+        $ownedAgency = $this->createWorkspace($dual, ['name' => 'Dual-owned Agency']);
+        $this->assignTier($ownedAgency, WorkspacePlanTier::Agency);
+        [$ownedClient] = $this->workspaceOn(null, 'Client of the dual owner');
+
+        $byOwnership = $this->manager()->create((int) $dual->id, $ownedAgency->fresh(), $ownedClient);
+        $this->assertSame((int) $dual->id, (int) $byOwnership->established_by_user_id);
+
+        // Genuine, permitted, active member of someone else's Agency.
+        [$memberAgency] = $this->agency('Agency the dual user works for');
+        $this->createMembership($memberAgency, $dual, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+        [$memberClient] = $this->workspaceOn(null, 'Client worked by the dual member');
+
+        $byMembership = $this->manager()->create((int) $dual->id, $memberAgency, $memberClient);
+        $this->assertSame((int) $dual->id, (int) $byMembership->established_by_user_id);
+
+        // No ownership and no membership: platform status buys nothing.
+        [$strangerAgency] = $this->agency('Unrelated Agency');
+        [$strangerClient] = $this->workspaceOn(null, 'Unrelated Client');
+
+        $this->assertRefusesToCreate($dual, $strangerAgency, $strangerClient);
     }
 
     // ------------------------------------------------------------------

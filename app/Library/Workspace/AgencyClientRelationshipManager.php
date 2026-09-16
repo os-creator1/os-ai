@@ -67,8 +67,9 @@ class AgencyClientRelationshipManager
      * relationship on the platform's behalf, and establishing one through
      * the operator-run migration primitive. Registered in
      * config/permissions.php — the ADMIN registry, distinct from the
-     * customer one above — and resolved through the same Role/Permission/
-     * RoleUser RBAC every other admin capability already uses.
+     * customer one above — and read directly from the acting account's admin
+     * Role permissions (Role/Permission/RoleUser), never through the generic
+     * mixed-account Gate; see isPlatformRelationshipOperator().
      */
     public const PLATFORM_RELATIONSHIP_PERMISSION = 'manage agency relationships';
 
@@ -85,12 +86,18 @@ class AgencyClientRelationshipManager
      * at the request of that Agency's own owner or a permitted, active Agency
      * team member.
      *
-     * No admin-panel account may use this — not even one holding
-     * PLATFORM_RELATIONSHIP_PERMISSION. The platform never originates a
-     * management relationship on a customer's behalf (Addendum §10's
-     * posture, applied to creation); the operator-run legacy migration is the
-     * one sanctioned exception, and it has its own entry point,
-     * createForMigration(), so this rule never has to bend for it.
+     * Authorized ONLY through Agency-side authority. Platform status grants
+     * nothing here: is_admin and admin Role permissions — including
+     * PLATFORM_RELATIONSHIP_PERMISSION — add zero authority to this path, so
+     * the platform never originates a management relationship on a
+     * customer's behalf (Addendum §10's posture, applied to creation). One
+     * global User can, however, legitimately be both a platform account and
+     * the real owner or a permitted member of an Agency Workspace; being an
+     * admin does not erase that Agency-side authority, so such a User may
+     * create exactly when they independently qualify on the Agency side. The
+     * operator-run legacy migration is the one sanctioned platform-originated
+     * exception, and it has its own entry point, createForMigration(), so this
+     * rule never has to bend for it.
      *
      * Deliberately NOT idempotent: this is a single human-initiated action,
      * not a retried side effect, so a second attempt on an already-managed
@@ -366,10 +373,12 @@ class AgencyClientRelationshipManager
      * that helper excludes Staff entirely and cannot express "any active
      * member holding the permission", which is exactly the rule here. The
      * permission is necessary but never sufficient — it only counts for an
-     * ACTIVE member of the AGENCY Workspace. A platform actor is never an
-     * owner or member of the Agency Workspace by virtue of being a platform
-     * actor, so this refuses every admin-panel account, whatever Role
-     * permissions it holds.
+     * ACTIVE member of the AGENCY Workspace. Nothing here reads is_admin or
+     * admin Role permissions: a platform account qualifies only if it is
+     * independently the Agency Workspace's owner or a permitted active
+     * member, and is refused otherwise, whatever Role permissions it holds.
+     * There is deliberately no "if is_admin, deny" branch either — platform
+     * status neither grants nor erases Agency-side authority.
      */
     private function assertActorMayManageAgencyRelationships(int $actorUserId, Workspace $agencyWorkspace): void
     {
@@ -433,34 +442,44 @@ class AgencyClientRelationshipManager
      * shared by termination and migration-only establishment so the two
      * platform-reserved acts can never drift apart.
      *
-     * An admin-panel account that ALSO holds the dedicated Role permission —
-     * never a bare is_admin check, which would silently admit every
-     * admin-panel account including narrowly-scoped support roles, and never
-     * the permission alone, which a customer's own permission list could in
-     * principle carry by name. This repository has no graduated Platform
-     * Owner vs. Platform Administrator distinction to read (mechanically
-     * confirmed: User.is_admin is a single flat boolean, and admins.admin_role
-     * is vestigial and unread), so requiring both is the minimum safe
-     * stand-in for "Platform Owner".
+     * An admin-panel account (is_admin) that is either the repository's
+     * user-id-1 super admin, or ALSO holds the dedicated permission in its
+     * ADMIN Role permissions — never a bare is_admin check, which would
+     * silently admit every admin-panel account including narrowly-scoped
+     * support roles. This repository has no graduated Platform Owner vs.
+     * Platform Administrator distinction to read (mechanically confirmed:
+     * User.is_admin is a single flat boolean, and admins.admin_role is
+     * vestigial and unread), so this is the minimum safe stand-in for
+     * "Platform Owner".
      *
-     * The permission is asked through the admin Gate every other admin
-     * capability uses (EloquentAccountRepository::hasPermission()), and so
-     * inherits that Gate's existing resolution order unchanged: user id 1
-     * always passes; otherwise the session's permission list if one is set,
-     * else — for an account also flagged is_customer — that account's
-     * customer permission list, else the admin Role permissions. For a
-     * sessionless admin-panel account without a customer account (the
-     * operator shape Contract 10 runs as) that is exactly the Role RBAC.
-     * Hardening that shared Gate for dual admin+customer accounts is a
-     * codebase-wide concern, deliberately not changed by this slice.
+     * DELIBERATELY BYPASSES THE GENERIC GATE. Every other admin capability
+     * asks Gate::allows(), which resolves through
+     * EloquentAccountRepository::hasPermission() — and that resolves a
+     * session permission list first, then, for an account also flagged
+     * is_customer, the CUSTOMER permission list, and only otherwise the admin
+     * Roles. For these two highly privileged acts that precedence is wrong:
+     * a session list or a customer's own stored permissions could satisfy
+     * the check by name, while a dual admin+customer account's genuine Role
+     * grant could be ignored. So this reads the admin Role permissions
+     * directly, through User::getPermissions() (roles -> permissions), and
+     * never consults the session, customers.permissions, or any customer-side
+     * permission such as manage_agency_clients. The generic Gate itself is
+     * left unchanged for everything else.
+     *
+     * User id 1 keeps the repository's existing "first user is always super
+     * admin" convention (hasPermission()'s own short-circuit), but only while
+     * that account is still is_admin.
      */
     private function isPlatformRelationshipOperator(int $userId): bool
     {
         $user = User::query()->find($userId);
 
-        return $user !== null
-            && (bool) $user->is_admin
-            && Gate::forUser($user)->allows(self::PLATFORM_RELATIONSHIP_PERMISSION);
+        if ($user === null || $user->is_admin !== true) {
+            return false;
+        }
+
+        return (int) $user->id === 1
+            || $user->getPermissions()->contains(self::PLATFORM_RELATIONSHIP_PERMISSION);
     }
 
     /**

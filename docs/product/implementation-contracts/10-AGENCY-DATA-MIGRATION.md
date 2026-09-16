@@ -106,8 +106,9 @@ original draft:**
    migration-only primitive
    `AgencyClientRelationshipManager::createForMigration($operatorUserId,
    $agencyWorkspace, $clientWorkspace)` — **not** the normal product
-   `create()`, which deliberately refuses every platform/admin-panel actor
-   (Contract 01 §6, "Migration-only establishment") — actor = the human
+   `create()`, which is authorized only through Agency-side authority and
+   gives platform status no authority at all (Contract 01 §6,
+   "Migration-only establishment") — actor = the human
    operator running this migration (recorded honestly as
    `established_by_user_id` and as the event actor, not a system user
    pretending to be the Agency owner — see §6/§10) — **before** the payer

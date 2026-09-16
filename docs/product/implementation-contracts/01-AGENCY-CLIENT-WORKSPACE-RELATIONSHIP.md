@@ -199,8 +199,22 @@ fillable per the column list above (minus `id`/`uid`/timestamps);
 | Active Staff of the Agency Workspace | **Yes**, only with the same Agency-management permission | **No** | Yes, if permitted |
 | Agency Workspace member without the permission | No | No | No |
 | Client Workspace owner/staff | **No** | **No** — cannot remove its own managing relationship (Addendum §2) | No (not this manager's concern — the client never queries this table directly) |
-| Platform Owner (minimum safe rule, §3) | **No** through normal `create()` (never originates on a customer's behalf); **Yes** only through the migration-only `createForMigration()` — see "Migration-only establishment" below | **Yes** (Addendum §2's second owner-only exception) | Yes (admin surface) |
-| Any other admin-panel user (generic Platform Administrator) | No — neither entry point | **No** | Yes (admin surface, read-only) |
+| Platform Owner / platform relationship operator (minimum safe rule, §3) | **No authority from platform status** through normal `create()` (never originates on a customer's behalf — a User who is also genuinely the Agency owner or a permitted Agency member still creates, but only through that Agency-side authority); **Yes** only through the migration-only `createForMigration()` — see "Migration-only establishment" below | **Yes**, through the separate platform authority path (Addendum §2's second owner-only exception) | Yes (admin surface) |
+| Any other admin-panel user (generic Platform Administrator) | No authority from platform status — neither entry point | **No** | Yes (admin surface, read-only) |
+
+**Canonical V1 authority rule (the same language
+`V1-ACCEPTANCE-MATRIX.md` uses):**
+- **Create / ordinary management:** the Agency Workspace owner, or an
+  active Agency Admin/Staff member holding the Agency-management permission
+  (`manage_agency_clients`). Nothing else — `is_admin` and admin Role
+  permissions add **zero** authority to normal `create()`, and equally do
+  not erase a User's genuine Agency ownership or permitted membership.
+- **Termination:** the Agency Workspace owner only, on the Agency side; and
+  the Platform Owner / platform relationship operator, through the separate
+  platform authority path below.
+- **Money:** AgencyRebill consent, payer selection and funding configuration
+  remain Agency Workspace owner only (Addendum §10; Contract 09, not this
+  slice).
 
 **Exact permission-registration mechanism (mechanically located, §3):**
 this slice adds one new key to `config/customer-permissions.php` — the
@@ -235,9 +249,10 @@ narrower `assertActorMayTerminateAgencyRelationship()`: the Agency
 Workspace owner, **or** an admin-panel actor holding a **new, dedicated**
 admin-side permission — `manage agency relationships` — registered in
 `config/permissions.php` (the admin-side registry, distinct from the
-customer-side one above) and checked through the existing `Role`/
-`Permission`/`RoleUser` RBAC the admin panel already uses elsewhere (not
-through `User.is_admin` alone). This is the minimum safe stand-in for
+customer-side one above) and read **directly** from the account's admin
+`Role`/`Permission`/`RoleUser` grants (not through `User.is_admin` alone —
+see "Platform relationship operator predicate" below for why this
+deliberately bypasses the generic Gate). This is the minimum safe stand-in for
 "Platform Owner" until/unless this codebase ever adds a real graduated
 Owner-vs-Administrator distinction: it is **strictly narrower** than "any
 `is_admin = true` account," since an admin-panel user must additionally
@@ -254,33 +269,22 @@ relationship through this contract's domain primitive **and** record the
 real human migration operator as `established_by_user_id` — never a
 fabricated Agency-owner actor, since the Agency owner did not take that
 action (Contract 10 §6/§10). Normal `create()` cannot serve that caller: it
-deliberately refuses every admin-panel actor, and that refusal is correct
-and **unchanged**. So the manager exposes a second, narrowly-named entry
+is authorized only through Agency-side authority, platform status adds
+nothing to it, and that rule is correct and **unchanged**. So the manager
+exposes a second, narrowly-named entry
 point, `createForMigration(int $operatorUserId, Workspace $agencyWorkspace,
 Workspace $clientWorkspace)`:
 - **Not a product action.** No route, controller, middleware or UI reaches
   it in this slice or any product slice; its only intended caller is
   Contract 10's migration logic.
-- **Operator authority, and nothing else:** the operator must be an
-  admin-panel account (`User.is_admin`) **and** hold the same dedicated
-  admin-side `manage agency relationships` Role permission that governs
-  platform termination below — both, never either alone. There is no
+- **Operator authority, and nothing else:** the operator must be a
+  platform relationship operator (predicate below). There is no
   Agency-owner or Agency-team branch: an Agency owner or member, whatever
   customer permissions they hold (including `manage_agency_clients`, or a
   customer permission list naming `manage agency relationships`), is
   refused and uses normal `create()` instead. One private predicate defines
   "platform relationship operator" for both termination and migration
-  establishment, so the two platform-reserved acts cannot drift apart. The
-  permission is resolved through the same admin Gate
-  (`EloquentAccountRepository::hasPermission()`) every other admin
-  capability uses, with that Gate's existing resolution order unchanged:
-  user id 1 always passes, a session permission list wins when present, and
-  an account flagged both `is_admin` and `is_customer` is resolved against
-  its customer permission list rather than its admin Roles. Contract 10's
-  operator should therefore run as a sessionless (CLI) admin-panel account
-  without a linked customer account, for which the check is exactly the
-  admin Role RBAC; hardening that shared Gate for dual accounts is a
-  codebase-wide concern outside this slice.
+  establishment, so the two platform-reserved acts cannot drift apart.
 - **Records the real operator** as `established_by_user_id` and as the
   `AgencyClientRelationshipEstablished` event's actor (§10).
 - **Identical structural invariants.** `create()` and `createForMigration()`
@@ -293,23 +297,57 @@ Workspace $clientWorkspace)`:
   therefore one rule across both entry points (§7).
 - **Normal `create()` authority does not widen.** An admin-panel actor who
   holds `manage agency relationships` — the exact actor `createForMigration()`
-  accepts — is still refused by `create()`.
+  accepts — is still refused by `create()` unless they independently are the
+  Agency Workspace owner or a permitted active Agency member.
+
+**Platform relationship operator predicate — deliberately bypasses the
+generic Gate.** Every other admin capability asks `Gate::allows()`, which
+resolves through `EloquentAccountRepository::hasPermission()`: user id 1
+always passes, then a session permission list wins when present, then —
+for an account also flagged `is_customer` — that account's **customer**
+permission list, and only otherwise its admin Roles. That precedence is not
+acceptable as the load-bearing authority for the two platform-reserved acts
+(migration-only establishment and platform termination): a session or
+customer list could satisfy the check by name, while a dual admin+customer
+account's genuine Role grant could be ignored. So the manager does **not**
+use that Gate here; it reads admin Role permissions directly:
+
+```php
+$user !== null
+    && $user->is_admin === true
+    && ((int) $user->id === 1
+        || $user->getPermissions()->contains('manage agency relationships'))
+```
+
+`User::getPermissions()` is the admin `Role` → `Permission` read. The
+predicate never consults `Session` permissions, `customers.permissions`, or
+any customer-side permission such as `manage_agency_clients`. User id 1
+keeps the repository's existing "first user is always super admin"
+convention, but only while it is still `is_admin`.
+`EloquentAccountRepository::hasPermission()` itself is unchanged for every
+other caller.
 
 **Forbidden actors, explicitly tested (§13):** Agency Staff without the
 permission attempting create; Agency Admin (with or without the permission)
 attempting terminate; the Client Workspace's own owner attempting either;
 an unrelated third Workspace's owner attempting either; any admin-panel
 user without the new `manage agency relationships` Role permission
-attempting terminate; any admin-panel user at all attempting normal
-`create()`, including one holding `manage agency relationships` (never —
-Addendum §10's "administrator never originates on a customer's behalf"
+attempting terminate; any admin-panel user attempting normal `create()` on
+an Agency they neither own nor are a permitted active member of, including
+one holding `manage agency relationships` (platform status never grants it
+— Addendum §10's "administrator never originates on a customer's behalf"
 posture extends here by the same reasoning, even though §2 doesn't name
 creation explicitly, treating creation and termination symmetrically for
 platform-admin exclusion is the conservative, non-guessing choice; the
 operator-run migration is the one sanctioned exception, isolated in its own
-entry point above); and, for `createForMigration()`: a non-admin user, an
-admin-panel user lacking the dedicated permission, and any Agency/customer
-actor merely holding `manage_agency_clients`.
+entry point above — while a User who is both an admin and genuinely the
+Agency owner or a permitted member still creates through that Agency-side
+authority); for `createForMigration()`: a non-admin user, an admin-panel
+user lacking the dedicated permission, and any Agency/customer actor merely
+holding `manage_agency_clients`; and, for both platform-reserved acts: a
+dual admin+customer account whose permission text sits only in its
+customer permission list, and an admin whose session permission list — but
+no admin Role — names `manage agency relationships`.
 
 **Relationship existence is structural, not entitlement proof — the
 distinction this remediation requires be explicit.** `create()` asserts
@@ -457,6 +495,8 @@ file, so no conflict there) — see §17.
 - Termination: owner succeeds; Platform Owner succeeds; Admin/Staff/client fail; terminated row is never hard-deleted and is excluded from "find active" lookups.
 - History: a terminated relationship's row remains queryable (audit read), distinct from "no relationship" for a never-managed Client Workspace.
 - Migration-only establishment (§6): an admin-panel operator holding `manage agency relationships` succeeds through `createForMigration()` and is recorded as `established_by_user_id` and as the event actor; that same operator is still refused by normal `create()`; an admin lacking the permission, a non-admin whose own permission list names it, and any Agency owner/member or customer actor holding `manage_agency_clients` are refused by `createForMigration()`; self-link, wrong-tier, missing-Workspace and one-active-Agency protections apply identically to migration creation and across both entry points; migration creation takes the same locks in the same order; termination authority is unchanged for a migrated relationship.
+- Platform relationship operator predicate (§6) reads admin Role permissions directly: a dual admin+customer account whose admin Role holds `manage agency relationships` may migrate even though the generic Gate misses the grant; the same dual account with the text only in its customer permission list may neither migrate nor terminate; an admin whose session permission list — but no Role — names it has no platform authority; a Role grant succeeds when the session and customer lists lack it; user id 1 keeps super-admin platform authority only while `is_admin`.
+- Dual-role normal `create()`: an admin+customer User creates through genuine Agency ownership and through genuine permitted Agency membership, and is refused on an Agency where it has neither, whatever admin Role permissions it holds.
 
 `tests/Feature/Workspace/AgencyClientRelationshipConcurrencyTest.php`:
 - Concurrency: two concurrent `create()` calls for the same Client Workspace from different Agencies — exactly one succeeds; and a normal `create()` racing a `createForMigration()` for the same Client Workspace — exactly one succeeds, recording the winning real actor.
