@@ -193,6 +193,7 @@
                 // Implementation Contract 02 (Location ACL Foundation) §12.
                 WorkspaceMembershipLocationRepository::class => EloquentWorkspaceMembershipLocationRepository::class,
                 WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
+                \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class => \App\Repositories\Eloquent\EloquentAgencyClientWorkspaceRelationshipRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanCatalogRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanCatalogPricingChangeRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogPricingChangeRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanFeatureRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanFeatureRepository::class,
