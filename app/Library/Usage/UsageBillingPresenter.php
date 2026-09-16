@@ -2,13 +2,13 @@
 
 namespace App\Library\Usage;
 
+use App\Exceptions\Usage\AgencyRebillRelationshipInvalidException;
 use App\Models\Business;
 use App\Models\BusinessFundingAttempt;
 use App\Models\BusinessUsageLedgerEntry;
 use App\Repositories\Contracts\BusinessBillingContactRepository;
 use App\Repositories\Contracts\BusinessFeatureUsageLimitRepository;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
-use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
@@ -28,7 +28,9 @@ class UsageBillingPresenter
         private readonly BusinessUsageWalletRepository $walletRepository,
         private readonly BusinessFeatureUsageLimitRepository $featureLimitRepository,
         private readonly PlatformFeatureUsageSafetyLimitRepository $safetyLimitRepository,
-        private readonly BusinessPayerAssignmentRepository $payerAssignmentRepository,
+        // Implementation Contract 09 — payer display comes from the canonical
+        // resolver, never an independent payer_type interpretation.
+        private readonly EffectivePayerResolver $effectivePayerResolver,
         private readonly BusinessBillingContactRepository $billingContactRepository,
         private readonly BusinessUsageLedgerEntryRepository $ledgerRepository,
         private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
@@ -76,8 +78,8 @@ class UsageBillingPresenter
             })
             ->all();
 
-        $payerAssignment = $this->payerAssignmentRepository->findByBusinessId((int) $business->id);
-        $payerView = $payerAssignment !== null ? ['payer_type' => $payerAssignment->payer_type->value] : null;
+        $assignedPayerType = $this->effectivePayerResolver->assignedPayerType($business);
+        $payerView = $assignedPayerType !== null ? ['payer_type' => $assignedPayerType->value] : null;
 
         $billingContact = $this->billingContactRepository->findByBusinessId((int) $business->id);
         $billingContactView = null;
@@ -109,7 +111,7 @@ class UsageBillingPresenter
             ))
         );
 
-        $paymentMethodView = $this->resolvePaymentMethod((int) $business->id, $payerAssignment?->payer_type?->value, (int) $business->workspace_id);
+        $paymentMethodView = $assignedPayerType !== null ? $this->resolvePaymentMethod($business) : null;
 
         $autoRechargeView = [
             'enabled' => (bool) ($wallet->auto_recharge_enabled ?? false),
@@ -158,13 +160,22 @@ class UsageBillingPresenter
     /**
      * @return array{id: int, brand: ?string, last_four: ?string, expiry_month: ?int, expiry_year: ?int}|null
      */
-    private function resolvePaymentMethod(int $businessId, ?string $payerType, int $workspaceId): ?array
+    private function resolvePaymentMethod(Business $business): ?array
     {
-        $providerCustomer = match ($payerType) {
-            'business' => $this->providerCustomerRepository->findActiveByBusinessId($businessId),
-            'workspace' => $this->providerCustomerRepository->findActiveByWorkspaceId($workspaceId),
-            default => null,
-        };
+        // Implementation Contract 09 — the payment method shown is the one the
+        // canonical payer would actually charge: the managing Agency
+        // Workspace's default instrument for AgencyRebill, never the client's.
+        // An AgencyRebill payer that no longer resolves shows none (it would
+        // charge nothing).
+        try {
+            $payer = $this->effectivePayerResolver->resolve($business);
+        } catch (AgencyRebillRelationshipInvalidException) {
+            return null;
+        }
+
+        $providerCustomer = $payer->providerCustomerWorkspaceId !== null
+            ? $this->providerCustomerRepository->findActiveByWorkspaceId($payer->providerCustomerWorkspaceId)
+            : $this->providerCustomerRepository->findActiveByBusinessId((int) $payer->providerCustomerBusinessId);
 
         if ($providerCustomer === null) {
             return null;

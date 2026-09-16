@@ -139,6 +139,10 @@
                     @if ($agencyPaidClientView)
                         <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.agency_manages') }}</p>
                         <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.agency_manages_help') }}</p>
+                    @elseif ($responsibility['payer_type'] === 'agency_rebill')
+                        {{-- Implementation Contract 09 — funded by the managing agency; never shown as client-paid. --}}
+                        <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.managing_agency_pays') }}</p>
+                        <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.managing_agency_pays_help') }}</p>
                     @elseif (! $responsibility['is_agency'])
                         <p class="mb-1 fw-bolder" data-role="responsibility-statement">{{ __('locale.usage_billing.responsibility.you_pay') }}</p>
                         <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.you_pay_help') }}</p>
@@ -199,7 +203,7 @@
                             <hr>
 
                             <p class="mb-25" id="usage-billing-add-funds-help">{{ __('locale.usage_billing.add_funds.help') }}</p>
-                            <p class="text-caption mb-25">{{ __('locale.usage_billing.add_funds.who_pays', ['payer' => $responsibility['payer_type'] === 'workspace' ? __('locale.usage_billing.responsibility.agency_short') : __('locale.usage_billing.responsibility.business_short')]) }}</p>
+                            <p class="text-caption mb-25">{{ __('locale.usage_billing.add_funds.who_pays', ['payer' => $responsibility['who_pays'] === 'agency' ? __('locale.usage_billing.responsibility.agency_short') : __('locale.usage_billing.responsibility.business_short')]) }}</p>
                             <p class="text-caption mb-1" id="usage-billing-add-funds-minimum">{{ __('locale.usage_billing.add_funds.minimum', ['amount' => $money($minimumTopUpMicro)]) }}</p>
                             @if ((int) $wallet['available_balance_micro'] > 0)
                                 <p class="text-caption mb-1" data-role="existing-balance-note">{{ __('locale.usage_billing.add_funds.existing_balance', ['amount' => $money($wallet['available_balance_micro'])]) }}</p>

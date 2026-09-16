@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Workspace;
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Usage\PayerType;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -399,7 +400,15 @@ class WorkspaceController extends CustomerBaseController
             $rows[] = [
                 'uid' => (string) $business->uid,
                 'name' => (string) $business->name,
-                'responsibility' => $facts['payer_type'] === 'workspace' ? 'agency' : 'client',
+                // Implementation Contract 09 — tri-state and truthful. An
+                // AgencyRebill Business is paid by its managing Agency: it is
+                // never labelled client-paid, and the view shows it read-only,
+                // because the legacy agency/client selector cannot express it.
+                'responsibility' => match ($facts['payer_type']) {
+                    PayerType::Workspace->value => 'agency',
+                    PayerType::Business->value => 'client',
+                    PayerType::AgencyRebill->value => 'managing_agency',
+                },
             ];
         }
 

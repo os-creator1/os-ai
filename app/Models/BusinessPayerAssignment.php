@@ -14,14 +14,26 @@ class BusinessPayerAssignment extends Model
         'business_id',
         'payer_type',
         'effective_payment_instrument_id',
+        // Implementation Contract 09 §5.1 — written only by
+        // BillingProfileManager from the server-resolved relationship and
+        // the managing Agency owner's own action.
+        'managing_agency_relationship_id',
+        'agency_rebill_consented_at',
+        'agency_rebill_consented_by_user_id',
     ];
 
     protected $casts = [
         'payer_type' => PayerType::class,
+        'agency_rebill_consented_at' => 'datetime',
     ];
 
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function managingAgencyRelationship(): BelongsTo
+    {
+        return $this->belongsTo(AgencyClientWorkspaceRelationship::class, 'managing_agency_relationship_id');
     }
 }

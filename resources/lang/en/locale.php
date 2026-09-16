@@ -2342,6 +2342,9 @@ on ',
                 'agency_pays_option_help'  => 'Your agency adds funds and manages automatic top-up and spending limits for this client account.',
                 'client_pays_option'       => 'Client pays',
                 'client_pays_option_help'  => 'The client adds their own funds and manages automatic top-up and spending limits for this client account.',
+                'managing_agency_pays'      => 'The managing agency pays for this business\'s usage.',
+                'managing_agency_pays_help' => 'Paid activity is funded from this business\'s balance using the managing agency\'s payment method, under the agency owner\'s standing consent. The agency owner manages automatic top-up and spending limits.',
+                'managing_agency_option'    => 'Managing agency pays (agency rebill)',
             ],
 
             'add_funds'                    => [

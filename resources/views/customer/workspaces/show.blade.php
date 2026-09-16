@@ -233,6 +233,11 @@
                                                 <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.account_frame_empty') }}</p>
                                             @else
                                                 @foreach ($billingResponsibility['businesses'] as $clientAccount)
+                                                    @if ($clientAccount['responsibility'] === 'managing_agency')
+                                                        {{-- Implementation Contract 09 — AgencyRebill is shown truthfully and read-only: the agency/client selector below cannot express it and must never offer to change it. --}}
+                                                        <p class="mb-2" data-role="billing-responsibility-managing-agency" data-business-uid="{{ $clientAccount['uid'] }}"><strong>{{ $clientAccount['name'] }}</strong> &mdash; {{ __('locale.usage_billing.responsibility.account_frame_current') }} <span data-role="billing-responsibility-current">{{ __('locale.usage_billing.responsibility.managing_agency_option') }}</span></p>
+                                                        @continue
+                                                    @endif
                                                     <form method="POST" data-business-action="usage-billing/payer" data-business-uid="{{ $clientAccount['uid'] }}" data-role="billing-responsibility-form" class="mb-2" novalidate>
                                                         @csrf
                                                         <input type="hidden" name="return_to" value="account">

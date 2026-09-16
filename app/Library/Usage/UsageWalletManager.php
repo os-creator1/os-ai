@@ -16,6 +16,7 @@ use App\Enums\Usage\UsageLimitType;
 use App\Enums\Usage\UsageReservationStatus;
 use App\Enums\Usage\WalletBillingStatus;
 use App\Events\Usage\BusinessWalletBillingStatusChanged;
+use App\Exceptions\Usage\AgencyRebillRelationshipInvalidException;
 use App\Exceptions\Usage\BusinessCurrencyUnresolvableException;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Exceptions\Usage\FeatureLimitExceedsPlatformSafetyLimitException;
@@ -60,7 +61,6 @@ use App\Models\Workspace;
 use App\Notifications\Usage\AutoRechargeFailedNotification;
 use App\Notifications\Usage\SpendingLimitReachedNotification;
 use App\Repositories\Contracts\BusinessBillingContactRepository;
-use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Carbon\CarbonImmutable;
@@ -142,6 +142,14 @@ class UsageWalletManager
         'workspace_recharge_cap',
         self::DENIAL_WORKSPACE_RECHARGE_CAP_MISSING,
         self::DENIAL_AUTO_RECHARGE_FREQUENCY,
+        // Contract 09 §11 — an AgencyRebill payer without standing consent,
+        // without usable account access, or without a valid relationship is
+        // a policy refusal, never a payment failure: it must not count toward
+        // consecutive_recharge_failures or disable automatic top-up.
+        EffectivePayerResolver::REFUSAL_AGENCY_REBILL_RELATIONSHIP_INVALID,
+        EffectivePayerResolver::REFUSAL_AGENCY_REBILL_CONSENT_MISSING,
+        EffectivePayerResolver::REFUSAL_AGENCY_REBILL_ACCOUNT_ACCESS_LOCKED,
+        EffectivePayerResolver::REFUSAL_PAYER_CHANGED,
     ];
 
     /** Reservation denial reasons introduced by this slice (contract §12.2, §20 C-10). */
@@ -458,7 +466,35 @@ class UsageWalletManager
                 return new ReservationResult(false, null, self::DENIAL_PAID_ACTIVITY_PAUSED, false);
             }
 
-            $workspaceControls = $this->lockWorkspaceControls((int) $business->workspace_id);
+            // Implementation Contract 09 §5.3/§11 — who pays, resolved under
+            // the wallet lock (locking reads of an AgencyRebill assignment and
+            // relationship). An AgencyRebill payer must hold standing consent
+            // and usable effective account access before any new paid
+            // reservation; an invalid relationship fails closed. Business and
+            // Workspace payers get no new gate. Lock order: wallet row, then
+            // (AgencyRebill only) assignment and relationship rows.
+            $effectivePayerResolver = app(EffectivePayerResolver::class);
+
+            try {
+                $payer = $effectivePayerResolver->resolveForPaidEffect($business);
+            } catch (AgencyRebillRelationshipInvalidException) {
+                return new ReservationResult(false, null, EffectivePayerResolver::REFUSAL_AGENCY_REBILL_RELATIONSHIP_INVALID, false);
+            }
+
+            $payerRefusal = $effectivePayerResolver->paidEffectRefusal($business, $payer);
+
+            if ($payerRefusal !== null) {
+                return new ReservationResult(false, null, $payerRefusal, false);
+            }
+
+            // Contract 09 §5.4 — the Business's own Workspace controls row
+            // (Workspace pause, aggregate spend cap) governs Business and
+            // Workspace payers exactly as before; it is not a payer-side control
+            // over an AgencyRebill Business, whose funding Workspace is the
+            // managing Agency's, so it is neither locked nor applied then.
+            $workspaceControls = $payer->payerType->isGovernedByOwnWorkspaceControls()
+                ? $this->lockWorkspaceControls((int) $business->workspace_id)
+                : null;
 
             if ($workspaceControls !== null && $workspaceControls->paid_activity_paused_at !== null) {
                 return new ReservationResult(false, null, self::DENIAL_WORKSPACE_PAID_ACTIVITY_PAUSED, false);
@@ -564,7 +600,7 @@ class UsageWalletManager
             // Workspace-paid wallets, while the Workspace controls row is
             // locked (above). Unconfigured, or a Business paying for
             // itself, never denies.
-            if ($workspaceControls !== null && $workspaceControls->monthly_aggregate_spend_cap_micro !== null && $this->isWorkspacePaid((int) $business->id)) {
+            if ($workspaceControls !== null && $workspaceControls->monthly_aggregate_spend_cap_micro !== null && $payer->payerType->countsTowardOwnWorkspaceAggregateLimits()) {
                 $workspaceCapEvaluation = $this->evaluateHeadroom(
                     (int) $workspaceControls->monthly_aggregate_spend_cap_micro,
                     $this->workspacePaidSpendThisPeriod((int) $business->workspace_id, $wallet->spend_period_key),
@@ -2057,7 +2093,16 @@ class UsageWalletManager
         ?string $monthlyCapMicro,
         int $actorUserId,
     ): void {
-        $this->assertChargeCausingConsentForAutoRecharge($business, $actorUserId);
+        // Implementation Contract 09 §6.2 — the one funding-configuration
+        // authority (BillingProfileManager): the Workspace owner, the direct
+        // Business owner, or — while the managing Agency pays — that Agency
+        // Workspace's owner only. The client owner can never configure an
+        // Agency-funded automatic top-up. Configuration needs no standing
+        // consent and is not blocked by locked account access; every automatic
+        // charge is still gated at spend time.
+        if (app(BillingProfileManager::class)->authorizedFundingPayer($business, $actorUserId) === null) {
+            throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
+        }
 
         // Customer Experience Slice 5 (contract §12.2, §28.9; T-WALLET-2/4)
         // — enabling requires a threshold and one of the four fixed preset
@@ -2375,9 +2420,25 @@ class UsageWalletManager
             throw new UsageWalletNotFoundException((int) $business->id);
         }
 
-        $payerType = $this->isWorkspacePaid((int) $business->id) ? PayerType::Workspace : PayerType::Business;
+        // Contract 09 — the canonical payer, never a "Workspace or else
+        // Business" collapse. An AgencyRebill payer whose relationship no
+        // longer resolves, or that lacks standing consent or usable account
+        // access, is refused here as a policy outcome before any attempt.
+        $effectivePayerResolver = app(EffectivePayerResolver::class);
 
-        return $this->evaluateAutoRechargeAdmission($wallet, $business, $payerType, $amountMicro);
+        try {
+            $payer = $effectivePayerResolver->resolve($business);
+        } catch (AgencyRebillRelationshipInvalidException) {
+            return new CapEvaluation(false, EffectivePayerResolver::REFUSAL_AGENCY_REBILL_RELATIONSHIP_INVALID, '0');
+        }
+
+        $payerRefusal = $effectivePayerResolver->paidEffectRefusal($business, $payer);
+
+        if ($payerRefusal !== null) {
+            return new CapEvaluation(false, $payerRefusal, '0');
+        }
+
+        return $this->evaluateAutoRechargeAdmission($wallet, $business, $payer->payerType, $amountMicro);
     }
 
     /**
@@ -2401,7 +2462,9 @@ class UsageWalletManager
      */
     public function claimAutoRechargeAdmissionUnderLock(BusinessUsageWallet $lockedWallet, Business $business, PayerType $payerType, int $amountMicro): CapEvaluation
     {
-        if ($payerType === PayerType::Workspace) {
+        // Contract 09 §5.4 — only a Workspace payer counts toward its own
+        // Workspace's aggregate recharge ceiling, so only it takes that lock.
+        if ($payerType->countsTowardOwnWorkspaceAggregateLimits()) {
             $this->lockWorkspaceControls((int) $business->workspace_id);
         }
 
@@ -2469,7 +2532,11 @@ class UsageWalletManager
             return new CapEvaluation(false, self::DENIAL_AUTO_RECHARGE_FREQUENCY, '0');
         }
 
-        if ($payerType !== PayerType::Workspace) {
+        // Contract 09 §5.4 — a Business payer and an AgencyRebill payer are
+        // bounded by this Business's own ceiling and frequency only: neither
+        // counts toward the Client Workspace's aggregate recharge ceiling, and
+        // no cross-client Agency aggregate exists in V1.
+        if (! $payerType->countsTowardOwnWorkspaceAggregateLimits()) {
             return $businessCeiling;
         }
 
@@ -2695,13 +2762,6 @@ class UsageWalletManager
         ]);
     }
 
-    private function isWorkspacePaid(int $businessId): bool
-    {
-        $assignment = app(BusinessPayerAssignmentRepository::class)->findByBusinessId($businessId);
-
-        return ($assignment?->payer_type ?? \App\Enums\Usage\PayerType::Workspace) === \App\Enums\Usage\PayerType::Workspace;
-    }
-
     /**
      * Committed + reserved spend this period across every wallet in the
      * Workspace whose Business is paid by the Workspace, in the same spend
@@ -2856,38 +2916,6 @@ class UsageWalletManager
         if ($business !== null) {
             $this->notifyBillingContact($businessId, new AutoRechargeFailedNotification($business->name));
         }
-    }
-
-    /**
-     * RFC-005 §16's "consent extended to every charge-causing action" rule
-     * — evaluated against the wallet's CURRENT payer_type, mirroring
-     * BillingProfileManager::assertPayerConsent() and
-     * PaymentInstrumentManager/UsageBillingCheckoutManager's own identical
-     * private method exactly (duplicated rather than shared, matching
-     * this class's own existing assertCanManageBusinessUsageBilling()
-     * duplication precedent — no common ancestor is authorized by any
-     * merged contract).
-     */
-    private function assertChargeCausingConsentForAutoRecharge(Business $business, int $actorUserId): void
-    {
-        $business->loadMissing('workspace');
-
-        $assignment = app(\App\Repositories\Contracts\BusinessPayerAssignmentRepository::class)->findByBusinessId((int) $business->id);
-        $payerType = $assignment?->payer_type ?? \App\Enums\Usage\PayerType::Workspace;
-
-        if ($payerType === \App\Enums\Usage\PayerType::Workspace) {
-            if ((int) $business->workspace->owner_user_id === $actorUserId) {
-                return;
-            }
-
-            throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
-        }
-
-        if ((int) $business->customer_id === $actorUserId) {
-            return;
-        }
-
-        throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
     }
 
     /**
