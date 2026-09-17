@@ -757,12 +757,21 @@
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/auto-recharge', 'Business\UsageBillingAutoRechargeController@configure')->name('businesses.usage-billing.auto-recharge.configure');
 
         // RFC-005 Milestone 4: Workspace-scoped additional-slot agreement
-        // (Checkout/renewal/cancellation) surface.
+        // (renewal/cancellation) surface. Implementation Contract 11 §1/§4/
+        // §14 (corrected) retires EVERY entry point that buys new paid slot
+        // capacity — both the initial checkout AND the owner-initiated
+        // mid-period increase, since requestIncrease() is a real new sale
+        // of additional capacity against an existing agreement, not mere
+        // renewal/cancellation management. Both routes are removed
+        // entirely (unreachable / 404), never left reachable behind a
+        // friendly error. Every genuinely non-expansion existing-holder
+        // route below (display, checkout-return confirmation, renewal
+        // retry, cancellation) is deliberately preserved: this slice
+        // freezes new sales, it does not touch already-paid commercial
+        // commitments (§9).
         Route::prefix('{workspaceUid}/additional-business-slots')->name('additional-business-slots.')->group(function () {
             Route::get('/', 'Workspace\AdditionalBusinessSlotAgreementController@show')->name('show');
-            Route::post('checkout', 'Workspace\AdditionalBusinessSlotAgreementController@checkout')->name('checkout');
             Route::get('{agreement}/confirm', 'Workspace\AdditionalBusinessSlotAgreementController@confirmFromReturn')->name('confirm')->whereNumber('agreement');
-            Route::post('{agreement}/increase', 'Workspace\AdditionalBusinessSlotAgreementController@requestIncrease')->name('increase')->whereNumber('agreement');
             Route::post('{agreement}/renewals/{charge}/retry', 'Workspace\AdditionalBusinessSlotAgreementController@retryRenewal')->name('retry')->whereNumber('agreement')->whereNumber('charge');
             Route::post('{agreement}/cancel', 'Workspace\AdditionalBusinessSlotAgreementController@requestCancellation')->name('cancel')->whereNumber('agreement');
         });

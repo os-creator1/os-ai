@@ -40,15 +40,8 @@
             <div class="col-12">
                 <x-card title="Additional Business Slots">
                     @if ($agreement === null)
-                        <p class="text-caption mb-3">No additional-slot agreement exists yet for this {{ $accountNoun }}.</p>
-
-                        <form method="POST" action="{{ route('customer.workspaces.additional-business-slots.checkout', $workspace->uid) }}">
-                            @csrf
-                            <div class="input-group">
-                                <input type="number" name="target_allocation_count" class="form-control transition-fast" min="1" placeholder="Target additional slot count" required>
-                                <x-button type="submit" variant="primary">Purchase Additional Slots</x-button>
-                            </div>
-                        </form>
+                        {{-- Implementation Contract 11 §4/§14 — the new-purchase checkout route is retired; no form may reference it. --}}
+                        <p class="text-caption mb-3">No additional-slot agreement exists for this {{ $accountNoun }}. New additional-slot purchases are not currently available.</p>
                     @else
                         <dl class="row mb-3">
                             <dt class="col-sm-4 text-label">State</dt>
@@ -81,28 +74,8 @@
                             <a href="{{ route('customer.workspaces.additional-business-slots.confirm', ['workspaceUid' => $workspace->uid, 'agreement' => $agreement->id]) }}" class="btn btn-outline-primary btn-sm">Confirm Payment</a>
                         @endif
 
+                        {{-- Implementation Contract 11 §1/§4/§14 (corrected) — mid-period increase buys new paid slot capacity and is retired along with initial checkout; no form may reference it. Cancellation is a non-expansion existing-holder action and remains available. --}}
                         @if ($agreement->state->value === 'completed' && ! $agreement->cancel_at_period_end)
-                            {{--
-                                M4 contract §11 — change_operation_id is
-                                generated exactly once, client-side, by
-                                this view's own form, the instant it
-                                renders — never by the controller, never
-                                by the manager. Str::uuid() here is a
-                                fresh value on every page render/reload;
-                                a genuine retry resubmits this same
-                                already-rendered form (identical hidden
-                                value), while reloading the page produces
-                                a new one.
-                            --}}
-                            <form method="POST" action="{{ route('customer.workspaces.additional-business-slots.increase', ['workspaceUid' => $workspace->uid, 'agreement' => $agreement->id]) }}" class="mt-3">
-                                @csrf
-                                <input type="hidden" name="change_operation_id" value="{{ \Illuminate\Support\Str::uuid() }}">
-                                <div class="input-group">
-                                    <input type="number" name="target_allocation_count" class="form-control transition-fast" min="{{ $agreement->target_allocation_count + 1 }}" placeholder="New target allocation" required>
-                                    <x-button type="submit" variant="outline-primary">Request Increase</x-button>
-                                </div>
-                            </form>
-
                             <form method="POST" action="{{ route('customer.workspaces.additional-business-slots.cancel', ['workspaceUid' => $workspace->uid, 'agreement' => $agreement->id]) }}" class="mt-3">
                                 @csrf
                                 <x-button type="submit" variant="outline-danger" size="sm">Cancel At Period End</x-button>
