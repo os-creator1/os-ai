@@ -627,7 +627,7 @@ class ChatBoxSecurityTest extends TestCase
     public function test_business_scoped_staff_work_only_their_assigned_business(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $businessB = $this->createIndependentWorkspaceBusiness(businessName: 'Client B ' . uniqid())['business'];
         $boxA = $this->box($businessA, '15550102001', '15550109002');
         $boxB = $this->box($businessB, '15550102002', '15550109003');
 
@@ -651,7 +651,11 @@ class ChatBoxSecurityTest extends TestCase
     public function test_the_same_actor_inside_business_a_cannot_reach_business_bs_conversation(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $clientB = $this->createIndependentWorkspaceBusiness(businessName: 'Client B ' . uniqid());
+        $this->assignTier($clientB['workspace'], WorkspacePlanTier::Agency);
+        $this->member($clientB['workspace'], $owner->user, WorkspaceMembershipRole::Admin);
+        $businessB = $clientB['business'];
+        $workspaceB = $clientB['workspace'];
         $boxB = $this->box($businessB, '15550103001', '15550109004');
 
         $this->authenticateAs($owner, ['chat_box']);
@@ -663,7 +667,7 @@ class ChatBoxSecurityTest extends TestCase
         $this->postJson($this->conversationUrl('reply', $workspace, $businessA, $boxB->uid), ['message' => 'x'])->assertNotFound();
 
         // B's own inbox, addressed as B, still works for the same actor.
-        $this->postJson($this->conversationUrl('messages', $workspace, $businessB, $boxB->uid))->assertOk();
+        $this->postJson($this->conversationUrl('messages', $workspaceB, $businessB, $boxB->uid))->assertOk();
 
         $this->assertSame(1, DB::table('chat_boxes')->where('id', $boxB->id)->count());
         $this->assertSame(0, DB::table('blacklists')->count());
@@ -716,7 +720,7 @@ class ChatBoxSecurityTest extends TestCase
     public function test_view_as_reaches_only_the_viewed_business(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $businessB = $this->createIndependentWorkspaceBusiness(businessName: 'Client B ' . uniqid())['business'];
         $boxA = $this->box($businessA, '15550106001', '15550109008');
         $boxB = $this->box($businessB, '15550106002', '15550109009');
 
@@ -1411,7 +1415,8 @@ class ChatBoxSecurityTest extends TestCase
     public function test_the_bare_inbox_sends_a_multi_business_actor_to_the_chooser_never_a_guess(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $clientB = $this->createIndependentWorkspaceBusiness(businessName: 'Client B ' . uniqid());
+        $this->member($clientB['workspace'], $owner->user, WorkspaceMembershipRole::Admin);
         $this->authenticateAs($owner, ['chat_box']);
 
         $this->get('/chat-box')->assertRedirect(route('customer.workspaces.index'));
@@ -1730,7 +1735,7 @@ class ChatBoxSecurityTest extends TestCase
     public function test_the_business_analytics_page_links_to_that_businesss_inbox(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $businessB = $this->createIndependentWorkspaceBusiness(businessName: 'Client B ' . uniqid())['business'];
         $this->authenticateAs($owner);
 
         $html = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $businessA->uid]))
@@ -1749,7 +1754,6 @@ class ChatBoxSecurityTest extends TestCase
     public function test_a_business_contact_list_links_to_that_businesss_inbox_and_a_legacy_list_to_the_compatibility_entry(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
-        $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
         $group = \App\Models\ContactGroups::create(['customer_id' => $businessA->customer_id, 'business_id' => $businessA->id, 'name' => 'List ' . uniqid()]);
         $this->authenticateAs($owner);
 
@@ -1926,14 +1930,22 @@ class ChatBoxSecurityTest extends TestCase
         }
     }
 
+    /**
+     * Contract 13 remediation (Category C): "scoped to Business B only"
+     * used to mean an ordinary same-Workspace Selected-scope assignment to
+     * a sibling Business — impossible now, since a
+     * workspace_membership_businesses row must name a Business inside the
+     * membership's own Workspace. A Selected-scope membership of A's own
+     * Workspace with ZERO assignments proves the same property this test
+     * exists for (Business A stays unreachable to a Selected-scope member
+     * not assigned to it) — B never factored into the assertion below.
+     */
     public function test_staff_with_no_access_to_the_business_cannot_join_its_channel(): void
     {
         $fx = $this->sendableBusinessPair();
 
-        // Staff of the same Workspace, scoped to Business B only.
         $staff = $this->createCustomer();
-        $membership = $this->member($fx['workspace'], $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
-        $this->assign($membership, $fx['businessB']);
+        $this->member($fx['workspace'], $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->authenticateAs($staff, ['chat_box']);
         $this->usePusherBroadcasting();
 
@@ -2261,9 +2273,14 @@ class ChatBoxSecurityTest extends TestCase
     // -----------------------------------------------------------------
 
     /**
-     * One customer who owns TWO sendable Businesses in one Agency Workspace,
-     * each with its own receiving number — the shape every cross-Business
-     * leak needs.
+     * One customer who owns TWO sendable Businesses — the shape every
+     * cross-Business leak needs. Contract 13 remediation (Category B): the
+     * two Businesses used to be siblings inside one Agency Workspace,
+     * impossible now; Business B lives in its own genuinely independent
+     * Workspace instead, with the same owner made an ordinary Admin there
+     * (mirroring the same-owner-reaches-both-Businesses shape the callers
+     * of this fixture actually rely on, none of which address B through
+     * A's own Workspace uid — see $fx['workspaceB'] for the one exception).
      *
      * @return array<string, mixed>
      */
@@ -2271,7 +2288,10 @@ class ChatBoxSecurityTest extends TestCase
     {
         $fx = $this->sendableBusiness('14155550100', WorkspacePlanTier::Agency);
 
-        $businessB = $this->addBusiness($fx['customer'], $fx['workspace'], 'Sibling ' . uniqid());
+        $clientB = $this->createIndependentWorkspaceBusiness(businessName: 'Sibling ' . uniqid(), workspaceName: 'Sibling WS ' . uniqid());
+        $this->assignTier($clientB['workspace'], WorkspacePlanTier::Agency);
+        $this->member($clientB['workspace'], $fx['owner'], WorkspaceMembershipRole::Admin);
+        $businessB = $clientB['business'];
 
         CustomerBasedSendingServer::create([
             'user_id' => $fx['owner']->id,
@@ -2293,7 +2313,7 @@ class ChatBoxSecurityTest extends TestCase
             'validity_date' => now()->addMonth(),
         ]);
 
-        return $fx + ['businessB' => $businessB, 'numberB' => $numberB->fresh()];
+        return $fx + ['businessB' => $businessB, 'workspaceB' => $clientB['workspace'], 'numberB' => $numberB->fresh()];
     }
 
     /**
