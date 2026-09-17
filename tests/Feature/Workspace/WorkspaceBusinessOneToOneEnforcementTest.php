@@ -283,8 +283,10 @@ class WorkspaceBusinessOneToOneEnforcementTest extends TestCase
     // ------------------------------------------------------------------
     // F. RESIDUAL APPLICATION SEAM BACKSTOP
     //
-    // WorkspaceManager::createBusinessInWorkspace() still exists (Contract
-    // 14 removes it). Its own entitlement gate (assertCanCreateAnotherBusiness())
+    // WorkspaceManager::createBusinessInWorkspace() still exists: Contract
+    // 14's recon found a genuine remaining live caller
+    // (WorkspaceController::storeBusiness()) and did not remove it. Its own
+    // entitlement gate (assertCanCreateAnotherBusiness())
     // would ALSO block a second Business for an ordinary Core/Growth
     // Workspace, for an unrelated reason (business_slot_max), which would
     // prove nothing about the NEW DB constraint specifically. An

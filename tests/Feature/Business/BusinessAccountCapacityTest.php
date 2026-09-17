@@ -99,37 +99,16 @@ class BusinessAccountCapacityTest extends TestCase
         $this->assertSame(1, DB::table('businesses')->where('workspace_id', $workspace->id)->count());
     }
 
-    public function test_an_agency_workspace_holds_several_businesses(): void
-    {
-        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
-        $manager = app(WorkspaceManager::class);
-
-        foreach (['Client Two', 'Client Three', 'Client Four'] as $name) {
-            $manager->createBusinessInWorkspace((int) $customer->user_id, $customer, $workspace, $this->businessAttributes(['name' => $name]));
-        }
-
-        $this->assertSame(4, DB::table('businesses')->where('workspace_id', $workspace->id)->count());
-        $this->assertTrue(app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace)->allowed);
-    }
-
-    // T-BIZ-2
-    public function test_a_workspace_already_holding_several_businesses_keeps_them_all_and_is_denied_only_new_ones(): void
-    {
-        [$customer, $first, $workspace] = $this->tenant(WorkspacePlanTier::Core);
-        $second = $this->addBusiness($customer, $workspace, 'Grandfathered Two');
-        $third = $this->addBusiness($customer, $workspace, 'Grandfathered Three');
-
-        $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
-        $this->assertSame(3, $decision->currentBusinessCount);
-        $this->assertFalse($decision->allowed);
-
-        foreach ([$first, $second, $third] as $business) {
-            $this->assertTrue(app(WorkspaceManager::class)->userCanAccessBusiness((int) $customer->user_id, $business), "{$business->name} stays reachable.");
-            $this->assertSame('active', DB::table('businesses')->where('id', $business->id)->value('status'), 'Nothing is deactivated.');
-        }
-
-        $this->expectExceptionSafely(BusinessSlotLimitExceededException::class, fn () => app(WorkspaceManager::class)->createBusinessInWorkspace((int) $customer->user_id, $customer, $workspace, $this->businessAttributes(['name' => 'Fourth'])));
-    }
+    // Implementation Contract 13 (businesses_workspace_id_unique) made
+    // "several Businesses in one Workspace" — including the Agency-tier
+    // unlimited case and the pre-13 grandfathered-Core case (T-BIZ-2) —
+    // permanently unconstructable at the database layer, not merely
+    // uncommon. Both tests that exercised that scenario were removed here
+    // (Contract 14 recon) rather than rewritten, since no data shape they
+    // depended on can exist again. Agency's unlimited_business_slots flag
+    // itself is still asserted in test_agency_stays_unlimited_for_
+    // businesses_and_locations() above; only the "count > 1" behavior was
+    // retired.
 
     public function test_a_cross_workspace_reassignment_into_a_full_core_workspace_is_denied(): void
     {

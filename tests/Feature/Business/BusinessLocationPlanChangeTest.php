@@ -4,10 +4,8 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Entitlement\WorkspaceEntitlementTransitionType;
 use App\Enums\Entitlement\WorkspacePlanTier;
-use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
 use App\Exceptions\Entitlement\LocationSlotAllocationRequiredException;
 use App\Exceptions\Entitlement\LocationSlotLimitExceededException;
-use App\Library\Workspace\WorkspaceManager;
 use App\Models\BusinessLocation;
 use App\Models\WorkspaceEntitlementTransition;
 use App\Models\WorkspacePlanAssignment;
@@ -70,24 +68,13 @@ class BusinessLocationPlanChangeTest extends TestCase
         $this->assertFalse($this->locations()->capacity($business)->allowed);
     }
 
-    public function test_agency_to_growth_keeps_every_business_and_denies_a_new_one(): void
-    {
-        [$customer, $first, $workspace] = $this->locationTenant(WorkspacePlanTier::Agency, 1);
-        $second = $this->addBusiness($customer, $workspace, 'Client Two');
-        $third = $this->addBusiness($customer, $workspace, 'Client Three');
-
-        $this->entitlements()->changePlan($workspace, WorkspacePlanTier::Growth, $this->platformAdminId(), 'Downgrade with several Businesses.');
-
-        foreach ([$first, $second, $third] as $business) {
-            $this->assertTrue(app(WorkspaceManager::class)->userCanAccessBusiness((int) $customer->user_id, $business), "{$business->name} stays reachable.");
-        }
-
-        $row = WorkspaceEntitlementTransition::where('transition_type', WorkspaceEntitlementTransitionType::CapacityGrandfathered)->sole();
-        $this->assertTrue($row->payload['businesses']['grandfathered_over_capacity']);
-        $this->assertSame(3, $row->payload['businesses']['count']);
-
-        $this->expectExceptionSafely(BusinessSlotLimitExceededException::class, fn () => app(WorkspaceManager::class)->createBusinessInWorkspace((int) $customer->user_id, $customer, $workspace->fresh(), $this->businessAttributes(['name' => 'Client Four'])));
-    }
+    // Implementation Contract 13 (businesses_workspace_id_unique) made
+    // "several Businesses in one Workspace" permanently unconstructable at
+    // the database layer, so the business-side grandfathering branch this
+    // test exercised (as opposed to the still-very-much-alive location-side
+    // grandfathering covered elsewhere in this file) can never fire again.
+    // Removed here (Contract 14 recon) rather than rewritten, since no data
+    // shape it depended on can exist again.
 
     public function test_a_later_downgrade_evaluates_grandfathering_fresh_instead_of_restoring_it(): void
     {

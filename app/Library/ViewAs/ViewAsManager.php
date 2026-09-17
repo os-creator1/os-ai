@@ -33,11 +33,15 @@ use Illuminate\Http\Request;
  * V1 Contract 04 adds a second, separately-named entry, startAgencyView(),
  * for CROSS-Workspace Agency View As through an Active Contract 01
  * relationship, revalidated on every read by its own chain. The
- * same-Workspace start()/actorMayView()/accessChainStillHolds() path above is
- * left unchanged until Contract 14 retires it. No route, controller or UI
- * reaches startAgencyView() yet (Contract 07/08A); the HTTP resolver, the
- * View As middleware and the broadcast channel are deliberately unchanged
- * and stay fail-closed for an Agency session, since each still checks the
+ * same-Workspace start()/actorMayView()/accessChainStillHolds() path above
+ * is left unchanged: Contract 14's recon found it still legitimately live
+ * (a plain, non-Agency-relationship active Admin/owner of one Workspace
+ * viewing that Workspace's own sole Business — a scenario startAgencyView()
+ * does not cover) and did not retire it. startAgencyView() is reachable in
+ * production via AgencyClientsController::viewAs() and the
+ * customer.workspaces.clients.view-as route (Contract 07/08A); the HTTP
+ * resolver, the View As middleware and the broadcast channel correctly stay
+ * fail-closed for a plain (non-Agency) actor, since each still checks the
  * actor's ordinary tenancy of the viewed Business.
  */
 final class ViewAsManager

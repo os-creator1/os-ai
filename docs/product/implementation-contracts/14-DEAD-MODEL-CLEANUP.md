@@ -227,3 +227,104 @@ check. This is the last slice in the series -- after this report, the V1
 architecture migration's tenancy/Agency portion is structurally complete
 per the Blueprint and Addendum.
 ```
+
+## 19. Implementation correction (post-Contract-13 recon, branch `agent/v1-slice-14-dead-model-cleanup`)
+
+§3's hypotheses about *why* each baseline candidate would turn out dead
+were wrong for every one of them. Five independent, file:line-level
+investigations against current `main` (after PR #319/Contract 13) found:
+
+- `SwitchBusinessAction` / `customer.context.business.switch` / the
+  Business-switcher Blade UI — **not dead**. Repurposed, not retired: it
+  is now one of the two arms (Business vs. Account) of the current unified
+  `ContextSwitcherPresenter` control rendered from `sidebar.blade.php` and
+  `navbar.blade.php`, and its route name is in `ViewAsProhibitedActions`'s
+  security allowlist.
+- `createBusinessInWorkspace()` — **not dead**. Still the live handler
+  behind `WorkspaceController::storeBusiness()`'s customer-facing "Create
+  Business" form (`customer.workspaces.businesses.store`), for creating
+  the first Business in an Agency client's or a Core/Growth account's
+  empty Workspace.
+- `reassignBusiness()` — **not dead**. Still a registered (if UI-orphaned,
+  support-only) controller action at
+  `customer.workspaces.businesses.reassign`, and a hard dependency of
+  Contract 10/12's own migration tooling
+  (`AgencyBusinessMigrationV1`/`NonAgencyBusinessSplitV1`). It is also the
+  caller of `removeAllForBusinessInWorkspace()`, which keeps the pivot
+  below alive.
+- `workspace_membership_businesses` (+ its model, repository, and both
+  events) — **not dead**, and §3's own hypothesis ("vestigial once
+  Location ACL replaces it") is the one factual claim in this contract
+  most clearly disproven: `LocationAccessGuard::userCanAccessLocation()`'s
+  "Business reach" step itself falls through to this pivot's
+  `isAssigned()` check. Location ACL is layered on top of this pivot, not
+  a replacement for it. It is also read/written directly by
+  `WorkspaceManager::userCanAccessBusiness()`,
+  `CustomerContextSnapshot::forUser()`, `BillingProfileManager`,
+  `UsageWalletManager`, and `InternalNotificationNodeExecutor`.
+- `additional_business_slot_*` family — **not dead**. Contract 11 kept the
+  full existing-holder billing engine live on purpose: `show`/`confirm`/
+  `retry`/`cancel` on both the customer and admin controller surfaces, and
+  three scheduled jobs still running continuously
+  (`InitiateSlotAgreementRenewal` every 5 minutes,
+  `FinalizeSlotAgreementCancellation` every 5 minutes,
+  `ReconcileSlotAgreementAllocation` hourly). Zero current rows in the
+  disposable test database does not change this — it is live
+  infrastructure, not dead code.
+- Old same-Workspace View As (`ViewAsManager::start()`,
+  `StartViewAsAction`, route `view-as`/`view-as.start`) — **not dead**,
+  and textually distinct from Contract 04's `startAgencyView()` on
+  purpose. It remains the only path for a plain (non-Agency-relationship)
+  active Admin/owner of one Workspace to View As that Workspace's own sole
+  Business — a scenario `startAgencyView()` does not cover. Its original
+  scenario (choosing among sibling Businesses within one Workspace) is,
+  however, now genuinely retired — see below.
+
+**Net result: zero candidates qualified for deletion.** No application
+code, event, repository, model, route, or table was removed by this
+slice. This is a valid completion of §4's procedure, not a failure of
+it — every category-(a) live caller found is reported above, per §4 step
+2(a) ("STOP — this candidate is not actually dead yet").
+
+**One genuine, narrower defect was found and fixed.** Contract 13's
+`businesses_workspace_id_unique` constraint made "more than one Business
+in one Workspace" not just uncommon but permanently unconstructable at
+the database layer. Three tests still built fixtures on that exact
+premise and were failing on `main` before this slice touched anything:
+`BusinessAccountCapacityTest::test_an_agency_workspace_holds_several_businesses`,
+`BusinessAccountCapacityTest::test_a_workspace_already_holding_several_businesses_keeps_them_all_and_is_denied_only_new_ones`
+(T-BIZ-2), and
+`BusinessLocationPlanChangeTest::test_agency_to_growth_keeps_every_business_and_denies_a_new_one`.
+All three were testing `createBusinessInWorkspace()`/`changePlan()`
+scenarios that can never occur again; they were removed (not rewritten —
+no data shape they depended on can exist), with a comment at each site
+explaining why.
+
+**A much larger, separate finding was deliberately left untouched.** The
+same "add a second Business into an already-occupied Workspace" fixture
+pattern (via the shared `CreatesCustomerContextFixtures::addBusiness()`
+helper) is the standard way well over 100 other test files across nearly
+every unrelated domain (Ai, Dashboards, Navigation, Security, Contacts,
+Conversations, Coo, CustomerShell, DesignSystem, QueryBudget, Theme,
+Usage, etc.) simulate "an Agency managing several clients." All of those
+call sites are now equally broken by Contract 13's constraint. This is a
+real, currently-unfixed regression on `main` — but it is Contract 13's
+fallout on unrelated product surfaces, not tenancy/Agency old-model dead
+code, and correctly redesigning that many fixtures (especially the
+several that are View-As/authorization security-boundary tests) is
+outside this slice's scope and too large to absorb here without risking a
+rushed, incorrect fix to security-sensitive coverage. It is reported to
+the human as its own follow-up item, not silently fixed or silently
+left unmentioned. Two further Agency-View-As tests
+(`AgencyViewAsTest::test_a_client_workspace_with_more_than_one_business_fails_closed_rather_than_choosing_one`
+and
+`AgencyViewAsTest::test_the_client_gaining_a_second_business_mid_session_fails_closed`)
+and one same-Workspace View As pinning test
+(`AgencyViewAsTest::test_the_same_workspace_view_as_path_is_unchanged`,
+plus `ViewAsClientTest`'s four tests) are in the same broken state for the
+same underlying reason, but were also left untouched here rather than
+rewritten under time pressure, since a correct fix requires redesigning
+security-boundary fixtures around a still-valid but different scenario
+(a plain cross-Workspace Admin membership, not a sibling Business), not a
+simple deletion — see the session's final Contract 14 report for the full
+list and recommended follow-up.
