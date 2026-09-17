@@ -17,12 +17,12 @@ use Illuminate\Support\Facades\DB;
  * than one Business. Performs ZERO writes and calls no manager/provider
  * of any kind — a plain read.
  *
- * Pre-production note (per this contract's own operator instructions):
- * running this against the local/test database proves the command is
- * correct, not that any particular deployed environment has zero (or
- * nonzero) such Workspaces. A real target environment must run this same
- * report against its own data before Contract 13-style enforcement is
- * deployed there.
+ * Environment-neutral by design: this command has no way to know whether
+ * it is being run against a disposable development/test database or a
+ * real target environment, so it never claims either — it reports
+ * exactly which environment/connection/database it is actually connected
+ * to (name only, never a credential-bearing DSN) and leaves the operator
+ * to verify that is the intended target before relying on the result.
  */
 class ReportNonAgencyMultiBusinessWorkspaces extends Command
 {
@@ -123,7 +123,12 @@ class ReportNonAgencyMultiBusinessWorkspaces extends Command
     private function printReport(array $report): void
     {
         $this->info('Contract 12 — non-Agency multi-Business Workspace report');
-        $this->warn('This report reflects the LOCAL/TEST database only. It does not represent any real production population — a real target environment must run this same report against its own data before relying on its result.');
+        $this->warn(sprintf(
+            'This report reflects the database/environment this command is currently connected to (app.env=%s, connection=%s, database=%s). Verify that you are running it against the intended target environment before relying on the result.',
+            config('app.env'),
+            DB::connection()->getName(),
+            DB::connection()->getDatabaseName(),
+        ));
         $this->line("Query: {$report['query']}");
         $this->line("Non-Agency multi-Business Workspace count: {$report['workspace_count']}");
 

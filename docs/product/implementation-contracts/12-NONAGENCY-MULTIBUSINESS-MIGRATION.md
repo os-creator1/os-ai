@@ -131,13 +131,31 @@ provider call is made, same as Contract 10 §11.
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `app/Console/Commands/ReportNonAgencyMultiBusinessWorkspaces.php` (Step 1's report, runnable independently of any migration decision)
-- `app/Library/Workspace/Migration/NonAgencyBusinessSplitV1.php` (only exercised if Step 1 finds rows)
+- `app/Console/Commands/ReportNonAgencyMultiBusinessWorkspaces.php` — Step
+  1's report, an independently runnable, read-only command with no
+  dependency on any migration decision. It never claims to be running
+  against any particular environment (local/test vs. real target); it
+  reports the environment/connection/database it is actually connected
+  to and leaves verification to the operator.
+- `app/Library/Workspace/Migration/NonAgencyBusinessSplitV1.php` (only
+  exercised if Step 1 finds rows) — the authoritative service; owns every
+  migration decision (candidate selection, payer classification,
+  transaction boundary, verification).
+- `app/Console/Commands/MigrateNonAgencyMultiBusinessWorkspaces.php` — the
+  thin operator-facing wrapper around `NonAgencyBusinessSplitV1`'s own
+  `preflight()`/`run()`, mirroring Contract 10's
+  `MigrateAgencyClientBusinesses` pattern (§6/§8's same operator-run
+  command posture: preflight/dry-run/execute modes, a required real
+  `--operator`, never a fabricated system actor). It owns **no** business
+  logic of its own — it resolves CLI options, calls the service, and
+  prints its report.
 - `tests/Feature/Workspace/NonAgencyMultiBusinessReportTest.php`
 - `tests/Feature/Workspace/NonAgencyBusinessSplitV1Test.php`
 
-**No existing file modified** — this slice, like Contract 10, reuses
-`WorkspaceManager`/`WorkspaceMembershipBusinessRepository` unchanged.
+**No existing production file modified** — this slice, like Contract 10,
+reuses `WorkspaceManager`/`WorkspaceMembershipBusinessRepository`/
+`EntitlementManager` unchanged. (The three new files above are all new,
+not modifications to any existing file.)
 
 ## 13. Required tests
 
@@ -159,6 +177,15 @@ holding only that one Business) and each moved Business (whose
 containing Workspace is now its own newly created one) —
 `EffectivePayerResolver` proves both cases from the Business's current
 `workspace_id`, never from a rewritten payer row.
+
+Focused coverage for `MigrateNonAgencyMultiBusinessWorkspaces` (the
+operator wrapper) proves only wrapper-level concerns, not the migration
+algorithm itself (already proven above): preflight/dry-run remain
+zero-write; `--execute` reaches the real service and migrates a genuine
+seeded candidate; a missing `--operator` fails clearly for write modes;
+an invalid `--workspace` uid fails; any `blocked`/`failed`/
+`verification_failed` Workspace status fails the command's exit code; a
+clean no-candidate run succeeds.
 
 ## 14. Acceptance criteria
 

@@ -102,4 +102,22 @@ class NonAgencyMultiBusinessReportTest extends TestCase
         $this->assertEquals($workspacesBefore, DB::table('workspaces')->orderBy('id')->get());
         $this->assertEquals($planAssignmentsBefore, DB::table('workspace_plan_assignments')->orderBy('id')->get());
     }
+
+    /**
+     * Review correction: the report must never hardcode a claim that it
+     * is necessarily running against a LOCAL/TEST database — it must
+     * describe the environment/connection/database it is ACTUALLY
+     * connected to, and never print a credential-bearing DSN or secret.
+     */
+    public function test_the_report_describes_its_actual_connection_without_claiming_local_test_or_leaking_secrets(): void
+    {
+        $exitCode = \Illuminate\Support\Facades\Artisan::call('workspaces:report-nonagency-multibusiness');
+        $rendered = \Illuminate\Support\Facades\Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('database/environment this command is currently connected to', $rendered);
+        $this->assertStringContainsString('connection=' . DB::connection()->getName(), $rendered);
+        $this->assertStringContainsString('database=' . DB::connection()->getDatabaseName(), $rendered);
+        $this->assertStringNotContainsStringIgnoringCase('LOCAL/TEST database only', $rendered);
+    }
 }

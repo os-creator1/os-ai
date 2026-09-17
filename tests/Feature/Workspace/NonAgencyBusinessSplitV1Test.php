@@ -432,4 +432,124 @@ class NonAgencyBusinessSplitV1Test extends TestCase
             'updated_at' => now(),
         ]);
     }
+
+    // ------------------------------------------------------------------
+    // OPERATOR COMMAND WRAPPER (review correction) — proves ONLY
+    // wrapper-level concerns; the migration algorithm itself is already
+    // proven above via the direct service tests.
+    // ------------------------------------------------------------------
+
+    public function test_command_default_and_preflight_mode_are_zero_write(): void
+    {
+        [$workspace, $customer] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Nu');
+        $this->secondBusiness($workspace, $customer, 'Nu Two');
+
+        $workspaceCountBefore = Workspace::count();
+        $businessCountBefore = Business::count();
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness')->assertExitCode(0);
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', ['--preflight' => true])->assertExitCode(0);
+
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame($businessCountBefore, Business::count());
+    }
+
+    public function test_command_dry_run_is_zero_write(): void
+    {
+        [$workspace, $customer] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Xi');
+        $this->secondBusiness($workspace, $customer, 'Xi Two');
+
+        $workspaceCountBefore = Workspace::count();
+        $businessCountBefore = Business::count();
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--dry-run' => true,
+            '--operator' => $this->operator(),
+        ])->assertExitCode(0);
+
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame($businessCountBefore, Business::count());
+    }
+
+    public function test_command_execute_reaches_the_real_service_and_migrates_a_seeded_workspace(): void
+    {
+        [$workspace, $customer, $primary] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Omicron');
+        $moved = $this->secondBusiness($workspace, $customer, 'Omicron Two');
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--execute' => true,
+            '--operator' => $this->operator(),
+            '--workspace' => [$workspace->uid],
+        ])->assertExitCode(0);
+
+        $this->assertSame($workspace->id, (int) $primary->fresh()->workspace_id);
+        $this->assertNotSame($workspace->id, (int) $moved->fresh()->workspace_id);
+        $this->assertSame(0, Business::where('workspace_id', $workspace->id)->where('is_primary', false)->count());
+    }
+
+    public function test_command_rejects_both_dry_run_and_execute_together(): void
+    {
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--dry-run' => true,
+            '--execute' => true,
+            '--operator' => $this->operator(),
+        ])->assertExitCode(1);
+    }
+
+    public function test_command_fails_clearly_without_an_operator_for_write_modes(): void
+    {
+        [$workspace, $customer] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Pi');
+        $moved = $this->secondBusiness($workspace, $customer, 'Pi Two');
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', ['--dry-run' => true])->assertExitCode(1);
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', ['--execute' => true])->assertExitCode(1);
+
+        $this->assertSame($workspace->id, (int) $moved->fresh()->workspace_id, 'Refusing for a missing --operator must happen before any write.');
+    }
+
+    public function test_command_fails_on_an_invalid_workspace_uid(): void
+    {
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--preflight' => true,
+            '--workspace' => ['does-not-exist-uid'],
+        ])->assertExitCode(1);
+    }
+
+    public function test_command_exits_with_failure_for_a_blocked_workspace(): void
+    {
+        [$workspace, $customer] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Rho');
+        $this->secondBusiness($workspace, $customer, 'Rho Unexpected', PayerType::AgencyRebill);
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--execute' => true,
+            '--operator' => $this->operator(),
+            '--workspace' => [$workspace->uid],
+        ])->assertExitCode(1);
+    }
+
+    public function test_command_exits_with_failure_on_verification_failure(): void
+    {
+        [$workspace, $customer] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Sigma');
+        $this->secondBusiness($workspace, $customer, 'Sigma Two');
+
+        $partialRepository = Mockery::mock(
+            \App\Repositories\Eloquent\EloquentAgencyClientWorkspaceRelationshipRepository::class,
+            [new AgencyClientWorkspaceRelationship()],
+        )->makePartial();
+        $partialRepository->shouldReceive('findActiveForClientWorkspace')->andReturn(new AgencyClientWorkspaceRelationship());
+        $this->app->instance(\App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class, $partialRepository);
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness', [
+            '--execute' => true,
+            '--operator' => $this->operator(),
+            '--workspace' => [$workspace->uid],
+        ])->assertExitCode(1);
+    }
+
+    public function test_command_returns_success_for_a_clean_no_candidate_run(): void
+    {
+        $this->nonAgencyWorkspace(WorkspacePlanTier::Core, 'Tau');
+
+        $this->artisan('workspaces:migrate-nonagency-multibusiness')->assertExitCode(0);
+    }
 }
