@@ -51,17 +51,40 @@ principle).
 **Changes:** one new controller (`AgencyClientsController` or similar),
 new routes under the Agency's own Workspace path, new Blade views (list,
 detail), wiring to Contract 01's relationship repository (list/read),
-Contract 07's provisioning manager (create), and Contract 04's
-`startAgencyView()` (the View As entry point).
+Contract 07's **invitation** flow — `ClientInvitationManager::send()`,
+reusing the existing `client-invitations.store` route as-is, never a new
+endpoint — and Contract 04's `startAgencyView()` (the View As entry
+point).
+>
+> **Implementation-time correction (this slice):** Contract 07's own
+> merged design intentionally splits the flow in two: the Agency side
+> (`ClientInvitationManager::send()`/`revoke()`) only ever creates a
+> Pending invitation row; only the RECIPIENT's own authenticated
+> acceptance (`AgencyClientProvisioningManager::accept()`) creates the
+> Client Workspace, Business, Location and the Contract 01 relationship.
+> This slice's Agency Clients UI therefore **never calls
+> `AgencyClientProvisioningManager::accept()`** — the Agency cannot
+> provision a Client Workspace on the recipient's behalf. "Invite Client"
+> means sending the invitation and waiting for the recipient to
+> authenticate and accept; the new Client Workspace appears in this
+> slice's managed-Clients list only after that acceptance has already
+> created the Active relationship. The line below (originally "Contract
+> 07's provisioning manager (create)") is corrected accordingly; this is a
+> wording correction only, not a redesign of Contract 07.
 
 **Explicitly does NOT change:** any of the three consumed contracts'
 backend code — this is purely a new consumption layer.
 
 ## 5. Data model contract
 
-None — no new table or column. This slice reads Contract 01's
-relationship table and writes to it only via Contract 07's orchestrator
-(create) — never a direct write from the controller.
+None — no new table or column. This slice only ever READS Contract 01's
+relationship table. It never writes to it, directly or indirectly: the
+only write this slice performs at all is a Pending invitation row via
+Contract 07's `ClientInvitationManager::send()`; the relationship row
+itself is created later, outside this slice's control flow entirely, only
+when the invited recipient authenticates and accepts
+(`AgencyClientProvisioningManager::accept()`) — never something this
+Agency-facing controller triggers.
 
 ## 6. Authority / security contract
 
