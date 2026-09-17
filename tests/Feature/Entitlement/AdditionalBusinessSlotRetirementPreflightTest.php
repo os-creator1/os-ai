@@ -11,6 +11,7 @@ use App\Library\Usage\FakePaymentProviderGateway;
 use App\Library\Usage\PaymentMethodResult;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Models\AdditionalBusinessSlotAgreement;
+use App\Models\AdditionalBusinessSlotRenewalCharge;
 use App\Models\Currency;
 use App\Models\Customer;
 use App\Models\Workspace;
@@ -209,14 +210,25 @@ class AdditionalBusinessSlotRetirementPreflightTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // NEW SALE FROZEN
+    // NEW SALE FROZEN — initial checkout AND mid-period increase
+    // (review correction: requestSlotAgreementIncrease() is a real new
+    // sale of additional paid slot capacity against an existing
+    // agreement, not mere existing-holder management)
     // ------------------------------------------------------------------
 
     public function test_the_checkout_route_no_longer_exists(): void
     {
         $this->assertFalse(
             Route::has('customer.workspaces.additional-business-slots.checkout'),
-            'The new-purchase checkout entry point must be genuinely removed, not merely guarded.'
+            'The new-agreement checkout entry point must be genuinely removed, not merely guarded.'
+        );
+    }
+
+    public function test_the_increase_route_no_longer_exists(): void
+    {
+        $this->assertFalse(
+            Route::has('customer.workspaces.additional-business-slots.increase'),
+            'The mid-period paid-increase entry point must be genuinely removed — it buys new slot capacity, exactly like checkout.'
         );
     }
 
@@ -233,20 +245,42 @@ class AdditionalBusinessSlotRetirementPreflightTest extends TestCase
         $this->assertSame(0, AdditionalBusinessSlotAgreement::count(), 'No QuoteCreated/CheckoutPending agreement — no checkout/provider call could have been initiated.');
     }
 
-    // ------------------------------------------------------------------
-    // EXISTING-HOLDER BEHAVIOR PRESERVED (smallest meaningful smoke)
-    // ------------------------------------------------------------------
-
-    public function test_existing_holder_show_increase_and_cancellation_routes_remain_reachable(): void
+    public function test_posting_to_the_retired_increase_path_is_unreachable_and_creates_nothing(): void
     {
         [$tenantCustomer, $tenantWorkspace] = $this->paidTenant('Alpha Biz', 'Alpha Account');
         [$customer, $workspace, $agreement] = $this->completedAgreementFor($tenantCustomer, $tenantWorkspace);
         $this->authenticateAs($customer);
 
+        $originalAllocation = $agreement->target_allocation_count;
+        $renewalChargeCountBefore = AdditionalBusinessSlotRenewalCharge::count();
+
+        $response = $this->post("/workspaces/{$workspace->uid}/additional-business-slots/{$agreement->id}/increase", [
+            'target_allocation_count' => $originalAllocation + 1,
+            'change_operation_id' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+
+        $response->assertNotFound();
+        $this->assertSame($renewalChargeCountBefore, AdditionalBusinessSlotRenewalCharge::count(), 'Zero new AdditionalBusinessSlotRenewalCharge rows — no provider charge could have been initiated.');
+        $this->assertSame($originalAllocation, $agreement->fresh()->target_allocation_count, 'No allocation increase — the retired route must never be reachable to change it.');
+    }
+
+    // ------------------------------------------------------------------
+    // EXISTING-HOLDER BEHAVIOR PRESERVED (smallest meaningful smoke;
+    // increase is deliberately NOT part of this list — it is a retired
+    // new-sale path, not a preserved existing-holder action)
+    // ------------------------------------------------------------------
+
+    public function test_existing_holder_show_confirm_retry_and_cancellation_routes_remain_reachable(): void
+    {
+        [$tenantCustomer, $tenantWorkspace] = $this->paidTenant('Alpha Biz', 'Alpha Account');
+        [$customer, $workspace, $agreement] = $this->completedAgreementFor($tenantCustomer, $tenantWorkspace);
+        $this->authenticateAs($customer);
+
+        $originalAllocation = $agreement->target_allocation_count;
+
         $this->get(route('customer.workspaces.additional-business-slots.show', $workspace->uid))->assertOk();
 
-        $this->assertTrue(Route::has('customer.workspaces.additional-business-slots.increase'));
-        $this->assertTrue(Route::has('customer.workspaces.additional-business-slots.confirm'));
+        $this->assertTrue(Route::has('customer.workspaces.additional-business-slots.confirm'), 'Confirmation for an agreement whose checkout already started before retirement must remain registered.');
         $this->assertTrue(Route::has('customer.workspaces.additional-business-slots.retry'));
 
         $this->post(route('customer.workspaces.additional-business-slots.cancel', [
@@ -254,6 +288,8 @@ class AdditionalBusinessSlotRetirementPreflightTest extends TestCase
             'agreement' => $agreement->id,
         ]))->assertRedirect(route('customer.workspaces.additional-business-slots.show', ['workspaceUid' => $workspace->uid]));
 
-        $this->assertTrue((bool) $agreement->fresh()->cancel_at_period_end, 'Cancellation of an existing paid holder must still work exactly as before.');
+        $refreshed = $agreement->fresh();
+        $this->assertTrue((bool) $refreshed->cancel_at_period_end, 'Cancellation of an existing paid holder must still work exactly as before.');
+        $this->assertSame($originalAllocation, $refreshed->target_allocation_count, 'Cancellation must never itself change the already-paid allocation.');
     }
 }

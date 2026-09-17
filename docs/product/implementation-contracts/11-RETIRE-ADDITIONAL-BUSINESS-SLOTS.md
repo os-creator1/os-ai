@@ -14,6 +14,38 @@ determines whether any already-paid holder exists — a conditional
 migration/operations gate, not an open architecture decision (Blueprint's
 own closing section, Roadmap A7).
 
+**"New sales" — scope clarification (review correction).** An initial
+implementation pass left `requestSlotAgreementIncrease()`'s customer
+route reachable, reasoning that it reuses an existing `Completed`
+agreement row rather than creating a new one. That reasoning is
+mechanically true but commercially wrong: "new sales" in this objective
+means any purchase of NEW paid slot capacity, not merely the creation of
+a new `additional_business_slot_agreements` row. "New sales" therefore
+covers BOTH:
+
+- creation/checkout of a new additional-slot agreement (the original
+  `checkout` entry point); and
+- an owner-initiated, paid, mid-period increase that buys MORE slot
+  capacity against an existing agreement (`requestSlotAgreementIncrease()`),
+  since it prices and charges a real prorated amount for additional
+  capacity via the same real provider payment path checkout uses.
+
+Both entry points are frozen by this contract. An existing `Completed`
+holder retains exactly what they already paid for and nothing more:
+
+- their already-paid, current slot allocation;
+- scheduled renewal billing for that existing allocation, unchanged;
+- cancellation, unchanged;
+- any other non-expansion existing-holder lifecycle behavior.
+
+They cannot buy additional slot capacity after this contract. This is
+**not** the §8 case-3 refund/grandfather/convert commercial decision —
+no already-owned capacity is revoked, no scheduled renewal is disabled,
+and the underlying manager/controller methods are left in place
+unmodified pending Contract 14's eventual cleanup; only the customer-
+facing purchase entry points (checkout and increase) are made
+unreachable.
+
 ## 2. Governing authority
 
 - Addendum §17 (RFC-004 §13/§17 superseded), §18 step 5.
