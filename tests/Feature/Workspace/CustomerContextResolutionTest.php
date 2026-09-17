@@ -9,7 +9,9 @@ use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Helpers\Helper;
 use App\Library\Navigation\CustomerContextPreference;
+use App\Models\Business;
 use App\Models\BusinessLocation;
+use App\Models\Customer;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembershipBusiness;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -115,11 +117,34 @@ class CustomerContextResolutionTest extends TestCase
     // T-CTX-1 — Agency owner, staff, client owner, restricted staff
     // -----------------------------------------------------------------
 
+    /**
+     * Contract 13 remediation (Category C): "Client Two" used to be a
+     * sibling Business inside the Agency's own Workspace — impossible now.
+     * The context switcher's own selectable-Businesses set was never
+     * scoped to one Workspace (it already spans every Workspace the actor
+     * ordinarily reaches, matching CustomerContextResolver's own
+     * allSelectable()), so a genuinely separate Workspace the same owner
+     * also administers (via an ordinary Admin membership) preserves the
+     * exact property under test: the switcher offers every reachable
+     * client, and explicit selection enters that client's own Business
+     * frame.
+     */
     public function test_agency_owner_gets_the_account_frame_and_a_client_switcher(): void
     {
         [$customer, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($customer, $workspace, 'Client Two');
+        $clientTwoSetup = $this->createIndependentWorkspaceBusiness(businessName: 'Client Two', workspaceName: 'Client Two Workspace');
+        $this->member($clientTwoSetup['workspace'], $customer->user, WorkspaceMembershipRole::Admin);
+        $clientTwo = $clientTwoSetup['business'];
+        $clientTwoWorkspace = $clientTwoSetup['workspace'];
+        $this->assignTier($clientTwoWorkspace, WorkspacePlanTier::Agency);
         $this->authenticateAs($customer);
+        // With two Workspaces now reachable (Contract 13 forbids sharing
+        // one), the resolver treats an unselected home() as genuinely
+        // ambiguous (Choose an account) rather than the Agency's own
+        // frame. switchToAccount() deliberately selects the Agency
+        // Workspace as the frame while the switcher still lists every
+        // reachable client, including Client Two.
+        $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
 
         $response = $this->home()->assertOk();
         $html = $response->getContent();
@@ -148,7 +173,7 @@ class CustomerContextResolutionTest extends TestCase
         $response->assertSee('View Client One as a client', false);
 
         // Explicit selection enters the Business frame of that client.
-        $this->switchTo($workspace, $clientTwo)->assertRedirect(route('user.home'));
+        $this->switchTo($clientTwoWorkspace, $clientTwo)->assertRedirect(route('user.home'));
 
         $after = $this->home()->assertOk();
         $afterKeys = $this->menuKeys($after->getContent());
@@ -161,14 +186,14 @@ class CustomerContextResolutionTest extends TestCase
         $this->assertStringContainsString('Client Two', $this->shellText($after->getContent()));
         $after->assertSee('aria-current="true"', false);
         $after->assertSee('All client accounts', false);
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientTwo->uid]), $this->menuLinks($after->getContent()));
+        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$clientTwoWorkspace->uid, $clientTwo->uid]), $this->menuLinks($after->getContent()));
         $this->assertNotContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($after->getContent()));
     }
 
     public function test_selected_scope_staff_land_in_their_sole_assigned_business_without_a_switcher(): void
     {
         [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
-        $unassigned = $this->addBusiness($owner, $workspace, 'Unassigned Client');
+        $unassigned = $this->createIndependentWorkspaceBusiness(businessName: 'Unassigned Client')['business'];
         $staff = $this->createCustomer();
         $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->assign($membership, $assigned);
@@ -192,11 +217,18 @@ class CustomerContextResolutionTest extends TestCase
         }
     }
 
+    /**
+     * Contract 13 remediation (Category C): "Client Bakery" used to be a
+     * sibling Business inside the Agency's own Workspace, distinct from
+     * the Agency's own Business — impossible now. Selected-scope
+     * assignment to the Workspace's own sole Business preserves the exact
+     * property under test (a Business-scoped client sees only their own
+     * Business frame, never the Workspace/account-level identity).
+     */
     public function test_client_business_owner_inside_an_agency_sees_only_their_business_frame(): void
     {
-        [$agencyOwner, $agencyOwnBusiness, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House Business', 'Northwind Agency');
+        [$agencyOwner, $clientBusiness, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
         $client = $this->createCustomer();
-        $clientBusiness = $this->addBusiness($client, $workspace, 'Client Bakery');
         $membership = $this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->assign($membership, $clientBusiness);
         $this->authenticateAs($client);
@@ -218,7 +250,6 @@ class CustomerContextResolutionTest extends TestCase
         $shell = $this->shellText($html);
         $this->assertStringContainsString('Client Bakery', $shell);
         $this->assertStringNotContainsString('Northwind Agency', $html, 'S-6: the Agency Workspace name is never disclosed to a client.');
-        $this->assertStringNotContainsString('Agency House Business', $html);
         $this->assertStringNotContainsStringIgnoringCase('workspace', $shell);
         $response->assertDontSee('as a client', false);
     }
@@ -364,7 +395,6 @@ class CustomerContextResolutionTest extends TestCase
     public function test_a_remembered_preference_is_reauthorized_on_every_use_and_cleared_when_access_is_revoked(): void
     {
         [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Other Client');
         $staff = $this->createCustomer();
         $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->assign($membership, $assigned);
@@ -388,7 +418,7 @@ class CustomerContextResolutionTest extends TestCase
     public function test_the_business_switcher_never_lists_physical_locations(): void
     {
         [$customer, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($customer, $workspace, 'Client Two');
+        $this->anotherReachableAgencyClient($customer);
 
         foreach (['Downtown Storefront Location', 'Riverside Branch Location', 'Mobile Service Area Location'] as $index => $name) {
             BusinessLocation::create([
@@ -419,18 +449,20 @@ class CustomerContextResolutionTest extends TestCase
     public function test_business_routes_never_mark_an_account_frame_item_active(): void
     {
         [$customer, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($customer, $workspace, 'Client Two');
+        $clientTwoSetup = $this->anotherReachableAgencyClient($customer);
+        $clientTwo = $clientTwoSetup['business'];
+        $clientTwoWorkspace = $clientTwoSetup['workspace'];
         $this->authenticateAs($customer);
-        $this->switchTo($workspace, $clientTwo);
+        $this->switchTo($clientTwoWorkspace, $clientTwo);
 
-        $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientTwo->uid]))->assertOk();
+        $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$clientTwoWorkspace->uid, $clientTwo->uid]))->assertOk();
         $this->assertSame(['analytics'], $this->activeMenuKeys($analytics->getContent()));
         $this->assertNotContains('accounts', $this->menuKeys($analytics->getContent()));
         $this->assertSame(1, substr_count($this->sidebarHtml($analytics->getContent()), 'aria-current="page"'));
 
         // The legacy campaigns page is no longer a menu destination, so it
         // marks nothing active — least of all an Account-frame item.
-        $campaigns = $this->get(route('customer.workspaces.businesses.outreach.campaigns', [$workspace->uid, $clientTwo->uid]))->assertOk();
+        $campaigns = $this->get(route('customer.workspaces.businesses.outreach.campaigns', [$clientTwoWorkspace->uid, $clientTwo->uid]))->assertOk();
         $this->assertSame([], $this->activeMenuKeys($campaigns->getContent()));
         $this->assertNotContains('accounts', $this->menuKeys($campaigns->getContent()));
 
@@ -445,7 +477,7 @@ class CustomerContextResolutionTest extends TestCase
     public function test_automatic_redirects_are_deterministic_and_never_loop(): void
     {
         [$customer, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($customer, $workspace, 'Client Two');
+        $this->anotherReachableAgencyClient($customer);
         $this->authenticateAs($customer);
 
         // Ambiguous: the bare campaigns entry hands over to the explicit chooser, which renders.
@@ -615,5 +647,30 @@ class CustomerContextResolutionTest extends TestCase
         $stripped = preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $withoutStyles) ?? '';
 
         return html_entity_decode(strip_tags($stripped));
+    }
+
+    /**
+     * Contract 13 remediation (Category C): "a second reachable client" of
+     * the same owner used to be a sibling Business inside the Agency's own
+     * Workspace — impossible now. A genuinely separate, also Agency-tier
+     * Workspace with an ordinary Admin membership preserves the exact
+     * property under test (the switcher/redirect/active-menu logic treats
+     * more than one reachable Business as genuinely ambiguous, and each
+     * Business's own frame renders in full, including Agency-tier-specific
+     * navigation like "All client accounts" — see
+     * app/Library/Navigation/ContextSwitcherPresenter.php and
+     * resources/views/customer/dashboard/agency-home.blade.php, neither of
+     * which key off WHICH Agency Workspace the Business happens to live
+     * in).
+     *
+     * @return array{business: Business, workspace: Workspace}
+     */
+    private function anotherReachableAgencyClient(Customer $owner, string $name = 'Client Two'): array
+    {
+        $setup = $this->createIndependentWorkspaceBusiness(businessName: $name, workspaceName: $name . ' Workspace');
+        $this->member($setup['workspace'], $owner->user, WorkspaceMembershipRole::Admin);
+        $this->assignTier($setup['workspace'], WorkspacePlanTier::Agency);
+
+        return ['business' => $setup['business'], 'workspace' => $setup['workspace']];
     }
 }
