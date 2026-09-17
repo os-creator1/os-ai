@@ -57,18 +57,30 @@ report the remainder.
   than re-deriving it from scratch).
 - **One or more found:** migrate each using the **same** mechanics
   Contract 10 already built (`reassignBusiness()`,
-  `removeAllForBusinessInWorkspace()`, primary-location repair-if-none),
-  but **without** Contract 01's Agency relationship step (these are
-  ordinary Workspaces, not Agencies) — each non-primary Business gets its
-  own new plain Workspace, no relationship row. The payer matrix (Roadmap
-  A5) does not apply here either — non-Agency `payer_type = 'workspace'`
-  rows are, per the M2 backfill default (Phase A A5's own citation),
-  already the *expected* self-pay-via-the-single-Workspace case, and
-  since each split Workspace ends up with exactly one Business, a
-  `workspace`-type payer assignment's meaning is **unchanged** by the
-  split (it meant "this Workspace pays," and after the split it still
-  does, for the one Business now solely inside it) — no halt condition
-  is needed for this slice's case, unlike Contract 10's Agency case.
+  `removeAllForBusinessInWorkspace()`, primary-location repair-if-none,
+  and — per the same Workspace-creation-needs-a-plan-first ordering
+  Contract 10's own §4 corrected — `EntitlementManager::assignFirstPlan()`
+  assigning the new Workspace a fresh `Core`, complimentary,
+  zero-additional-slot plan, mechanically identical to Contract 10's own
+  Client Workspace treatment; the SOURCE Workspace's own existing plan
+  assignment is never touched), but **without** Contract 01's Agency
+  relationship step (these are ordinary Workspaces, not Agencies) — each
+  non-primary Business gets its own new plain Workspace, no relationship
+  row. The payer matrix (Roadmap A5) does not apply here either —
+  non-Agency `payer_type = 'workspace'` rows are, per the M2 backfill
+  default (Phase A A5's own citation), already the *expected*
+  self-pay-via-the-single-Workspace case, and since each split Workspace
+  ends up with exactly one Business, the payer assignment row is **never
+  written by this slice**. The correct invariant is: the payer
+  TYPE/economic rule remains "the Workspace *containing this Business*
+  pays" (`EffectivePayerResolver::fromAssignment()` resolves
+  `PayerType::Workspace` via the Business's own, current `workspace_id`
+  at read time) — after reassignment, that is the **newly created**
+  Workspace, not the original one. Saying "the same Workspace still pays"
+  is inaccurate: no Workspace "still" pays anything here, since the
+  Business itself no longer sits in the original Workspace at all — no
+  halt condition is needed for this slice's case, unlike Contract 10's
+  Agency case, and no payer row of any kind is ever rewritten.
 
 ## 5. Data model contract
 
@@ -119,13 +131,31 @@ provider call is made, same as Contract 10 §11.
 ## 12. Exact implementation allowlist
 
 **New files:**
-- `app/Console/Commands/ReportNonAgencyMultiBusinessWorkspaces.php` (Step 1's report, runnable independently of any migration decision)
-- `app/Library/Workspace/Migration/NonAgencyBusinessSplitV1.php` (only exercised if Step 1 finds rows)
+- `app/Console/Commands/ReportNonAgencyMultiBusinessWorkspaces.php` — Step
+  1's report, an independently runnable, read-only command with no
+  dependency on any migration decision. It never claims to be running
+  against any particular environment (local/test vs. real target); it
+  reports the environment/connection/database it is actually connected
+  to and leaves verification to the operator.
+- `app/Library/Workspace/Migration/NonAgencyBusinessSplitV1.php` (only
+  exercised if Step 1 finds rows) — the authoritative service; owns every
+  migration decision (candidate selection, payer classification,
+  transaction boundary, verification).
+- `app/Console/Commands/MigrateNonAgencyMultiBusinessWorkspaces.php` — the
+  thin operator-facing wrapper around `NonAgencyBusinessSplitV1`'s own
+  `preflight()`/`run()`, mirroring Contract 10's
+  `MigrateAgencyClientBusinesses` pattern (§6/§8's same operator-run
+  command posture: preflight/dry-run/execute modes, a required real
+  `--operator`, never a fabricated system actor). It owns **no** business
+  logic of its own — it resolves CLI options, calls the service, and
+  prints its report.
 - `tests/Feature/Workspace/NonAgencyMultiBusinessReportTest.php`
 - `tests/Feature/Workspace/NonAgencyBusinessSplitV1Test.php`
 
-**No existing file modified** — this slice, like Contract 10, reuses
-`WorkspaceManager`/`WorkspaceMembershipBusinessRepository` unchanged.
+**No existing production file modified** — this slice, like Contract 10,
+reuses `WorkspaceManager`/`WorkspaceMembershipBusinessRepository`/
+`EntitlementManager` unchanged. (The three new files above are all new,
+not modifications to any existing file.)
 
 ## 13. Required tests
 
@@ -138,9 +168,24 @@ at this simpler scope — reassignment preserves every `business_id`-keyed
 table (same inventory as Contract 10 §3, re-asserted here since this is a
 distinct code path even though it shares mechanics); no relationship row
 is created (confirming this slice correctly excludes Contract 01's step);
-`workspace`-type payer assignments are provably unaffected in meaning
-(the same Workspace still pays, now for a Workspace holding only the one
-remaining Business).
+`workspace`-type payer assignments are provably unaffected — the
+assignment row itself is never rewritten, and the economic rule "the
+Workspace containing this Business pays" continues to resolve correctly
+for both outcomes of the split: the retained primary Business (whose
+containing Workspace is unchanged, the original source Workspace, now
+holding only that one Business) and each moved Business (whose
+containing Workspace is now its own newly created one) —
+`EffectivePayerResolver` proves both cases from the Business's current
+`workspace_id`, never from a rewritten payer row.
+
+Focused coverage for `MigrateNonAgencyMultiBusinessWorkspaces` (the
+operator wrapper) proves only wrapper-level concerns, not the migration
+algorithm itself (already proven above): preflight/dry-run remain
+zero-write; `--execute` reaches the real service and migrates a genuine
+seeded candidate; a missing `--operator` fails clearly for write modes;
+an invalid `--workspace` uid fails; any `blocked`/`failed`/
+`verification_failed` Workspace status fails the command's exit code; a
+clean no-candidate run succeeds.
 
 ## 14. Acceptance criteria
 
