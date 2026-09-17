@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Business;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -72,7 +74,20 @@ class CreatesCustomerContextFixturesTopologyTest extends TestCase
         $this->assertNotSame($m['agencyWorkspace']->id, $m['clientWorkspace']->id);
         $this->assertSame($m['clientWorkspace']->id, $m['clientBusiness']->workspace_id);
         $this->assertSame(1, Business::query()->where('workspace_id', $m['clientWorkspace']->id)->count());
-        $this->assertSame(0, Business::query()->where('workspace_id', $m['agencyWorkspace']->id)->count());
+    }
+
+    public function test_agency_managed_client_helper_gives_the_agency_workspace_exactly_one_agency_business(): void
+    {
+        $m = $this->createAgencyManagedClient();
+
+        $this->assertSame(1, Business::query()->where('workspace_id', $m['agencyWorkspace']->id)->count());
+        $this->assertSame($m['agencyWorkspace']->id, $m['agencyBusiness']->workspace_id);
+
+        // The returned agencyBusiness is the persisted sole Business for that Workspace.
+        $this->assertSame(
+            Business::query()->where('workspace_id', $m['agencyWorkspace']->id)->sole()->id,
+            $m['agencyBusiness']->id,
+        );
     }
 
     public function test_agency_managed_client_helper_establishes_a_real_active_relationship_through_canonical_authority(): void
@@ -101,9 +116,25 @@ class CreatesCustomerContextFixturesTopologyTest extends TestCase
         $second = $this->createAgencyManagedClient($first['agencyWorkspace'], 'Client Two', 'Client Two Workspace');
 
         $this->assertSame($first['agencyWorkspace']->id, $second['agencyWorkspace']->id);
+        $this->assertSame($first['agencyBusiness']->id, $second['agencyBusiness']->id);
         $this->assertNotSame($first['clientWorkspace']->id, $second['clientWorkspace']->id);
         $this->assertSame(1, Business::query()->where('workspace_id', $first['clientWorkspace']->id)->count());
         $this->assertSame(1, Business::query()->where('workspace_id', $second['clientWorkspace']->id)->count());
+
+        // Reusing the same Agency Workspace for a second Client never creates a second Agency Business.
+        $this->assertSame(1, Business::query()->where('workspace_id', $first['agencyWorkspace']->id)->count());
+    }
+
+    public function test_agency_managed_client_helper_fails_clearly_for_an_existing_workspace_with_no_agency_business(): void
+    {
+        $customer = $this->createCustomer();
+        $emptyWorkspace = $this->createWorkspace($customer->user, ['name' => 'Empty Agency']);
+        $this->assignTier($emptyWorkspace, WorkspacePlanTier::Agency);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/exactly one Business \(found 0\)/');
+
+        $this->createAgencyManagedClient($emptyWorkspace->fresh());
     }
 
     public function test_neither_helper_can_ever_produce_a_multi_business_workspace(): void
@@ -122,7 +153,7 @@ class CreatesCustomerContextFixturesTopologyTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $this->addBusiness($customer, $workspace, 'First Business');
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         DB::table('businesses')->insert(array_merge($this->businessAttributes(['name' => 'Second Business']), [
             'uid' => uniqid('biz_', true),

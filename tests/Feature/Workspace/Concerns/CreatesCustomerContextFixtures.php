@@ -168,31 +168,48 @@ trait CreatesCustomerContextFixtures
 
     /**
      * The V1 Agency-managed-client shape (Contract 13 remediation class A):
-     * a separate Client Workspace holding exactly one Business, managed by
-     * an Agency Workspace through a real, canonically-authorized ACTIVE
-     * AgencyClientWorkspaceRelationship — never a manually fabricated
-     * relationship row.
+     * an Agency Workspace holding exactly one Agency Business — the same
+     * Workspace -> exactly one Business -> assigned plan shape tenant()
+     * already models — managing a separate Client Workspace holding exactly
+     * one Client Business, through a real, canonically-authorized ACTIVE
+     * AgencyClientWorkspaceRelationship. Never a manually fabricated
+     * relationship row, and never an Agency Workspace with zero or several
+     * Businesses: that is not a valid current V1 Agency topology.
      *
-     * Pass an existing $agencyWorkspace to attach another client to an
-     * Agency that already exists; omit it to create a fresh Agency-tier
-     * Workspace for this call alone.
+     * Omit $agencyWorkspace to build a brand-new Agency (owner, Business and
+     * Agency-tier Workspace, via tenant()) for this call alone. Pass an
+     * existing $agencyWorkspace to attach another client to an Agency that
+     * already exists — that Workspace must already hold exactly one
+     * Business, or this throws rather than silently creating a second one
+     * or proceeding with none.
      *
-     * @return array{agencyOwner: Customer, agencyWorkspace: Workspace, clientOwner: Customer, clientBusiness: Business, clientWorkspace: Workspace, relationship: AgencyClientWorkspaceRelationship}
+     * @return array{agencyOwner: Customer, agencyWorkspace: Workspace, agencyBusiness: Business, clientOwner: Customer, clientBusiness: Business, clientWorkspace: Workspace, relationship: AgencyClientWorkspaceRelationship}
      */
     protected function createAgencyManagedClient(
         ?Workspace $agencyWorkspace = null,
         string $clientBusinessName = 'Managed Client',
         string $clientWorkspaceName = 'Managed Client Workspace',
+        string $agencyBusinessName = 'Agency Business',
+        string $agencyWorkspaceName = 'Agency Workspace',
     ): array {
         $this->ensureRequiredAppConfigRowsExist();
         $this->platformAdminId();
 
         if ($agencyWorkspace === null) {
-            $agencyOwner = $this->createCustomer();
-            $agencyWorkspace = $this->createWorkspace($agencyOwner->user, ['name' => 'Agency Workspace']);
-            $this->assignTier($agencyWorkspace, WorkspacePlanTier::Agency);
+            [$agencyOwner, $agencyBusiness, $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, $agencyBusinessName, $agencyWorkspaceName);
         } else {
             $agencyOwner = Customer::where('user_id', $agencyWorkspace->owner_user_id)->firstOrFail();
+            $agencyBusinesses = Business::query()->where('workspace_id', $agencyWorkspace->id)->get();
+
+            if ($agencyBusinesses->count() !== 1) {
+                throw new RuntimeException(sprintf(
+                    'createAgencyManagedClient() requires the supplied Agency Workspace [%d] to already represent a valid V1 Agency topology — exactly one Business (found %d). Build it with tenant(WorkspacePlanTier::Agency, ...) or an earlier createAgencyManagedClient() call, or omit $agencyWorkspace to create a fresh one.',
+                    $agencyWorkspace->id,
+                    $agencyBusinesses->count(),
+                ));
+            }
+
+            $agencyBusiness = $agencyBusinesses->first();
         }
 
         $client = $this->createIndependentWorkspaceBusiness(
@@ -209,6 +226,7 @@ trait CreatesCustomerContextFixtures
         return [
             'agencyOwner' => $agencyOwner,
             'agencyWorkspace' => $agencyWorkspace->fresh(),
+            'agencyBusiness' => $agencyBusiness->fresh(),
             'clientOwner' => $client['customer'],
             'clientBusiness' => $client['business'],
             'clientWorkspace' => $client['workspace'],
