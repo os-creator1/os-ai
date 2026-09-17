@@ -214,10 +214,19 @@ class AnalyticsSecurityTest extends TestCase
             ->assertRedirect(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]));
     }
 
+    /**
+     * Contract 13 remediation (Category B): "several businesses" used to
+     * be two Businesses in one Workspace — impossible now
+     * (businesses_workspace_id_unique). The same customer owning a second,
+     * genuinely independent Workspace (createBusinessWithWorkspace()
+     * creates its own new one) preserves the exact property under test —
+     * more than one reachable Business makes the entry route render a
+     * chooser rather than guess.
+     */
     public function test_entry_with_several_businesses_renders_a_chooser_and_never_guesses(): void
     {
         [$customer, $first, $workspace] = $this->tenant();
-        $second = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Second Venue']));
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Venue']));
         $this->authenticateAsCustomer($customer);
 
         $this->get(route('customer.analytics.entry'))->assertOk()->assertSee($first->name)->assertSee('Second Venue');
