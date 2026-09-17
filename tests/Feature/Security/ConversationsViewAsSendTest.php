@@ -43,6 +43,28 @@ use Tests\TestCase;
  * feature's code path reads or writes an actor identity of its own, so
  * there is nothing here to falsify.
  */
+/**
+ * Contract 13 remediation note: the four tests below that exercise sending
+ * while viewing (send/retry/double-click-retry/blacklist) are marked
+ * incomplete, not fixed, not deleted. Modeling the CURRENT, correct
+ * cross-Workspace Agency View As topology (createAgencyManagedClient() +
+ * the real customer.workspaces.clients.view-as route, replacing the old
+ * fixture's now-impossible sibling-Business-in-one-Workspace shape)
+ * uncovered a genuine, pre-existing production gap, independently
+ * confirmed by reading the code, not merely inferred from the fixture:
+ * ChatBoxController::resolveBusiness() (app/Http/Controllers/Customer/
+ * ChatBoxController.php ~line 1473) authorizes purely through
+ * WorkspaceManager::userCanAccessBusiness() — which
+ * AgencyViewAsTest::test_the_real_agency_actor_stays_the_actor_and_client_tenancy_is_not_widened
+ * already proves returns false BY DESIGN for an Agency actor viewing a
+ * Client cross-Workspace. The "defence in depth for view-as" check just
+ * below it only NARROWS further; it never GRANTS access. So Conversations
+ * reply/retry has never actually worked during a cross-Workspace Agency
+ * View As session — the old fixture only appeared to prove it because the
+ * acting Agency owner also happened to be that Workspace's own owner. Per
+ * this remediation's explicit instruction not to fix production defects
+ * silently, this is reported here and in the final report, not patched.
+ */
 class ConversationsViewAsSendTest extends TestCase
 {
     use RefreshDatabase;
@@ -61,11 +83,13 @@ class ConversationsViewAsSendTest extends TestCase
 
     public function test_view_as_can_send_a_reply_exactly_as_the_customer_could(): void
     {
-        [$agency, $viewed, $workspace] = $this->managedAgencyTenant();
+        $this->markTestIncomplete('Blocked on a confirmed, pre-existing production gap: ChatBoxController::resolveBusiness() has no View-As-aware grant for cross-Workspace Agency sessions — see class docblock.');
+
+        [$agency, $viewed, $workspace, $agencyWorkspace] = $this->managedAgencyTenant();
         $box = $this->inboundConversation($viewed, self::PERSON);
 
         $this->authenticateAs($agency);
-        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $this->startClientViewAs($agencyWorkspace, $workspace)->assertRedirect(route('user.home'));
 
         $this->reply($workspace, $viewed, $box, 'Sent while viewing as the client', (string) Str::uuid())
             ->assertOk()
@@ -79,7 +103,9 @@ class ConversationsViewAsSendTest extends TestCase
 
     public function test_view_as_can_retry_a_failed_send_exactly_as_the_customer_could(): void
     {
-        [$agency, $viewed, $workspace] = $this->managedAgencyTenant();
+        $this->markTestIncomplete('Blocked on a confirmed, pre-existing production gap: ChatBoxController::resolveBusiness() has no View-As-aware grant for cross-Workspace Agency sessions — see class docblock.');
+
+        [$agency, $viewed, $workspace, $agencyWorkspace] = $this->managedAgencyTenant();
         $box = $this->inboundConversation($viewed, self::PERSON);
         $this->authenticateAs($agency);
 
@@ -91,7 +117,7 @@ class ConversationsViewAsSendTest extends TestCase
         $this->assertSame('failed', $message->send_status);
         $this->fakeAdapter->rejections = [];
 
-        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $this->startClientViewAs($agencyWorkspace, $workspace)->assertRedirect(route('user.home'));
 
         $this->postJson(route('customer.workspaces.businesses.conversations.retry', [$workspace->uid, $viewed->uid, $box->uid]), [
             'send_uid' => $message->send_uid,
@@ -104,7 +130,9 @@ class ConversationsViewAsSendTest extends TestCase
 
     public function test_view_as_double_click_retry_still_makes_no_second_provider_call(): void
     {
-        [$agency, $viewed, $workspace] = $this->managedAgencyTenant();
+        $this->markTestIncomplete('Blocked on a confirmed, pre-existing production gap: ChatBoxController::resolveBusiness() has no View-As-aware grant for cross-Workspace Agency sessions — see class docblock.');
+
+        [$agency, $viewed, $workspace, $agencyWorkspace] = $this->managedAgencyTenant();
         $box = $this->inboundConversation($viewed, self::PERSON);
         $this->authenticateAs($agency);
 
@@ -113,7 +141,7 @@ class ConversationsViewAsSendTest extends TestCase
         $message = DB::table('chat_box_messages')->where('direction', 'outgoing')->sole();
         $this->fakeAdapter->rejections = [];
 
-        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $this->startClientViewAs($agencyWorkspace, $workspace)->assertRedirect(route('user.home'));
 
         // The claim a first, still-in-flight retry click already made —
         // freshly stamped, so reconciliation correctly treats it as a live
@@ -134,7 +162,9 @@ class ConversationsViewAsSendTest extends TestCase
      */
     public function test_view_as_is_still_refused_by_the_same_blacklist_rule_as_the_customer(): void
     {
-        [$agency, $viewed, $workspace] = $this->managedAgencyTenant();
+        $this->markTestIncomplete('Blocked on a confirmed, pre-existing production gap: ChatBoxController::resolveBusiness() has no View-As-aware grant for cross-Workspace Agency sessions — see class docblock.');
+
+        [$agency, $viewed, $workspace, $agencyWorkspace] = $this->managedAgencyTenant();
         $box = $this->inboundConversation($viewed, self::PERSON);
 
         Blacklists::create([
@@ -145,7 +175,7 @@ class ConversationsViewAsSendTest extends TestCase
         ]);
 
         $this->authenticateAs($agency);
-        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $this->startClientViewAs($agencyWorkspace, $workspace)->assertRedirect(route('user.home'));
 
         $this->reply($workspace, $viewed, $box, 'Are you still there?', (string) Str::uuid())
             ->assertOk()
@@ -157,15 +187,25 @@ class ConversationsViewAsSendTest extends TestCase
     // -----------------------------------------------------------------
 
     /**
-     * An Agency-tier Workspace with a managed, sendable Business the agency
-     * owner can view as.
+     * A real, current V1 Agency-managed Client Workspace (Contract 13
+     * remediation: the old fixture put the "viewed" Business as a sibling
+     * inside the Agency's own Workspace — impossible under
+     * businesses_workspace_id_unique. The current, canonical shape is a
+     * separate Client Workspace linked by an Active
+     * AgencyClientWorkspaceRelationship, viewed via startAgencyView()/the
+     * customer.workspaces.clients.view-as route — which is exactly what
+     * this class's own docblock describes: "an authorized agency/platform
+     * actor using View As" on a client, not a sibling Business).
      *
-     * @return array{0: \App\Models\Customer, 1: Business, 2: Workspace}
+     * @return array{0: \App\Models\Customer, 1: Business, 2: Workspace, 3: Workspace}
      */
     private function managedAgencyTenant(): array
     {
-        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Primary', 'Northwind Agency');
-        $viewed = $this->addBusiness($customer, $workspace, 'Harbor Lane Studios');
+        $pair = $this->createAgencyManagedClient(clientBusinessName: 'Harbor Lane Studios', agencyBusinessName: 'Primary', agencyWorkspaceName: 'Northwind Agency');
+        $customer = $pair['agencyOwner'];
+        $agencyWorkspace = $pair['agencyWorkspace'];
+        $workspace = $pair['clientWorkspace'];
+        $viewed = $pair['clientBusiness'];
 
         $country = Country::firstOrCreate(['country_code' => '1', 'iso_code' => 'US'], ['name' => 'United States', 'status' => 1]);
         $currency = Currency::firstOrCreate(['code' => 'USD'], ['name' => 'US Dollar', 'format' => '$', 'status' => true]);
@@ -203,7 +243,18 @@ class ConversationsViewAsSendTest extends TestCase
         $customer->user->sms_unit = 1000;
         $customer->user->save();
 
-        return [$customer->fresh(), $viewed->fresh(), $workspace];
+        return [$customer->fresh(), $viewed->fresh(), $workspace, $agencyWorkspace];
+    }
+
+    /**
+     * The current, real cross-Workspace Agency View As entry point
+     * (Contract 04/07/08A): posts to customer.workspaces.clients.view-as,
+     * the same route AgencyClientsController::viewAs() registers and the
+     * only one this class's Agency-manages-a-client scenario now uses.
+     */
+    private function startClientViewAs(Workspace $agencyWorkspace, Workspace $clientWorkspace): TestResponse
+    {
+        return $this->post(route('customer.workspaces.clients.view-as', [$agencyWorkspace->uid, $clientWorkspace->uid]));
     }
 
     /** The conversation managed inbound (#285) keys for this person. */
