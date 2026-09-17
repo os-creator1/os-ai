@@ -42,11 +42,12 @@
                                 @endforelse
                             </td>
                             <td>
-                                @if($row['switch'] && $clients['switchUrl'])
-                                    <form method="POST" action="{{ $clients['switchUrl'] }}">
+                                {{-- The canonical Agency View As entry (presenter-supplied, and
+                                     re-authorized by that endpoint): a managed client lives in its
+                                     own Workspace and is never an ordinary context switch. --}}
+                                @if($row['openUrl'])
+                                    <form method="POST" action="{{ $row['openUrl'] }}" data-role="client-open">
                                         @csrf
-                                        <input type="hidden" name="workspace" value="{{ $row['switch']['workspace'] }}">
-                                        <input type="hidden" name="business" value="{{ $row['switch']['business'] }}">
                                         <x-button type="submit" variant="outline" size="sm">Open<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
                                     </form>
                                 @endif
@@ -70,11 +71,9 @@
                         @empty
                             <p class="text-muted mb-50">Nothing needs attention</p>
                         @endforelse
-                        @if($row['switch'] && $clients['switchUrl'])
-                            <form method="POST" action="{{ $clients['switchUrl'] }}">
+                        @if($row['openUrl'])
+                            <form method="POST" action="{{ $row['openUrl'] }}" data-role="client-open">
                                 @csrf
-                                <input type="hidden" name="workspace" value="{{ $row['switch']['workspace'] }}">
-                                <input type="hidden" name="business" value="{{ $row['switch']['business'] }}">
                                 <x-button type="submit" variant="outline" size="sm">Open<span class="visually-hidden"> {{ $row['name'] }}</span></x-button>
                             </form>
                         @endif

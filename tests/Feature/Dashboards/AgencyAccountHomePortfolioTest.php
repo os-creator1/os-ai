@@ -6,7 +6,10 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Library\Website\WebsiteAiGenerationClient;
+use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\Business;
+use App\Models\Customer;
+use App\Models\ViewAsSession;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +46,151 @@ class AgencyAccountHomePortfolioTest extends TestCase
     }
 
     // =================================================================
+    // V1 client portfolio — the ACTIVE relationship is the only authority
+    // =================================================================
+
+    /**
+     * Contract 13: an Agency Workspace holds exactly ONE Business, its own,
+     * and every client is a SEPARATE Workspace reached through an ACTIVE
+     * relationship. So the portfolio is the relationship set — and the
+     * Agency's own Business is never a row in it, in either band.
+     */
+    public function test_the_portfolio_lists_relationship_clients_and_never_the_agencys_own_business(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental']);
+        $this->contactsAdded($managed['Alpha Dental'], 2, '2026-09-02');
+        $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
+
+        $html = $this->home()->assertOk()->getContent();
+        $band = $this->clientsBand($html);
+
+        $this->assertStringContainsString('Alpha Dental', $band);
+        $this->assertSame(1, substr_count($band, 'data-role="client-row"'), 'One managed client, one row.');
+        $this->assertStringNotContainsString('Northwind HQ', $band, "The Agency's own Business is not its own client.");
+        $this->assertSame(['Alpha Dental', 'All client accounts'], array_column($this->crossClientRows($html), 'name'));
+    }
+
+    /**
+     * Several managed clients all appear; a Workspace this Agency does not
+     * manage never does, however many Businesses exist in the installation.
+     */
+    public function test_every_managed_client_appears_and_an_unmanaged_workspace_never_does(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro', 'Charlie Cafe']);
+        $stranger = $this->createIndependentWorkspaceBusiness(businessName: 'Stranger Studio', workspaceName: 'Stranger Account');
+        $this->contactsAdded($stranger['business'], 7, '2026-09-02');
+        $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
+
+        $html = $this->home()->assertOk()->getContent();
+        $band = $this->clientsBand($html);
+
+        foreach (['Alpha Dental', 'Bravo Bistro', 'Charlie Cafe'] as $name) {
+            $this->assertStringContainsString($name, $band);
+        }
+
+        $this->assertSame(3, substr_count($band, 'data-role="client-row"'));
+        $this->assertStringNotContainsString('Stranger Studio', $this->mainText($html), 'No relationship, no row — membership and existence are not authority.');
+        $this->assertCount(3, $managed);
+    }
+
+    /**
+     * Ending the relationship — through Contract 01's own canonical manager —
+     * removes the client from the portfolio at once, figures and all. A
+     * client can never put itself back in, because it never writes here.
+     */
+    public function test_a_terminated_relationship_leaves_the_portfolio_immediately(): void
+    {
+        $agency = $this->createAgencyManagedClient(null, 'Alpha Dental', 'Alpha Dental Account', 'Northwind HQ', 'Northwind Agency');
+        $leaving = $this->createAgencyManagedClient($agency['agencyWorkspace'], 'Bravo Bistro', 'Bravo Bistro Account');
+        $this->contactsAdded($agency['clientBusiness'], 2, '2026-09-02');
+        $this->contactsAdded($leaving['clientBusiness'], 5, '2026-09-02');
+        $this->authenticateAs($agency['agencyOwner']);
+        $this->switchToAccount($agency['agencyWorkspace']);
+
+        $before = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('Bravo Bistro', $this->clientsBand($before));
+        $this->assertSame(['7', '0'], (function (array $rows) {
+            return [$rows[count($rows) - 1]['contacts'], $rows[count($rows) - 1]['conversations']];
+        })($this->crossClientRows($before)), 'Both managed clients are in the total while both are managed.');
+
+        app(AgencyClientRelationshipManager::class)->terminate(
+            (int) $agency['agencyOwner']->user_id,
+            $leaving['relationship'],
+            'Engagement ended.',
+        );
+
+        $after = $this->home()->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Bravo Bistro', $this->mainText($after));
+        $this->assertSame(['Alpha Dental', 'All client accounts'], array_column($this->crossClientRows($after), 'name'));
+        $this->assertSame(['2', '0'], (function (array $rows) {
+            return [$rows[count($rows) - 1]['contacts'], $rows[count($rows) - 1]['conversations']];
+        })($this->crossClientRows($after)), "The ended client's figures leave the total with it.");
+    }
+
+    /**
+     * A Client Workspace that does not currently hold exactly one Business is
+     * a legacy or mid-repair shape: it is omitted rather than resolved to
+     * some other account's Business.
+     */
+    public function test_a_client_workspace_without_exactly_one_business_is_omitted_not_guessed(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
+        DB::table('businesses')->where('id', $managed['Bravo Bistro']->id)->delete();
+        $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
+
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('Alpha Dental', $this->clientsBand($html));
+        $this->assertSame(1, substr_count($this->clientsBand($html), 'data-role="client-row"'));
+        $this->assertStringNotContainsString('Bravo Bistro', $this->mainText($html));
+    }
+
+    /**
+     * Opening a managed client is the canonical Agency View As entry the
+     * Agency Clients surface already owns — never the ordinary Business
+     * switch, which only ever addressed the retired same-Workspace siblings.
+     * The endpoint itself re-authorizes, so a rival Agency posting the same
+     * URL is refused.
+     */
+    public function test_opening_a_client_uses_the_canonical_view_as_and_never_the_business_switch(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental']);
+        $clientWorkspaceUid = Workspace::query()->findOrFail($managed['Alpha Dental']->workspace_id)->uid;
+        $viewAsUrl = route('customer.workspaces.clients.view-as', [$workspace->uid, $clientWorkspaceUid]);
+        $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
+
+        $band = $this->clientsBand($this->home()->assertOk()->getContent());
+
+        $this->assertStringContainsString('action="' . $viewAsUrl . '"', $band);
+        $this->assertStringNotContainsString(route('customer.context.business.switch'), $band, 'A managed client is not an ordinary context-switcher entry.');
+        $this->assertStringNotContainsString('name="business"', $band);
+        $this->assertStringNotContainsString('name="workspace"', $band);
+
+        // The canonical path, reused: posting the row's own action starts a
+        // real Agency View As session over THAT client's Workspace and sole
+        // Business — this band contributes no opening mechanism of its own.
+        // (What the shell then renders inside a view is View As's own
+        // contract, asserted by its own tests, not by this band.)
+        $this->post($viewAsUrl)->assertRedirect(route('user.home'));
+
+        $session = ViewAsSession::query()->where('actor_user_id', $agency->user_id)->latest('id')->firstOrFail();
+        $this->assertSame((int) $managed['Alpha Dental']->workspace_id, (int) $session->workspace_id);
+        $this->assertSame((int) $managed['Alpha Dental']->id, (int) $session->business_id);
+        $this->assertSame((int) $workspace->id, (int) $session->viewing_agency_workspace_id);
+
+        // And no authority is granted by the Home row: another Agency posting
+        // the same URL is refused by the endpoint's own checks.
+        ['owner' => $rival] = $this->agencyManaging(['Rival Clinic'], 'Rival Agency', 'Rival HQ');
+        $this->authenticateAs($rival);
+        $this->post($viewAsUrl)->assertNotFound();
+    }
+
+    // =================================================================
     // T-AGY-1 — the outreach truth table
     // =================================================================
 
@@ -54,8 +202,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_the_outreach_band_reports_exactly_the_persisted_prospecting_facts(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
 
         $inPeriod = '2026-09-04 10:00:00';
@@ -84,6 +231,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->failedOutbound($workspace, $third, createdAt: $beforePeriod);
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('/data-role="prospecting-contacted">2</', $html, 'Distinct members reached in the period.');
@@ -108,14 +256,14 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_positive_replies_counts_only_persisted_positive_intent(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $member = $this->member($workspace, $campaign, $this->prospect($workspace));
         $this->outbound($workspace, $member, sentAt: '2026-09-04 10:00:00');
         $this->inbound($workspace, $member, receivedAt: '2026-09-05 10:00:00');
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
@@ -132,8 +280,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_only_the_positive_intent_counts_every_other_intent_is_excluded(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $member = $this->member($workspace, $campaign, $this->prospect($workspace));
 
@@ -147,6 +294,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-07 10:00:00', intent: 'positive');
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('/data-role="prospecting-positive">2</', $html);
@@ -160,8 +308,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_positive_replies_follows_the_selected_period_with_half_open_boundaries(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $member = $this->member($workspace, $campaign, $this->prospect($workspace));
 
@@ -169,6 +316,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->inboundWithIntent($workspace, $member, receivedAt: '2026-08-31 23:59:59', intent: 'positive'); // last instant of August: out
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $thisMonth = $this->home()->assertOk()->getContent();
         $this->assertMatchesRegularExpression('/data-role="prospecting-positive">1</', $thisMonth, 'The first instant of the month is inside it.');
 
@@ -179,8 +327,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
     /** A rival Agency's positive replies must never leak into this count. */
     public function test_a_rival_agencys_positive_replies_are_never_counted(): void
     {
-        [$mine, , $myWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($mine, $myWorkspace, 'Zulu Zoo');
+        ['owner' => $mine, 'workspace' => $myWorkspace] = $this->agencyManaging(['Alpha Dental', 'Zulu Zoo']);
         $myCampaign = $this->campaign($myWorkspace);
         $myMember = $this->member($myWorkspace, $myCampaign, $this->prospect($myWorkspace));
         $this->inboundWithIntent($myWorkspace, $myMember, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
@@ -192,6 +339,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->inboundWithIntent($theirWorkspace, $theirMember, receivedAt: '2026-09-05 11:00:00', intent: 'positive');
 
         $this->authenticateAs($mine);
+        $this->switchToAccount($myWorkspace);
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('/data-role="prospecting-positive">1</', $html, "The rival's two positive replies are not in this total.");
@@ -204,8 +352,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_positive_replies_adds_no_query_and_stays_flat_as_messages_multiply(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $member = $this->member($workspace, $campaign, $this->prospect($workspace));
 
@@ -214,6 +361,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         }
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $few = $this->portfolioSql($agency->user);
 
         for ($i = 0; $i < 50; $i++) {
@@ -233,8 +381,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
     /** No AI call is ever made just to render the Positive replies figure. */
     public function test_positive_replies_never_triggers_an_ai_call(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $member = $this->member($workspace, $campaign, $this->prospect($workspace));
         $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
@@ -245,6 +392,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         });
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $this->home()->assertOk();
 
         Http::assertNothingSent();
@@ -260,8 +408,8 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_cross_client_performance_is_grouped_and_its_query_count_does_not_grow(): void
     {
-        [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $bravo = $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
+        [$alpha, $bravo] = [$managed['Alpha Dental'], $managed['Bravo Bistro']];
 
         foreach ([$alpha, $bravo] as $client) {
             $this->contactsAdded($client, 2, '2026-09-02');
@@ -269,15 +417,24 @@ class AgencyAccountHomePortfolioTest extends TestCase
         }
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $two = $this->portfolioSql($agency->user);
 
         foreach (['Charlie Cafe', 'Delta Deli'] as $name) {
-            $client = $this->addBusiness($agency, $workspace, $name);
+            $client = $this->createAgencyManagedClient($workspace, $name, $name . ' Account')['clientBusiness'];
             $this->contactsAdded($client, 3, '2026-09-03');
             $this->conversationsStarted($client, 2, '2026-09-03');
         }
 
         $four = $this->portfolioSql($agency->user);
+
+        // Resolving WHO the clients are is bounded too: one relationship
+        // statement and one joined client-Workspace/Business statement,
+        // whatever the number of managed clients.
+        foreach (['two' => $two, 'four' => $four] as $label => $sql) {
+            $this->assertSame(1, $this->countMatching($sql, '/agency_client_workspace_relationships/'), "{$label} clients: one relationship statement.");
+            $this->assertSame(1, $this->countMatching($sql, '/from `businesses`.*join `workspaces`/i'), "{$label} clients: one joined client resolution statement.");
+        }
 
         $this->assertSame(1, $this->countMatching($two, '/\bcontacts\b/'), 'Two clients: one contacts statement.');
         $this->assertSame(1, $this->countMatching($four, '/\bcontacts\b/'), 'Four clients: still one contacts statement.');
@@ -299,15 +456,15 @@ class AgencyAccountHomePortfolioTest extends TestCase
     /** Each client keeps its own figures; they are never pooled or swapped. */
     public function test_each_client_row_carries_its_own_period_figures(): void
     {
-        [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $bravo = $this->addBusiness($agency, $workspace, 'Bravo Bistro');
-        $this->addBusiness($agency, $workspace, 'Charlie Cafe');
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro', 'Charlie Cafe']);
+        [$alpha, $bravo] = [$managed['Alpha Dental'], $managed['Bravo Bistro']];
 
         $this->contactsAdded($alpha, 5, '2026-09-02');
         $this->conversationsStarted($alpha, 2, '2026-09-02');
         $this->contactsAdded($bravo, 1, '2026-09-03');
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $rows = $this->crossClientRows($this->home()->assertOk()->getContent());
 
         $this->assertSame(['Alpha Dental', 'Bravo Bistro', 'Charlie Cafe', 'All client accounts'], array_column($rows, 'name'));
@@ -355,13 +512,16 @@ class AgencyAccountHomePortfolioTest extends TestCase
 
     public function test_no_agency_portfolio_figure_is_rendered_on_a_client_business_home(): void
     {
-        [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        // The Agency's own single Business, entered the ordinary way — a
+        // managed client is never reached like this (it has its own
+        // Workspace and its own canonical View As path).
+        ['owner' => $agency, 'workspace' => $workspace, 'agencyBusiness' => $agencyBusiness] = $this->agencyManaging(['Bravo Bistro']);
         $campaign = $this->campaign($workspace);
         $this->outbound($workspace, $this->member($workspace, $campaign, $this->prospect($workspace)), sentAt: '2026-09-04 10:00:00');
 
         $this->authenticateAs($agency);
-        $this->switchTo($workspace, $client);
+        $this->switchToAccount($workspace);
+        $this->switchTo($workspace, $agencyBusiness);
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
@@ -380,13 +540,16 @@ class AgencyAccountHomePortfolioTest extends TestCase
 
     public function test_one_agency_never_reads_another_agencys_clients_or_outreach(): void
     {
-        [$mine, $alpha, $myWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $mineSecond = $this->addBusiness($mine, $myWorkspace, 'Zulu Zoo');
+        ['owner' => $mine, 'workspace' => $myWorkspace, 'clients' => $myClients] = $this->agencyManaging(['Alpha Dental', 'Zulu Zoo']);
+        $alpha = $myClients['Alpha Dental'];
         $this->contactsAdded($alpha, 2, '2026-09-02');
         $myCampaign = $this->campaign($myWorkspace);
         $this->outbound($myWorkspace, $this->member($myWorkspace, $myCampaign, $this->prospect($myWorkspace)), sentAt: '2026-09-04 10:00:00');
 
-        [$theirs, $theirClient, $theirWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Rival Clinic', 'Rival Agency');
+        // A rival Agency, with a managed client of its own: neither its
+        // relationship nor its client's figures may reach this portfolio.
+        ['workspace' => $theirWorkspace, 'clients' => $theirClients] = $this->agencyManaging(['Rival Clinic'], 'Rival Agency', 'Rival HQ');
+        $theirClient = $theirClients['Rival Clinic'];
         $this->contactsAdded($theirClient, 9, '2026-09-02');
         $this->conversationsStarted($theirClient, 9, '2026-09-02');
         $theirCampaign = $this->campaign($theirWorkspace);
@@ -396,6 +559,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->failedOutbound($theirWorkspace, $theirMember, createdAt: '2026-09-05 10:00:00');
 
         $this->authenticateAs($mine);
+        $this->switchToAccount($myWorkspace);
         $html = $this->home()->assertOk()->getContent();
         $rows = $this->crossClientRows($html);
 
@@ -423,8 +587,8 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_the_period_boundaries_are_half_open_and_the_selection_moves_the_window(): void
     {
-        [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
+        $alpha = $managed['Alpha Dental'];
 
         $this->contactsAt($alpha, 1, '2026-09-01 00:00:00');
         $this->contactsAt($alpha, 1, '2026-08-31 23:59:59');
@@ -432,6 +596,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $this->conversationsAt($alpha, 1, '2026-08-31 23:59:59');
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $thisMonth = $this->crossClientRows($this->home()->assertOk()->getContent());
         $this->assertSame(['1', '1'], [$thisMonth[0]['contacts'], $thisMonth[0]['conversations']], 'The first instant of the month is inside it.');
@@ -442,9 +607,9 @@ class AgencyAccountHomePortfolioTest extends TestCase
 
     public function test_the_period_control_offers_the_canonical_presets_and_ignores_anything_else(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $html = $this->home()->assertOk()->getContent();
 
@@ -470,9 +635,9 @@ class AgencyAccountHomePortfolioTest extends TestCase
 
     public function test_capacity_appears_only_when_it_needs_an_action(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $this->assertStringNotContainsString('data-band="capacity"', $this->home()->assertOk()->getContent(), 'An Agency with room to grow needs no capacity band.');
 
@@ -502,15 +667,18 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_a_plan_that_is_no_longer_active_takes_the_actor_off_the_agency_frame_entirely(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $this->assertStringContainsString('data-kind="agency"', $this->home()->assertOk()->getContent());
 
         DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => 'suspended']);
 
-        $html = $this->home()->assertOk()->getContent();
+        // Without the Agency tier the account frame itself is no longer a
+        // frame this actor holds, so navigation moves them off it — followed
+        // here, because being moved IS the behaviour under test.
+        $html = $this->followingRedirects()->get(route('user.home'))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('data-kind="agency"', $html);
         $this->assertStringNotContainsString('data-band="capacity"', $html);
@@ -519,9 +687,9 @@ class AgencyAccountHomePortfolioTest extends TestCase
 
     public function test_account_billing_appears_only_for_an_actionable_problem(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $routine = $this->home()->assertOk()->getContent();
         $this->assertStringNotContainsString('data-band="account"', $routine);
@@ -552,9 +720,8 @@ class AgencyAccountHomePortfolioTest extends TestCase
      */
     public function test_the_agency_account_home_resolves_no_ai_client_and_calls_no_provider(): void
     {
-        [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
-        $this->contactsAdded($alpha, 3, '2026-09-02');
+        ['owner' => $agency, 'workspace' => $workspace, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
+        $this->contactsAdded($managed['Alpha Dental'], 3, '2026-09-02');
         $campaign = $this->campaign($workspace);
         $this->outbound($workspace, $this->member($workspace, $campaign, $this->prospect($workspace)), sentAt: '2026-09-04 10:00:00');
 
@@ -567,6 +734,7 @@ class AgencyAccountHomePortfolioTest extends TestCase
         }
 
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $this->home()->assertOk();
 
         Http::assertNothingSent();
@@ -581,6 +749,48 @@ class AgencyAccountHomePortfolioTest extends TestCase
      *
      * @return array<int, string>
      */
+    /**
+     * The V1 Agency topology (Contract 13): ONE Agency Workspace holding
+     * exactly one Business — its own, never a client — managing each named
+     * client through a real, canonically-authorized ACTIVE
+     * AgencyClientWorkspaceRelationship to that client's SEPARATE Workspace,
+     * each holding exactly one Business. No sibling Business is ever created
+     * under the Agency Workspace: that topology no longer exists.
+     *
+     * @param  array<int, string>  $clientNames
+     * @return array{owner: Customer, workspace: Workspace, agencyBusiness: Business, clients: array<string, Business>}
+     */
+    private function agencyManaging(
+        array $clientNames,
+        string $agencyWorkspaceName = 'Northwind Agency',
+        string $agencyBusinessName = 'Northwind HQ',
+    ): array {
+        $first = array_shift($clientNames);
+        $fixture = $this->createAgencyManagedClient(null, $first, $first . ' Account', $agencyBusinessName, $agencyWorkspaceName);
+        $clients = [$first => $fixture['clientBusiness']];
+
+        foreach ($clientNames as $name) {
+            $clients[$name] = $this->createAgencyManagedClient($fixture['agencyWorkspace'], $name, $name . ' Account')['clientBusiness'];
+        }
+
+        return [
+            'owner' => $fixture['agencyOwner'],
+            'workspace' => $fixture['agencyWorkspace'],
+            'agencyBusiness' => $fixture['agencyBusiness'],
+            'clients' => $clients,
+        ];
+    }
+
+    /** The client-accounts band's own markup. */
+    private function clientsBand(string $html): string
+    {
+        $start = strpos($html, 'data-band="clients"');
+        $this->assertNotFalse($start, 'The client accounts band must render.');
+        $end = strpos($html, 'data-band="cross_client"', $start);
+
+        return substr($html, $start, ($end === false ? strlen($html) : $end) - $start);
+    }
+
     private function portfolioSql(\App\Models\User $user): array
     {
         $context = $this->resolvedContext($user);

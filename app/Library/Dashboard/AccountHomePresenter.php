@@ -69,6 +69,7 @@ final class AccountHomePresenter
         private readonly ParentAccountSwitch $parentSwitch,
         private readonly BusinessAnalyticsQueries $analyticsQueries,
         private readonly BusinessConversationReadModel $conversations,
+        private readonly AgencyClientPortfolio $clientPortfolio,
     ) {
     }
 
@@ -96,7 +97,15 @@ final class AccountHomePresenter
     {
         $bands = [];
         $failed = [];
-        $clients = $workspace->accessibleBusinesses();
+
+        // V1 topology: an Agency Workspace holds exactly ONE Business — its
+        // own — and manages each client through an ACTIVE
+        // AgencyClientWorkspaceRelationship to that client's SEPARATE
+        // Workspace. The portfolio therefore comes from the relationship set
+        // (the same authority the Agency Clients surface uses), never from
+        // this Workspace's own Businesses: that older read could only ever
+        // return the Agency itself, which is not a client of itself.
+        $clients = $this->clientPortfolio->activeClientsFor((int) $workspace->id);
         $statuses = null;
         $range = $this->period();
 
@@ -165,12 +174,26 @@ final class AccountHomePresenter
     /**
      * Client accounts with their flags — the ones needing the owner first.
      *
+     * OPENING A CLIENT IS THE CANONICAL AGENCY VIEW AS, the one the Agency
+     * Clients surface already uses (customer.workspaces.clients.view-as →
+     * AgencyClientsController::viewAs → ViewAsManager::startAgencyView). A
+     * managed client lives in its own Workspace and is NOT an ordinary
+     * context-switcher entry, so the Business switch form this band used to
+     * render — valid only for the retired same-Workspace sibling Businesses —
+     * is gone. No authorization is duplicated here or in the view: the row
+     * carries a URL only for a client this Agency actively manages whose
+     * Workspace and Business are both active, and that endpoint re-proves the
+     * relationship, this actor's Agency authority, the Agency's management
+     * eligibility and the client's own state before any view begins.
+     *
      * @param  array<int, BusinessCandidate>  $clients
      * @param  array<int, BusinessStatusRow>  $statuses
-     * @return array{rows: array<int, array<string, mixed>>, switchUrl: ?string, manageUrl: ?string}
+     * @return array{rows: array<int, array<string, mixed>>, manageUrl: ?string}
      */
     private function clients(User $user, WorkspaceCandidate $workspace, array $clients, array $statuses): array
     {
+        $canOpen = Route::has('customer.workspaces.clients.view-as');
+
         $rows = [];
 
         foreach ($clients as $client) {
@@ -190,7 +213,9 @@ final class AccountHomePresenter
                 'name' => $client->name,
                 'active' => $client->isSelectable(),
                 'statusWord' => $client->isSelectable() ? 'Active' : 'Not active',
-                'switch' => $client->isSelectable() ? ['workspace' => $client->workspaceUid, 'business' => $client->uid] : null,
+                'openUrl' => $canOpen && $client->isSelectable()
+                    ? route('customer.workspaces.clients.view-as', [$workspace->uid, $client->workspaceUid])
+                    : null,
                 'flags' => $flags,
                 'rank' => $flags !== [] ? $flags[0]['severity']->rank() : 3,
             ];
@@ -200,7 +225,6 @@ final class AccountHomePresenter
 
         return [
             'rows' => $rows,
-            'switchUrl' => Route::has('customer.context.business.switch') ? route('customer.context.business.switch') : null,
             'manageUrl' => $this->manageUrl($user, $workspace),
         ];
     }
