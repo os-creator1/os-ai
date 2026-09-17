@@ -170,6 +170,12 @@ class WorkspaceM1BBoundaryTest extends TestCase
 
     // 6/7/8/9. businesses.workspace_id is NOT NULL, both final indexes
     // exist, and the final FK exists with RESTRICT.
+    //
+    // Contract 13 (2026_09_22_100001_enforce_workspace_business_one_to_one_constraint.php)
+    // dropped the plain businesses_workspace_id_index as redundant once
+    // businesses_workspace_id_unique was added, leaving the unique index and
+    // the composite businesses_workspace_id_status_index as the two
+    // surviving Workspace indexes on this table.
     public function test_businesses_workspace_id_is_permanently_enforced(): void
     {
         $column = DB::selectOne(
@@ -182,7 +188,7 @@ class WorkspaceM1BBoundaryTest extends TestCase
         $indexes = DB::select(
             "SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'businesses'
-             AND INDEX_NAME IN ('businesses_workspace_id_index', 'businesses_workspace_id_status_index')"
+             AND INDEX_NAME IN ('businesses_workspace_id_unique', 'businesses_workspace_id_status_index')"
         );
         $this->assertCount(2, $indexes);
 

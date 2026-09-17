@@ -236,13 +236,16 @@ class WorkspaceSchemaTest extends TestCase
     }
 
     // (rewritten for Slice 4B — both final Workspace indexes now exist, in
-    // the documented column order.)
+    // the documented column order. Contract 13 later dropped the plain
+    // businesses_workspace_id_index as redundant once
+    // businesses_workspace_id_unique was added; this assertion was updated
+    // to match — see 2026_09_22_100001_enforce_workspace_business_one_to_one_constraint.php.)
     public function test_businesses_has_the_final_m1b_workspace_indexes(): void
     {
         $indexes = DB::select(
             "SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'businesses'
-             AND INDEX_NAME IN ('businesses_workspace_id_index', 'businesses_workspace_id_status_index')"
+             AND INDEX_NAME IN ('businesses_workspace_id_unique', 'businesses_workspace_id_status_index')"
         );
         $this->assertCount(2, $indexes);
 
