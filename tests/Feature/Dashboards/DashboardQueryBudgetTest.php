@@ -186,7 +186,7 @@ class DashboardQueryBudgetTest extends TestCase
 
         $before = $this->businessHomeCost($customer->user);
 
-        $sibling = $this->addBusiness($customer, $workspace, 'Sibling Venue');
+        $sibling = $this->createIndependentWorkspaceBusiness(businessName: 'Sibling Venue', workspaceName: 'Sibling Account')['business'];
         $this->populate($sibling, 1);
         $this->populate($business, 1);
         $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
@@ -242,10 +242,11 @@ class DashboardQueryBudgetTest extends TestCase
     public function test_the_dashboard_views_execute_no_query(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $second = $this->addBusiness($customer, $workspace, 'Bravo Bistro');
+        $second = $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account')['clientBusiness'];
         $this->populate($business, 1);
         $this->website($business, 'draft');
         $this->authenticateAs($customer);
+        $this->switchToAccount($workspace);
 
         $agencySnapshot = $this->dashboardFor($customer->user);
         $this->assertSame(DashboardSnapshot::KIND_AGENCY, $agencySnapshot->kind);

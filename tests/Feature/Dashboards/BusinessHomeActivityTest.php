@@ -304,7 +304,7 @@ class BusinessHomeActivityTest extends TestCase
     public function test_one_business_never_counts_another_businesss_activity(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Mine Venue', 'Northwind Agency');
-        $other = $this->addBusiness($customer, $workspace, 'Other Venue');
+        $other = $this->createAgencyManagedClient($workspace, 'Other Venue', 'Other Venue Account')['clientBusiness'];
         $this->authenticateAs($customer);
         $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
         $this->previousHomeVisit($business, (int) $customer->user_id, $this->ago('2 days'));

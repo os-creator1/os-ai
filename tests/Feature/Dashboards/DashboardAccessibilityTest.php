@@ -4,6 +4,8 @@ namespace Tests\Feature\Dashboards;
 
 use App\Enums\Dashboard\AttentionSeverity;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
@@ -122,15 +124,18 @@ class DashboardAccessibilityTest extends TestCase
         $this->authenticateAs($owner);
         $pages['business'] = $this->home()->assertOk()->getContent();
 
-        $this->addBusiness($owner, $workspace, 'Second Structure Venue');
+        $secondAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Second Structure Venue', workspaceName: 'Second Structure Account');
+        $this->assignTier($secondAccount['workspace'], WorkspacePlanTier::Growth);
+        $this->member($secondAccount['workspace'], $owner->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
         session()->forget(array_keys(session()->all()));
         $this->authenticateAs($owner);
         $pages['chooser'] = $this->home()->assertOk()->getContent();
 
         [$agency, $client, $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Client One', 'Structure Agency');
-        $this->addBusiness($agency, $agencyWorkspace, 'Agency Client Two');
+        $this->createAgencyManagedClient($agencyWorkspace, 'Agency Client Two', 'Agency Client Two Account');
         $this->wallet($client, ['debt_balance_micro' => 10]);
         $this->authenticateAs($agency);
+        $this->switchToAccount($agencyWorkspace);
         $pages['agency'] = $this->home()->assertOk()->getContent();
 
         $nobody = $this->createCustomer();

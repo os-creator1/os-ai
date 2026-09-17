@@ -217,9 +217,9 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
+        $this->switchToAccount($workspace);
         $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
 
         $this->switchTo($workspace, $clientOne);
@@ -237,8 +237,8 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_an_agency_owner_gets_the_account_tree_with_advanced(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $keys = array_merge(
             $this->menuKeys($this->home()->assertOk()->getContent()),
@@ -304,8 +304,8 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_the_account_frame_offers_no_business_only_entry(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
@@ -510,8 +510,8 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_the_account_frame_costs_no_entitlement_queries(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $count = 0;
         DB::listen(function () use (&$count) {
@@ -571,11 +571,10 @@ class CustomerNavigationTreeTest extends TestCase
      */
     public function test_a_settings_screen_keeps_the_single_settings_entry_active(): void
     {
-        // Two client accounts, so the Agency stands in its own account frame,
-        // where Advanced belongs.
+        // The Agency stands in its own account frame, where Advanced belongs.
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $html = $this->get(route('customer.keywords.index'))->assertOk()->getContent();
 

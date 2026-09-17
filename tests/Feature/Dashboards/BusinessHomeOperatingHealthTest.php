@@ -147,7 +147,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_another_businesss_website_and_google_never_reach_this_home(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Mine Venue', 'Mine Account');
-        $rival = $this->addBusiness($customer, $workspace, 'Rival Venue');
+        $rival = $this->createIndependentWorkspaceBusiness(businessName: 'Rival Venue', workspaceName: 'Rival Account')['business'];
         $this->website($rival, 'published');
         $this->googleConnection($rival, GoogleConnectionState::Active);
         $this->googleLocation($rival, 'suspended');
@@ -344,7 +344,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_another_businesss_conversations_are_never_counted(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Ours Venue', 'Ours Account');
-        $rival = $this->addBusiness($customer, $workspace, 'Rival Venue');
+        $rival = $this->createIndependentWorkspaceBusiness(businessName: 'Rival Venue', workspaceName: 'Rival Account')['business'];
         $at = $this->localInstant('2026-09-02 12:00:00', $business);
 
         $this->conversationWith($business, [['incoming', $at]]);
@@ -458,7 +458,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_awaiting_reply_excludes_another_business_and_a_message_of_no_recorded_direction(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Isolated Venue', 'Isolated Account');
-        $rival = $this->addBusiness($customer, $workspace, 'Rival Venue');
+        $rival = $this->createIndependentWorkspaceBusiness(businessName: 'Rival Venue', workspaceName: 'Rival Account')['business'];
         $model = app(BusinessConversationReadModel::class);
 
         $this->conversationWith($rival, [['incoming', $this->minutesAgo(60)]]);
@@ -588,7 +588,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_another_businesss_runs_are_never_counted(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Own Runs Venue', 'Own Runs Account');
-        $rival = $this->addBusiness($customer, $workspace, 'Rival Venue');
+        $rival = $this->createIndependentWorkspaceBusiness(businessName: 'Rival Venue', workspaceName: 'Rival Account')['business'];
         $this->automationRuns($business, 2, '2026-09-02', 'succeeded');
         $this->automationRuns($rival, 9, '2026-09-02', 'succeeded');
         $this->authenticateAs($customer);
@@ -714,7 +714,7 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_an_agency_opened_client_business_gets_the_same_three_bands_and_no_portfolio_data(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account');
         $this->website($client, 'published');
         $this->googleConnection($client, GoogleConnectionState::Active);
         $this->conversationWith($client, [['incoming', $this->minutesAgo(30)]]);
@@ -742,10 +742,11 @@ class BusinessHomeOperatingHealthTest extends TestCase
     public function test_the_agency_account_home_gains_none_of_the_new_bands(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account');
         $this->website($client, 'published');
         $this->conversationWith($client, [['incoming', $this->minutesAgo(30)]]);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $snapshot = $this->dashboardFor($agency->user);
 
