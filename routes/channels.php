@@ -5,8 +5,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
-use App\Library\ViewAs\ViewAsManager;
-use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Support\Facades\Broadcast;
@@ -33,17 +32,20 @@ use Illuminate\Support\Facades\Gate;
 |
 | A listener is admitted exactly when it could open that Business's inbox.
 | The answer comes from the same authorities, in the same order, as
-| ChatBoxController::resolveBusiness() — WorkspaceManager for access,
-| ViewAsManager for the view-as narrowing, the chat_box permission, the
-| Business's status and EntitlementManager for `conversations` — so there is
-| no second access policy to drift. Keep the two in step.
+| ChatBoxController::resolveBusiness() — the shared BusinessRouteAccess
+| decision for access, the chat_box permission, the Business's status and
+| EntitlementManager for `conversations` — so there is no second access
+| policy to drift. Keep the two in step.
 |
 | View-as: this callback runs inside the web middleware group, so the
-| current view-as session is available here and narrows exactly as it does
-| on every Business route. (ResolveCustomerContext additionally refuses the
-| unclassified /broadcasting/auth route while a view is active, so a viewing
-| actor gets no live channel at all — the callback's own check is defence in
-| depth, never the only line.)
+| current view-as session is available to BusinessRouteAccess here and
+| narrows exactly as it does on every Business route — admitting a session
+| only for its own exact Workspace+Business target and never one Business
+| wider. (ResolveCustomerContext additionally refuses the unclassified
+| /broadcasting/auth route while a view is active, so through that endpoint a
+| viewing actor gets no live channel at all; /pusher/auth is classified Safe
+| and does reach this callback, which is why the narrowing lives here too and
+| is defence in depth, never the only line.)
 */
 Broadcast::channel('chat.business.{businessUid}', function (User $user, string $businessUid): bool {
     $business = Business::query()->where('uid', $businessUid)->first();
@@ -53,13 +55,7 @@ Broadcast::channel('chat.business.{businessUid}', function (User $user, string $
         return false;
     }
 
-    if (! app(WorkspaceManager::class)->userCanAccessBusiness((int) $user->id, $business)) {
-        return false;
-    }
-
-    $viewAs = app(ViewAsManager::class)->current($user);
-
-    if ($viewAs !== null && ($viewAs->businessUid !== $business->uid || $viewAs->workspaceUid !== $workspace->uid)) {
+    if (! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute($user, $workspace, $business)) {
         return false;
     }
 
