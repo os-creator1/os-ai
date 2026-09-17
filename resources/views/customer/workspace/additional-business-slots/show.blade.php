@@ -40,15 +40,8 @@
             <div class="col-12">
                 <x-card title="Additional Business Slots">
                     @if ($agreement === null)
-                        <p class="text-caption mb-3">No additional-slot agreement exists yet for this {{ $accountNoun }}.</p>
-
-                        <form method="POST" action="{{ route('customer.workspaces.additional-business-slots.checkout', $workspace->uid) }}">
-                            @csrf
-                            <div class="input-group">
-                                <input type="number" name="target_allocation_count" class="form-control transition-fast" min="1" placeholder="Target additional slot count" required>
-                                <x-button type="submit" variant="primary">Purchase Additional Slots</x-button>
-                            </div>
-                        </form>
+                        {{-- Implementation Contract 11 §4/§14 — the new-purchase checkout route is retired; no form may reference it. --}}
+                        <p class="text-caption mb-3">No additional-slot agreement exists for this {{ $accountNoun }}. New additional-slot purchases are not currently available.</p>
                     @else
                         <dl class="row mb-3">
                             <dt class="col-sm-4 text-label">State</dt>

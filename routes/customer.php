@@ -757,10 +757,15 @@
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/auto-recharge', 'Business\UsageBillingAutoRechargeController@configure')->name('businesses.usage-billing.auto-recharge.configure');
 
         // RFC-005 Milestone 4: Workspace-scoped additional-slot agreement
-        // (Checkout/renewal/cancellation) surface.
+        // (renewal/cancellation) surface. Implementation Contract 11 §4/§14
+        // retires the NEW-purchase checkout entry point ONLY — the route is
+        // removed entirely (unreachable / 404), not left reachable behind a
+        // friendly error. Every existing-holder route below (display,
+        // checkout-return confirmation, renewal retry, cancellation) is
+        // deliberately preserved: this slice freezes new sales, it does not
+        // touch already-paid commercial commitments (§9).
         Route::prefix('{workspaceUid}/additional-business-slots')->name('additional-business-slots.')->group(function () {
             Route::get('/', 'Workspace\AdditionalBusinessSlotAgreementController@show')->name('show');
-            Route::post('checkout', 'Workspace\AdditionalBusinessSlotAgreementController@checkout')->name('checkout');
             Route::get('{agreement}/confirm', 'Workspace\AdditionalBusinessSlotAgreementController@confirmFromReturn')->name('confirm')->whereNumber('agreement');
             Route::post('{agreement}/increase', 'Workspace\AdditionalBusinessSlotAgreementController@requestIncrease')->name('increase')->whereNumber('agreement');
             Route::post('{agreement}/renewals/{charge}/retry', 'Workspace\AdditionalBusinessSlotAgreementController@retryRenewal')->name('retry')->whereNumber('agreement')->whereNumber('charge');

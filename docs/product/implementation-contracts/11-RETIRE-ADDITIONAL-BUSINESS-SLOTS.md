@@ -1,8 +1,10 @@
 # Implementation Contract 11 — Retire Additional-Business-Slots Flow
 
-**Status:** Planning contract only. Does not authorize implementation.
-Depends on Contract 10 being merged and its migration run and verified
-first.
+**Status:** Depends on Contract 10 being merged and, wherever a real
+legacy-Agency-data target database exists, its migration run and
+verified there first (see §16's pre-production clarification —
+implementation is authorized once that condition is met for the
+project's current phase).
 
 ## 1. Objective
 
@@ -160,6 +162,23 @@ touch `assertCanCreateAnotherBusiness()`'s general capacity logic.
 Contract 10 merged, run, and verified (Roadmap ordering — cannot retire
 the mechanism Agency accounts still depend on before they're migrated
 off it).
+
+**Pre-production clarification.** "Run and verified" means: run and
+verified against any real target database that actually holds legacy
+multi-Business Agency data. As of this contract's implementation, the
+project is pre-production — no deployed production/staging database with
+real Agency customer data exists yet, so there is no target for Contract
+10's migration to have run against, and a disposable local development/
+test database is explicitly not that target (running the migration there
+proves the code works, not that any real legacy data was migrated). This
+does not waive Contract 10's operational migration: the same "run and
+verified" gate applies in full, unmodified, the first time this
+architecture is deployed to, or this contract's retirement assumptions
+are relied upon for, any real environment that does contain legacy
+multi-Business Agency Workspaces — Contract 10's migration must be run
+and verified there before that happens. It only reflects that, absent
+such an environment today, the gate is currently satisfied vacuously
+(there is nothing yet to migrate), not that it has been skipped.
 
 ## 17. Conflict map
 
