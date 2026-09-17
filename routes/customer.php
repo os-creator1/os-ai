@@ -715,6 +715,17 @@
         Route::post('{workspaceUid}/client-invitations', 'Workspace\ClientInvitationController@store')->name('client-invitations.store');
         Route::post('{workspaceUid}/client-invitations/{invitationUid}/revoke', 'Workspace\ClientInvitationController@revoke')->name('client-invitations.revoke');
 
+        // Implementation Contract 08A §12 — the Agency-facing Clients
+        // list/detail screen and its View As entry point. A thin
+        // consumption layer: authority/eligibility both delegate to
+        // AgencyClientRelationshipManager's own canonical methods inside
+        // the controller, never reimplemented here. "Invite Client" reuses
+        // the client-invitations.store route above (Contract 07's own
+        // send endpoint) — no separate invitation-write route exists.
+        Route::get('{workspaceUid}/clients', 'Agency\AgencyClientsController@index')->name('clients.index');
+        Route::get('{workspaceUid}/clients/{clientWorkspaceUid}', 'Agency\AgencyClientsController@show')->name('clients.show');
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/view-as', 'Agency\AgencyClientsController@viewAs')->name('clients.view-as');
+
         // RFC-003 Milestone 4 Slice 4E: Business reassignment between Workspaces.
         Route::post('{workspaceUid}/businesses/{businessUid}/reassign', 'Workspace\WorkspaceController@reassignBusiness')->name('businesses.reassign');
 
