@@ -328,3 +328,22 @@ security-boundary fixtures around a still-valid but different scenario
 (a plain cross-Workspace Admin membership, not a sibling Business), not a
 simple deletion — see the session's final Contract 14 report for the full
 list and recommended follow-up.
+
+Full regression counts actually run for this slice (all against a live,
+disposable `ultimatesms_testing` database, all confirmed to share this
+one root cause except one unrelated pre-existing flake noted below):
+`tests/Feature/Workspace` — 127 of 1010+127 failing (down from 129 before
+this slice's two schema-test fixes); `tests/Feature/Agency` +
+`tests/Feature/Conversations` — 1 of 182 failing;
+`tests/Feature/Contacts` — 4 of 51 failing; `tests/Feature/Security` — 36
+of 332 failing, of which 35 are this same root cause and 1
+(`DashboardInvoiceScopeTest`) is an unrelated, pre-existing,
+date-coincidence flake that only fails when run on the 17th of a month
+and has nothing to do with Contracts 13/14. The adversarial review for
+this slice additionally found `tests/Feature/Business/
+BusinessLocationCapacityMigrationTest.php` (untouched by this slice, in
+the same directory as two of the three deleted tests, using its own
+hand-rolled raw-insert fixture rather than
+`CreatesCustomerContextFixtures::addBusiness()`) also fails on the same
+root cause — one more data point for whoever picks up the ~165+-file
+follow-up, not a scope gap in this slice.
