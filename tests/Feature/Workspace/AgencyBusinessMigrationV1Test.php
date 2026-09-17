@@ -508,6 +508,37 @@ class AgencyBusinessMigrationV1Test extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // PREFLIGHT AGGREGATES (§8.1, review correction Finding 5)
+    // ------------------------------------------------------------------
+
+    public function test_preflight_reports_exact_aggregate_counts(): void
+    {
+        [$agency, $customer] = $this->legacyAgency();
+        $withLocation = $this->legacyClientBusiness($agency, $customer, 'Has Location', PayerType::Business);
+        app(BusinessLocationRepository::class)->upsertPrimary($withLocation, [
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ]);
+        $withoutLocationA = $this->legacyClientBusiness($agency, $customer, 'No Location A', PayerType::Workspace);
+        $withoutLocationB = $this->legacyClientBusiness($agency, $customer, 'No Location B', PayerType::Business);
+
+        $report = $this->migration()->preflight([$agency->id]);
+        $agencyReport = $report['agencies'][0];
+
+        $this->assertSame('ready', $agencyReport['status']);
+        $this->assertSame(4, $agencyReport['business_count'], 'Primary + 3 candidates.');
+        $this->assertSame(3, $agencyReport['candidate_business_count']);
+        $this->assertSame(2, $agencyReport['primary_location_missing_count']);
+
+        $byId = collect($agencyReport['businesses'])->keyBy('business_id');
+        $this->assertSame('unchanged', $byId[$withLocation->id]['payer_action']);
+        $this->assertSame('convert_to_pending_agency_rebill', $byId[$withoutLocationA->id]['payer_action']);
+        $this->assertSame('unchanged', $byId[$withoutLocationB->id]['payer_action']);
+        $this->assertTrue($byId[$withLocation->id]['primary_location_present']);
+        $this->assertFalse($byId[$withoutLocationA->id]['primary_location_present']);
+    }
+
+    // ------------------------------------------------------------------
     // PAYER MATRIX (§5)
     // ------------------------------------------------------------------
 
@@ -580,21 +611,33 @@ class AgencyBusinessMigrationV1Test extends TestCase
         $this->assertNull($refusal, 'Once the real owner consents, the paid-effect gate must clear.');
     }
 
-    public function test_a_missing_payer_assignment_blocks_only_that_business(): void
+    /**
+     * Review correction Finding 2: under the corrected per-Agency atomic
+     * boundary, one unresolved candidate must block the ENTIRE Agency's
+     * batch with zero writes — never migrate the "good" sibling around it.
+     */
+    public function test_an_unresolved_sibling_blocks_the_entire_agency_with_zero_writes(): void
     {
         [$agency, $customer] = $this->legacyAgency();
-        $client = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental', null);
-        $otherClient = $this->legacyClientBusiness($agency, $customer, 'Beta Salon', PayerType::Business);
+        $validClient = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental', PayerType::Business);
+        $unresolvedClient = $this->legacyClientBusiness($agency, $customer, 'Beta Salon', null);
+        $workspaceCountBefore = Workspace::count();
+        $relationshipCountBefore = AgencyClientWorkspaceRelationship::count();
 
         $result = $this->migration()->run($this->platformOperator(), false, [$agency->id]);
+        $agencyReport = $result['agencies'][0];
 
-        $byId = collect($result['agencies'][0]['businesses'])->keyBy('business_id');
-        $this->assertSame('blocked', $byId[$client->id]['status']);
-        $this->assertSame('missing_payer_assignment', $byId[$client->id]['reason']);
-        $this->assertSame('migrated', $byId[$otherClient->id]['status']);
+        $this->assertSame('blocked', $agencyReport['status']);
+        $this->assertSame('unresolved_business_payer', $agencyReport['reason']);
+        $blockedIds = collect($agencyReport['blocked_businesses'])->pluck('business_id')->all();
+        $this->assertSame([$unresolvedClient->id], $blockedIds);
+        $this->assertSame([], $agencyReport['businesses'], 'No per-Business cutover results at all — the batch never started executing.');
 
-        // The blocked Business never moved.
-        $this->assertSame($agency->id, (int) $client->fresh()->workspace_id);
+        // ZERO writes for BOTH — including the otherwise-perfectly-valid sibling.
+        $this->assertSame($agency->id, (int) $validClient->fresh()->workspace_id);
+        $this->assertSame($agency->id, (int) $unresolvedClient->fresh()->workspace_id);
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame($relationshipCountBefore, AgencyClientWorkspaceRelationship::count());
     }
 
     // ------------------------------------------------------------------
@@ -631,7 +674,131 @@ class AgencyBusinessMigrationV1Test extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // FAILURE / ROLLBACK
+    // MULTI-BUSINESS AGENCY BATCH ATOMICITY (§7, review correction Finding 1)
+    // ------------------------------------------------------------------
+
+    public function test_a_multi_business_agency_with_all_valid_candidates_commits_atomically(): void
+    {
+        [$agency, $customer, $primary] = $this->legacyAgency();
+        $clientA = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental', PayerType::Business);
+        $clientB = $this->legacyClientBusiness($agency, $customer, 'Beta Salon', PayerType::Workspace);
+
+        $result = $this->migration()->run($this->platformOperator(), false, [$agency->id]);
+        $agencyReport = $result['agencies'][0];
+
+        $this->assertSame('migrated', $agencyReport['status']);
+        $this->assertTrue($agencyReport['verified']);
+        $this->assertCount(2, $agencyReport['businesses']);
+
+        $statuses = collect($agencyReport['businesses'])->pluck('status', 'business_id');
+        $this->assertSame('migrated', $statuses[$clientA->id]);
+        $this->assertSame('migrated', $statuses[$clientB->id]);
+
+        // The Agency retains only its own primary Business.
+        $this->assertSame(0, Business::where('workspace_id', $agency->id)->where('is_primary', false)->count());
+        $this->assertSame($agency->id, (int) $primary->fresh()->workspace_id);
+
+        $this->assertNotSame(
+            (int) $clientA->fresh()->workspace_id,
+            (int) $clientB->fresh()->workspace_id,
+            'Each moved Business gets its OWN independent Client Workspace.'
+        );
+    }
+
+    /**
+     * Review correction Finding 1: the Agency Workspace, not one Business,
+     * is the true atomic unit. A failure migrating the SECOND of two
+     * client Businesses must roll back the FIRST sibling too, even though
+     * its own cutover had already fully succeeded earlier in the same
+     * loop — no partial-Agency commit is ever left behind.
+     */
+    public function test_a_failure_migrating_the_second_of_two_siblings_rolls_back_the_whole_agency(): void
+    {
+        [$agency, $customer] = $this->legacyAgency();
+        $first = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental', PayerType::Workspace);
+        $second = $this->legacyClientBusiness($agency, $customer, 'Beta Salon', PayerType::Workspace);
+        $workspaceCountBefore = Workspace::count();
+        $relationshipCountBefore = AgencyClientWorkspaceRelationship::count();
+
+        // Businesses are processed in ascending id order — $first's
+        // createWorkspace()+reassignBusiness() both genuinely succeed
+        // before this forces the SECOND Business's reassignment to fail.
+        $realWorkspaceManager = app(WorkspaceManager::class);
+        $callCount = 0;
+        $manager = Mockery::mock(WorkspaceManager::class);
+        $manager->shouldReceive('createWorkspace')
+            ->andReturnUsing(fn (int $ownerId, string $name) => $realWorkspaceManager->createWorkspace($ownerId, $name));
+        $manager->shouldReceive('reassignBusiness')
+            ->andReturnUsing(function (int $actorId, Business $business, Workspace $target) use (&$callCount, $realWorkspaceManager) {
+                $callCount++;
+
+                if ($callCount === 2) {
+                    throw new RuntimeException('Forced failure on second sibling.');
+                }
+
+                return $realWorkspaceManager->reassignBusiness($actorId, $business, $target);
+            });
+        $this->app->instance(WorkspaceManager::class, $manager);
+
+        $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
+
+        $this->assertSame('failed', $result['agencies'][0]['status']);
+        $this->assertSame([], $result['agencies'][0]['businesses']);
+
+        // The FIRST sibling — already fully cutover before the failure —
+        // must roll back too.
+        $this->assertSame($agency->id, (int) $first->fresh()->workspace_id, 'The already-succeeded-so-far first sibling must roll back as well.');
+        $this->assertSame($agency->id, (int) $second->fresh()->workspace_id);
+        $this->assertSame($workspaceCountBefore, Workspace::count(), 'Zero new Client Workspaces survive, including the one already created for the first sibling before the failure.');
+        $this->assertSame($relationshipCountBefore, AgencyClientWorkspaceRelationship::count());
+
+        $this->assertSame(PayerType::Workspace, BusinessPayerAssignment::where('business_id', $first->id)->first()->payer_type);
+        $this->assertSame(PayerType::Workspace, BusinessPayerAssignment::where('business_id', $second->id)->first()->payer_type);
+
+        $this->assertSame(0, DB::table('workspace_transitions')->where('business_id', $first->id)->count(), 'No committed transition residue from the first sibling survives the rollback.');
+        $this->assertSame(0, DB::table('workspace_transitions')->where('business_id', $second->id)->count());
+    }
+
+    /**
+     * Review correction Finding 3: a post-cutover verification invariant
+     * failure must THROW and roll back the whole Agency transaction, via
+     * the narrowest possible test seam — findActiveForClientWorkspace() is
+     * called ONLY by verifyAgencyCutover() in this whole class, never by
+     * the real cutover logic, so forcing it to lie about a relationship
+     * createForMigration() genuinely created (left completely untouched)
+     * induces a real verification failure without disturbing any actual
+     * production write path.
+     */
+    public function test_a_post_cutover_verification_failure_rolls_back_the_whole_agency(): void
+    {
+        [$agency, $customer] = $this->legacyAgency();
+        $client = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental', PayerType::Workspace);
+        $workspaceCountBefore = Workspace::count();
+        $relationshipCountBefore = AgencyClientWorkspaceRelationship::count();
+
+        $partialRepository = Mockery::mock(
+            \App\Repositories\Eloquent\EloquentAgencyClientWorkspaceRelationshipRepository::class,
+            [new AgencyClientWorkspaceRelationship()],
+        )->makePartial();
+        $partialRepository->shouldReceive('findActiveForClientWorkspace')->andReturn(null);
+        $this->app->instance(\App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class, $partialRepository);
+
+        $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
+
+        $this->assertSame('verification_failed', $result['agencies'][0]['status']);
+        $this->assertStringContainsString('active relationship', $result['agencies'][0]['reason']);
+
+        // The whole Agency's attempt rolled back — as if nothing happened.
+        $this->assertSame($agency->id, (int) $client->fresh()->workspace_id);
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame($relationshipCountBefore, AgencyClientWorkspaceRelationship::count());
+
+        $assignment = BusinessPayerAssignment::where('business_id', $client->id)->first();
+        $this->assertSame(PayerType::Workspace, $assignment->payer_type, 'The payer conversion must roll back too — never left half-converted.');
+    }
+
+    // ------------------------------------------------------------------
+    // FAILURE / ROLLBACK (single-Business Agency)
     // ------------------------------------------------------------------
 
     private function assertNothingMigratedFor(Workspace $agency, Business $business): void
@@ -654,7 +821,7 @@ class AgencyBusinessMigrationV1Test extends TestCase
 
         $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
 
-        $this->assertSame('failed', $result['agencies'][0]['businesses'][0]['status']);
+        $this->assertSame('failed', $result['agencies'][0]['status']);
         $this->assertSame($workspaceCountBefore, Workspace::count(), 'The Workspace created in step 1 must roll back with everything else.');
         $this->assertNothingMigratedFor($agency, $client);
     }
@@ -675,7 +842,7 @@ class AgencyBusinessMigrationV1Test extends TestCase
 
         $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
 
-        $this->assertSame('failed', $result['agencies'][0]['businesses'][0]['status']);
+        $this->assertSame('failed', $result['agencies'][0]['status']);
         $this->assertSame($workspaceCountBefore, Workspace::count());
         $this->assertSame($planAssignmentCountBefore, DB::table('workspace_plan_assignments')->count());
         $this->assertNothingMigratedFor($agency, $client);
@@ -693,7 +860,7 @@ class AgencyBusinessMigrationV1Test extends TestCase
 
         $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
 
-        $this->assertSame('failed', $result['agencies'][0]['businesses'][0]['status']);
+        $this->assertSame('failed', $result['agencies'][0]['status']);
         $this->assertSame($workspaceCountBefore, Workspace::count());
         $this->assertNothingMigratedFor($agency, $client);
     }
@@ -717,7 +884,7 @@ class AgencyBusinessMigrationV1Test extends TestCase
 
         $result = app(AgencyBusinessMigrationV1::class)->run($this->platformOperator(), false, [$agency->id]);
 
-        $this->assertSame('failed', $result['agencies'][0]['businesses'][0]['status']);
+        $this->assertSame('failed', $result['agencies'][0]['status']);
         $this->assertSame($workspaceCountBefore, Workspace::count());
         $this->assertNothingMigratedFor($agency, $client);
 
@@ -786,57 +953,123 @@ class AgencyBusinessMigrationV1Test extends TestCase
         $this->assertNull($assignment->agency_rebill_consented_at, 'A rerun must never reset or otherwise touch consent state.');
     }
 
-    public function test_resuming_after_a_partial_agency_run_only_processes_the_remainder(): void
+    /**
+     * Review correction Finding 1: resumability must never be proven by
+     * relying on the corrected command committing one sibling while
+     * failing another — that behavior has been removed. Instead this
+     * reproduces a genuinely already-partly-migrated Agency the honest
+     * way: a real, fully-committed prior run() call (the corrected
+     * per-Agency transaction always leaves an Agency either fully
+     * migrated or fully untouched), followed by a NEW legacy client
+     * Business appearing under the same Agency afterward.
+     */
+    public function test_resuming_after_a_genuinely_partly_migrated_agency_only_processes_the_remainder(): void
     {
         [$agency, $customer] = $this->legacyAgency();
-        $migrated = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental');
-        $stillPending = $this->legacyClientBusiness($agency, $customer, 'Beta Salon');
+        $alreadyMigrated = $this->legacyClientBusiness($agency, $customer, 'Alpha Dental');
         $operatorId = $this->platformOperator();
 
-        // Simulate a prior partial run: only the first Business was migrated.
-        $result = $this->migration()->run($operatorId, false, [$agency->id]);
-        $this->assertSame('migrated', collect($result['agencies'][0]['businesses'])->firstWhere('business_id', $migrated->id)['status']);
-        $this->assertSame('migrated', collect($result['agencies'][0]['businesses'])->firstWhere('business_id', $stillPending->id)['status']);
+        $firstRun = $this->migration()->run($operatorId, false, [$agency->id]);
+        $this->assertSame('migrated', $firstRun['agencies'][0]['status']);
+        $firstClientWorkspaceId = $firstRun['agencies'][0]['businesses'][0]['client_workspace_id'];
+        $firstRelationshipId = $firstRun['agencies'][0]['businesses'][0]['relationship_id'];
 
-        // Both were actually migrated by the single run() call above (it
-        // processes every candidate); to prove genuine resumption after a
-        // TRUE partial failure, force the FIRST Business's relationship
-        // creation to fail (deterministic by call order — Businesses are
-        // processed in ascending id), then rerun and confirm only that one
-        // is retried, while the successfully-migrated sibling is not.
-        [$agencyB, $customerB] = $this->legacyAgency('Agency B');
-        $businessOne = $this->legacyClientBusiness($agencyB, $customerB, 'One');
-        $businessTwo = $this->legacyClientBusiness($agencyB, $customerB, 'Two');
+        // A second, still-legacy client Business appears under the SAME
+        // Agency Workspace afterward — the authoritative,
+        // workspace_id-driven candidate detection is what finds it.
+        $stillPending = $this->legacyClientBusiness($agency, $customer, 'Beta Salon');
 
-        $realRelationshipManager = app(AgencyClientRelationshipManager::class);
-        $callCount = 0;
-        $relationshipManager = \Mockery::mock(AgencyClientRelationshipManager::class);
-        $relationshipManager->shouldReceive('createForMigration')
-            ->andReturnUsing(function (int $operator, Workspace $agencyWs, Workspace $clientWs) use (&$callCount, $realRelationshipManager) {
-                $callCount++;
+        $secondRun = $this->migration()->run($operatorId, false, [$agency->id]);
+        $agencyReport = $secondRun['agencies'][0];
 
-                if ($callCount === 1) {
-                    throw new \RuntimeException('Forced failure on first Business.');
-                }
+        $this->assertSame('migrated', $agencyReport['status']);
+        $this->assertCount(1, $agencyReport['businesses'], 'Only the genuine remainder is processed — the already-migrated sibling is untouched.');
+        $this->assertSame($stillPending->id, $agencyReport['businesses'][0]['business_id']);
 
-                return $realRelationshipManager->createForMigration($operator, $agencyWs, $clientWs);
-            });
-        $this->app->instance(AgencyClientRelationshipManager::class, $relationshipManager);
+        // The already-migrated Business was never touched again: same
+        // Client Workspace, same relationship, no duplication.
+        $this->assertSame($firstClientWorkspaceId, (int) $alreadyMigrated->fresh()->workspace_id);
+        $this->assertSame(1, AgencyClientWorkspaceRelationship::where('client_workspace_id', $firstClientWorkspaceId)->count());
+        $this->assertSame($firstRelationshipId, AgencyClientWorkspaceRelationship::where('client_workspace_id', $firstClientWorkspaceId)->first()->id);
 
-        $firstRun = app(AgencyBusinessMigrationV1::class)->run($operatorId, false, [$agencyB->id]);
-        $statuses = collect($firstRun['agencies'][0]['businesses'])->pluck('status', 'business_id');
-        $this->assertSame('failed', $statuses[$businessOne->id]);
-        $this->assertSame('migrated', $statuses[$businessTwo->id]);
-        $this->assertSame($agencyB->id, (int) $businessOne->fresh()->workspace_id);
+        // A rerun after full completion creates nothing further.
+        $thirdRun = $this->migration()->run($operatorId, false, [$agency->id]);
+        $this->assertSame([], $thirdRun['agencies'], 'Fully migrated — the Agency no longer qualifies as a candidate at all.');
+    }
 
-        // Restore the real manager, rerun: only businessOne should be
-        // (re)processed — businessTwo is no longer a candidate at all.
-        $this->app->forgetInstance(AgencyClientRelationshipManager::class);
-        $this->app->forgetInstance(AgencyBusinessMigrationV1::class);
+    // ------------------------------------------------------------------
+    // COMMAND EXIT STATUS (review correction Finding 4)
+    // ------------------------------------------------------------------
 
-        $secondRun = app(AgencyBusinessMigrationV1::class)->run($operatorId, false, [$agencyB->id]);
-        $remainingBusinessIds = collect($secondRun['agencies'][0]['businesses'])->pluck('business_id')->all();
-        $this->assertSame([$businessOne->id], $remainingBusinessIds, 'Only the previously-failed Business remains a candidate on rerun.');
-        $this->assertSame('migrated', $secondRun['agencies'][0]['businesses'][0]['status']);
+    public function test_command_exit_code_reflects_the_actual_outcome(): void
+    {
+        $operatorId = $this->platformOperator();
+
+        // 1. Clean, fully successful execute -> SUCCESS.
+        [$cleanAgency, $cleanCustomer] = $this->legacyAgency('Clean Agency');
+        $this->legacyClientBusiness($cleanAgency, $cleanCustomer, 'Clean Client', PayerType::Business);
+        $this->artisan('agency:migrate-client-businesses', [
+            '--execute' => true,
+            '--operator' => $operatorId,
+            '--agency' => [$cleanAgency->uid],
+        ])->assertExitCode(0);
+
+        // 2. Blocked (unresolved payer) -> FAILURE, zero writes.
+        [$blockedAgency, $blockedCustomer] = $this->legacyAgency('Blocked Agency');
+        $unresolvedClient = $this->legacyClientBusiness($blockedAgency, $blockedCustomer, 'Unresolved Co', null);
+        $this->artisan('agency:migrate-client-businesses', [
+            '--execute' => true,
+            '--operator' => $operatorId,
+            '--agency' => [$blockedAgency->uid],
+        ])->assertExitCode(1);
+        $this->assertSame($blockedAgency->id, (int) $unresolvedClient->fresh()->workspace_id);
+
+        // 3. Malformed (ambiguous primary) during preflight -> FAILURE.
+        $ambiguousCustomer = $this->createCustomer();
+        $ambiguousAgency = $this->createWorkspace($ambiguousCustomer->user, ['name' => 'Ambiguous Agency']);
+        $this->assignTier($ambiguousAgency, WorkspacePlanTier::Agency);
+        $one = $this->addBusiness($ambiguousCustomer, $ambiguousAgency, 'One');
+        $two = $this->addBusiness($ambiguousCustomer, $ambiguousAgency, 'Two');
+        DB::table('businesses')->whereIn('id', [$one->id, $two->id])->update(['is_primary' => false]);
+        $this->artisan('agency:migrate-client-businesses', [
+            '--preflight' => true,
+            '--agency' => [$ambiguousAgency->uid],
+        ])->assertExitCode(1);
+    }
+
+    public function test_command_exit_code_is_failure_for_execute_and_verification_failures(): void
+    {
+        $operatorId = $this->platformOperator();
+
+        // Execute failure (forced exception mid-cutover) -> FAILURE.
+        [$failAgency, $failCustomer] = $this->legacyAgency('Fail Agency');
+        $this->legacyClientBusiness($failAgency, $failCustomer, 'Fail Client', PayerType::Business);
+        DB::table('workspace_plan_catalog')->where('tier', WorkspacePlanTier::Core->value)->update(['is_active' => false]);
+
+        $this->artisan('agency:migrate-client-businesses', [
+            '--execute' => true,
+            '--operator' => $operatorId,
+            '--agency' => [$failAgency->uid],
+        ])->assertExitCode(1);
+
+        DB::table('workspace_plan_catalog')->where('tier', WorkspacePlanTier::Core->value)->update(['is_active' => true]);
+
+        // Post-cutover verification failure -> FAILURE (same narrow seam
+        // as the feature-level verification test above).
+        [$verifyFailAgency, $verifyFailCustomer] = $this->legacyAgency('Verify Fail Agency');
+        $this->legacyClientBusiness($verifyFailAgency, $verifyFailCustomer, 'Verify Fail Client', PayerType::Workspace);
+
+        $partialRepository = Mockery::mock(
+            \App\Repositories\Eloquent\EloquentAgencyClientWorkspaceRelationshipRepository::class,
+            [new AgencyClientWorkspaceRelationship()],
+        )->makePartial();
+        $partialRepository->shouldReceive('findActiveForClientWorkspace')->andReturn(null);
+        $this->app->instance(\App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class, $partialRepository);
+
+        $this->artisan('agency:migrate-client-businesses', [
+            '--execute' => true,
+            '--operator' => $operatorId,
+            '--agency' => [$verifyFailAgency->uid],
+        ])->assertExitCode(1);
     }
 }

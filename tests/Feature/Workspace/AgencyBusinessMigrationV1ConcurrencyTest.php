@@ -20,10 +20,15 @@ use Tests\TestCase;
 
 /**
  * Implementation Contract 10 — real concurrency for
- * AgencyBusinessMigrationV1: two genuinely independent OS processes racing
- * to migrate the SAME legacy client Business out of the same Agency
- * Workspace must leave exactly one Client Workspace, one relationship, and
- * one cutover — never two, and never the Business stranded half-moved.
+ * AgencyBusinessMigrationV1, corrected for the per-Agency-Workspace
+ * transaction boundary (§7 review correction): two genuinely independent
+ * OS processes race to migrate the SAME legacy Agency Workspace's ENTIRE
+ * batch of client Businesses (deliberately more than one, to prove the
+ * whole-batch atomicity survives a real race, not just a single-Business
+ * one). Exactly one process's Agency-level transaction must commit —
+ * migrating every client Business in one shot — and the other must observe
+ * a clean "no work left" outcome, never a duplicate Client Workspace,
+ * relationship, or contradictory payer conversion.
  *
  * Deliberately does NOT use RefreshDatabase — mirrors
  * AgencyClientRelationshipConcurrencyTest/AgencyClientProvisioningConcurrencyTest's
@@ -200,9 +205,9 @@ class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
     }
 
     /**
-     * @return array{0: int, 1: int} agency workspace id, the legacy client Business id
+     * @return array{0: int, 1: int, 2: int} agency workspace id, first legacy client Business id, second legacy client Business id
      */
-    private function legacyAgencyWithOneClient(): array
+    private function legacyAgencyWithTwoClients(): array
     {
         $ownerUserId = $this->insertUser('Owner');
         $this->insertCustomer($ownerUserId);
@@ -228,20 +233,28 @@ class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $clientId = $this->insertBusiness($ownerUserId, $agencyWorkspaceId, 'Contested Client', false);
+        $clientOneId = $this->insertBusiness($ownerUserId, $agencyWorkspaceId, 'Contested Client One', false);
         DB::table('business_payer_assignments')->insert([
-            'business_id' => $clientId,
+            'business_id' => $clientOneId,
             'payer_type' => PayerType::Workspace->value,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        return [$agencyWorkspaceId, $clientId];
+        $clientTwoId = $this->insertBusiness($ownerUserId, $agencyWorkspaceId, 'Contested Client Two', false);
+        DB::table('business_payer_assignments')->insert([
+            'business_id' => $clientTwoId,
+            'payer_type' => PayerType::Business->value,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$agencyWorkspaceId, $clientOneId, $clientTwoId];
     }
 
-    public function test_two_racing_migration_attempts_leave_exactly_one_cutover(): void
+    public function test_two_racing_migration_attempts_leave_exactly_one_agency_batch_committed(): void
     {
-        [$agencyWorkspaceId, $clientBusinessId] = $this->legacyAgencyWithOneClient();
+        [$agencyWorkspaceId, $clientOneId, $clientTwoId] = $this->legacyAgencyWithTwoClients();
         $operatorUserId = $this->platformOperator();
         $workspaceCountBefore = Workspace::count();
 
@@ -299,11 +312,15 @@ class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
         $this->assertSame(
             [0, self::ALREADY_MIGRATED_EXIT_CODE],
             $exitCodes,
-            'Exactly one process must migrate the Business for real and exactly one must observe it already migrated. ' . $output
+            'Exactly one process must migrate the Agency\'s entire batch for real and exactly one must observe no work left. ' . $output
         );
 
         foreach ([$first, $second] as $process) {
             if ($process->getExitCode() === 0) {
+                preg_match('/business_count=(\d+)/', $process->getOutput(), $countMatch);
+                $this->assertNotEmpty($countMatch, 'The winning process did not report its business_count: ' . $process->getOutput());
+                $this->assertSame('2', $countMatch[1], 'The winner must have migrated BOTH client Businesses in its one Agency-level transaction. ' . $output);
+
                 preg_match('/elapsed_ms=(\d+)/', $process->getOutput(), $match);
                 $this->assertNotEmpty($match, 'The winning process did not report its elapsed time: ' . $process->getOutput());
                 $this->assertGreaterThanOrEqual(
@@ -314,27 +331,52 @@ class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
             }
         }
 
-        // ---- Durable DB-state proof ----
+        // ---- Durable DB-state proof: only ONE Agency batch ever committed ----
 
-        $business = Business::find($clientBusinessId);
-        $this->assertNotSame($agencyWorkspaceId, (int) $business->workspace_id, 'The Business must have actually moved.');
-        $this->createdWorkspaceIds[] = (int) $business->workspace_id;
+        $businessOne = Business::find($clientOneId);
+        $businessTwo = Business::find($clientTwoId);
+
+        $this->assertNotSame($agencyWorkspaceId, (int) $businessOne->workspace_id, 'The first Business must have actually moved.');
+        $this->assertNotSame($agencyWorkspaceId, (int) $businessTwo->workspace_id, 'The second Business must have actually moved.');
+        $this->assertNotSame(
+            (int) $businessOne->workspace_id,
+            (int) $businessTwo->workspace_id,
+            'Each Business gets its OWN independent Client Workspace — never merged.'
+        );
+        $this->createdWorkspaceIds[] = (int) $businessOne->workspace_id;
+        $this->createdWorkspaceIds[] = (int) $businessTwo->workspace_id;
 
         $this->assertSame(
-            $workspaceCountBefore + 1,
+            $workspaceCountBefore + 2,
             Workspace::count(),
-            'Exactly one new Client Workspace must exist after the race, never two.'
+            'Exactly two new Client Workspaces must exist after the race (one per Business, from the single winning Agency batch), never four (no duplicate batch commit).'
         );
 
         $relationships = AgencyClientWorkspaceRelationship::where('agency_workspace_id', $agencyWorkspaceId)->get();
-        $this->assertCount(1, $relationships, 'Exactly one Active relationship must exist, never two.');
-        $this->assertSame(AgencyClientRelationshipStatus::Active, $relationships->first()->status);
-        $this->assertSame((int) $business->workspace_id, (int) $relationships->first()->client_workspace_id);
+        $this->assertCount(2, $relationships, 'Exactly two Active relationships must exist (one per migrated Business), never a duplicate set from a second committed batch.');
+        $this->assertTrue($relationships->every(fn (AgencyClientWorkspaceRelationship $r) => $r->status === AgencyClientRelationshipStatus::Active));
 
-        $assignment = BusinessPayerAssignment::where('business_id', $clientBusinessId)->first();
-        $this->assertSame(PayerType::AgencyRebill, $assignment->payer_type);
-        $this->assertSame((int) $relationships->first()->id, (int) $assignment->managing_agency_relationship_id);
-        $this->assertNull($assignment->agency_rebill_consented_at);
+        $relationshipByClientWorkspace = $relationships->keyBy('client_workspace_id');
+        $this->assertTrue($relationshipByClientWorkspace->has((int) $businessOne->workspace_id));
+        $this->assertTrue($relationshipByClientWorkspace->has((int) $businessTwo->workspace_id));
+
+        // No contradictory payer conversion: Business One was a legacy
+        // `workspace` payer (must convert to pre-consent agency_rebill),
+        // Business Two was already a `business` payer (must stay
+        // untouched) — proving the winner's batch applied the payer
+        // matrix correctly to BOTH, not just one.
+        $assignmentOne = BusinessPayerAssignment::where('business_id', $clientOneId)->first();
+        $this->assertSame(PayerType::AgencyRebill, $assignmentOne->payer_type);
+        $this->assertSame(
+            (int) $relationshipByClientWorkspace[(int) $businessOne->workspace_id]->id,
+            (int) $assignmentOne->managing_agency_relationship_id,
+        );
+        $this->assertNull($assignmentOne->agency_rebill_consented_at);
+        $this->assertNull($assignmentOne->agency_rebill_consented_by_user_id);
+
+        $assignmentTwo = BusinessPayerAssignment::where('business_id', $clientTwoId)->first();
+        $this->assertSame(PayerType::Business, $assignmentTwo->payer_type);
+        $this->assertNull($assignmentTwo->managing_agency_relationship_id);
     }
 
     private function waitForBothChildrenToEnterRun(Process $first, Process $second): bool

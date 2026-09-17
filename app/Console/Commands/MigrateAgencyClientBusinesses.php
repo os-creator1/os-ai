@@ -107,6 +107,16 @@ class MigrateAgencyClientBusinesses extends Command
     }
 
     /**
+     * Agency Workspace statuses that mean this operator run did not fully
+     * and cleanly succeed for that Agency, and must therefore fail the
+     * command's exit code — an operator migration must never let tooling
+     * read a blocked/failed/unverified Agency as a green run.
+     *
+     * @var array<int, string>
+     */
+    private const FAILING_AGENCY_STATUSES = ['blocked', 'failed', 'verification_failed'];
+
+    /**
      * @param  array{schema_ready: bool, dry_run?: bool, agencies: array<int, array<string, mixed>>}  $report
      */
     private function printReport(array $report, string $mode): int
@@ -125,15 +135,35 @@ class MigrateAgencyClientBusinesses extends Command
             return self::SUCCESS;
         }
 
-        $blockedAgencies = 0;
-        $failedBusinesses = 0;
+        $failingAgencies = 0;
 
         foreach ($report['agencies'] as $agencyReport) {
             $this->line("Agency Workspace #{$agencyReport['agency_workspace_id']} ({$agencyReport['agency_workspace_uid']}): {$agencyReport['status']}");
 
+            if (($agencyReport['business_count'] ?? null) !== null) {
+                $this->line("  business_count={$agencyReport['business_count']} candidate_business_count={$agencyReport['candidate_business_count']} primary_location_missing_count=" . ($agencyReport['primary_location_missing_count'] ?? 'n/a'));
+            }
+
+            if (in_array($agencyReport['status'], self::FAILING_AGENCY_STATUSES, true)) {
+                $failingAgencies++;
+            }
+
             if ($agencyReport['status'] === 'blocked') {
-                $blockedAgencies++;
-                $this->warn("  blocked: {$agencyReport['reason']} (primary_business_count={$agencyReport['primary_business_count']})");
+                if ($agencyReport['reason'] === 'ambiguous_primary_business') {
+                    $this->warn("  blocked: {$agencyReport['reason']} (primary_business_count={$agencyReport['primary_business_count']})");
+                } else {
+                    $this->warn("  blocked: {$agencyReport['reason']} — this Agency's entire batch performs ZERO writes while any candidate is unresolved:");
+
+                    foreach ($agencyReport['blocked_businesses'] ?? [] as $blocked) {
+                        $this->warn("    Business #{$blocked['business_id']} ({$blocked['business_uid']}): {$blocked['reason']}");
+                    }
+                }
+
+                continue;
+            }
+
+            if ($agencyReport['status'] === 'failed' || $agencyReport['status'] === 'verification_failed') {
+                $this->error("  {$agencyReport['status']}: {$agencyReport['reason']}");
 
                 continue;
             }
@@ -142,23 +172,26 @@ class MigrateAgencyClientBusinesses extends Command
                 $status = $businessReport['status'] ?? $businessReport['payer_action'] ?? 'unknown';
                 $this->line("  Business #{$businessReport['business_id']} ({$businessReport['business_name']}): {$status}");
 
-                if (($businessReport['status'] ?? null) === 'failed') {
-                    $failedBusinesses++;
-                    $this->warn("    {$businessReport['reason']}");
-                }
-
-                if (($businessReport['status'] ?? null) === 'blocked' || ($businessReport['blocking'] ?? false)) {
-                    $this->warn('    blocked: ' . ($businessReport['reason'] ?? $businessReport['blocking_reason'] ?? 'unresolved'));
+                if (($businessReport['blocking'] ?? false)) {
+                    $this->warn('    blocked: ' . ($businessReport['blocking_reason'] ?? 'unresolved'));
                 }
 
                 if (($businessReport['payer_action'] ?? null) === 'convert_to_pending_agency_rebill') {
-                    $this->comment('    pending Agency owner confirmation for AgencyRebill funding (Contract 09)');
+                    $this->comment(sprintf(
+                        '    pending Agency owner confirmation for AgencyRebill funding (Contract 09) — Business #%d (%s), Client Workspace %s, relationship #%s',
+                        $businessReport['business_id'],
+                        $businessReport['business_uid'],
+                        $businessReport['client_workspace_uid'] ?? 'n/a',
+                        $businessReport['relationship_id'] ?? 'n/a',
+                    ));
                 }
             }
         }
 
-        if ($blockedAgencies > 0 || $failedBusinesses > 0) {
-            $this->warn("Completed with {$blockedAgencies} blocked Agency Workspace(s) and {$failedBusinesses} failed Business migration(s) — see above.");
+        if ($failingAgencies > 0) {
+            $this->warn("Completed with {$failingAgencies} blocked/failed/unverified Agency Workspace(s) — see above. This run did not fully succeed.");
+
+            return self::FAILURE;
         }
 
         return self::SUCCESS;

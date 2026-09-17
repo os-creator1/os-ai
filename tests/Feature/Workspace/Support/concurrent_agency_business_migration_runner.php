@@ -5,9 +5,9 @@
  * AgencyBusinessMigrationV1ConcurrencyTest, so the real cross-process race
  * required by Implementation Contract 10's concurrency requirement
  * exercises two genuinely independent database connections both trying to
- * migrate the SAME legacy client Business out of the same Agency Workspace
- * — something a single PHPUnit process cannot do on its own, and something
- * an open RefreshDatabase transaction would hide even if it could (the same
+ * migrate the SAME legacy Agency Workspace's client Businesses — something
+ * a single PHPUnit process cannot do on its own, and something an open
+ * RefreshDatabase transaction would hide even if it could (the same
  * rationale AgencyClientRelationshipConcurrencyTest and
  * AgencyClientProvisioningConcurrencyTest already record for their own
  * analogous races).
@@ -18,12 +18,17 @@
  * EXPECTED_TEST_DATABASE before touching anything — mirroring the other
  * concurrency runners' own safety check verbatim.
  *
+ * Corrected for the per-Agency-Workspace transaction boundary (Contract 10
+ * §7 review correction): the unit of contention is now the WHOLE Agency's
+ * batch, not one Business, so this runner reports the AGENCY-level
+ * outcome, not a single Business's.
+ *
  * Exit codes:
- *   0  this process migrated the Business for real (prints the created
- *      Client Workspace id)
+ *   0  this process migrated the Agency's entire batch for real (prints
+ *      every created Client Workspace id and relationship id)
  *   6  this process lost the race — by the time this process's own
- *      transaction reached the Business, it was no longer a candidate
- *      (already moved out of the Agency Workspace)
+ *      transaction reached the Agency, it had no remaining candidate
+ *      Businesses (the winner already migrated all of them)
  *   3  refused to run against an unexpected database
  *   1  anything else, with the exception class on STDERR
  *
@@ -70,31 +75,41 @@ try {
     $migration = $app->make(App\Library\Workspace\Migration\AgencyBusinessMigrationV1::class);
 
     $report = $migration->run((int) $operatorUserId, false, [(int) $agencyWorkspaceId]);
-    $businessReport = $report['agencies'][0]['businesses'][0] ?? null;
+    $agencyReport = $report['agencies'][0] ?? null;
 
-    if ($businessReport === null) {
-        fwrite(STDERR, "No Business reported for Agency Workspace [{$agencyWorkspaceId}].\n");
+    if ($agencyReport === null) {
+        fwrite(STDERR, "No Agency Workspace reported for id [{$agencyWorkspaceId}].\n");
         exit(1);
     }
 
     $elapsedMs = (int) round((microtime(true) - $startedAt) * 1000);
 
-    if ($businessReport['status'] === 'migrated') {
+    if ($agencyReport['status'] === 'migrated') {
+        $clientWorkspaceIds = implode(',', array_map(
+            static fn (array $business) => $business['client_workspace_id'],
+            $agencyReport['businesses'],
+        ));
+        $relationshipIds = implode(',', array_map(
+            static fn (array $business) => $business['relationship_id'],
+            $agencyReport['businesses'],
+        ));
+
         fwrite(STDOUT, sprintf(
-            "OK client_workspace_id=%d relationship_id=%d elapsed_ms=%d\n",
-            $businessReport['client_workspace_id'],
-            $businessReport['relationship_id'],
+            "OK business_count=%d client_workspace_ids=%s relationship_ids=%s elapsed_ms=%d\n",
+            count($agencyReport['businesses']),
+            $clientWorkspaceIds,
+            $relationshipIds,
             $elapsedMs,
         ));
         exit(0);
     }
 
-    if ($businessReport['status'] === 'already_migrated') {
-        fwrite(STDOUT, sprintf("ALREADY_MIGRATED elapsed_ms=%d\n", $elapsedMs));
+    if ($agencyReport['status'] === 'no_action') {
+        fwrite(STDOUT, sprintf("NO_ACTION elapsed_ms=%d\n", $elapsedMs));
         exit(ALREADY_MIGRATED_EXIT_CODE);
     }
 
-    fwrite(STDERR, 'Unexpected status: ' . $businessReport['status'] . ' reason=' . ($businessReport['reason'] ?? 'none') . "\n");
+    fwrite(STDERR, 'Unexpected Agency status: ' . $agencyReport['status'] . ' reason=' . ($agencyReport['reason'] ?? 'none') . "\n");
     exit(1);
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e) . ': ' . $e->getMessage() . "\n");

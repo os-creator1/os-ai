@@ -264,11 +264,37 @@ the operator, not a `main`-wide behavior change on deploy.
 
 Reuses `BusinessReassignedToWorkspace`, `WorkspaceMembershipBusinessUnassigned`
 (both already dispatched by the reused `reassignBusiness()` call),
-`WorkspaceCreated`, and Contract 01's `AgencyClientRelationshipEstablished`
-— all with the real migration operator as actor (§6). No new event type.
-The existing `workspace_transitions` row `reassignBusiness()` already
-writes is the durable "this Business moved, and when" record — sufficient,
-not duplicated.
+`WorkspaceCreated`, and Contract 01's `AgencyClientRelationshipEstablished`.
+No new event type.
+
+**Actor split, corrected — mechanically re-verified against current main.**
+This section previously said all four reused events carry the real
+migration operator as actor. That is impossible without either weakening
+`WorkspaceManager`'s own dual-authority check or fabricating an
+Agency-owner action the owner did not take: `createWorkspace(int
+$ownerUserId, ...)` and `reassignBusiness(int $actorUserId, ...)` each take
+exactly **one** actor-shaped parameter, used both as the subject of their
+own `assertActorIsOwnerOrActiveAdmin()` check AND as the actor recorded on
+every event/`workspace_transitions` row they write — there is no separate
+"audit actor" parameter to record the operator through while authorizing
+as the owner. The genuine, current-main-honest split is therefore:
+
+- `WorkspaceCreated` and `BusinessReassignedToWorkspace` /
+  `WorkspaceMembershipBusinessUnassigned` (all three from step 1/3, via
+  `createWorkspace()`/`reassignBusiness()`) record the **real Agency
+  owner** — the same standing authority `WorkspaceController::reassignBusiness()`
+  already relies on for an owner moving a Business between two Workspaces
+  they own (§6, §4 step 1/3). This is not a fabricated actor: the owner
+  genuinely owns both Workspaces once the new one exists.
+- `AgencyClientRelationshipEstablished` (step 4, via `createForMigration()`)
+  alone records the **real platform migration operator** — the
+  cross-tenant relationship fact only the operator, not the Agency owner,
+  is asserting (§6).
+
+No actor is fabricated on either side of this split. The existing
+`workspace_transitions` row `reassignBusiness()` already writes is the
+durable "this Business moved, and when" record — sufficient, not
+duplicated.
 
 ## 11. Billing/provider safety
 
