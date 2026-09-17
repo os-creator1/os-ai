@@ -236,7 +236,7 @@ class BusinessHomeRecentWorkTest extends TestCase
     public function test_another_businesss_work_never_appears(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Ours Venue', 'Ours Account');
-        $rival = $this->addBusiness($customer, $workspace, 'Rival Venue');
+        $rival = $this->createIndependentWorkspaceBusiness(businessName: 'Rival Venue', workspaceName: 'Rival Account')['business'];
 
         $this->website($rival, 'published');
         $this->websiteRevision($rival, 9, $this->hoursAgo(1));
@@ -314,7 +314,7 @@ class BusinessHomeRecentWorkTest extends TestCase
     public function test_an_agency_opened_client_business_gets_its_own_work_and_nothing_of_the_portfolio(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $sibling = $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $sibling = $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account')['clientBusiness'];
 
         $this->website($client, 'published');
         $this->websiteRevision($client, 2, $this->hoursAgo(3));
@@ -336,10 +336,11 @@ class BusinessHomeRecentWorkTest extends TestCase
     public function test_the_agency_account_home_has_no_recent_work_band(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account');
         $this->website($client, 'published');
         $this->websiteRevision($client, 1, $this->hoursAgo(1));
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $snapshot = $this->dashboardFor($agency->user);
 

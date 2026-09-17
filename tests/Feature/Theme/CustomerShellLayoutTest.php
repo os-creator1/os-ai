@@ -49,9 +49,11 @@ class CustomerShellLayoutTest extends TestCase
     public function test_the_agency_account_frame_title_names_the_agency(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
 
+        // The title names the frame the shell is standing in, so stand in the
+        // Agency account frame rather than the account's own Business.
+        $this->switchToAccount($workspace);
         $html = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
 
         preg_match('/<title>(.*?)<\/title>/s', $html, $title);
@@ -75,13 +77,13 @@ class CustomerShellLayoutTest extends TestCase
     public function test_slice_1b_context_switcher_and_view_as_banner_are_preserved(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
+        $this->switchToAccount($workspace);
 
         $home = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-role="sidebar-context"', $home);
         $this->assertStringContainsString('id="customer-context-switcher-toggle"', $home);
-        $this->assertStringContainsString('aria-label="Choose a client account"', $home, 'Two reachable Businesses and no choice yet: the Account frame asks.');
+        $this->assertStringContainsString('aria-label="Choose a client account"', $home, 'Standing in the Account frame with no client account chosen: the switcher asks.');
 
         $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
         $selected = $this->home()->assertOk()->getContent();
