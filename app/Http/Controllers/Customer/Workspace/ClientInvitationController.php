@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer\Workspace;
 
+use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\InvalidClientInvitationClaimException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
 use App\Http\Controllers\Controller;
@@ -50,6 +51,11 @@ class ClientInvitationController extends Controller
             );
         } catch (UnauthorizedAgencyRelationshipManagementException) {
             abort(403);
+        } catch (AgencyWorkspaceNotEligibleException) {
+            return back()->with([
+                'status' => 'error',
+                'message' => 'This Agency Workspace cannot send client invitations right now.',
+            ]);
         }
 
         return back()->with([

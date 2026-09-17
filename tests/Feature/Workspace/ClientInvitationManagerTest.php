@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\ClientInvitationStatus;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\InvalidClientInvitationClaimException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Support\RequestScopedCache;
 use App\Library\Workspace\ClientInvitationManager;
 use App\Models\ClientWorkspaceInvitation;
 use App\Models\User;
@@ -67,6 +71,46 @@ class ClientInvitationManagerTest extends TestCase
         $this->assignTier($workspace, WorkspacePlanTier::Agency);
 
         return [$workspace->fresh(), $customer->user->fresh()];
+    }
+
+    /** An Agency-tier Workspace still on its Trial window. */
+    private function agencyInTrial(string $name = 'Trialing Agency'): array
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => $name]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->platformAdminId(), 'Trial fixture.', true, 0, now()->addDays(14));
+
+        return [$workspace->fresh(), $customer->user->fresh()];
+    }
+
+    /** A Workspace deliberately NOT on the Agency tier (Core/Growth). */
+    private function nonAgencyWorkspace(WorkspacePlanTier $tier, string $name = 'Ordinary Co'): array
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => $name]);
+        $this->assignTier($workspace, $tier);
+
+        return [$workspace->fresh(), $customer->user->fresh()];
+    }
+
+    /**
+     * Drives an Agency Workspace's account into a lifecycle state through
+     * EntitlementManager's own writers — never by poking lifecycle columns
+     * directly. Matches AgencyClientRelationshipManagerTest's own
+     * putWorkspaceInto()/AgencyViewAsTest's putAgencyInto() convention.
+     */
+    private function putAgencyInto(string $state, Workspace $agency): void
+    {
+        $entitlements = app(EntitlementManager::class);
+
+        match ($state) {
+            'grace' => $entitlements->enterGracePeriod($agency),
+            'locked' => [$entitlements->enterGracePeriod($agency), $entitlements->lockForNonPayment($agency)],
+            'inactive' => $entitlements->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'Test: plan made inactive.'),
+            'suspended' => $entitlements->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Test: plan suspended.'),
+        };
+
+        app(RequestScopedCache::class)->flush();
     }
 
     /**
@@ -231,6 +275,143 @@ class ClientInvitationManagerTest extends TestCase
         $this->expectException(UnauthorizedAgencyRelationshipManagementException::class);
 
         $this->send($agency, $outsider);
+    }
+
+    // ------------------------------------------------------------------
+    // Eligibility — SEND requires BOTH authority AND standing Agency
+    // management eligibility (Contract 01 §6, reused verbatim via
+    // assertAgencyWorkspaceHasManagementEligibility()).
+    // ------------------------------------------------------------------
+
+    public function test_a_core_tier_owner_cannot_send(): void
+    {
+        [$workspace, $owner] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core);
+
+        $this->expectException(AgencyWorkspaceNotEligibleException::class);
+
+        $this->send($workspace, $owner);
+    }
+
+    public function test_a_growth_tier_owner_cannot_send(): void
+    {
+        [$workspace, $owner] = $this->nonAgencyWorkspace(WorkspacePlanTier::Growth);
+
+        $this->expectException(AgencyWorkspaceNotEligibleException::class);
+
+        $this->send($workspace, $owner);
+    }
+
+    public function test_an_agency_on_trial_can_send(): void
+    {
+        [$agency, $owner] = $this->agencyInTrial();
+
+        $invitation = $this->send($agency, $owner);
+
+        $this->assertSame(ClientInvitationStatus::Pending, $invitation->status);
+    }
+
+    public function test_an_active_agency_can_send(): void
+    {
+        [$agency, $owner] = $this->agency();
+
+        $invitation = $this->send($agency, $owner);
+
+        $this->assertSame(ClientInvitationStatus::Pending, $invitation->status);
+    }
+
+    public function test_an_agency_in_grace_can_send(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->putAgencyInto('grace', $agency);
+
+        $invitation = $this->send($agency, $owner);
+
+        $this->assertSame(ClientInvitationStatus::Pending, $invitation->status);
+    }
+
+    public function test_a_locked_agency_cannot_send(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->putAgencyInto('locked', $agency);
+
+        $countBefore = ClientWorkspaceInvitation::count();
+
+        try {
+            $this->send($agency, $owner);
+            $this->fail('Expected AgencyWorkspaceNotEligibleException.');
+        } catch (AgencyWorkspaceNotEligibleException) {
+            // expected
+        }
+
+        $this->assertSame($countBefore, ClientWorkspaceInvitation::count());
+        Notification::assertNothingSent();
+    }
+
+    public function test_an_inactive_agency_cannot_send(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->putAgencyInto('inactive', $agency);
+
+        $countBefore = ClientWorkspaceInvitation::count();
+
+        try {
+            $this->send($agency, $owner);
+            $this->fail('Expected AgencyWorkspaceNotEligibleException.');
+        } catch (AgencyWorkspaceNotEligibleException) {
+            // expected
+        }
+
+        $this->assertSame($countBefore, ClientWorkspaceInvitation::count());
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_suspended_agency_cannot_send(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $this->putAgencyInto('suspended', $agency);
+
+        $countBefore = ClientWorkspaceInvitation::count();
+
+        try {
+            $this->send($agency, $owner);
+            $this->fail('Expected AgencyWorkspaceNotEligibleException.');
+        } catch (AgencyWorkspaceNotEligibleException) {
+            // expected
+        }
+
+        $this->assertSame($countBefore, ClientWorkspaceInvitation::count());
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_core_tier_refusal_creates_zero_invitations_and_sends_zero_notifications(): void
+    {
+        [$workspace, $owner] = $this->nonAgencyWorkspace(WorkspacePlanTier::Core);
+        $countBefore = ClientWorkspaceInvitation::count();
+
+        try {
+            $this->send($workspace, $owner);
+            $this->fail('Expected AgencyWorkspaceNotEligibleException.');
+        } catch (AgencyWorkspaceNotEligibleException) {
+            // expected
+        }
+
+        $this->assertSame($countBefore, ClientWorkspaceInvitation::count());
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_pending_invitation_may_still_be_revoked_after_the_agency_becomes_ineligible(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $invitation = $this->send($agency, $owner);
+
+        // The Agency becomes ineligible AFTER the invitation was sent while
+        // still eligible — revoke() is deliberately authority-only, so this
+        // otherwise-authorized owner must still be able to withdraw it.
+        $this->putAgencyInto('locked', $agency);
+
+        $revoked = $this->manager()->revoke((int) $owner->id, $invitation);
+
+        $this->assertSame(ClientInvitationStatus::Revoked, $revoked->status);
     }
 
     // ------------------------------------------------------------------

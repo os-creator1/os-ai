@@ -55,10 +55,23 @@
     // sign-in/create-account screen for a guest, per §5's
     // existence-disclosure discipline); only POST accept performs any
     // write, and requires authentication.
+    //
+    // Both routes carry the 'twofactor' middleware (routes/web.php is
+    // loaded with only the 'web' group — unlike routes/customer.php, which
+    // gets it group-wide — so it is not otherwise applied here). Without
+    // it, Auth::check() === true the instant a User completes password
+    // authentication, before any pending 2FA challenge is resolved
+    // (TwoFactorController's own verify step), which would let a User who
+    // knows only the first factor complete real provisioning. TwoFactor is
+    // a no-op for a guest (GET stays reachable while unauthenticated) and
+    // a no-op once a User has no pending challenge; it only intercepts an
+    // authenticated User with a pending code, redirecting to verify.index
+    // — the exact existing mechanism every other authenticated surface
+    // already relies on, not new 2FA logic.
     Route::get('client-invitations/{uid}/{token}', [\App\Http\Controllers\ClientInvitationClaimController::class, 'show'])
-        ->name('client-invitations.claim');
+        ->middleware('twofactor')->name('client-invitations.claim');
     Route::post('client-invitations/{uid}/{token}/accept', [\App\Http\Controllers\ClientInvitationClaimController::class, 'accept'])
-        ->middleware('auth')->name('client-invitations.accept');
+        ->middleware(['auth', 'twofactor'])->name('client-invitations.accept');
 
     // Security Remediation Slice 0 §16.A.1 (D-24) — the five unauthenticated
     // GET routes formerly registered here (add-gateways, remove-jobs,

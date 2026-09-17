@@ -3,6 +3,7 @@
 namespace App\Library\Workspace;
 
 use App\Enums\Workspace\ClientInvitationStatus;
+use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\InvalidClientInvitationClaimException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
@@ -28,14 +29,18 @@ use Illuminate\Support\Str;
  * anything, and only at acceptance time, once a real authenticated
  * User/Customer already exists.
  *
- * AUTHORITY. send()/revoke() call AgencyClientRelationshipManager's own
- * canonical `actorHasAgencyAuthority()` and
- * `agencyWorkspaceHasManagementEligibility()` — the exact same methods
- * Contract 01's create() uses internally — never a duplicate or
- * reimplemented check. There is no separate "manage_agency_clients"
- * permission: ordinary active Admin/Staff membership of the exact Agency
- * Workspace is the whole grant, per Contract 01 §6/Blueprint §2's
- * correction (A1) that provisioning is not owner-only.
+ * AUTHORITY. send() calls AgencyClientRelationshipManager's own canonical
+ * `actorHasAgencyAuthority()` AND `assertAgencyWorkspaceHasManagementEligibility()`
+ * — the exact same checks Contract 01's create() itself runs, in the same
+ * order (authority, then eligibility) — never a duplicate or reimplemented
+ * check. There is no separate "manage_agency_clients" permission: ordinary
+ * active Admin/Staff membership of the exact Agency Workspace is the whole
+ * authority grant, per Contract 01 §6/Blueprint §2's correction (A1) that
+ * provisioning is not owner-only. revoke() is authority-only, deliberately:
+ * it is a safety-reducing cleanup action, and an Agency that has since
+ * become ineligible (or downgraded off the Agency tier) must still be able
+ * to withdraw a Pending invitation rather than being forced to leave it
+ * live.
  *
  * TOKEN. Never stored or logged in plaintext. A cryptographically strong
  * random token is generated once, hashed with Hash::make() (the same
@@ -56,16 +61,20 @@ class ClientInvitationManager
      * Send a new client invitation. Creates exactly one Pending row — no
      * Workspace, Business, Location, User, or relationship is touched.
      *
-     * §6 deliberately gates SEND on authority alone, not standing Agency
-     * eligibility: eligibility is asserted where it actually matters — at
-     * ACCEPTANCE, fresh, by Contract 01's own create() (§C/Clarification
-     * C) — exactly like an Active relationship's own eligibility is never
-     * a standing guarantee (Contract 01 §6). Gating send() on eligibility
-     * too would only duplicate that check prematurely against a Workspace
-     * state that can still change before acceptance anyway.
+     * Canonical ordinary Agency management requires BOTH authority (who may
+     * act) AND standing eligibility (whether the Agency Workspace itself
+     * may be used to manage a client right now — Agency tier AND a usable
+     * account, Contract 01 §6). SEND is a real Agency product action, so it
+     * is gated on both, exactly like Contract 01's create() itself:
+     * Core/Growth (non-Agency tier), Locked, Inactive, or Suspended Agency
+     * Workspaces may not send — Trial, Active, and Grace may. This is
+     * re-asked fresh, unconditionally, at ACCEPTANCE too by Contract 01's
+     * own create() (Clarification C) — sending does not make eligibility a
+     * standing guarantee between send and accept.
      *
      * @throws WorkspaceNotFoundException
      * @throws UnauthorizedAgencyRelationshipManagementException
+     * @throws AgencyWorkspaceNotEligibleException
      */
     public function send(
         int $actorUserId,
@@ -83,6 +92,7 @@ class ClientInvitationManager
             }
 
             $this->assertActorMayManageInvitations($actorUserId, $lockedAgencyWorkspace);
+            $this->agencyClientRelationshipManager->assertAgencyWorkspaceHasManagementEligibility($lockedAgencyWorkspace);
 
             $normalizedEmail = self::normalizeEmail($email);
             $trimmedBusinessName = $intendedBusinessName !== null ? trim($intendedBusinessName) : null;
@@ -117,6 +127,12 @@ class ClientInvitationManager
      * Revoke a still-Pending invitation. No Workspace side effect — none
      * was ever created. A revoked invitation's claim link becomes unusable
      * immediately (validateClaim() refuses any non-Pending row).
+     *
+     * Authority-only, deliberately (no eligibility gate): revocation only
+     * ever narrows what exists, so an otherwise-authorized actor may revoke
+     * even once the Agency Workspace has become ineligible — the same
+     * asymmetry Contract 01 §6 already draws between establishing a
+     * relationship (gated) and terminating one (authority-only).
      *
      * @throws WorkspaceNotFoundException
      * @throws UnauthorizedAgencyRelationshipManagementException

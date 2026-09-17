@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace;
 
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Enums\Workspace\ClientInvitationStatus;
@@ -9,6 +10,7 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Exceptions\Workspace\InvalidClientInvitationClaimException;
 use App\Exceptions\Workspace\UnauthorizedAgencyRelationshipManagementException;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientProvisioningManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
@@ -57,6 +59,14 @@ class AgencyClientProvisioningTest extends TestCase
         // suite — EloquentAccountRepository::hasPermission() short-circuits
         // that id to "every permission".
         $this->platformAdminId();
+
+        // Required by any route that resolves through RedirectIfAuthenticated
+        // (Helper::app_config() throws on a missing row) — the 2FA
+        // verify.store route this file's new tests exercise is one of
+        // them. tenant()'s own fixture calls this internally; the plain
+        // agency()/realAccount() helpers here do not, so it is called once
+        // for the whole class instead.
+        $this->ensureRequiredAppConfigRowsExist();
 
         Notification::fake();
     }
@@ -724,5 +734,242 @@ class AgencyClientProvisioningTest extends TestCase
             ->exists();
 
         $this->assertFalse($membershipExists);
+    }
+
+    // ------------------------------------------------------------------
+    // Final correction round, item 2 — 2FA bypass on invitation acceptance.
+    // routes/web.php carries only the 'web' middleware group, so 'auth'
+    // alone let a User who has completed only the FIRST factor (password)
+    // reach real provisioning while a 2FA challenge was still pending.
+    // Both client-invitations.claim (GET) and .accept (POST) now also
+    // carry 'twofactor'.
+    // ------------------------------------------------------------------
+
+    /**
+     * Matches CustomerAccountAccessGateTest::markPendingTwoFactor()'s own
+     * convention exactly, adapted to operate on a User directly (this
+     * file's realAccount() returns a User, not a Customer tuple).
+     *
+     * @return int the plaintext pending code, for a test that needs to
+     *   submit it back
+     */
+    private function markPendingTwoFactor(User $user): int
+    {
+        config(['app.two_factor' => true]);
+
+        $customer = $user->customer;
+        $customer->permissions = json_encode($this->allCustomerPermissions());
+        $customer->save();
+
+        $user = $user->fresh();
+        $user->two_factor = true;
+        $user->generateTwoFactorCode();
+        $user->save();
+
+        // Rebind the guard to the freshly-mutated instance -- the same
+        // object TwoFactor middleware will read auth()->user() as.
+        $this->actingAs($user);
+
+        return $user->two_factor_code;
+    }
+
+    public function test_a_pending_two_factor_challenge_blocks_both_claim_and_accept_until_completed(): void
+    {
+        [$agency, $owner] = $this->agency();
+        $email = 'twofactor-client' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $owner, $email, 'Two Factor Co');
+        $account = $this->realAccount($email);
+
+        $code = $this->markPendingTwoFactor($account);
+
+        $workspaceCountBefore = Workspace::count();
+        $businessCountBefore = Business::count();
+
+        // GET claim -> redirected to the 2FA challenge, never the claim
+        // page itself, while the challenge is pending.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect(route('verify.index'));
+
+        // POST accept -> the same redirect, and no provisioning occurs.
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect(route('verify.index'));
+
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame($businessCountBefore, Business::count());
+        $this->assertSame(0, AgencyClientWorkspaceRelationship::count());
+        $fresh = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Pending, $fresh->status);
+        $this->assertNull($fresh->created_client_workspace_id);
+
+        // Complete the 2FA challenge using the existing test convention.
+        $this->post(route('verify.store'), ['two_factor_code' => (string) $code])
+            ->assertRedirect();
+
+        // The SAME invitation now proceeds normally: GET shows the
+        // confirmation page, and POST accept provisions for real.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertOk()
+            ->assertViewIs('client_invitations.confirm');
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect();
+
+        $accepted = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Accepted, $accepted->status);
+        $this->assertNotNull($accepted->created_client_workspace_id);
+    }
+
+    // ------------------------------------------------------------------
+    // Final correction round, item 3 — invitation routes must not inherit
+    // an unrelated Workspace's lock from CustomerAccountAccessGate (global
+    // 'web' middleware group). client-invitations.claim/.accept carry no
+    // {workspaceUid}, so without an explicit allowlist entry they fell to
+    // the workspace-agnostic resolution path, keyed off the actor's OTHER,
+    // wholly unrelated Workspace(s).
+    // ------------------------------------------------------------------
+
+    public function test_a_locked_unrelated_workspace_does_not_block_claim_and_acceptance_still_succeeds(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $email = 'locked-unrelated' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $agencyOwner, $email, 'New Co');
+        $account = $this->realAccount($email);
+
+        $lockedWorkspace = $this->createWorkspace($account, ['name' => 'Old Locked Co']);
+        $this->assignTier($lockedWorkspace, WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->enterGracePeriod($lockedWorkspace);
+        app(EntitlementManager::class)->lockForNonPayment($lockedWorkspace);
+
+        $this->actingAs($account);
+
+        // The claim route remains reachable despite the owned, Locked,
+        // wholly unrelated Workspace.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertOk()
+            ->assertViewIs('client_invitations.confirm');
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect();
+
+        $accepted = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Accepted, $accepted->status);
+        $this->assertNotNull($accepted->created_client_workspace_id);
+
+        // The old, unrelated, locked Workspace is completely unchanged --
+        // still locked, not silently reactivated by this flow.
+        $this->assertTrue(app(\App\Library\Entitlement\CustomerAccountAccessResolver::class)->resolve($lockedWorkspace->fresh())->isLocked());
+    }
+
+    public function test_an_inactive_unrelated_workspace_does_not_block_claim_and_acceptance_still_succeeds(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $email = 'inactive-unrelated' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $agencyOwner, $email, 'New Co');
+        $account = $this->realAccount($email);
+
+        $inactiveWorkspace = $this->createWorkspace($account, ['name' => 'Old Inactive Co']);
+        $this->assignTier($inactiveWorkspace, WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->changePlanStatus($inactiveWorkspace, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'Fixture.');
+
+        $this->actingAs($account);
+
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertOk();
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect();
+
+        $accepted = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Accepted, $accepted->status);
+        $this->assertNotNull($accepted->created_client_workspace_id);
+    }
+
+    public function test_a_suspended_unrelated_workspace_does_not_block_claim_and_acceptance_still_succeeds(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $email = 'suspended-unrelated' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $agencyOwner, $email, 'New Co');
+        $account = $this->realAccount($email);
+
+        $suspendedWorkspace = $this->createWorkspace($account, ['name' => 'Old Suspended Co']);
+        $this->assignTier($suspendedWorkspace, WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->changePlanStatus($suspendedWorkspace, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Fixture.');
+
+        $this->actingAs($account);
+
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertOk();
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect();
+
+        $accepted = $invitation->fresh();
+        $this->assertSame(ClientInvitationStatus::Accepted, $accepted->status);
+        $this->assertNotNull($accepted->created_client_workspace_id);
+    }
+
+    public function test_the_allowlist_is_invitation_specific_and_the_old_locked_workspace_stays_ordinarily_blocked(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $email = 'still-blocked' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $agencyOwner, $email, 'New Co');
+        $account = $this->realAccount($email);
+
+        $lockedWorkspace = $this->createWorkspace($account, ['name' => 'Old Locked Co']);
+        $this->assignTier($lockedWorkspace, WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->enterGracePeriod($lockedWorkspace);
+        app(EntitlementManager::class)->lockForNonPayment($lockedWorkspace);
+
+        $this->actingAs($account);
+
+        // The invitation routes are reachable...
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertOk();
+
+        // ...but an ORDINARY operational route for the old, locked
+        // Workspace remains exactly as blocked as before -- this allowlist
+        // names only the two invitation routes, never a prefix or a
+        // broader carve-out.
+        $this->get(route('customer.workspaces.show', $lockedWorkspace->uid))
+            ->assertRedirect(route('customer.account-locked.show'));
+    }
+
+    public function test_middleware_ordering_locked_unrelated_workspace_plus_pending_two_factor_still_requires_verification_first(): void
+    {
+        [$agency, $agencyOwner] = $this->agency();
+        $email = 'locked-and-2fa' . uniqid('', true) . '@example.test';
+        [$invitation, $token] = $this->pendingInvitation($agency, $agencyOwner, $email, 'New Co');
+        $account = $this->realAccount($email);
+
+        $lockedWorkspace = $this->createWorkspace($account, ['name' => 'Old Locked Co']);
+        $this->assignTier($lockedWorkspace, WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->enterGracePeriod($lockedWorkspace);
+        app(EntitlementManager::class)->lockForNonPayment($lockedWorkspace);
+
+        $code = $this->markPendingTwoFactor($account);
+
+        $workspaceCountBefore = Workspace::count();
+
+        // The account gate lets the invitation route through (it is
+        // allowlisted) but TwoFactor still intercepts and redirects to
+        // verify -- the gate's allowlist and the 2FA gate are independent,
+        // and neither one substitutes for the other.
+        $this->get(route('client-invitations.claim', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect(route('verify.index'));
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect(route('verify.index'));
+
+        $this->assertSame($workspaceCountBefore, Workspace::count());
+        $this->assertSame(ClientInvitationStatus::Pending, $invitation->fresh()->status);
+
+        // Completing 2FA lets acceptance proceed normally, the locked
+        // unrelated Workspace notwithstanding.
+        $this->post(route('verify.store'), ['two_factor_code' => (string) $code])->assertRedirect();
+
+        $this->post(route('client-invitations.accept', ['uid' => $invitation->uid, 'token' => $token]))
+            ->assertRedirect();
+
+        $this->assertSame(ClientInvitationStatus::Accepted, $invitation->fresh()->status);
     }
 }
