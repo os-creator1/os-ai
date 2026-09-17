@@ -110,6 +110,26 @@ use Symfony\Component\HttpFoundation\Response;
  *    {workspaceUid}, so without this it fell to the workspace-agnostic
  *    path, resolved the (locked) viewed Workspace, and redirected to the
  *    locked screen before ExitViewAsAction ever ran.
+ *
+ * IMPLEMENTATION CONTRACT 07 — 'client-invitations.claim'/'.accept' are
+ * allowlisted for the same structural reason as the 2FA challenge routes
+ * above: they carry no {workspaceUid} of their own, so without this they
+ * would fall to the workspace-agnostic path and be decided by the
+ * accepting actor's CURRENT/other Workspace(s) — Workspace(s) wholly
+ * unrelated to the one this flow is about to create. Accepting an
+ * invitation always creates a brand-new, independent Client Workspace; the
+ * lifecycle state of a User's existing Workspace A must never gate their
+ * ability to accept ownership of a new Workspace B (Contract 07 §5 —
+ * "the same global User may accept while retaining independent
+ * memberships elsewhere"). This is not an operational-access bypass:
+ * acceptance still requires a valid, Pending, unexpired invitation and
+ * token; an authenticated User whose normalized email matches; a
+ * completed 2FA challenge (TwoFactor middleware, unaffected by this
+ * allowlist); current Agency eligibility (re-asserted fresh by Contract
+ * 01's own create()); and the whole five-step atomic transaction to
+ * succeed. Every OTHER route addressing that existing locked/inactive/
+ * suspended Workspace remains exactly as gated as before — this allowlist
+ * names these two routes only, never a prefix.
  */
 class CustomerAccountAccessGate
 {
@@ -142,6 +162,12 @@ class CustomerAccountAccessGate
         // session must remain possible even when the viewed Workspace is
         // itself locked; see the class docblock, point 5.
         'customer.view-as.exit',
+        // Implementation Contract 07 — accepting a client invitation
+        // creates a brand-new, independent Client Workspace; it must never
+        // be gated by an unrelated existing Workspace's lifecycle state.
+        // See the class docblock's "IMPLEMENTATION CONTRACT 07" section.
+        'client-invitations.claim',
+        'client-invitations.accept',
     ];
 
     public function __construct(

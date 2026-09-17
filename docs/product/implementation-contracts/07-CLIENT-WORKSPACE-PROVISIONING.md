@@ -187,9 +187,22 @@ since none was ever created).
 authority-check method directly (the same one Contract 01's `create()`
 already uses internally) — **not** a duplicate check.
 `AgencyClientProvisioningManager`'s acceptance-time step requires no
-Agency-side authority check at all (the Agency already acted, at
+Agency-side *authority* check at all (the Agency already acted, at
 invitation time); it requires only that the accepting User is
-authenticated (§5).
+authenticated (§5). This is narrower than it may first read: *authority*
+(who may act) and *eligibility* (whether the Agency Workspace itself may
+be used to manage a client right now — tier + account access, Contract 01
+§6) are two distinct, already-separate checks in this codebase, and only
+the first is skipped here. `AgencyClientProvisioningManager` calls
+Contract 01's own unmodified `AgencyClientRelationshipManager::create()`
+to establish the relationship, and that call re-asserts eligibility fresh,
+fail-closed, at the moment of acceptance — never bypassed or duplicated.
+Concretely: if the inviting actor has since lost Agency authority (removed
+or deactivated), or the Agency Workspace has since left the Agency tier or
+become Locked/Inactive/Suspended, `create()` refuses and the whole
+acceptance transaction rolls back (§7) — a pending invitation can never
+complete provisioning against an Agency that is no longer eligible to
+receive it.
 
 **A resold SaaS plan assignment, if bundled into provisioning:** any
 sub-step that commits the Agency to a financial obligation on the

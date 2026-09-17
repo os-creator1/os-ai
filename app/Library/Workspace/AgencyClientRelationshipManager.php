@@ -552,8 +552,15 @@ class AgencyClientRelationshipManager
      * is an Agency product action, so it needs the same management
      * eligibility every other one does: Agency tier AND a usable account (a
      * Grace Agency may; a Locked, Inactive or Suspended one may not).
+     *
+     * Public (Implementation Contract 07 §6 correction): this is the one
+     * canonical throwing eligibility gate every Agency product action that
+     * creates a managed client must use, establish() included. Making it
+     * public lets ClientInvitationManager::send() reuse it verbatim instead
+     * of duplicating the entitlement-tier/account-access lookups it wraps —
+     * no behavior here changes, only who may call it.
      */
-    private function assertAgencyWorkspaceHasManagementEligibility(Workspace $agencyWorkspace): void
+    public function assertAgencyWorkspaceHasManagementEligibility(Workspace $agencyWorkspace): void
     {
         if ($this->agencyWorkspaceHasManagementEligibility($agencyWorkspace)) {
             return;

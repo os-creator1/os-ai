@@ -708,6 +708,13 @@
         // RFC-003 Milestone 4 Slice 4D: Business creation inside an existing Workspace.
         Route::post('{workspaceUid}/businesses', 'Workspace\WorkspaceController@storeBusiness')->name('businesses.store');
 
+        // Implementation Contract 07 §6/§12 — Agency-side send/revoke of a
+        // client Workspace invitation. Authority (owner or active
+        // Admin/Staff of this exact Agency Workspace) is asserted inside
+        // ClientInvitationManager, not here.
+        Route::post('{workspaceUid}/client-invitations', 'Workspace\ClientInvitationController@store')->name('client-invitations.store');
+        Route::post('{workspaceUid}/client-invitations/{invitationUid}/revoke', 'Workspace\ClientInvitationController@revoke')->name('client-invitations.revoke');
+
         // RFC-003 Milestone 4 Slice 4E: Business reassignment between Workspaces.
         Route::post('{workspaceUid}/businesses/{businessUid}/reassign', 'Workspace\WorkspaceController@reassignBusiness')->name('businesses.reassign');
 
