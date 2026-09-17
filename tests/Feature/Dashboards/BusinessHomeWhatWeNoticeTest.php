@@ -277,8 +277,7 @@ class BusinessHomeWhatWeNoticeTest extends TestCase
 
     public function test_explain_this_change_is_never_offered_while_viewing_as_a_client(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Client', 'Northwind Agency');
-        $viewed = $this->addBusiness($agency, $workspace, 'Viewed Client');
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
         $this->materialPeriod($viewed);
         $this->authenticateAs($agency);
 

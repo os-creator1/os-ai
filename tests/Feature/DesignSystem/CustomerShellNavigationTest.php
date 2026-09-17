@@ -42,8 +42,8 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringNotContainsString('locale.menu.', $growthHome);
 
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
         $agencyHome = $this->home()->assertOk()->getContent();
 
         $this->assertStringNotContainsString('locale.', $this->shellText($agencyHome));
@@ -101,8 +101,8 @@ class CustomerShellNavigationTest extends TestCase
     public function test_the_switcher_is_keyboard_operable_and_labelled(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $home = $this->home()->assertOk();
         $shell = $this->shellHtml($home->getContent());
@@ -168,7 +168,6 @@ class CustomerShellNavigationTest extends TestCase
     public function test_an_actor_with_nothing_to_switch_to_gets_a_labelled_identity(): void
     {
         [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Other Client');
         $staff = $this->createCustomer();
         $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->assign($membership, $assigned);
@@ -196,7 +195,6 @@ class CustomerShellNavigationTest extends TestCase
     public function test_the_view_as_banner_is_announced_and_carries_the_exit_control(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Florist');
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
 
@@ -250,8 +248,8 @@ class CustomerShellNavigationTest extends TestCase
         config(['app.theme_layout_type' => 'horizontal']);
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($customer, $workspace, 'Client Two');
         $this->authenticateAs($customer);
+        $this->switchToAccount($workspace);
 
         $response = $this->home()->assertOk();
         $html = $response->getContent();

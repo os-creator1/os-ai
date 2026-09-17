@@ -4,6 +4,8 @@ namespace Tests\Feature\Navigation;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Navigation\BusinessCandidate;
 use App\Library\Navigation\ContextSource;
@@ -150,8 +152,8 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     public function test_the_account_frame_issues_no_business_entitlement_query(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $reads = $this->snapshotReads(fn () => $this->home()->assertOk());
         $this->assertSame(0, $reads['snapshots'], 'An Account-frame request evaluates no Business.');
@@ -212,12 +214,13 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     public function test_business_a_and_business_b_never_share_a_snapshot_within_one_request(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A', 'Northwind Agency');
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B');
+        $accountB = $this->secondAccountFor($owner, 'Client B', 'Second Account');
+        $businessB = $accountB['business'];
         app(EntitlementManager::class)->disableBusinessFeature($businessB, PlatformFeature::Automations, (int) $owner->user_id, 'B differs from A.');
 
         $workspace = $workspace->fresh();
         $contextA = $this->businessContext($owner, $businessA, $workspace);
-        $contextB = $this->businessContext($owner, $businessB->fresh(), $workspace);
+        $contextB = $this->businessContext($owner, $businessB->fresh(), $accountB['workspace']->fresh());
         $this->freshRequest();
 
         $a = app(CustomerShellComposer::class)->currentMenuEntitlements($contextA);
@@ -239,14 +242,15 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     public function test_switching_business_between_requests_serves_the_new_businesss_answer(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A', 'Northwind Agency');
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B');
+        $accountB = $this->secondAccountFor($owner, 'Client B', 'Second Account');
+        $businessB = $accountB['business'];
         app(EntitlementManager::class)->disableBusinessFeature($businessB, PlatformFeature::Automations, (int) $owner->user_id, 'B differs from A.');
         $this->authenticateAs($owner);
 
         $this->switchTo($workspace, $businessA)->assertRedirect();
         $this->assertContains('automations', $this->menuKeys($this->home()->assertOk()->getContent()));
 
-        $this->switchTo($workspace, $businessB)->assertRedirect();
+        $this->switchTo($accountB['workspace'], $businessB)->assertRedirect();
         $this->assertNotContains('automations', $this->menuKeys($this->home()->assertOk()->getContent()));
     }
 
@@ -257,11 +261,12 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     public function test_a_view_as_context_never_receives_a_non_view_as_or_other_business_snapshot(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A', 'Northwind Agency');
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B');
+        $accountB = $this->secondAccountFor($owner, 'Client B', 'Second Account');
+        $businessB = $accountB['business'];
         $workspace = $workspace->fresh();
 
         $plainA = $this->businessContext($owner, $businessA, $workspace);
-        $plainB = $this->businessContext($owner, $businessB->fresh(), $workspace);
+        $plainB = $this->businessContext($owner, $businessB->fresh(), $accountB['workspace']->fresh());
         $viewingA = $this->businessContext($owner, $businessA, $workspace, $this->viewAs($owner, $workspace, $businessA));
         $this->freshRequest();
 
@@ -297,12 +302,13 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     public function test_while_viewing_a_client_the_menu_reflects_only_that_clients_entitlements(): void
     {
         [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A', 'Northwind Agency');
-        $businessB = $this->addBusiness($owner, $workspace, 'Client B');
+        $accountB = $this->secondAccountFor($owner, 'Client B', 'Second Account');
+        $businessB = $accountB['business'];
         app(EntitlementManager::class)->disableBusinessFeature($businessA, PlatformFeature::Automations, (int) $owner->user_id, 'A is the restricted one.');
         $this->authenticateAs($owner);
 
         // Business B selected first, in its own request.
-        $this->switchTo($workspace, $businessB)->assertRedirect();
+        $this->switchTo($accountB['workspace'], $businessB)->assertRedirect();
         $this->assertContains('automations', $this->menuKeys($this->home()->assertOk()->getContent()));
 
         // Viewing A: A's answer, never B's from the earlier request.
@@ -373,6 +379,23 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
     /**
      * @return array{snapshots: int, tables: array<string, int>}
      */
+    /**
+     * A second Business the same actor may enter. An account holds exactly one
+     * Business, so a second one is a second account with an active agency-wide
+     * membership — never a sibling in the same Workspace.
+     *
+     * @return array{customer: Customer, business: Business, workspace: Workspace}
+     */
+    private function secondAccountFor(Customer $actor, string $businessName, string $workspaceName): array
+    {
+        $account = $this->createIndependentWorkspaceBusiness(businessName: $businessName, workspaceName: $workspaceName);
+
+        $this->assignTier($account['workspace'], WorkspacePlanTier::Growth);
+        $this->member($account['workspace'], $actor->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
+
+        return $account;
+    }
+
     private function snapshotReads(callable $work): array
     {
         $tables = array_fill_keys(self::SNAPSHOT_TABLES, 0);

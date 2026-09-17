@@ -166,17 +166,19 @@ class CustomerShellAccountProfileCleanupTest extends TestCase
     public function test_the_agency_account_home_and_client_businesses_are_unaffected(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
+        // The account holds one Business, so its Agency Account Home is the
+        // deliberate move the switcher offers.
+        $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
         $start = $this->home()->assertOk()->getContent();
-        $this->assertStringContainsString('data-kind="agency"', $start, 'Agency Account Home first.');
+        $this->assertStringContainsString('data-kind="agency"', $start, 'Agency Account Home.');
         $this->assertSame(1, substr_count($this->shellHtml($start), 'data-role="context-option-account"'));
 
-        $this->switchTo($workspace, $clientTwo)->assertRedirect(route('user.home'));
+        $this->switchTo($workspace, $clientOne)->assertRedirect(route('user.home'));
         $inClient = $this->home()->assertOk()->getContent();
         $this->assertStringContainsString('data-kind="business"', $inClient);
-        $this->assertStringContainsString('Client Two', $this->shellText($inClient));
+        $this->assertStringContainsString('Client One', $this->shellText($inClient));
 
         $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
         $this->assertStringContainsString('data-kind="agency"', $this->home()->assertOk()->getContent(), 'And back to the portfolio.');

@@ -224,12 +224,16 @@ class SettingsHubNavigationTest extends TestCase
     public function test_an_agency_assigns_client_access_from_its_team_page_and_its_overview_keeps_client_creation(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
+        // One Business to grant, so the page grants exactly it — least
+        // privilege, never a hidden "all Businesses" scope and never a choice
+        // with one row.
         $team = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk()->getContent();
-        $this->assertStringContainsString('id="member-scope" name="business_access_scope"', $team, 'All or selected client accounts.');
+        $this->assertStringContainsString('data-role="member-single-business"', $team);
+        $this->assertStringContainsString('<input type="hidden" name="business_access_scope" value="selected">', $team);
         $this->assertStringContainsString('name="business_uids[]"', $team);
+        $this->assertStringNotContainsString('id="member-scope" name="business_access_scope"', $team, 'Nothing to choose between.');
 
         $overview = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
         $this->assertStringContainsString('data-workspace-action="businesses"', $overview, 'Agency client creation remains.');
@@ -243,8 +247,8 @@ class SettingsHubNavigationTest extends TestCase
     public function test_agency_account_settings_remain_available_at_the_agency_account_level(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $home = $this->home()->assertOk()->getContent();
         $this->assertContains(route('customer.workspaces.settings.show', $workspace->uid), $this->menuLinks($home));
@@ -262,7 +266,6 @@ class SettingsHubNavigationTest extends TestCase
     public function test_a_client_business_does_not_inherit_agency_account_settings(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
         $this->switchTo($workspace, $clientOne)->assertRedirect(route('user.home'));
 

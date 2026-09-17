@@ -97,7 +97,6 @@ class CustomerShellTranslationTest extends TestCase
     public function test_agency_owner_admin_and_scoped_staff_never_see_a_raw_translation_key(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $second = $this->addBusiness($owner, $workspace, 'Client Two');
 
         $this->authenticateAs($owner);
         $pages = $this->businessFramePages($workspace->uid, $business->uid);
@@ -115,19 +114,18 @@ class CustomerShellTranslationTest extends TestCase
         ], 'agency admin');
 
         $staff = $this->createCustomer();
-        $this->assign($this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $second);
+        $this->assign($this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
         $this->authenticateAs($staff);
         $this->assertNoRawKey([
             'home' => $this->home()->assertOk()->getContent(),
-            'analytics' => $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $second->uid]))->assertOk()->getContent(),
-            'contacts' => $this->get(route('customer.workspaces.businesses.contacts.index', [$workspace->uid, $second->uid]))->assertOk()->getContent(),
+            'analytics' => $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk()->getContent(),
+            'contacts' => $this->get(route('customer.workspaces.businesses.contacts.index', [$workspace->uid, $business->uid]))->assertOk()->getContent(),
         ], 'scoped staff');
     }
 
     public function test_view_as_client_pages_never_see_a_raw_translation_key(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
         $this->startViewAs($workspace, $business)->assertRedirect(route('user.home'));
 
