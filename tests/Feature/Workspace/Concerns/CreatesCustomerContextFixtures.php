@@ -7,6 +7,8 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Workspace\AgencyClientRelationshipManager;
+use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
@@ -19,6 +21,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
+use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 
@@ -107,16 +110,110 @@ trait CreatesCustomerContextFixtures
     }
 
     /**
-     * Persists a Business directly through the repository seam (fixture
-     * only — bypasses the customer-facing capacity path on purpose).
+     * Persists the FIRST Business directly through the repository seam
+     * (fixture only — bypasses the customer-facing capacity path on
+     * purpose). Contract 13 (`businesses_workspace_id_unique`) makes a
+     * second Business in an already-occupied Workspace impossible, so this
+     * asserts the Workspace is still empty rather than letting the DB
+     * throw an opaque constraint-violation deep inside a fixture.
+     *
+     * A test that needs a second Business never had a real single-Workspace
+     * topology for it (see the contract's remediation inventory): use
+     * createIndependentWorkspaceBusiness() for an unrelated tenant, or
+     * createAgencyManagedClient() for an Agency-managed one.
      */
     protected function addBusiness(Customer $customer, Workspace $workspace, string $name, BusinessStatus $status = BusinessStatus::Active): Business
     {
+        if (Business::query()->where('workspace_id', $workspace->id)->exists()) {
+            throw new RuntimeException(
+                'Contract 13 enforces one Business per Workspace; use the explicit independent/client fixture helper instead.'
+            );
+        }
+
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => $name]));
 
         DB::table('businesses')->where('id', $business->id)->update(['status' => $status->value]);
 
         return $business->fresh();
+    }
+
+    /**
+     * A Business alone in its own, freshly-created Workspace — the
+     * independent-tenant shape (Contract 13 remediation class B): an
+     * unrelated second tenant/resource with no Agency relationship implied.
+     * Always creates a NEW Workspace, so it can never collide with one a
+     * caller already populated.
+     *
+     * @return array{customer: Customer, business: Business, workspace: Workspace}
+     */
+    protected function createIndependentWorkspaceBusiness(
+        ?Customer $customer = null,
+        string $businessName = 'Independent Business',
+        string $workspaceName = 'Independent Workspace',
+        BusinessStatus $status = BusinessStatus::Active,
+    ): array {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $customer ??= $this->createCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => $workspaceName]);
+        $business = $this->addBusiness($customer, $workspace, $businessName, $status);
+
+        return [
+            'customer' => $customer,
+            'business' => $business->fresh(),
+            'workspace' => $workspace->fresh(),
+        ];
+    }
+
+    /**
+     * The V1 Agency-managed-client shape (Contract 13 remediation class A):
+     * a separate Client Workspace holding exactly one Business, managed by
+     * an Agency Workspace through a real, canonically-authorized ACTIVE
+     * AgencyClientWorkspaceRelationship — never a manually fabricated
+     * relationship row.
+     *
+     * Pass an existing $agencyWorkspace to attach another client to an
+     * Agency that already exists; omit it to create a fresh Agency-tier
+     * Workspace for this call alone.
+     *
+     * @return array{agencyOwner: Customer, agencyWorkspace: Workspace, clientOwner: Customer, clientBusiness: Business, clientWorkspace: Workspace, relationship: AgencyClientWorkspaceRelationship}
+     */
+    protected function createAgencyManagedClient(
+        ?Workspace $agencyWorkspace = null,
+        string $clientBusinessName = 'Managed Client',
+        string $clientWorkspaceName = 'Managed Client Workspace',
+    ): array {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        if ($agencyWorkspace === null) {
+            $agencyOwner = $this->createCustomer();
+            $agencyWorkspace = $this->createWorkspace($agencyOwner->user, ['name' => 'Agency Workspace']);
+            $this->assignTier($agencyWorkspace, WorkspacePlanTier::Agency);
+        } else {
+            $agencyOwner = Customer::where('user_id', $agencyWorkspace->owner_user_id)->firstOrFail();
+        }
+
+        $client = $this->createIndependentWorkspaceBusiness(
+            businessName: $clientBusinessName,
+            workspaceName: $clientWorkspaceName,
+        );
+
+        $relationship = app(AgencyClientRelationshipManager::class)->create(
+            (int) $agencyOwner->user_id,
+            $agencyWorkspace->fresh(),
+            $client['workspace'],
+        );
+
+        return [
+            'agencyOwner' => $agencyOwner,
+            'agencyWorkspace' => $agencyWorkspace->fresh(),
+            'clientOwner' => $client['customer'],
+            'clientBusiness' => $client['business'],
+            'clientWorkspace' => $client['workspace'],
+            'relationship' => $relationship,
+        ];
     }
 
     protected function member(
