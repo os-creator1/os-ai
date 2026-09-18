@@ -40,7 +40,19 @@ class PayerConsentAuthorizationTest extends TestCase
     {
         Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
 
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        // Contract 13: ONE Business in this Agency-tier Workspace. The matrix
+        // still needs the Business's own direct owner to differ from the
+        // account owner — `isCurrentPayer()` distinguishes exactly those two —
+        // so the Workspace is built empty and its single Business is the
+        // client's. No managing-Agency relationship is created: this account
+        // manages its Business directly, which is what keeps AgencyRebill
+        // refused below.
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user, ['name' => 'Northwind Agency']);
+        $this->assignTier($workspace, WorkspacePlanTier::Agency);
         $ownerId = (int) $owner->user_id;
 
         $client = $this->createCustomer();

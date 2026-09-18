@@ -483,19 +483,38 @@ class MessagingTransportMeasurementLayeringTest extends TestCase
     // updating the pinned hash below, deliberately, with its reason.
 
     /**
-     * The reviewed post-Slice-2B baseline of ConversationsPlainSmsMeteringTest,
-     * as the SHA-256 of its LF-normalised content.
+     * The reviewed baseline of ConversationsPlainSmsMeteringTest, as the
+     * SHA-256 of its LF-normalised content.
      *
-     * What was approved, from a mechanical diff against main at dcb2770: the
-     * same 32 test methods and the same 135 assertion statements, one of them
+     * Approved once for Customer Experience Redesign Slice 2B: the same 32
+     * test methods and the same assertion statements, one of them
      * re-targeted — the M5 retain redirect now names
      * `customer.workspaces.businesses.conversations.new` instead of
      * `customer.chatbox.new`. Every metering/accounting reference
      * (reservations, ledger entries, m5_token_action, wallet balances,
-     * sms_unit, retain/clear) appears exactly as often as before. The rest
-     * of the change is Business-route context and Business-owned fixtures.
+     * sms_unit, retain/clear) appeared exactly as often as before. The rest
+     * of that change was Business-route context and Business-owned fixtures.
+     *
+     * Approved again for Implementation Contract 13 (fixture topology R4).
+     * Three tests produced a NON-qualifying M5 send by putting a second
+     * Business in the sender's Workspace; `businesses_workspace_id_unique`
+     * makes that unbuildable, so they now use the gate's own pilot tuple
+     * instead — leaveTheM5Pilot() points the pilot at a different Business,
+     * which is the same "not a qualifying send at all → falls through to
+     * legacy" branch. A second pass relocated that helper so its neighbour's
+     * pre-existing @return docblock no longer landed on the wrong method
+     * (pure code motion, no logic change). Verified mechanically against the
+     * previous baseline both times: the same 32 test methods, the same 122
+     * `$this->assert` statements, and identical occurrence counts for every
+     * metering/accounting reference (m5_token_action 20,
+     * business_usage_reservations 32, business_usage_ledger_entries 7,
+     * available_balance_micro 10, sms_unit 24, 'retain' 10, 'clear' 7,
+     * reserve( 15, settleConversationsMeterReservation 4). No metering
+     * behaviour, amount or accounting assertion changed; only how a send is
+     * made non-qualifying, one renamed test method, and where one helper
+     * physically sits in the file.
      */
-    private const CONVERSATIONS_METERING_SUITE_APPROVED_SHA256 = 'a054eff6071e1037820851a1c22ba816b8aaa1d42f6473d69fb53287ff29c233';
+    private const CONVERSATIONS_METERING_SUITE_APPROVED_SHA256 = 'e7ec05003db1501e3494cef9491bce1f03b857dd5c985c79b972343a28b29528';
 
     public function test_the_conversations_metering_suite_matches_its_approved_post_slice_2b_baseline(): void
     {

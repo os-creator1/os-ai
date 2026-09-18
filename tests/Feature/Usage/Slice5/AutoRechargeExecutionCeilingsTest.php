@@ -114,48 +114,60 @@ class AutoRechargeExecutionCeilingsTest extends TestCase
 
     public function test_the_agency_aggregate_ceiling_is_enforced_by_the_real_job_fails_closed_without_one_and_ignores_client_paid_businesses(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        // Contract 13: one Workspace, one Business — so the Agency ceiling is
+        // consumed by SUCCESSIVE top-ups of this account's own Business rather
+        // than by sibling clients (production is explicit that no cross-client
+        // Agency aggregate exists in V1). The boundary arithmetic, the
+        // fail-closed-without-a-ceiling rule and the client-paid exclusion are
+        // all unchanged; the client-paid Business now sits in its own account,
+        // which is what a self-paying Business is under V1.
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         $this->fakeProvider();
-        [, $clientA] = $this->clientBusiness($workspace, 'Client A');
-        [, $clientB] = $this->clientBusiness($workspace, 'Client B');
-        [, $clientC] = $this->clientBusiness($workspace, 'Client C');
-        [$selfPayer, $selfPaid] = $this->clientBusiness($workspace, 'Self Paid');
-        foreach ([$clientA, $clientB, $clientC] as $client) {
-            $this->setPayer($client, PayerType::Workspace);
-        }
+        [, $client] = $this->clientBusiness($workspace, 'Client A');
+        $this->setPayer($client, PayerType::Workspace);
+
+        // It pays for itself, so its OWN owner is the payer authority.
+        [, $selfPaid, , $selfPayer] = $this->clientBusinessInOwnAccount('Self Paid');
         $this->setPayer($selfPaid, PayerType::Business);
-        $this->attachFakeCard($clientA, (int) $agency->user_id); // the Agency's instrument serves every agency-paid client
+
+        $this->attachFakeCard($client, (int) $agency->user_id); // the Agency's instrument serves its agency-paid client
         $this->attachFakeCard($selfPaid, (int) $selfPayer->user_id);
         $max = (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO;
-        foreach ([$clientA, $clientB, $clientC] as $client) {
-            app(UsageWalletManager::class)->configureAutoRecharge($client, true, '2000000', '5000000', $max, (int) $agency->user_id);
-            $this->fund($client, 1_000_000);
-        }
+        app(UsageWalletManager::class)->configureAutoRecharge($client, true, '2000000', '5000000', $max, (int) $agency->user_id);
+        $this->fund($client, 1_000_000);
         app(UsageWalletManager::class)->configureAutoRecharge($selfPaid, true, '2000000', '5000000', $max, (int) $selfPayer->user_id);
         $this->fund($selfPaid, 1_000_000);
 
         // 22. No effective Agency ceiling yet: fails closed before the provider, no attempt.
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
-        EvaluateBusinessAutoRecharge::dispatch((int) $clientA->id);
-        $this->assertSame(0, $this->autoRechargeAttempts($clientA));
-        $this->assertSame('1000000', (string) $this->walletRow($clientA)->available_balance_micro);
-        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP_MISSING, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($clientA, 5_000_000)->denialReason);
-        // … while the client-paid Business is not held back by the Agency at all.
+        EvaluateBusinessAutoRecharge::dispatch((int) $client->id);
+        $this->assertSame(0, $this->autoRechargeAttempts($client));
+        $this->assertSame('1000000', (string) $this->walletRow($client)->available_balance_micro);
+        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP_MISSING, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($client, 5_000_000)->denialReason);
+        // … while the client-paid Business is not held back by an Agency at all.
         $this->assertTrue(app(UsageWalletManager::class)->autoRechargeCeilingAdmission($selfPaid, 5_000_000)->allowed);
         $this->gateway->paymentIntentOutcomes = [];
 
-        // 26/27. Aggregate ceiling 10,000,000: A then B reach exactly 10,000,000; C is one preset over.
+        // 26/27. Aggregate ceiling 10,000,000. Half of it was already
+        // recharged earlier in the period — written straight onto the wallet,
+        // so the rolling-window attempt counter (2 per 24 h) stays free for
+        // the two evaluations below and the ceiling is what refuses, not the
+        // minimum-interval rule. One real top-up then reaches exactly the
+        // ceiling, and the next is one preset over it.
         app(UsageWalletManager::class)->setWorkspaceAggregateRechargeCap($workspace, '10000000', (int) $agency->user_id, 'Agency ceiling.');
-        EvaluateBusinessAutoRecharge::dispatch((int) $clientA->id);
-        $this->assertSame('6000000', (string) $this->walletRow($clientA)->available_balance_micro);
-        EvaluateBusinessAutoRecharge::dispatch((int) $clientB->id);
-        $this->assertSame('6000000', (string) $this->walletRow($clientB)->available_balance_micro);
+        $this->setWallet($client, ['recharged_this_period_micro' => 5_000_000, 'available_balance_micro' => 1_000_000]);
 
+        EvaluateBusinessAutoRecharge::dispatch((int) $client->id);
+        $this->assertSame('6000000', (string) $this->walletRow($client)->available_balance_micro);
+        $this->assertSame('10000000', (string) $this->walletRow($client)->recharged_this_period_micro, 'Exactly the Agency ceiling.');
+
+        $this->fund($client, 1_000_000);
+        $attemptsBeforeRefusal = $this->autoRechargeAttempts($client);
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
-        EvaluateBusinessAutoRecharge::dispatch((int) $clientC->id);
-        $this->assertSame(0, $this->autoRechargeAttempts($clientC), 'The third agency-paid client is refused before the provider.');
-        $this->assertSame('1000000', (string) $this->walletRow($clientC)->available_balance_micro);
-        $refused = app(UsageWalletManager::class)->autoRechargeCeilingAdmission($clientC, 5_000_000);
+        EvaluateBusinessAutoRecharge::dispatch((int) $client->id);
+        $this->assertSame($attemptsBeforeRefusal, $this->autoRechargeAttempts($client), 'The top-up past the ceiling is refused before the provider.');
+        $this->assertSame('1000000', (string) $this->walletRow($client)->available_balance_micro);
+        $refused = app(UsageWalletManager::class)->autoRechargeCeilingAdmission($client, 5_000_000);
         $this->assertFalse($refused->allowed);
         $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP, $refused->denialReason);
         $this->assertSame('0', $refused->remainingHeadroomMicro);
@@ -164,20 +176,18 @@ class AutoRechargeExecutionCeilingsTest extends TestCase
         // 23. The client-paid Business neither consumes nor is limited by the exhausted Agency ceiling.
         EvaluateBusinessAutoRecharge::dispatch((int) $selfPaid->id);
         $this->assertSame('6000000', (string) $this->walletRow($selfPaid)->available_balance_micro);
-        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($clientC, 5_000_000)->denialReason);
+        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($client, 5_000_000)->denialReason);
 
-        // The Agency hard maximum bounds execution even when a stored aggregate ceiling is higher.
-        app(UsageWalletManager::class)->setWorkspaceAggregateRechargeCap($workspace, (string) UsageWalletManager::WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, (int) $agency->user_id, 'Maximum.');
-        $this->setWallet($clientA, ['recharged_this_period_micro' => 495_000_000]);
-        $this->setWallet($clientB, ['recharged_this_period_micro' => 0, 'available_balance_micro' => 1_000_000]);
-        $this->setWallet($clientC, ['recharged_this_period_micro' => 0, 'available_balance_micro' => 1_000_000]);
-        $this->assertTrue(app(UsageWalletManager::class)->autoRechargeCeilingAdmission($clientB, 5_000_000)->allowed, '495,000,000 + 5,000,000 is exactly the $500 maximum.');
-        DB::table('workspace_usage_controls')->where('workspace_id', $workspace->id)->update(['monthly_aggregate_recharge_cap_micro' => 600_000_000]);
-        $this->setWallet($clientA, ['recharged_this_period_micro' => 496_000_000]);
-        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
-        EvaluateBusinessAutoRecharge::dispatch((int) $clientC->id);
-        $this->assertSame(0, $this->autoRechargeAttempts($clientC));
-        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_RECHARGE_CAP, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($clientC, 5_000_000)->denialReason);
+        // NOT ASSERTED ANY MORE — the platform Workspace hard maximum
+        // (WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO) capping a HIGHER
+        // stored Agency ceiling. That case needed the Workspace aggregate to
+        // sit near the maximum while the evaluated Business's own total was
+        // low, which required a sibling Business carrying the spend. Under
+        // Contract 13 a Workspace holds exactly one Business, so the aggregate
+        // IS that Business's own total, and with both platform maxima at
+        // 500,000,000 the Business ceiling always binds first — the Workspace
+        // maximum can no longer be the refusing rule. The rule itself is
+        // untouched in production; only this scenario became unreachable.
     }
 
     public function test_manual_top_ups_never_consume_an_automatic_top_up_ceiling(): void

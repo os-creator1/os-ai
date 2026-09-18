@@ -416,8 +416,11 @@ class ChatBoxLocationScopingTest extends TestCase
 
     public function test_site_four_legacy_rows_stay_unattributed_for_a_multi_business_user(): void
     {
-        [$customer, $first, $workspace] = $this->locationTenant(WorkspacePlanTier::Core, 1);
-        $second = $this->addBusiness($customer, $workspace, 'Second Business');
+        // Contract 13: a customer who owns several Businesses owns several
+        // Workspaces, one Business each. What matters here is unchanged —
+        // the acting user has more than one resolvable Business.
+        [$customer, $first] = $this->locationTenant(WorkspacePlanTier::Core, 1);
+        $second = $this->createIndependentWorkspaceBusiness($customer, 'Second Business', 'Second Business Workspace')['business'];
         $this->locations()->createLocation($second, $this->locationAttributes('Second HQ'), (int) $customer->user_id);
 
         // Both Businesses are individually resolvable — the strongest

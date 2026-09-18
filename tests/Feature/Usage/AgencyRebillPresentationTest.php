@@ -78,16 +78,23 @@ class AgencyRebillPresentationTest extends TestCase
 
     public function test_the_agency_account_frame_shows_agency_rebill_read_only_and_never_as_a_selector_option(): void
     {
-        // An Agency-tier Client Workspace managed by another Agency, so its own
-        // account frame lists client accounts; one of them is AgencyRebill.
-        $m = $this->managedClient(WorkspacePlanTier::Agency);
-        [, $rebilled] = $this->clientBusiness($m['client'], 'Rebilled Client');
-        [, $selfPaying] = $this->clientBusiness($m['client'], 'Self Paying Client');
-        app(BillingProfileManager::class)->assignPayer($rebilled, PayerType::AgencyRebill, (int) $m['agencyOwner']->user_id, 'Agency funds this client.');
-        $this->setPayer($selfPaying, PayerType::Business);
+        // The account frame lists THIS account's own Businesses whose customer
+        // is not the account owner. Contract 13 allows exactly one such
+        // Business per account, so the AgencyRebill row and the ordinary
+        // client-paid row are now two accounts, each read on its own frame.
+        //
+        // The funding Agency is a full V1 Agency account — one Workspace
+        // holding its own single Business — because that is the only valid
+        // Agency topology under Contract 13.
+        [$fundingOwner, , $fundingAgency] = $this->tenant(WorkspacePlanTier::Agency, 'Funding Agency Business', 'Funding Agency');
 
-        $this->authenticateAs($m['clientOwner']);
-        $html = $this->get(route('customer.workspaces.show', $m['client']->uid))->assertOk()->getContent();
+        [$rebilledAccountOwner, $rebilledWorkspace] = $this->agencyAccountWithWallet('Rebilled Account');
+        [, $rebilled] = $this->clientBusiness($rebilledWorkspace, 'Rebilled Client');
+        app(AgencyClientRelationshipManager::class)->create((int) $fundingOwner->user_id, $fundingAgency, $rebilledWorkspace);
+        app(BillingProfileManager::class)->assignPayer($rebilled, PayerType::AgencyRebill, (int) $fundingOwner->user_id, 'Agency funds this client.');
+
+        $this->authenticateAs($rebilledAccountOwner);
+        $html = $this->get(route('customer.workspaces.show', $rebilledWorkspace->uid))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-role="billing-responsibility-managing-agency" data-business-uid="' . $rebilled->uid . '"', $html);
         $this->assertStringContainsString(e(__('locale.usage_billing.responsibility.managing_agency_option')), $html);
@@ -96,7 +103,15 @@ class AgencyRebillPresentationTest extends TestCase
         $this->assertStringNotContainsString('data-business-uid="' . $rebilled->uid . '" data-role="billing-responsibility-form"', $html);
 
         // The ordinary client account keeps its selector.
-        $this->assertStringContainsString('billing-responsibility-client-' . $selfPaying->uid, $html);
+        [$selfPayingAccountOwner, $selfPayingWorkspace] = $this->agencyAccountWithWallet('Self Paying Account');
+        [, $selfPaying] = $this->clientBusiness($selfPayingWorkspace, 'Self Paying Client');
+        $this->setPayer($selfPaying, PayerType::Business);
+
+        $this->authenticateAs($selfPayingAccountOwner);
+        $selfPayingHtml = $this->get(route('customer.workspaces.show', $selfPayingWorkspace->uid))->assertOk()->getContent();
+
+        $this->assertStringContainsString('billing-responsibility-client-' . $selfPaying->uid, $selfPayingHtml);
+        $this->assertStringNotContainsString('data-role="billing-responsibility-managing-agency"', $selfPayingHtml);
     }
 
     public function test_the_legacy_payer_selector_still_rejects_agency_rebill(): void

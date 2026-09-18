@@ -255,7 +255,7 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
     public function test_the_comparison_cache_is_per_business_and_per_range_with_no_global_key(): void
     {
         [$customer, $businessA, $workspace] = $this->tenant(self::TZ);
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Other Venue', 'timezone' => self::TZ]));
+        [$businessB] = $this->otherBusinessOf($customer, self::TZ);
         $u = $businessA->customer_id;
         $this->report($businessA, $u, ['created_at' => $this->utcFromLocal('2026-09-01 12:00:00', self::TZ)]);
         foreach (range(1, 3) as $i) {

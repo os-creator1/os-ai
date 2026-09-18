@@ -27,9 +27,12 @@ use Tests\TestCase;
 /**
  * RFC-005 M3 contract §9/§25 item 99 — Business A's instruments, funding
  * history, and provider-event status are never visible from Business B's
- * own dashboard request or repository lookup, even within the same
- * Workspace, mirroring CrossBusinessBillingIsolationTest's own M2 pattern
- * exactly.
+ * own dashboard request or repository lookup, mirroring
+ * CrossBusinessBillingIsolationTest's own M2 pattern exactly.
+ *
+ * Implementation Contract 13: a Workspace holds exactly one Business, so the
+ * two Businesses here are two accounts. The same-Workspace variant this file
+ * used to also cover is no longer buildable, and is not claimed.
  */
 class CrossBusinessPaymentIsolationTest extends TestCase
 {
@@ -68,8 +71,10 @@ class CrossBusinessPaymentIsolationTest extends TestCase
         // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
         \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessA->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
+        // Contract 13: the other Business is a separate tenant in its own
+        // Workspace — which is what "a different Business's dashboard" is.
         $ownerB = $this->createCustomer();
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $workspace, $this->businessAttributes());
+        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $this->entitledWorkspace($ownerB->user), $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
         // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
         \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessB->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
@@ -101,8 +106,10 @@ class CrossBusinessPaymentIsolationTest extends TestCase
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
         app(BillingProfileManager::class)->changePayer($businessA, PayerType::Workspace, $ownerA->user_id, 'Test.');
 
+        // Contract 13: the other Business is a separate tenant in its own
+        // Workspace; the lookup must still be scoped to the Business.
         $ownerB = $this->createCustomer();
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $workspace, $this->businessAttributes());
+        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $this->entitledWorkspace($ownerB->user), $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
 
         $instrumentManager = app(PaymentInstrumentManager::class);

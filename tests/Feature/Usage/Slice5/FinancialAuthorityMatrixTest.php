@@ -36,7 +36,7 @@ class FinancialAuthorityMatrixTest extends TestCase
     /** @return array{0: Customer, 1: Business, 2: Workspace, 3: Customer} agency, agency-paid client business, workspace, client */
     private function agencyPaidClient(): array
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->fakeProvider();
@@ -152,7 +152,7 @@ class FinancialAuthorityMatrixTest extends TestCase
 
     public function test_a_client_paid_business_owner_retains_the_payer_owned_controls(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Business);
         $this->fakeProvider();

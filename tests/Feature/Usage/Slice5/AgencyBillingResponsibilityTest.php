@@ -56,9 +56,21 @@ class AgencyBillingResponsibilityTest extends TestCase
         $this->assertStringNotContainsStringIgnoringCase('assignment id', $html);
     }
 
+    /**
+     * NOTE (Contract 13): the exact-array assertion below used to also prove
+     * that the account owner's OWN Business ('Agency House', in the same
+     * Workspace as this client) is excluded from the client list
+     * (WorkspaceController::billingResponsibilityViewData() skips any
+     * Business whose customer_id equals the Workspace owner). Since a
+     * Workspace now holds exactly one Business, an owner-owned Business and
+     * a client Business can never coexist in one Workspace any more, so that
+     * exclusion can no longer be exercised here. The exclusion itself is
+     * unchanged production code; only this test's ability to demonstrate it
+     * became unbuildable under V1 topology.
+     */
     public function test_the_agency_owner_sees_the_control_in_client_accounts_with_the_active_option_marked(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
@@ -81,7 +93,7 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_an_agency_wide_active_admin_sees_the_control(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $admin = $this->createCustomer();
@@ -113,7 +125,7 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_business_clients_staff_selected_scope_admins_and_strangers_never_see_it(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
 
@@ -150,7 +162,7 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_a_genuine_change_through_the_new_form_is_audited_once_and_repeating_it_is_a_complete_no_op(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
@@ -207,9 +219,9 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_cross_workspace_and_cross_business_mutations_are_concealed_with_404(): void
     {
-        [$agencyA, , $workspaceA] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency A', 'Agency A Workspace');
+        [$agencyA, $workspaceA] = $this->agencyAccountWithWallet('Agency A Workspace');
         [, $businessA] = $this->clientBusiness($workspaceA, 'Client A');
-        [, , $workspaceB] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency B', 'Agency B Workspace');
+        [, $workspaceB] = $this->agencyAccountWithWallet('Agency B Workspace');
         [, $businessB] = $this->clientBusiness($workspaceB, 'Client B');
         $this->setPayer($businessA, PayerType::Workspace);
         $this->setPayer($businessB, PayerType::Workspace);
@@ -245,7 +257,7 @@ class AgencyBillingResponsibilityTest extends TestCase
         }
 
         // A selected-scope Admin of an Agency Workspace cannot either.
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $scoped = $this->createCustomer();

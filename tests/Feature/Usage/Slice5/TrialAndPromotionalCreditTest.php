@@ -42,8 +42,12 @@ class TrialAndPromotionalCreditTest extends TestCase
             $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $business->id)->count(), $tier->value . ': no credit row of any kind.');
 
             if ($tier === WorkspacePlanTier::Agency) {
+                // Contract 13: an Agency's unlimited Businesses are unlimited
+                // ACCOUNTS, one Business each. None of them is granted a
+                // balance either.
                 foreach (['One', 'Two', 'Three'] as $name) {
-                    [, $extra] = $this->clientBusiness($workspace, 'Client ' . $name);
+                    [, $extraWorkspace] = $this->agencyAccountWithWallet('Client ' . $name . ' Agency');
+                    [, $extra] = $this->clientBusiness($extraWorkspace, 'Client ' . $name);
                     $this->assertSame('0', (string) $this->walletRow($extra)->available_balance_micro, 'Unlimited Agency Businesses never multiply free allowance.');
                 }
             }

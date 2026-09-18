@@ -143,20 +143,13 @@ class InternalNotificationExecutorTest extends TestCase
     {
         [$business, $workspace, $workflow, $contact] = $this->notifyingWorkflow();
 
-        // Scope `selected`, but assigned to a DIFFERENT Business in the same
-        // workspace — the case a scope-only check would get wrong.
-        // workspace_id and status are guarded on Business — they are tenancy and
-        // lifecycle state, not mass-assignable input — so they are set directly.
-        $otherBusiness = new Business();
-        $otherBusiness->uid = (string) \Illuminate\Support\Str::uuid();
-        $otherBusiness->workspace_id = $workspace->id;
-        $otherBusiness->customer_id = $business->customer_id;
-        $otherBusiness->name = 'Second Business';
-        $otherBusiness->status = $business->status;
-        $otherBusiness->save();
-
+        // Scope `selected` and NOT assigned this Business — the case a
+        // scope-only check would get wrong. Contract 13 holds exactly one
+        // Business per Workspace, so "assigned a different Business of this
+        // workspace" no longer exists; an unassigned selected-scope member is
+        // the shape that remains, and it must be excluded just the same.
         $elsewhere = $this->user('Elsewhere');
-        $this->memberWithScope($workspace, $elsewhere, WorkspaceBusinessAccessScope::Selected, assigned: $otherBusiness);
+        $this->memberWithScope($workspace, $elsewhere, WorkspaceBusinessAccessScope::Selected);
 
         Notification::fake();
 

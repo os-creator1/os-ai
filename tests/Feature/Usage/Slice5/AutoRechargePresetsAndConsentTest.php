@@ -179,10 +179,12 @@ class AutoRechargePresetsAndConsentTest extends TestCase
      */
     public function test_the_consent_backfill_keeps_provable_consent_and_switches_everything_else_off(): void
     {
+        // Contract 13: four Businesses are four accounts. The backfill reads
+        // wallet rows, so where each Business lives changes nothing it asserts.
         [$owner, $business] = $this->tenantWithWallet(WorkspacePlanTier::Growth);
-        [, $businessB] = $this->clientBusiness($business->workspace, 'Second');
-        [, $businessC] = $this->clientBusiness($business->workspace, 'Third');
-        [, $businessD] = $this->clientBusiness($business->workspace, 'Fourth');
+        [, $businessB] = $this->clientBusinessInOwnAccount('Second');
+        [, $businessC] = $this->clientBusinessInOwnAccount('Third');
+        [, $businessD] = $this->clientBusinessInOwnAccount('Fourth');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['auto_recharge_enabled' => true, 'auto_recharge_threshold_micro' => 2_000_000, 'auto_recharge_amount_micro' => 10_000_000, 'auto_recharge_consented_at' => null]);
         DB::table('business_usage_wallets')->where('business_id', $businessB->id)->update(['auto_recharge_enabled' => true, 'auto_recharge_threshold_micro' => 2_000_000, 'auto_recharge_amount_micro' => 3_000_000, 'auto_recharge_consented_at' => null]);

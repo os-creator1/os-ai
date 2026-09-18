@@ -56,6 +56,36 @@ trait Slice5Fixtures
         app(BillingProfileManager::class)->initializePayerAssignmentForBusiness($business->id);
     }
 
+    /**
+     * An Agency-tier account that holds NO Business of its own — the shape
+     * these tests need, because the Business they act on is the client's and
+     * Contract 13 allows exactly one Business per Workspace.
+     *
+     * @return array{0: Customer, 1: Workspace}
+     */
+    protected function agencyAccountWithWallet(string $workspaceName = 'Northwind Agency'): array
+    {
+        $this->usd();
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user, ['name' => $workspaceName]);
+        $this->assignTier($workspace, WorkspacePlanTier::Agency);
+
+        return [$owner, $workspace->fresh()];
+    }
+
+    /**
+     * The client Business of an Agency account: this Workspace's ONE Business
+     * (Contract 13), owned by a customer who is not the account owner —
+     * exactly the pair `BillingProfileManager::isCurrentPayer()` tells apart,
+     * so "the Workspace pays" still means "the Agency pays" and every payer,
+     * wallet and ceiling assertion keeps its meaning. Pass a Workspace built
+     * by agencyAccountWithWallet(), which holds no Business of its own.
+     *
+     * @return array{0: Customer, 1: Business}
+     */
     protected function clientBusiness(Workspace $workspace, string $name = 'Client Bakery'): array
     {
         $client = $this->createCustomer();
@@ -63,6 +93,25 @@ trait Slice5Fixtures
         $this->walletFor($business);
 
         return [$client, $business->fresh()];
+    }
+
+    /**
+     * A client Business in an Agency account OF ITS OWN — for tests that need
+     * several independent Businesses with wallets (a data backfill over wallet
+     * rows, say). Contract 13: several Businesses means several accounts.
+     *
+     * Returns the ACCOUNT owner first: that is the payer authority while the
+     * Workspace pays. The Business's own owner is returned last, for the
+     * Business-pays case.
+     *
+     * @return array{0: Customer, 1: Business, 2: Workspace, 3: Customer}
+     */
+    protected function clientBusinessInOwnAccount(string $name = 'Client Bakery'): array
+    {
+        [$accountOwner, $workspace] = $this->agencyAccountWithWallet($name . ' Agency');
+        [$client, $business] = $this->clientBusiness($workspace, $name);
+
+        return [$accountOwner, $business, $workspace, $client];
     }
 
     /**

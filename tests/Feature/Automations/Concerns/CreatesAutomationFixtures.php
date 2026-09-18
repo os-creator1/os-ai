@@ -65,6 +65,27 @@ trait CreatesAutomationFixtures
         return [$customer, $business->fresh(), $workspace->fresh()];
     }
 
+    /**
+     * A SECOND entitled Business belonging to the same customer.
+     *
+     * Contract 13: one Workspace holds exactly one Business, so a customer
+     * with several Businesses has several Workspaces, each with its own plan.
+     *
+     * @return array{0: Business, 1: Workspace}
+     */
+    protected function entitledBusinessFor(Customer $customer, string $name): array
+    {
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => $name]));
+
+        DB::table('businesses')->where('id', $business->id)->update(['status' => BusinessStatus::Active->value]);
+
+        $workspace = Workspace::query()->findOrFail($business->workspace_id);
+
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'B4 fixture assignment.', true, 0);
+
+        return [$business->fresh(), $workspace->fresh()];
+    }
+
     protected function platformAdminId(): int
     {
         return User::create([
