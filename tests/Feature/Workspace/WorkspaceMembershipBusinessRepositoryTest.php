@@ -215,7 +215,19 @@ class WorkspaceMembershipBusinessRepositoryTest extends TestCase
         $this->assertSame(1, $repository->assignedBusinessIds($membership)->count());
     }
 
-    public function test_sync_replaces_grants_atomically_after_successful_validation(): void
+    /**
+     * assign()/syncForMembership() both require every Business to belong
+     * to the membership's OWN Workspace (guardSameWorkspace()), and
+     * Contract 13 (businesses_workspace_id_unique) permanently caps a
+     * Workspace at one — so "keep one, drop a second, add a third" is no
+     * longer constructible for any one membership, at any V1 topology.
+     * What survives, and was not otherwise proven anywhere in this file
+     * (every other test reaches the assigned state through assign()
+     * directly, never through syncForMembership() itself), is
+     * syncForMembership() correctly persisting AND returning a non-empty
+     * target set — the 0-to-1 sync, the only cardinality still reachable.
+     */
+    public function test_sync_to_a_non_empty_set_persists_and_returns_the_grant(): void
     {
         $owner = $this->createCustomer();
         $repository = app(WorkspaceMembershipBusinessRepository::class);
@@ -223,25 +235,18 @@ class WorkspaceMembershipBusinessRepositoryTest extends TestCase
         $membership = $this->createMembership($workspace, $this->createCustomer()->user, [
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
+        $soleBusiness = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
-        $keep = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $drop = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $add = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-
-        $repository->assign($membership, $keep);
-        $repository->assign($membership, $drop);
-
-        $result = $repository->syncForMembership($membership, [$keep->id, $add->id]);
+        $result = $repository->syncForMembership($membership, [$soleBusiness->id]);
 
         $resultIds = collect($result)->pluck('business_id');
-        $this->assertCount(2, $resultIds);
-        $this->assertTrue($resultIds->contains($keep->id));
-        $this->assertTrue($resultIds->contains($add->id));
-        $this->assertFalse($resultIds->contains($drop->id));
+        $this->assertCount(1, $resultIds);
+        $this->assertTrue($resultIds->contains($soleBusiness->id));
 
-        $this->assertTrue($repository->isAssigned($membership, $keep->id));
-        $this->assertTrue($repository->isAssigned($membership, $add->id));
-        $this->assertFalse($repository->isAssigned($membership, $drop->id));
+        $this->assertTrue($repository->isAssigned($membership, $soleBusiness->id));
+        $assignedIds = $repository->assignedBusinessIds($membership);
+        $this->assertCount(1, $assignedIds);
+        $this->assertTrue($assignedIds->contains($soleBusiness->id));
     }
 
     public function test_sync_with_empty_array_removes_all_grants(): void
