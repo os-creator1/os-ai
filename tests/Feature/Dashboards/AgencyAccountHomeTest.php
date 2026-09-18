@@ -146,6 +146,101 @@ class AgencyAccountHomeTest extends TestCase
         ]);
     }
 
+    /**
+     * The whole product flow the Open button exists for, end to end: from the
+     * Agency Account Home, opening a managed client renders THAT CLIENT's own
+     * Business Home — the client's Workspace and its sole Business — with the
+     * View-as banner naming it, and exiting puts the Agency back where it was.
+     *
+     * The cross-Workspace resolution this depends on is shared infrastructure
+     * (PR #323, BusinessRouteAccess/CustomerContextResolver); this asserts the
+     * product flow over it, not that infrastructure's own rules.
+     */
+    public function test_opening_a_client_renders_that_clients_business_home_and_exiting_restores_the_agency(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'agencyBusiness' => $agencyBusiness, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
+        $alpha = $managed['Alpha Dental'];
+        $clientWorkspace = Workspace::query()->findOrFail($alpha->workspace_id);
+        $this->contactsAdded($alpha, 3, '2026-09-02');
+
+        $this->authenticateAs($agency);
+        // An explicit Agency ACCOUNT-frame preference is held before opening:
+        // it must not survive into the client's view.
+        $this->switchToAccount($workspace);
+
+        $accountHome = $this->home()->assertOk()->getContent();
+        $viewAsUrl = route('customer.workspaces.clients.view-as', [$workspace->uid, $clientWorkspace->uid]);
+        $this->assertStringContainsString('action="' . $viewAsUrl . '"', $this->between($accountHome, 'data-band="clients"', 'data-band="cross_client"'));
+
+        // A managed client is not an ordinary switcher candidate: the shell's
+        // own Business switcher offers the Agency's own Business only.
+        $switcher = $this->between($accountHome, 'data-role="context-switcher-menu"', '</ul>');
+        $this->assertStringContainsString($agencyBusiness->name, $switcher);
+        $this->assertStringNotContainsString('Alpha Dental', $switcher, 'A managed client is opened through View As, never switched into.');
+        $this->assertStringNotContainsString($alpha->uid, $accountHome, "The client's Business uid is never a switch target on Home.");
+
+        // Open it.
+        $this->post($viewAsUrl)->assertRedirect(route('user.home'));
+        $this->assertDatabaseHas('view_as_sessions', [
+            'actor_user_id' => $agency->user_id,
+            'workspace_id' => $clientWorkspace->id,
+            'business_id' => $alpha->id,
+            'viewing_agency_workspace_id' => $workspace->id,
+            'ended_at' => null,
+        ]);
+
+        // The rendered landing is the CLIENT's Business Home.
+        $opened = $this->home()->assertOk()->getContent();
+        $this->assertStringContainsString('data-kind="business"', $opened);
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Alpha Dental.*</h1>#s', $opened);
+        $this->assertStringNotContainsString($agencyBusiness->name, $this->mainText($opened), "The Agency's own Business is not the active Business inside a client view.");
+        $this->assertStringNotContainsString('data-kind="agency"', $opened, 'The account-frame preference does not survive into the client view.');
+
+        // Truthfully framed, with the way out.
+        $this->assertStringContainsString('data-role="view-as-banner"', $opened);
+        $this->assertStringContainsString('Viewing Alpha Dental as a client', $opened);
+
+        // No Agency portfolio figure follows the actor into a client.
+        foreach (['clients', 'cross_client', 'prospecting'] as $agencyBand) {
+            $this->assertStringNotContainsString('data-band="' . $agencyBand . '"', $opened);
+        }
+
+        // Exiting restores the Agency's own context.
+        $this->post(route('customer.view-as.exit'))->assertRedirect();
+        $restored = $this->home()->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-kind="agency"', $restored);
+        $this->assertStringNotContainsString('data-role="view-as-banner"', $restored);
+        $this->assertStringContainsString('Alpha Dental', $this->between($restored, 'data-band="clients"', 'data-band="cross_client"'), 'The portfolio is back.');
+        $this->assertDatabaseMissing('view_as_sessions', [
+            'actor_user_id' => $agency->user_id,
+            'workspace_id' => $clientWorkspace->id,
+            'ended_at' => null,
+        ]);
+    }
+
+    /**
+     * The same flow when the Agency was last inside its OWN Business rather
+     * than the account frame: a Business preference cannot override the
+     * viewed client either.
+     */
+    public function test_an_agency_business_preference_does_not_override_the_viewed_client(): void
+    {
+        ['owner' => $agency, 'workspace' => $workspace, 'agencyBusiness' => $agencyBusiness, 'clients' => $managed] = $this->agencyManaging(['Alpha Dental']);
+        $clientWorkspace = Workspace::query()->findOrFail($managed['Alpha Dental']->workspace_id);
+
+        $this->authenticateAs($agency);
+        $this->switchTo($workspace, $agencyBusiness)->assertRedirect(route('user.home'));
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*' . preg_quote($agencyBusiness->name, '#') . '.*</h1>#s', $this->home()->assertOk()->getContent());
+
+        $this->post(route('customer.workspaces.clients.view-as', [$workspace->uid, $clientWorkspace->uid]))->assertRedirect(route('user.home'));
+        $opened = $this->home()->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Alpha Dental.*</h1>#s', $opened);
+        $this->assertStringNotContainsString($agencyBusiness->name, $this->mainText($opened));
+        $this->assertStringContainsString('Viewing Alpha Dental as a client', $opened);
+    }
+
     public function test_the_client_list_stacks_at_narrow_widths_instead_of_scrolling_sideways(): void
     {
         ['owner' => $agency, 'workspace' => $workspace] = $this->agencyManaging(['Alpha Dental', 'Bravo Bistro']);
