@@ -123,11 +123,13 @@ class AutoRechargeExecutionCeilingsTest extends TestCase
         // which is what a self-paying Business is under V1.
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         $this->fakeProvider();
-        [, $client] = $this->clientBusiness($workspace, 'Client A');
+        [, $client] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
         $this->setPayer($client, PayerType::Workspace);
 
-        // It pays for itself, so its OWN owner is the payer authority.
-        [, $selfPaid, , $selfPayer] = $this->clientBusinessInOwnAccount('Self Paid');
+        // A second, ordinary account whose own Business pays for itself — no
+        // different-customer mechanic needed, since PayerType::Business
+        // already means "this Business's own owner is the payer."
+        [$selfPayer, $selfPaid] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Self Paid', 'Self Paid Agency');
         $this->setPayer($selfPaid, PayerType::Business);
 
         $this->attachFakeCard($client, (int) $agency->user_id); // the Agency's instrument serves its agency-paid client

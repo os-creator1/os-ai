@@ -57,9 +57,26 @@ trait Slice5Fixtures
     }
 
     /**
-     * An Agency-tier account that holds NO Business of its own — the shape
-     * these tests need, because the Business they act on is the client's and
-     * Contract 13 allows exactly one Business per Workspace.
+     * An Agency-tier Workspace with no Business of its own yet, so a caller
+     * can immediately give it its own single Business (Contract 13: exactly
+     * one per Workspace).
+     *
+     * THIS IS NOT AN AGENCY-MANAGED CLIENT. V1's only managed-client shape is
+     * a SEPARATE Client Workspace reached through a real, ACTIVE
+     * AgencyClientWorkspaceRelationship (createAgencyManagedClient() in R1's
+     * CreatesCustomerContextFixtures, or managedClient()/rebilledClient() in
+     * AgencyRebillFixtures for the AgencyRebill-funded case) — never a second
+     * Business added directly into this Workspace. What this helper is for is
+     * narrower and unrelated to that: an ordinary Agency-tier Workspace whose
+     * single Business happens to be created for a different Customer than the
+     * Workspace owner, exactly as WorkspaceManager::createBusinessInWorkspace()
+     * itself supports ("Business.customer_id stays fully independent of
+     * Workspace ownership"). That distinction — the Workspace owner versus
+     * this Business's own direct customer_id owner — is what
+     * BillingProfileManager::isCurrentPayer() tells apart for
+     * PayerType::Workspace vs PayerType::Business, and it is what several
+     * Slice 5 payer/wallet/ceiling authority tests need. See
+     * businessOwnedByAnotherCustomer().
      *
      * @return array{0: Customer, 1: Workspace}
      */
@@ -77,41 +94,30 @@ trait Slice5Fixtures
     }
 
     /**
-     * The client Business of an Agency account: this Workspace's ONE Business
-     * (Contract 13), owned by a customer who is not the account owner —
-     * exactly the pair `BillingProfileManager::isCurrentPayer()` tells apart,
-     * so "the Workspace pays" still means "the Agency pays" and every payer,
-     * wallet and ceiling assertion keeps its meaning. Pass a Workspace built
-     * by agencyAccountWithWallet(), which holds no Business of its own.
+     * This Workspace's ONE Business (Contract 13), created for a customer
+     * OTHER than the Workspace owner — a real, supported V1 shape
+     * (WorkspaceManager::createBusinessInWorkspace()'s own documented
+     * behaviour), NOT a stand-in for an Agency-managed client. It is exactly
+     * the pair `BillingProfileManager::isCurrentPayer()` tells apart: "the
+     * Workspace owner while the Workspace pays, the direct owner while the
+     * Business pays." Pass a Workspace built by agencyAccountWithWallet(),
+     * which holds no Business of its own.
+     *
+     * Never use this to represent a managed client of an Agency: that is
+     * always a separate Client Workspace reached through a real
+     * AgencyClientWorkspaceRelationship (createAgencyManagedClient(), or
+     * managedClient()/rebilledClient() for the AgencyRebill-funded case) —
+     * never a second Business inside this one Workspace.
      *
      * @return array{0: Customer, 1: Business}
      */
-    protected function clientBusiness(Workspace $workspace, string $name = 'Client Bakery'): array
+    protected function businessOwnedByAnotherCustomer(Workspace $workspace, string $name = 'Riverside Bakery'): array
     {
-        $client = $this->createCustomer();
-        $business = $this->addBusiness($client, $workspace, $name);
+        $directOwner = $this->createCustomer();
+        $business = $this->addBusiness($directOwner, $workspace, $name);
         $this->walletFor($business);
 
-        return [$client, $business->fresh()];
-    }
-
-    /**
-     * A client Business in an Agency account OF ITS OWN — for tests that need
-     * several independent Businesses with wallets (a data backfill over wallet
-     * rows, say). Contract 13: several Businesses means several accounts.
-     *
-     * Returns the ACCOUNT owner first: that is the payer authority while the
-     * Workspace pays. The Business's own owner is returned last, for the
-     * Business-pays case.
-     *
-     * @return array{0: Customer, 1: Business, 2: Workspace, 3: Customer}
-     */
-    protected function clientBusinessInOwnAccount(string $name = 'Client Bakery'): array
-    {
-        [$accountOwner, $workspace] = $this->agencyAccountWithWallet($name . ' Agency');
-        [$client, $business] = $this->clientBusiness($workspace, $name);
-
-        return [$accountOwner, $business, $workspace, $client];
+        return [$directOwner, $business->fresh()];
     }
 
     /**

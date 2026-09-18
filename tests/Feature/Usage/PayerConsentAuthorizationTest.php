@@ -41,12 +41,15 @@ class PayerConsentAuthorizationTest extends TestCase
         Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
 
         // Contract 13: ONE Business in this Agency-tier Workspace. The matrix
-        // still needs the Business's own direct owner to differ from the
-        // account owner — `isCurrentPayer()` distinguishes exactly those two —
-        // so the Workspace is built empty and its single Business is the
-        // client's. No managing-Agency relationship is created: this account
-        // manages its Business directly, which is what keeps AgencyRebill
-        // refused below.
+        // needs the Business's own direct customer_id owner to differ from
+        // the account/Workspace owner — exactly the pair
+        // `isCurrentPayer()` distinguishes — which is a real, supported V1
+        // shape (WorkspaceManager::createBusinessInWorkspace(): "Business.
+        // customer_id stays fully independent of Workspace ownership"), NOT
+        // an Agency-managed-client relationship: no
+        // AgencyClientWorkspaceRelationship is created, this account manages
+        // its own Business directly, and that is exactly what keeps
+        // AgencyRebill refused below.
         $this->ensureRequiredAppConfigRowsExist();
         $this->platformAdminId();
 
@@ -55,9 +58,9 @@ class PayerConsentAuthorizationTest extends TestCase
         $this->assignTier($workspace, WorkspacePlanTier::Agency);
         $ownerId = (int) $owner->user_id;
 
-        $client = $this->createCustomer();
-        $business = $this->addBusiness($client, $workspace, 'Client Bakery');
-        $directOwnerId = (int) $client->user_id;
+        $directOwner = $this->createCustomer();
+        $business = $this->addBusiness($directOwner, $workspace, 'Riverside Bakery');
+        $directOwnerId = (int) $directOwner->user_id;
 
         $agencyAdmin = $this->createCustomer();
         $this->member($workspace, $agencyAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);

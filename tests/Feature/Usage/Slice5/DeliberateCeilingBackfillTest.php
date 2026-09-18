@@ -43,9 +43,11 @@ class DeliberateCeilingBackfillTest extends TestCase
             'zero_ceiling' => ['auto_recharge_enabled' => true, 'monthly_recharge_cap_micro' => 0],
             'already_off' => ['auto_recharge_enabled' => false, 'monthly_recharge_cap_micro' => null],
         ] as $label => $columns) {
-            // Contract 13: each of these Businesses is its own account; the
-            // backfill reads wallet rows, so that changes nothing it asserts.
-            [$owner, $business] = $this->clientBusinessInOwnAccount('Client ' . $label);
+            // Contract 13: each of these Businesses is its own ordinary
+            // account; the backfill reads wallet rows and $owner is only ever
+            // used as this account's own payer authority below, so no
+            // different-customer mechanic is needed here at all.
+            [$owner, $business] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Client ' . $label, 'Client ' . $label . ' Agency');
             $this->setPayer($business, $label === 'below_preset' ? PayerType::Business : PayerType::Workspace);
             DB::table('business_usage_wallets')->where('business_id', $business->id)->update(array_merge([
                 'auto_recharge_threshold_micro' => 2_000_000,

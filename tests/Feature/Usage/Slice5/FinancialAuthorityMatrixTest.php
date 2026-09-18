@@ -33,11 +33,20 @@ class FinancialAuthorityMatrixTest extends TestCase
     use RefreshDatabase;
     use Slice5Fixtures;
 
-    /** @return array{0: Customer, 1: Business, 2: Workspace, 3: Customer} agency, agency-paid client business, workspace, client */
+    /**
+     * An Agency-tier account whose one Business (Contract 13) is owned by a
+     * different customer than the account/Workspace owner, paid via
+     * PayerType::Workspace ("Agency pays" in the product's own vocabulary).
+     * This is an ordinary V1 shape — WorkspaceManager::createBusinessInWorkspace()'s
+     * own documented behaviour — NOT an Agency-managed client relationship:
+     * no AgencyClientWorkspaceRelationship exists here.
+     *
+     * @return array{0: Customer, 1: Business, 2: Workspace, 3: Customer} agency (Workspace owner), Business, Workspace, the Business's own direct customer_id owner
+     */
     private function agencyPaidClient(): array
     {
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->fakeProvider();
         $this->attachFakeCard($business, (int) $agency->user_id);
@@ -153,7 +162,7 @@ class FinancialAuthorityMatrixTest extends TestCase
     public function test_a_client_paid_business_owner_retains_the_payer_owned_controls(): void
     {
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Business);
         $this->fakeProvider();
         $this->attachFakeCard($business, (int) $client->user_id);

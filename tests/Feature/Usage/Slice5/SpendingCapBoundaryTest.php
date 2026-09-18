@@ -92,14 +92,15 @@ class SpendingCapBoundaryTest extends TestCase
         // Business (production is explicit that no cross-client Agency
         // aggregate exists in V1). The boundary arithmetic is unchanged.
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [, $client] = $this->clientBusiness($workspace, 'Client A');
+        [, $client] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
         $this->setPayer($client, PayerType::Workspace);
 
-        // A self-paying Business is its own account under V1. Its OWN account
-        // carries an aggregate limit too — otherwise "not subject to it" would
-        // pass for the trivial reason that no limit exists anywhere near it,
-        // and the payer-type gate could be deleted unnoticed.
-        [$selfPayingAccountOwner, $selfPaid, $selfPaidWorkspace] = $this->clientBusinessInOwnAccount('Self Paid');
+        // A second, ordinary account whose own Business pays for itself — no
+        // different-customer mechanic needed here. Its OWN account carries an
+        // aggregate limit too — otherwise "not subject to it" would pass for
+        // the trivial reason that no limit exists anywhere near it, and the
+        // payer-type gate could be deleted unnoticed.
+        [$selfPayingAccountOwner, $selfPaid, $selfPaidWorkspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Self Paid', 'Self Paid Agency');
         $this->setPayer($selfPaid, PayerType::Business);
 
         $this->activateFixtureRate('crm', '1000000');
@@ -202,7 +203,7 @@ class SpendingCapBoundaryTest extends TestCase
     {
         // Contract 13: "every Business of the Workspace" is its one Business.
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [$client, $clientBusiness] = $this->clientBusiness($workspace, 'Client A');
+        [$client, $clientBusiness] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
         $this->setPayer($clientBusiness, PayerType::Business);
         $this->activateFixtureRate('crm', '1000000');
         $this->fund($clientBusiness, 100_000_000);

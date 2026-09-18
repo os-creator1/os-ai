@@ -60,13 +60,13 @@ class AutoRechargeCeilingsTest extends TestCase
         // used to be split across two Workspace-paid siblings is now the one
         // Business's own 15,000,000.
         [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [, $client] = $this->clientBusiness($workspace, 'Client A');
+        [, $client] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
         $this->setPayer($client, PayerType::Workspace);
 
         // A second account whose single Business pays for itself: never
         // counted towards, and never limited by, another account's ceiling.
         [$selfPayer, $selfPaidWorkspace] = $this->agencyAccountWithWallet('Self Paid Agency');
-        [, $selfPaid] = $this->clientBusiness($selfPaidWorkspace, 'Self Paid');
+        [, $selfPaid] = $this->businessOwnedByAnotherCustomer($selfPaidWorkspace, 'Self Paid');
         $this->setPayer($selfPaid, PayerType::Business);
 
         // Correction Round 1 §6.1 — every Business carries its own deliberately
@@ -102,7 +102,7 @@ class AutoRechargeCeilingsTest extends TestCase
         // Contract 13: this account holds exactly one Business, the client's.
         // Its owner is the "Business user" who must be refused the
         // Agency-wide ceiling.
-        [$client] = $this->clientBusiness($workspace, 'Client');
+        [$client] = $this->businessOwnedByAnotherCustomer($workspace, 'Client');
 
         app(UsageWalletManager::class)->setWorkspaceAggregateRechargeCap($workspace, '30000000', (int) $agency->user_id, 'Set.');
         $this->assertDatabaseHas('workspace_usage_controls', ['workspace_id' => $workspace->id, 'monthly_aggregate_recharge_cap_micro' => 30_000_000]);

@@ -112,7 +112,7 @@ class ManualTopUpMinimumTest extends TestCase
     public function test_a_non_payer_cannot_add_funds_by_direct_post(): void
     {
         [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace);
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, \App\Enums\Usage\PayerType::Workspace);
         $this->assign($this->member($workspace, $client->user, \App\Enums\Workspace\WorkspaceMembershipRole::Staff, \App\Enums\Workspace\WorkspaceBusinessAccessScope::Selected), $business);
         $this->fakeProvider();

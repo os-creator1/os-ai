@@ -47,7 +47,7 @@ class TrialAndPromotionalCreditTest extends TestCase
                 // balance either.
                 foreach (['One', 'Two', 'Three'] as $name) {
                     [, $extraWorkspace] = $this->agencyAccountWithWallet('Client ' . $name . ' Agency');
-                    [, $extra] = $this->clientBusiness($extraWorkspace, 'Client ' . $name);
+                    [, $extra] = $this->businessOwnedByAnotherCustomer($extraWorkspace, 'Client ' . $name);
                     $this->assertSame('0', (string) $this->walletRow($extra)->available_balance_micro, 'Unlimited Agency Businesses never multiply free allowance.');
                 }
             }
