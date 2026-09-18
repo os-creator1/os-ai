@@ -204,13 +204,12 @@ class AdminWorkspaceControllerTest extends TestCase
         $owner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
         $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $this->createBusinessForCustomer($owner->id, $workspace->id);
         $this->actingAsAdmin(['access backend', 'view workspace']);
 
         $response = $this->get(route('admin.workspaces.index'))->assertOk();
         $row = collect($response->original->getData()['workspaces']->items())->firstWhere('id', $workspace->id);
 
-        $this->assertSame(2, $row->businesses_count);
+        $this->assertSame(1, $row->businesses_count);
     }
 
     public function test_index_shows_active_membership_count(): void
@@ -353,21 +352,19 @@ class AdminWorkspaceControllerTest extends TestCase
         $owner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
         $assigned = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $unassigned = $this->createBusinessForCustomer($owner->id, $workspace->id);
         $membership = $this->createMembership($workspace, $this->createCustomer()->user, [
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $membership->id, 'business_id' => $assigned->id]);
+
+        // An entirely unrelated Business (its own Workspace, never
+        // assigned) — assignedBusinesses() resolves purely through the
+        // pivot table (WorkspaceModelTest proves this directly), so it
+        // must never leak in here either. Contract 13 leaves no sibling
+        // Business in $workspace itself to prove this with.
+        $unassigned = $this->createBusinessForCustomer($owner->id, $this->createWorkspace($this->createCustomer()->user)->id);
         $this->actingAsAdmin(['access backend', 'view workspace']);
 
-        // Both Businesses legitimately appear somewhere on the page (the
-        // separate Businesses section lists every Business in the
-        // Workspace regardless of assignment), so the exact per-membership
-        // assignment is asserted against the view data directly rather
-        // than raw page text. Compared by id, not name: the shared
-        // businessAttributes() fixture default gives both Businesses the
-        // same name unless overridden, so a name-based comparison cannot
-        // distinguish them.
         $response = $this->get(route('admin.workspaces.show', $workspace))->assertOk();
         $renderedWorkspace = $response->original->getData()['workspace'];
         $renderedMembership = $renderedWorkspace->memberships->firstWhere('id', $membership->id);

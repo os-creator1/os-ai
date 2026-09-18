@@ -139,6 +139,27 @@ class TemporaryTestDatabase
         string $namedConnection,
         callable $callback
     ): mixed {
+        $name = self::beginGeneratedDatabase($purpose, $namePattern, $namedConnection);
+
+        try {
+            return $callback($name, $namedConnection);
+        } finally {
+            self::dropDatabase($name, $namePattern, $namedConnection);
+        }
+    }
+
+    /**
+     * The create+register half of withGeneratedDatabase(), split out for
+     * callers that need the disposable database to outlive a single
+     * callback — a PHPUnit setUp()/tearDown() pair, where PHPUnit itself
+     * guarantees tearDown() runs after every test method that reaches it
+     * (pass, fail, or throw), exactly the same "always cleaned up"
+     * guarantee the callback form gets from its own try/finally. Only
+     * reached through the purpose-specific begin*()/end*() pairs below —
+     * never exposed as a raw, purpose-less entry point.
+     */
+    private static function beginGeneratedDatabase(string $purpose, string $namePattern, string $namedConnection): string
+    {
         $baseDatabase = DB::connection()->getDatabaseName();
 
         if (! TestDatabaseSafety::isSafeTestDatabaseName($baseDatabase)) {
@@ -152,13 +173,38 @@ class TemporaryTestDatabase
 
         DB::statement('CREATE DATABASE ' . self::quoteIdentifier($name, $namePattern));
 
-        try {
-            self::registerNamedConnection($name, $namePattern, $namedConnection);
+        self::registerNamedConnection($name, $namePattern, $namedConnection);
 
-            return $callback($name, $namedConnection);
-        } finally {
-            self::dropDatabase($name, $namePattern, $namedConnection);
-        }
+        return $name;
+    }
+
+    /**
+     * setUp()/tearDown() counterpart to withEnforcementDatabase(): creates
+     * the disposable database and registers it as
+     * ENFORCEMENT_NAMED_CONNECTION, returning [databaseName, connectionName].
+     * The caller MUST call endEnforcementDatabase() with the same pair in
+     * tearDown() — there is no try/finally here, because the whole point is
+     * to let the database outlive this single call, across the test
+     * method PHPUnit runs in between.
+     *
+     * @return array{0: string, 1: string}
+     */
+    public static function beginEnforcementDatabase(): array
+    {
+        $name = self::beginGeneratedDatabase('enforcement', self::ENFORCEMENT_NAME_PATTERN, self::ENFORCEMENT_NAMED_CONNECTION);
+
+        return [$name, self::ENFORCEMENT_NAMED_CONNECTION];
+    }
+
+    /**
+     * Drops the database created by beginEnforcementDatabase(). Safe to
+     * call from tearDown() even after the test method failed or threw:
+     * PHPUnit calls tearDown() unconditionally once setUp() has returned,
+     * so this always runs.
+     */
+    public static function endEnforcementDatabase(string $name, string $namedConnection): void
+    {
+        self::dropDatabase($name, self::ENFORCEMENT_NAME_PATTERN, $namedConnection);
     }
 
     private static function generateName(string $baseDatabase, string $purpose, string $namePattern): string

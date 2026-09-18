@@ -23,13 +23,13 @@ use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use App\Repositories\Contracts\BusinessRepository;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Mockery;
 use RuntimeException;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\CreatesLegacyMultiBusinessFixtures;
+use Tests\Feature\Workspace\Support\PreContract13HistoricalTestCase;
 
 /**
  * Implementation Contract 10 — Agency Data Migration.
@@ -45,10 +45,18 @@ use Tests\TestCase;
  * is what makes WorkspaceManager::reassignBusiness()'s owner-or-active-
  * admin-over-both-Workspaces authority requirement satisfiable honestly).
  */
-class AgencyBusinessMigrationV1Test extends TestCase
+/**
+ * Every legacy multi-Business Agency Workspace fixture in this file runs
+ * against PreContract13HistoricalTestCase's own disposable database — the
+ * real pre-Contract-13 schema, where businesses.workspace_id carries no
+ * unique constraint — never the shared ultimatesms_testing-family
+ * database, which Contract 13 permanently enforces one Business per
+ * Workspace on.
+ */
+class AgencyBusinessMigrationV1Test extends PreContract13HistoricalTestCase
 {
     use CreatesCustomerContextFixtures;
-    use RefreshDatabase;
+    use CreatesLegacyMultiBusinessFixtures;
 
     protected function setUp(): void
     {
@@ -103,7 +111,7 @@ class AgencyBusinessMigrationV1Test extends TestCase
      */
     private function legacyClientBusiness(Workspace $agency, Customer $customer, string $name, ?PayerType $payerType = PayerType::Workspace): Business
     {
-        $business = $this->addBusiness($customer, $agency, $name);
+        $business = $this->legacyBusiness($customer, $agency, $name);
 
         if ($payerType !== null) {
             $this->createPayerAssignment($business, $payerType);
@@ -163,8 +171,8 @@ class AgencyBusinessMigrationV1Test extends TestCase
         $customer = $this->createCustomer();
         $workspace = $this->createWorkspace($customer->user, ['name' => 'Core Co']);
         $this->assignTier($workspace, WorkspacePlanTier::Core);
-        $this->addBusiness($customer, $workspace, 'Core Primary');
-        $this->addBusiness($customer, $workspace, 'Core Secondary');
+        $this->legacyBusiness($customer, $workspace, 'Core Primary');
+        $this->legacyBusiness($customer, $workspace, 'Core Secondary');
 
         $report = $this->migration()->preflight([$workspace->id]);
 
@@ -196,8 +204,8 @@ class AgencyBusinessMigrationV1Test extends TestCase
         $customerB = $this->createCustomer();
         $agencyB = $this->createWorkspace($customerB->user, ['name' => 'Agency B']);
         $this->assignTier($agencyB, WorkspacePlanTier::Agency);
-        $b1 = $this->addBusiness($customerB, $agencyB, 'B One');
-        $b2 = $this->addBusiness($customerB, $agencyB, 'B Two');
+        $b1 = $this->legacyBusiness($customerB, $agencyB, 'B One');
+        $b2 = $this->legacyBusiness($customerB, $agencyB, 'B Two');
         DB::table('businesses')->whereIn('id', [$b1->id, $b2->id])->update(['is_primary' => false]);
 
         $report = $this->migration()->preflight([$agencyA->id, $agencyB->id]);
@@ -1028,8 +1036,8 @@ class AgencyBusinessMigrationV1Test extends TestCase
         $ambiguousCustomer = $this->createCustomer();
         $ambiguousAgency = $this->createWorkspace($ambiguousCustomer->user, ['name' => 'Ambiguous Agency']);
         $this->assignTier($ambiguousAgency, WorkspacePlanTier::Agency);
-        $one = $this->addBusiness($ambiguousCustomer, $ambiguousAgency, 'One');
-        $two = $this->addBusiness($ambiguousCustomer, $ambiguousAgency, 'Two');
+        $one = $this->legacyBusiness($ambiguousCustomer, $ambiguousAgency, 'One');
+        $two = $this->legacyBusiness($ambiguousCustomer, $ambiguousAgency, 'Two');
         DB::table('businesses')->whereIn('id', [$one->id, $two->id])->update(['is_primary' => false]);
         $this->artisan('agency:migrate-client-businesses', [
             '--preflight' => true,

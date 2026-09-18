@@ -370,13 +370,14 @@ class BusinessRepositoryTest extends TestCase
     public function test_second_business_in_workspace_variant_is_not_primary_by_default(): void
     {
         $customer = $this->createCustomer();
-        $workspace = $this->createWorkspaceOwnedBy($customer->user);
+        $firstWorkspace = $this->createWorkspaceOwnedBy($customer->user);
+        $secondWorkspace = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'Second Workspace']);
         $repository = app(BusinessRepository::class);
 
-        $repository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        $repository->createForCustomerInWorkspace($customer, $firstWorkspace, $this->businessAttributes());
         $second = $repository->createForCustomerInWorkspace(
             $customer,
-            $workspace,
+            $secondWorkspace,
             $this->businessAttributes(['name' => 'Second Business'])
         );
 
@@ -505,8 +506,6 @@ class BusinessRepositoryTest extends TestCase
         $repository = app(BusinessRepository::class);
         $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'One']));
         $repository->createForCustomerInWorkspace($customer, $workspaceB, $this->businessAttributes(['name' => 'Two']));
-        // Same Workspace as the first Business, seen again — must not duplicate.
-        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'Three']));
 
         $otherCustomer = $this->createCustomer();
         $otherWorkspace = $this->createWorkspaceOwnedBy($otherCustomer->user, ['name' => 'Other WS']);
@@ -531,8 +530,6 @@ class BusinessRepositoryTest extends TestCase
         $repository = app(BusinessRepository::class);
         $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'One']));
         $repository->createForCustomerInWorkspace($customer, $workspaceB, $this->businessAttributes(['name' => 'Two']));
-        // Same Workspace as the first Business, seen again — must not duplicate.
-        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'Three']));
 
         $ids = $repository->workspaceIdsForCustomer($customer->user_id);
 

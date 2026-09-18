@@ -228,12 +228,11 @@ class WorkspaceRepositoryTest extends TestCase
         $owner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
         $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $this->createBusinessForCustomer($owner->id, $workspace->id);
 
         $result = $repository->paginateForAdmin([], 25);
         $found = $result->getCollection()->first(fn ($item) => $item->is($workspace));
 
-        $this->assertSame(2, $found->businesses_count);
+        $this->assertSame(1, $found->businesses_count);
     }
 
     public function test_paginate_for_admin_active_memberships_count_excludes_inactive(): void

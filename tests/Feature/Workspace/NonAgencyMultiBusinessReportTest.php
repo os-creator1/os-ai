@@ -4,10 +4,10 @@ namespace Tests\Feature\Workspace;
 
 use App\Console\Commands\ReportNonAgencyMultiBusinessWorkspaces;
 use App\Enums\Entitlement\WorkspacePlanTier;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\CreatesLegacyMultiBusinessFixtures;
+use Tests\Feature\Workspace\Support\PreContract13HistoricalTestCase;
 
 /**
  * Implementation Contract 12 §4 Step 1 / §13 — the mandatory, read-only
@@ -15,11 +15,16 @@ use Tests\TestCase;
  * an empty test database (which would prove nothing per §14 acceptance
  * criterion 1) — and explicitly NOT claimed to represent any real
  * production population (this repository is pre-production).
+ *
+ * Every genuine multi-Business Workspace fixture here runs against
+ * PreContract13HistoricalTestCase's own disposable database — the real
+ * pre-Contract-13 schema — never the shared database Contract 13
+ * permanently enforces one Business per Workspace on.
  */
-class NonAgencyMultiBusinessReportTest extends TestCase
+class NonAgencyMultiBusinessReportTest extends PreContract13HistoricalTestCase
 {
     use CreatesCustomerContextFixtures;
-    use RefreshDatabase;
+    use CreatesLegacyMultiBusinessFixtures;
 
     private function report(): ReportNonAgencyMultiBusinessWorkspaces
     {
@@ -37,7 +42,7 @@ class NonAgencyMultiBusinessReportTest extends TestCase
     public function test_a_genuine_seeded_core_multibusiness_workspace_is_reported(): void
     {
         [$customer, $primary, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Core Primary', 'Core Account');
-        $second = $this->addBusiness($customer, $workspace, 'Core Secondary');
+        $second = $this->legacyBusiness($customer, $workspace, 'Core Secondary');
 
         $report = $this->report()->buildReport();
 
@@ -57,7 +62,7 @@ class NonAgencyMultiBusinessReportTest extends TestCase
     public function test_a_genuine_seeded_growth_multibusiness_workspace_is_reported(): void
     {
         [$customer, $primary, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Primary', 'Growth Account');
-        $this->addBusiness($customer, $workspace, 'Growth Secondary');
+        $this->legacyBusiness($customer, $workspace, 'Growth Secondary');
 
         $report = $this->report()->buildReport();
 
@@ -69,7 +74,7 @@ class NonAgencyMultiBusinessReportTest extends TestCase
     public function test_an_agency_workspace_with_multiple_businesses_is_excluded(): void
     {
         [$customer, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Primary', 'Agency Account');
-        $this->addBusiness($customer, $agencyWorkspace, 'Agency Client');
+        $this->legacyBusiness($customer, $agencyWorkspace, 'Agency Client');
 
         $report = $this->report()->buildReport();
 
@@ -89,7 +94,7 @@ class NonAgencyMultiBusinessReportTest extends TestCase
     public function test_the_report_performs_zero_writes(): void
     {
         [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Core Primary', 'Core Account');
-        $this->addBusiness($customer, $workspace, 'Core Secondary');
+        $this->legacyBusiness($customer, $workspace, 'Core Secondary');
 
         $businessesBefore = DB::table('businesses')->orderBy('id')->get();
         $workspacesBefore = DB::table('workspaces')->orderBy('id')->get();

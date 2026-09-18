@@ -15,8 +15,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Feature\Workspace\Support\PreContract13HistoricalTestCase;
 use Tests\Support\TestDatabaseSafety;
-use Tests\TestCase;
 
 /**
  * Implementation Contract 10 — real concurrency for
@@ -32,10 +32,19 @@ use Tests\TestCase;
  *
  * Deliberately does NOT use RefreshDatabase — mirrors
  * AgencyClientRelationshipConcurrencyTest/AgencyClientProvisioningConcurrencyTest's
- * own proven strategy: fixture rows are committed for real and explicitly
- * removed in tearDown().
+ * own proven strategy: fixture rows are committed for real.
+ *
+ * The legacy Agency Workspace this race contests holds THREE Businesses
+ * (one primary, two contested clients) — the exact pre-Contract-13 shape
+ * Contract 13 permanently forbids on the shared database. This class runs
+ * entirely against PreContract13HistoricalTestCase's own disposable
+ * per-test database, and the child processes it spawns are handed that
+ * SAME disposable database's real name through childEnvironment()'s
+ * existing (already database-name-agnostic) DB_DATABASE/
+ * EXPECTED_TEST_DATABASE override — never the shared
+ * ultimatesms_testing-family database.
  */
-class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
+class AgencyBusinessMigrationV1ConcurrencyTest extends PreContract13HistoricalTestCase
 {
     private const PROBE_CONNECTION = 'mysql_agency_business_migration_lock_probe';
 
@@ -403,7 +412,12 @@ class AgencyBusinessMigrationV1ConcurrencyTest extends TestCase
 
     private function setUpProbeConnection(): Connection
     {
-        config(['database.connections.' . self::PROBE_CONNECTION => config('database.connections.mysql')]);
+        // Copies THIS test's own disposable historical connection's config
+        // (host/port/credentials plus its own generated database name) —
+        // never the plain 'mysql' connection, which still points at the
+        // shared base database and would make the probe lock a row nothing
+        // else in this test is touching.
+        config(['database.connections.' . self::PROBE_CONNECTION => config('database.connections.' . $this->historicalConnection())]);
         DB::purge(self::PROBE_CONNECTION);
 
         return DB::connection(self::PROBE_CONNECTION);

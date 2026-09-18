@@ -118,22 +118,20 @@ class WorkspaceMemberEmailIdentityTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
         $businessA = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
-        $this->createBusinessForCustomer($customer->user->id, $workspace->id);
         $mila = $this->createCustomerAccount('mila@example.test');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
             'member_email' => 'mila@example.test',
             'role' => 'admin',
             'business_access_scope' => 'selected',
-            'business_uids' => [$businessA->uid, $businessB->uid],
+            'business_uids' => [$businessA->uid],
         ])->assertSessionHas('flash_success');
 
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $mila->id)->firstOrFail();
         $this->assertSame(WorkspaceMembershipRole::Admin, $membership->role);
         $this->assertSame(WorkspaceBusinessAccessScope::Selected, $membership->business_access_scope);
         $this->assertEqualsCanonicalizing(
-            [$businessA->id, $businessB->id],
+            [$businessA->id],
             WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->all(),
         );
     }

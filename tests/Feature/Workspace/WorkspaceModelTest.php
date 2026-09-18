@@ -211,7 +211,12 @@ class WorkspaceModelTest extends TestCase
         ]);
 
         $assigned = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $unassigned = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        // An entirely unrelated Business (its own Workspace, no pivot row
+        // at all) proves the relation resolves ONLY through the pivot,
+        // never "every Business this Workspace happens to hold" — Contract
+        // 13 leaves no second sibling Business to prove this with.
+        $unassignedWorkspace = $this->createWorkspace($this->createCustomer()->user);
+        $unassigned = $this->createBusinessForCustomer($owner->user_id, $unassignedWorkspace->id);
 
         WorkspaceMembershipBusiness::create([
             'workspace_membership_id' => $membership->id,

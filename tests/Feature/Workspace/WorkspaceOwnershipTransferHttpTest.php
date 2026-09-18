@@ -167,7 +167,6 @@ class WorkspaceOwnershipTransferHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $newOwner = $this->createCustomer()->user;
         $selectedBusiness = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
-        $unselectedBusiness = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $response = $this->post(route('customer.workspaces.ownership.transfer', $workspace->uid), [
             'new_owner_user_uid' => $newOwner->uid,
@@ -188,7 +187,6 @@ class WorkspaceOwnershipTransferHttpTest extends TestCase
             ->all();
 
         $this->assertSame([$selectedBusiness->id], $assignedBusinessIds);
-        $this->assertNotContains($unselectedBusiness->id, $assignedBusinessIds);
     }
 
     public function test_convert_to_admin_selected_scope_with_empty_business_uids_succeeds(): void

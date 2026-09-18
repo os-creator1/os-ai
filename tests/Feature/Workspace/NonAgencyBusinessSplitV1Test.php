@@ -16,13 +16,13 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Mockery;
 use RuntimeException;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\CreatesLegacyMultiBusinessFixtures;
+use Tests\Feature\Workspace\Support\PreContract13HistoricalTestCase;
 
 /**
  * Implementation Contract 12 — Non-Agency Multi-Business Migration.
@@ -35,10 +35,17 @@ use Tests\TestCase;
  * the Business's current workspace_id automatically, never a rewritten
  * payer row.
  */
-class NonAgencyBusinessSplitV1Test extends TestCase
+/**
+ * Every legacy multi-Business Workspace fixture in this file runs against
+ * PreContract13HistoricalTestCase's own disposable database — the real
+ * pre-Contract-13 schema, where businesses.workspace_id carries no unique
+ * constraint — never the shared ultimatesms_testing-family database,
+ * which Contract 13 permanently enforces one Business per Workspace on.
+ */
+class NonAgencyBusinessSplitV1Test extends PreContract13HistoricalTestCase
 {
     use CreatesCustomerContextFixtures;
-    use RefreshDatabase;
+    use CreatesLegacyMultiBusinessFixtures;
 
     protected function setUp(): void
     {
@@ -80,7 +87,7 @@ class NonAgencyBusinessSplitV1Test extends TestCase
 
     private function secondBusiness(Workspace $workspace, Customer $customer, string $name, ?PayerType $payerType = PayerType::Workspace): Business
     {
-        $business = $this->addBusiness($customer, $workspace, $name);
+        $business = $this->legacyBusiness($customer, $workspace, $name);
 
         if ($payerType !== null) {
             $this->createPayerAssignment($business, $payerType);
