@@ -33,6 +33,7 @@ class LocationAccessGuard
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         private readonly WorkspaceMembershipLocationRepository $membershipLocationRepository,
+        private readonly BusinessRouteAccess $businessRouteAccess,
     ) {
     }
 
@@ -55,6 +56,11 @@ class LocationAccessGuard
      *    Locations with an explicit workspace_membership_locations grant
      *    row.
      *  - Inactive membership, or no membership at all: no access.
+     *
+     * That table is for ORDINARY requests and is unchanged. An active
+     * cross-Workspace Agency View As replaces it wholesale for as long as it
+     * lasts — see the branch below — because the actor is deliberately none of
+     * the things it asks about.
      *
      * Re-derives $location fresh from its own repository — never trusts
      * the passed-in instance — then resolves business/workspace the same
@@ -82,6 +88,28 @@ class LocationAccessGuard
 
         if ($workspace === null || ! $workspace->is_active) {
             return false;
+        }
+
+        // V1 Contract 04 — a cross-Workspace Agency View As deliberately makes
+        // the actor no ordinary tenant of the viewed Client Workspace, so
+        // every row of the table below correctly refuses them: they own no
+        // Business here, own no Workspace here and hold no membership here.
+        // While such a session is active the viewed Client's own Locations are
+        // nevertheless theirs to work in, exactly as the Client would.
+        //
+        // The session is therefore the WHOLE answer while it lasts, in both
+        // directions: the viewed Business's Locations are reachable, and every
+        // other Business's are refused — including Locations of a Business
+        // this actor ordinarily owns outright, because View As only narrows.
+        // Nothing is written to workspace_memberships or
+        // workspace_membership_locations to achieve it, and no Agency
+        // relationship is read here: BusinessRouteAccess asks the one
+        // canonical authority (ViewAsManager::current(), revalidated per
+        // request) and hands back only which Business it names.
+        $viewedBusinessId = $this->businessRouteAccess->viewedBusinessIdFor($userId);
+
+        if ($viewedBusinessId !== null) {
+            return $viewedBusinessId === (int) $business->id;
         }
 
         if ((int) $business->customer_id === $userId) {

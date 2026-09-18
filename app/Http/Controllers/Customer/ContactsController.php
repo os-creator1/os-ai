@@ -14,8 +14,8 @@
     use App\Library\Entitlement\CustomerAccountAccessGuard;
     use App\Library\StringHelper;
     use App\Library\Tool;
+    use App\Library\Workspace\BusinessRouteAccess;
     use App\Library\Workspace\LocationAccessGuard;
-    use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
     use App\Models\Business;
     use App\Models\ContactGroupFields;
@@ -69,7 +69,6 @@
         public function __construct(
             ContactsRepository $contactGroups,
             private readonly WorkspaceRepository $workspaceRepository,
-            private readonly WorkspaceManager $workspaceManager,
             private readonly CustomerAccountAccessGuard $accessGuard,
         ) {
             $this->contactGroups = $contactGroups;
@@ -100,7 +99,14 @@
 
             $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
 
-            if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+            // These routes carry businessUid, so they classify as BusinessScoped
+            // and are allowed while viewing — the canonical decision (ordinary
+            // tenancy, or the exact currently-valid View-As target) is what
+            // they must ask, exactly like every other Business-addressed
+            // controller. The legacy flat Contacts routes below are unaffected:
+            // they carry no uids, return null above, and keep scoping by
+            // customer_id as they always did.
+            if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
                 abort(404);
             }
 
