@@ -256,24 +256,16 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $this->manager()->changeMemberBusinessAccessScope($owner->user_id, $membership, WorkspaceBusinessAccessScope::All, [$business->id]);
     }
 
-    // 13. IDs are normalized.
-    public function test_ids_are_normalized(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->createMembership($workspace, $member, ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$businessB->id, $businessA->id, $businessB->id, (string) $businessA->id],
-        );
-
-        $persistedIds = WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->sort()->values()->all();
-        $this->assertSame(collect([$businessA->id, $businessB->id])->sort()->values()->all(), $persistedIds);
-    }
+    // Implementation Contract 13 (businesses_workspace_id_unique) removed
+    // "IDs are normalized" (originally #13): it proved dedup/type-coercion
+    // across a multi-id SET, which required two Businesses to coexist in
+    // one Workspace — permanently impossible now, not only via
+    // addBusiness() but via any insert whatsoever. Deleted rather than
+    // rewritten (Contract 13 fixture-topology remediation, R2): no data
+    // shape it depended on can exist again, and single-id/empty-id
+    // normalization remains covered by
+    // test_selected_to_selected_identical_set_is_a_no_op (a duplicated
+    // single id) below.
 
     // 14. Cross-Workspace IDs roll back every change.
     public function test_cross_workspace_ids_roll_back_every_change(): void
@@ -365,51 +357,13 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         Event::assertNotDispatched(WorkspaceMembershipBusinessUnassigned::class);
     }
 
-    // 18. All -> Selected with IDs writes exact set.
-    public function test_all_to_selected_with_ids_writes_exact_set(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->createMembership($workspace, $member, ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$businessA->id, $businessB->id],
-        );
-
-        $persistedIds = WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->sort()->values()->all();
-        $this->assertSame(collect([$businessA->id, $businessB->id])->sort()->values()->all(), $persistedIds);
-    }
-
-    // 19. Event order is scope-changed then assigned IDs ascending.
-    public function test_all_to_selected_event_order_is_scope_changed_then_assigned_ascending(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $orderedIds = collect([$businessA->id, $businessB->id])->sort()->values()->all();
-        $membership = $this->createMembership($workspace, $member, ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
-
-        $order = [];
-        Event::listen(WorkspaceMembershipBusinessAccessScopeChanged::class, function () use (&$order) {
-            $order[] = 'scope_changed';
-        });
-        Event::listen(WorkspaceMembershipBusinessAssigned::class, function (WorkspaceMembershipBusinessAssigned $event) use (&$order) {
-            $order[] = "assigned:{$event->businessId}";
-        });
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$orderedIds[1], $orderedIds[0]], // supplied out of order
-        );
-
-        $this->assertSame(['scope_changed', "assigned:{$orderedIds[0]}", "assigned:{$orderedIds[1]}"], $order);
-    }
+    // Implementation Contract 13 removed "All -> Selected with IDs writes
+    // exact set" and "Event order is scope-changed then assigned IDs
+    // ascending" (originally #18/#19): both proved multi-id SET/ordering
+    // behavior requiring two Businesses in one Workspace simultaneously —
+    // permanently impossible now. Deleted (R2): the single-id case remains
+    // covered by test_selected_to_selected_identical_set_is_a_no_op and the
+    // direct-assignment tests below.
 
     // 20. Selected -> All clears all rows.
     public function test_selected_to_all_clears_all_rows(): void
@@ -428,31 +382,9 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $this->assertSame(0, WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->count());
     }
 
-    // 21. Event order is unassigned IDs ascending then scope-changed.
-    public function test_selected_to_all_event_order_is_unassigned_ascending_then_scope_changed(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $orderedIds = collect([$businessA->id, $businessB->id])->sort()->values()->all();
-        $membership = $this->manager()->addMember(
-            $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, $orderedIds);
-
-        $order = [];
-        Event::listen(WorkspaceMembershipBusinessUnassigned::class, function (WorkspaceMembershipBusinessUnassigned $event) use (&$order) {
-            $order[] = "unassigned:{$event->businessId}";
-        });
-        Event::listen(WorkspaceMembershipBusinessAccessScopeChanged::class, function () use (&$order) {
-            $order[] = 'scope_changed';
-        });
-
-        $this->manager()->changeMemberBusinessAccessScope($owner->user_id, $membership, WorkspaceBusinessAccessScope::All, []);
-
-        $this->assertSame(["unassigned:{$orderedIds[0]}", "unassigned:{$orderedIds[1]}", 'scope_changed'], $order);
-    }
+    // Implementation Contract 13 removed "Event order is unassigned IDs
+    // ascending then scope-changed" (originally #21): same reasoning as
+    // #18/#19 above -- required two Businesses assigned simultaneously.
 
     // 22. Selected -> Selected identical normalized set is no-op.
     public function test_selected_to_selected_identical_set_is_a_no_op(): void
@@ -480,75 +412,19 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $this->assertSame(1, WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->count());
     }
 
-    // 23. Selected -> Selected changed set writes exact result.
-    public function test_selected_to_selected_changed_set_writes_exact_result(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessC = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->manager()->addMember(
-            $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id, $businessB->id]);
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$businessB->id, $businessC->id],
-        );
-
-        $persistedIds = WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->sort()->values()->all();
-        $this->assertSame(collect([$businessB->id, $businessC->id])->sort()->values()->all(), $persistedIds);
-    }
-
-    // 24. Only set-difference assignment events fire.
-    public function test_selected_to_selected_only_set_difference_events_fire(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessC = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->manager()->addMember(
-            $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id, $businessB->id]);
-
-        Event::fake(self::ALL_EVENTS);
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$businessB->id, $businessC->id],
-        );
-
-        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, 1);
-        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, fn (WorkspaceMembershipBusinessAssigned $e) => $e->businessId === $businessC->id);
-        Event::assertDispatched(WorkspaceMembershipBusinessUnassigned::class, 1);
-        Event::assertDispatched(WorkspaceMembershipBusinessUnassigned::class, fn (WorkspaceMembershipBusinessUnassigned $e) => $e->businessId === $businessA->id);
-    }
-
-    // 25. No scope-changed event fires for Selected -> Selected.
-    public function test_no_scope_changed_event_fires_for_selected_to_selected(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->manager()->addMember(
-            $owner->user_id, $workspace, $member->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id]);
-
-        Event::fake(self::ALL_EVENTS);
-
-        $this->manager()->changeMemberBusinessAccessScope(
-            $owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected,
-            [$businessB->id],
-        );
-
-        Event::assertNotDispatched(WorkspaceMembershipBusinessAccessScopeChanged::class);
-    }
+    // Implementation Contract 13 removed "Selected -> Selected changed set
+    // writes exact result", "Only set-difference assignment events fire",
+    // and "No scope-changed event fires for Selected -> Selected"
+    // (originally #23/#24/#25): all three required either three
+    // simultaneously-assignable Businesses in one Workspace, or switching
+    // a single Selected assignment from one Business to a genuinely
+    // different one in the SAME Workspace (the pivot's own
+    // guardSameWorkspace() requires the new id to belong to that
+    // Workspace, and it can hold only the one Business already assigned).
+    // Deleted (R2): no data shape any of the three depended on can exist
+    // again, and the underlying no-op/event-emission mechanics for the one
+    // reachable case (identical single-id set) remain covered by
+    // test_selected_to_selected_identical_set_is_a_no_op above.
 
     // --- DIRECT ASSIGN ---
 
@@ -862,37 +738,17 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         );
     }
 
-    // 39. userCanAccessBusiness reflects every scope/assignment change
-    // immediately.
-    public function test_user_can_access_business_reflects_scope_and_assignment_changes_immediately(): void
-    {
-        $owner = $this->createCustomer();
-        $member = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $membership = $this->createMembership($workspace, $member, ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
-
-        $this->assertTrue($this->manager()->userCanAccessBusiness($member->id, $businessA));
-        $this->assertTrue($this->manager()->userCanAccessBusiness($member->id, $businessB));
-
-        $this->manager()->changeMemberBusinessAccessScope($owner->user_id, $membership, WorkspaceBusinessAccessScope::Selected, [$businessA->id]);
-
-        $this->assertTrue($this->manager()->userCanAccessBusiness($member->id, $businessA));
-        $this->assertFalse($this->manager()->userCanAccessBusiness($member->id, $businessB));
-
-        $this->manager()->assignBusinessToMember($owner->user_id, $membership, $businessB);
-
-        $this->assertTrue($this->manager()->userCanAccessBusiness($member->id, $businessB));
-
-        $this->manager()->unassignBusinessFromMember($owner->user_id, $membership, $businessA);
-
-        $this->assertFalse($this->manager()->userCanAccessBusiness($member->id, $businessA));
-
-        $this->manager()->changeMemberBusinessAccessScope($owner->user_id, $membership, WorkspaceBusinessAccessScope::All, []);
-
-        $this->assertTrue($this->manager()->userCanAccessBusiness($member->id, $businessA));
-    }
+    // Implementation Contract 13 removed "userCanAccessBusiness reflects
+    // scope/assignment changes immediately" (originally #39): it chained
+    // access checks across two Businesses (A and B) coexisting in one
+    // Workspace at several points (both reachable under All scope, then B
+    // separately assigned while A stays assigned) — permanently impossible
+    // now. Deleted (R2): each individual property in the chain (All scope
+    // grants access; narrowing denies the unassigned; a direct assignment
+    // grants; a direct unassignment denies; widening back to All restores
+    // access) remains independently covered by
+    // WorkspaceEffectiveAccessTest's All/Selected-scope tests and this
+    // file's own direct-assign/-unassign tests below.
 
     // 40. No workspace_transitions rows are created.
     public function test_no_workspace_transitions_rows_are_created(): void

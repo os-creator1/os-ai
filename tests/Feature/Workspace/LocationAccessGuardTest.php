@@ -326,12 +326,26 @@ class LocationAccessGuardTest extends TestCase
      * narrows to Selected excluding this exact Business, while the old
      * explicit Location grant row is left in place -> DENIED.
      */
+    /**
+     * Contract 13 remediation (Category C): the old fixture narrowed scope
+     * to a DIFFERENT sibling Business in the same Workspace — but the
+     * pivot's own assignment repository independently requires the
+     * assigned Business to belong to the membership's own Workspace
+     * (EloquentWorkspaceMembershipBusinessRepository::guardSameWorkspace()),
+     * and Contract 13 makes a second Business in that Workspace impossible
+     * regardless. Under one-Business-per-Workspace, a Selected-scope
+     * membership's assignable set for a given Workspace is either the
+     * Workspace's own sole Business or nothing — so the only way left to
+     * exclude $business from scope is narrowing to an EMPTY selection,
+     * which proves the exact property under test (the old grant is denied
+     * once scope no longer includes $business) without needing a second
+     * Business at all.
+     */
     public function test_narrowing_business_scope_to_exclude_this_business_denies_the_old_location_grant(): void
     {
         $owner = $this->createCustomer();
         $workspace = $this->createWorkspace($owner->user);
         $business = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
-        $otherBusiness = $this->createBusinessForCustomer($this->createCustomer()->user_id, $workspace->id);
         $location = $this->location($business);
 
         $staff = $this->createCustomer();
@@ -347,7 +361,7 @@ class LocationAccessGuardTest extends TestCase
             (int) $owner->user_id,
             $membership,
             WorkspaceBusinessAccessScope::Selected,
-            [$otherBusiness->id],
+            [],
         );
 
         $this->assertFalse($this->guard()->userCanAccessLocation((int) $staff->user_id, $location));

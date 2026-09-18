@@ -64,8 +64,8 @@ class MessagesInboxOnlyTest extends TestCase
     public function test_an_agency_keeps_prospecting_in_its_account_frame_and_no_messages_there(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
@@ -82,8 +82,7 @@ class MessagesInboxOnlyTest extends TestCase
 
     public function test_a_selected_agency_client_business_gets_the_normal_business_inbox(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $client = $this->addBusiness($agency, $workspace, 'Client Two');
+        [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
 
         $this->switchTo($workspace, $client)->assertRedirect();

@@ -10,7 +10,7 @@ use App\Library\Navigation\ContextSource;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerMenuBuilder;
 use App\Library\Navigation\CustomerShellComposer;
-use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
@@ -32,9 +32,12 @@ use Illuminate\Support\Facades\Auth;
  *
  * WHAT CHANGED AND WHAT DID NOT. The AUTHORIZATION is the same chain every
  * one of these controllers ran before, on every request: an active
- * Workspace, the canonical WorkspaceManager::userCanAccessBusiness(), an
- * active Business, and — when a feature key is given — EntitlementManager's
- * decision. Only where the answers are FETCHED from changed:
+ * Workspace, the canonical Business-route decision
+ * (BusinessRouteAccess::actorMayUseBusinessRoute() — ordinary
+ * WorkspaceManager tenancy, or the exact currently-valid View-As target, and
+ * nothing else), an active Business, and — when a feature key is given —
+ * EntitlementManager's decision. Only where the answers are FETCHED from
+ * changed:
  *
  *   IDENTIFICATION. ResolveCustomerContext has already read, in one
  *   statement, which Workspaces and Businesses this actor can see, and
@@ -42,12 +45,14 @@ use Illuminate\Support\Facades\Auth;
  *   pair — for this actor, from this route, with no view-as session
  *   narrowing it — the ids come from there instead of two more repository
  *   reads. That snapshot is a presentation read model and is NEVER trusted
- *   as an authorization answer: userCanAccessBusiness() still runs below
+ *   as an authorization answer: the canonical decision still runs below
  *   and re-reads the persisted rows itself. When the context did not select
  *   this exact pair (a route uid the snapshot doesn't list, a view-as
  *   session, a stale snapshot from earlier in the request), the
  *   repositories are used exactly as before, so nobody who could reach this
- *   Business before is refused now.
+ *   Business before is refused now. A view-as request therefore always takes
+ *   the repository path here, and its authority comes from
+ *   BusinessRouteAccess below — never from the snapshot.
  *
  *   ENTITLEMENT. When the requested feature is one the customer shell
  *   already gates the menu on (CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES)
@@ -109,7 +114,7 @@ trait ResolvesBusinessTenancy
             abort(404);
         }
 
-        if ($business === null || ! app(WorkspaceManager::class)->userCanAccessBusiness($userId, $business)) {
+        if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
             abort(404);
         }
 

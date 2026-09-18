@@ -110,7 +110,7 @@ class ContextSwitcherTest extends TestCase
         // An Agency account frame is a real destination, so a choice to stand
         // in it holds — until a Business-scoped page says otherwise.
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
+        $this->createAgencyManagedClient($workspace, 'Client Two', 'Client Two Workspace');
         $this->authenticateAs($agency);
 
         $this->switchTo($workspace, $clientOne);
@@ -168,23 +168,31 @@ class ContextSwitcherTest extends TestCase
     public function test_an_agency_owner_moves_between_the_agency_home_and_a_client_business(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($agency, $workspace, 'Client Two');
+        $managed = $this->createAgencyManagedClient($workspace, 'Client Two', 'Client Two Workspace');
         $this->authenticateAs($agency);
 
-        // Account frame first (two clients, none chosen).
+        // The account holds one Business, so that is where the shell opens.
+        // The Agency account home is a deliberate move away from it, and the
+        // switcher lists only what can be entered: a managed Client lives in
+        // its own Workspace the Agency holds no membership in, so it is
+        // reached through View As and never offered here.
+        $this->home()->assertOk();
+        $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
         $start = $this->home()->assertOk();
         $startShell = $this->shellHtml($start->getContent());
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Agency account\s*</', $startShell);
-        $this->assertSame(2, $this->optionCount($startShell, 'context-option-business'));
+        $this->assertSame(1, $this->optionCount($startShell, 'context-option-business'));
         $this->assertStringContainsString('Client accounts', $startShell);
+        $this->assertStringNotContainsString($managed['clientBusiness']->name, $startShell);
+        $this->assertStringNotContainsString($managed['clientWorkspace']->name, $startShell);
 
-        // Into a client, and the switcher marks it current.
-        $this->switchTo($workspace, $clientTwo)->assertRedirect(route('user.home'));
+        // Into the Business, and the switcher marks it current.
+        $this->switchTo($workspace, $clientOne)->assertRedirect(route('user.home'));
         $inClient = $this->home()->assertOk();
         $clientShell = $this->shellHtml($inClient->getContent());
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Client account\s*</', $clientShell);
         $this->assertSame(1, substr_count($clientShell, 'aria-current="true"'));
-        $this->assertStringContainsString('aria-label="Current client account: Client Two. Switch client account"', $clientShell);
+        $this->assertStringContainsString('aria-label="Current client account: Client One. Switch client account"', $clientShell);
 
         // Back to the Agency account home in one action, from inside the client.
         $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
@@ -193,20 +201,25 @@ class ContextSwitcherTest extends TestCase
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Agency account\s*</', $this->shellHtml($back->getContent()));
     }
 
+    /**
+     * Two Businesses one actor may enter are two separate accounts they hold
+     * membership in — the only shape that exists now that an account holds
+     * exactly one Business.
+     */
     public function test_switching_between_two_authorized_businesses_changes_the_whole_shell(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($agency, $workspace, 'Client Two');
+        $second = $this->reachableSecondAccount($agency, 'Client Two', 'Second Account');
         $this->authenticateAs($agency);
 
         $this->switchTo($workspace, $clientOne);
         $first = $this->home()->assertOk()->getContent();
         $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($first));
 
-        $this->switchTo($workspace, $clientTwo);
-        $second = $this->home()->assertOk()->getContent();
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientTwo->uid]), $this->menuLinks($second));
-        $this->assertNotContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($second));
+        $this->switchTo($second['workspace'], $second['business']);
+        $secondPage = $this->home()->assertOk()->getContent();
+        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$second['workspace']->uid, $second['business']->uid]), $this->menuLinks($secondPage));
+        $this->assertNotContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($secondPage));
     }
 
     public function test_a_filter_appears_only_once_there_are_enough_businesses_to_need_one(): void
@@ -214,7 +227,8 @@ class ContextSwitcherTest extends TestCase
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client 01', 'Northwind Agency');
 
         for ($i = 2; $i <= ContextSwitcherPresenter::FILTER_THRESHOLD - 1; $i++) {
-            $this->addBusiness($agency, $workspace, 'Client ' . str_pad((string) $i, 2, '0', STR_PAD_LEFT));
+            $label = str_pad((string) $i, 2, '0', STR_PAD_LEFT);
+            $this->reachableSecondAccount($agency, 'Client ' . $label, 'Account ' . $label);
         }
 
         $this->authenticateAs($agency);
@@ -222,7 +236,7 @@ class ContextSwitcherTest extends TestCase
         $this->assertSame(ContextSwitcherPresenter::FILTER_THRESHOLD - 1, $this->optionCount($below, 'context-option-business'));
         $this->assertStringNotContainsString('data-role="context-switcher-filter"', $below);
 
-        $this->addBusiness($agency, $workspace, 'Client ' . ContextSwitcherPresenter::FILTER_THRESHOLD);
+        $this->reachableSecondAccount($agency, 'Client ' . ContextSwitcherPresenter::FILTER_THRESHOLD, 'Account ' . ContextSwitcherPresenter::FILTER_THRESHOLD);
         $atThreshold = $this->shellHtml($this->home()->assertOk()->getContent());
         $this->assertStringContainsString('data-role="context-switcher-filter"', $atThreshold);
         $this->assertStringContainsString('<label class="visually-hidden" for="customer-context-switcher-filter">', $atThreshold);
@@ -235,10 +249,10 @@ class ContextSwitcherTest extends TestCase
     public function test_a_selected_scope_member_sees_neither_the_account_nor_its_name(): void
     {
         [$agencyOwner, $houseBusiness, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House Business', 'Northwind Agency');
+        $managed = $this->createAgencyManagedClient($workspace, 'Client Bakery', 'Client Bakery Workspace');
         $client = $this->createCustomer();
-        $clientBusiness = $this->addBusiness($client, $workspace, 'Client Bakery');
         $membership = $this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
-        $this->assign($membership, $clientBusiness);
+        $this->assign($membership, $houseBusiness);
         $this->authenticateAs($client);
 
         $html = $this->home()->assertOk()->getContent();
@@ -249,7 +263,12 @@ class ContextSwitcherTest extends TestCase
         $this->assertStringNotContainsString('customer-context-switcher-toggle', $shell);
         $this->assertStringNotContainsString('context-option-account', $shell);
         $this->assertStringNotContainsString('Northwind Agency', $html, 'S-6: the agency account name is never disclosed to a client.');
-        $this->assertStringNotContainsString('Agency House Business', $html);
+
+        // Their own assigned Business is all they are shown; the account's
+        // managed client — its own account entirely — stays invisible.
+        $this->assertStringContainsString('Agency House Business', $shell);
+        $this->assertStringNotContainsString($managed['clientBusiness']->name, $html);
+        $this->assertStringNotContainsString($managed['clientWorkspace']->name, $html);
 
         // And the action itself refuses, not merely the menu.
         $this->switchToAccount($workspace)->assertNotFound();
@@ -292,14 +311,14 @@ class ContextSwitcherTest extends TestCase
     public function test_an_inactive_business_is_never_a_switcher_entry(): void
     {
         [$agency, $active, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Active Client', 'Northwind Agency');
-        $inactive = $this->addBusiness($agency, $workspace, 'Paused Client', BusinessStatus::Inactive);
+        $paused = $this->reachableSecondAccount($agency, 'Paused Client', 'Paused Account', BusinessStatus::Inactive);
         $this->authenticateAs($agency);
 
         $shell = $this->shellHtml($this->home()->assertOk()->getContent());
 
         $this->assertStringContainsString('Active Client', $shell);
         $this->assertStringNotContainsString('Paused Client', $shell);
-        $this->switchTo($workspace, $inactive)->assertNotFound();
+        $this->switchTo($paused['workspace'], $paused['business'])->assertNotFound();
     }
 
     public function test_the_switcher_never_lists_a_physical_location(): void
@@ -354,7 +373,6 @@ class ContextSwitcherTest extends TestCase
     public function test_viewing_as_a_client_replaces_the_switcher_with_the_viewed_identity(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Two');
         $this->authenticateAs($agency);
 
         $this->startViewAs($workspace, $clientOne, 'Checking a reported problem.');
@@ -379,7 +397,7 @@ class ContextSwitcherTest extends TestCase
     public function test_the_block_renders_once_and_only_in_the_sidebar(): void
     {
         [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($customer, $workspace, 'Client Two');
+        $this->createAgencyManagedClient($workspace, 'Client Two', 'Client Two Workspace');
         $this->authenticateAs($customer);
 
         $html = $this->home()->assertOk()->getContent();
@@ -395,5 +413,30 @@ class ContextSwitcherTest extends TestCase
     private function optionCount(string $shell, string $role): int
     {
         return substr_count($shell, 'data-role="' . $role . '"');
+    }
+
+    /**
+     * A second account $actor can genuinely enter: its own Workspace holding
+     * its own single Business, with $actor an active agency-wide member of it.
+     * An account holds exactly one Business, so this — not a sibling Business
+     * — is how one actor reaches more than one.
+     *
+     * @return array{customer: \App\Models\Customer, business: \App\Models\Business, workspace: \App\Models\Workspace}
+     */
+    private function reachableSecondAccount(
+        \App\Models\Customer $actor,
+        string $businessName,
+        string $workspaceName,
+        BusinessStatus $status = BusinessStatus::Active,
+    ): array {
+        $account = $this->createIndependentWorkspaceBusiness(
+            businessName: $businessName,
+            workspaceName: $workspaceName,
+            status: $status,
+        );
+
+        $this->member($account['workspace'], $actor->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
+
+        return $account;
     }
 }

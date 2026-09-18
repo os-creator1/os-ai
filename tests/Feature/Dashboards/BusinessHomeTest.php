@@ -136,17 +136,17 @@ class BusinessHomeTest extends TestCase
     public function test_an_agency_inside_a_selected_client_sees_that_clients_business_home_and_name(): void
     {
         [$agency, $clientA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Alpha', 'Northwind Agency');
-        $clientB = $this->addBusiness($agency, $workspace, 'Client Bravo');
+        $clientB = $this->createAgencyManagedClient($workspace, 'Client Bravo', 'Client Bravo Account')['clientBusiness'];
         $this->contactsAdded($clientA, 7, '2026-09-01');
         $this->contactsAdded($clientB, 4, '2026-09-01');
         $this->authenticateAs($agency);
 
-        $this->switchTo($workspace, $clientB)->assertRedirect(route('user.home'));
+        $this->switchTo($workspace, $clientA)->assertRedirect(route('user.home'));
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Client account home.*Client Bravo.*</h1>#s', $html);
-        $this->assertSame('4', $this->headlineFigure($html, 'new_contacts'));
-        $this->assertStringNotContainsString('Client Alpha', $this->mainText($html));
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Client account home.*Client Alpha.*</h1>#s', $html);
+        $this->assertSame('7', $this->headlineFigure($html, 'new_contacts'));
+        $this->assertStringNotContainsString('Client Bravo', $this->mainText($html), "A managed Client's own account never bleeds in.");
     }
 
     // =================================================================
@@ -156,7 +156,9 @@ class BusinessHomeTest extends TestCase
     public function test_restricted_staff_see_only_their_scoped_business_and_never_an_account_frame(): void
     {
         [$owner, $scoped, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Scoped Client', 'Northwind Agency');
-        $other = $this->addBusiness($owner, $workspace, 'Other Client');
+        $otherAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Other Client', workspaceName: 'Other Client Account');
+        $other = $otherAccount['business'];
+        $this->assignTier($otherAccount['workspace'], WorkspacePlanTier::Growth);
         $this->contactsAdded($scoped, 2, '2026-09-01');
         $this->contactsAdded($other, 9, '2026-09-01');
         $this->wallet($scoped, ['billing_status' => 'suspended']);
@@ -175,8 +177,10 @@ class BusinessHomeTest extends TestCase
         $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is never a Home band for anyone.');
         $this->assertNotContains('billing_exception', $this->bandOrder($html), 'No billing fix is reachable for staff, so no billing strip.');
 
-        // Two scoped Businesses: the chooser — never the Agency account bands.
-        $this->assign($membership, $other);
+        // Two scoped Businesses, in the two accounts they are scoped into:
+        // the chooser — never the Agency account bands.
+        $otherMembership = $this->member($otherAccount['workspace'], $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
+        $this->assign($otherMembership, $other);
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertStringContainsString('data-kind="chooser"', $html);
@@ -211,7 +215,10 @@ class BusinessHomeTest extends TestCase
         $this->assertStringContainsString('data-kind="business"', $this->home()->assertOk()->getContent());
 
         // Many, none chosen.
-        $second = $this->addBusiness($customer, $workspace, 'Second Venue');
+        $secondAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Second Venue', workspaceName: 'Second Account');
+        $second = $secondAccount['business'];
+        $this->assignTier($secondAccount['workspace'], WorkspacePlanTier::Growth);
+        $this->member($secondAccount['workspace'], $customer->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
         session()->forget(array_keys(session()->all()));
         $this->authenticateAs($customer);
         $html = $this->home()->assertOk()->getContent();
@@ -228,9 +235,9 @@ class BusinessHomeTest extends TestCase
 
     public function test_view_as_renders_the_viewed_clients_data_and_name_with_the_banner_and_no_agent_figure(): void
     {
-        [$agency, $ownClient, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Client', 'Northwind Agency');
-        $viewed = $this->addBusiness($agency, $workspace, 'Viewed Client');
-        $this->contactsAdded($ownClient, 7, '2026-09-01');
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
+        $managed = $this->createAgencyManagedClient($workspace, 'Managed Client', 'Managed Client Account')['clientBusiness'];
+        $this->contactsAdded($managed, 7, '2026-09-01');
         $this->contactsAdded($viewed, 2, '2026-09-01');
         $this->wallet($viewed, ['available_balance_micro' => 3000000, 'billing_status' => 'suspended']);
         $this->website($viewed, 'draft');
@@ -242,7 +249,7 @@ class BusinessHomeTest extends TestCase
         $this->assertStringContainsString('data-role="view-as-banner"', $html);
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Viewed Client.*</h1>#s', $html);
         $this->assertSame('2', $this->headlineFigure($html, 'new_contacts'));
-        $this->assertStringNotContainsString('Agency Own Client', $this->mainText($html));
+        $this->assertStringNotContainsString('Managed Client', $this->mainText($html));
         $this->assertSame(0, DB::table('business_home_visits')->count(), 'Viewing a client never consumes that client\'s own activity window.');
 
         // No cost, funding, provider or identity action while viewing.
@@ -764,7 +771,6 @@ class BusinessHomeTest extends TestCase
     public function test_login_as_parent_is_absent_while_a_team_member_views_a_client(): void
     {
         [$owner, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Parent Client', 'Parent Agency');
-        $this->addBusiness($owner, $workspace, 'Other Parent Client');
         $member = $this->createCustomer();
         DB::table('users')->where('id', $member->user_id)->update(['parent_id' => $owner->user_id]);
         $this->member($workspace, $member->user, WorkspaceMembershipRole::Admin);

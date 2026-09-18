@@ -5,6 +5,8 @@ namespace Tests\Feature\Dashboards;
 use App\Enums\Dashboard\AttentionType;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Library\Dashboard\BusinessHomePresenter;
 use App\Library\Dashboard\DashboardSnapshot;
@@ -269,10 +271,13 @@ class BusinessHomeNextBestMoveTest extends TestCase
     public function test_a_recommendation_for_a_business_the_advisor_would_not_open_is_shown_without_a_link(): void
     {
         [$customer, $primary, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Primary Venue', 'Primary Account');
-        $secondary = $this->addBusiness($customer, $workspace, 'Second Venue');
+        $secondAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Second Venue', workspaceName: 'Second Account');
+        $secondary = $secondAccount['business'];
+        $this->assignTier($secondAccount['workspace'], WorkspacePlanTier::Growth);
+        $this->member($secondAccount['workspace'], $customer->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
         $opportunity = $this->recommendation($secondary, ['type' => 'missing_phone']);
         $this->authenticateAs($customer);
-        $this->switchTo($workspace, $secondary)->assertRedirect(route('user.home'));
+        $this->switchTo($secondAccount['workspace'], $secondary)->assertRedirect(route('user.home'));
 
         $band = $this->band($customer->user);
         $html = $this->bandHtml($this->home()->assertOk()->getContent(), 'next_best_move');
@@ -335,7 +340,7 @@ class BusinessHomeNextBestMoveTest extends TestCase
     public function test_an_agency_opened_client_gets_its_own_move_and_nothing_of_a_sibling(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $sibling = $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $sibling = $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account')['clientBusiness'];
         $this->conversationWith($sibling, [['incoming', $this->minutesAgo(30)]]);
         $this->googleConnection($sibling, GoogleConnectionState::Revoked);
         $this->website($client, 'draft');

@@ -14,7 +14,10 @@ use Illuminate\Http\Request;
  * Flow, in order:
  *  1. the authenticated user;
  *  2. the visible Workspaces (CustomerContextSnapshot, one statement);
- *  3. a Workspace: from an active View-as session, from the route's
+ *  3. a Workspace: from an active View-as session — which is TERMINAL and
+ *     resolves to that session's exact Workspace and Business or to nothing,
+ *     so no preference, route uid or sole-Business rule below can put the
+ *     actor's own Business behind a client's banner — then from the route's
  *     `workspaceUid`, from the remembered preference, or the only one;
  *  4. a Business inside that Workspace: from View-as, from the route's
  *     `businessUid` (the owning controller authorizes it on this very
@@ -32,8 +35,12 @@ use Illuminate\Http\Request;
  *  7. when several authorized choices remain, NOTHING is chosen — the
  *     Account frame asks for an explicit selection. No "first row" wins.
  *
- * There is no second tenancy algorithm here: the authorization decision is
- * always WorkspaceManager's. The snapshot only decides what is LISTED.
+ * There is no second tenancy algorithm here. For every ordinary selection the
+ * authorization decision is WorkspaceManager's; for a view-as session it is
+ * ViewAsManager::current()'s, which the middleware has already run for this
+ * request and which owns the whole Agency relationship/eligibility/authority
+ * chain. The snapshot only decides what is LISTED, and what it lists stays
+ * the actor's ordinary tenancy even while they view a client.
  */
 final class CustomerContextResolver
 {
@@ -54,17 +61,15 @@ final class CustomerContextResolver
         $routeBusinessUid = $this->routeParameter($request, 'businessUid');
         $remembered = $this->preference->get();
 
-        // 1. View-as narrows everything to the viewed Business (§5.5). The
-        //    session is only honoured while the actor can still reach that
-        //    Business through the canonical check.
+        // 1. View-as narrows everything to the viewed Business (§5.5), and it
+        //    is TERMINAL: while a session is active the context is the viewed
+        //    pair or nothing at all. Nothing below may run — a remembered
+        //    preference, a route uid or the actor's own sole Business would
+        //    otherwise quietly become "the current Business" underneath a
+        //    banner announcing a client, which is the one thing this branch
+        //    exists to prevent.
         if ($viewAs !== null) {
-            $workspace = $this->findWorkspace($workspaces, $viewAs->workspaceUid);
-            $business = $workspace?->findBusinessByUid($viewAs->businessUid);
-
-            if ($workspace !== null && $business !== null && $business->isSelectable()
-                && $this->canonicallyAccessible($userId, $business)) {
-                return $this->context($userId, $workspaces, $workspace, $business, ContextSource::ViewAs, $viewAs, false);
-            }
+            return $this->viewedContext($userId, $workspaces, $viewAs);
         }
 
         // 2. Route-derived pair: the controller owning this route resolves
@@ -165,10 +170,75 @@ final class CustomerContextResolver
     }
 
     /**
+     * The context an ACTIVE view-as session resolves to: its own exact
+     * Workspace and Business, never anything else.
+     *
+     * Two shapes reach here, and the difference is the actor's ordinary
+     * standing, not the session:
+     *
+     *  - SAME-Workspace view-as (the pre-Contract-04 path): the viewed
+     *    Workspace is part of the actor's own tenancy, so it is already in
+     *    the snapshot and is taken from there, re-authorized through the
+     *    canonical §14.1 decision exactly as before. Unchanged.
+     *
+     *  - CROSS-Workspace Agency view-as (V1 Contract 04): the viewed Client
+     *    Workspace is deliberately NOT the Agency actor's ordinary tenancy —
+     *    WorkspaceManager::userCanAccessBusiness() correctly answers false
+     *    for it and must keep doing so — so it is absent from the snapshot
+     *    and §14.1 is the wrong question to ask about it. Looking for it
+     *    there and falling through when it was missing is what resolved the
+     *    shell to the AGENCY'S OWN Business while a client was being viewed.
+     *    The facts come from CustomerContextSnapshot::forViewedTarget()
+     *    instead, keyed by the session's own ids.
+     *
+     * No Agency relationship, eligibility or authority check is repeated
+     * here: this method never sees a session ViewAsManager::current() has not
+     * already revalidated on this request, so the only authority is that one.
+     * The moment the session ends — exit, expiry, a terminated relationship,
+     * lost Agency authority or lost eligibility — current() returns null,
+     * $viewAs is null, this branch does not run, and the actor's ordinary
+     * context resolves normally from the snapshot alone.
+     *
+     * $workspaces stays the actor's ORDINARY tenancy in both shapes. The
+     * viewed Client Workspace is never appended to it, so it cannot appear as
+     * a switcher candidate, and there is nothing to survive the session.
+     *
+     * @param  array<int, WorkspaceCandidate>  $workspaces
+     */
+    private function viewedContext(int $userId, array $workspaces, ViewAsContext $viewAs): CustomerContext
+    {
+        $workspace = $this->findWorkspace($workspaces, $viewAs->workspaceUid);
+
+        if ($workspace !== null) {
+            $business = $workspace->findBusinessByUid($viewAs->businessUid);
+
+            if ($business !== null && $business->isSelectable() && $this->canonicallyAccessible($userId, $business)) {
+                return $this->context($userId, $workspaces, $workspace, $business, ContextSource::ViewAs, $viewAs, false);
+            }
+
+            return $this->context($userId, $workspaces, null, null, ContextSource::None, $viewAs, false);
+        }
+
+        $viewed = $this->snapshot->forViewedTarget($viewAs);
+        $business = $viewed?->findBusinessByUid($viewAs->businessUid);
+
+        if ($viewed === null || $business === null || ! $business->isSelectable()) {
+            // Fail closed rather than fall back: a session whose target cannot
+            // be read is not a licence to show the actor their own Business.
+            return $this->context($userId, $workspaces, null, null, ContextSource::None, $viewAs, false);
+        }
+
+        return $this->context($userId, $workspaces, $viewed, $business, ContextSource::ViewAs, $viewAs, false);
+    }
+
+    /**
      * The canonical RFC-003 §14.1 decision, re-run for every selection the
      * shell makes on its own (preference or sole candidate). A lightweight
      * Business carrying only its id is enough: userCanAccessBusiness()
      * re-reads the persisted row itself and never trusts the caller's model.
+     *
+     * Deliberately NOT asked about a cross-Workspace view-as target: ordinary
+     * tenancy is the wrong authority for one (see viewedContext()).
      */
     private function canonicallyAccessible(int $userId, BusinessCandidate $candidate): bool
     {

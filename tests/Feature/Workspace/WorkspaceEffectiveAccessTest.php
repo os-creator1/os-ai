@@ -112,6 +112,13 @@ class WorkspaceEffectiveAccessTest extends TestCase
     // exactly like a staff member — this test constructs that realistic
     // configuration rather than asserting a role-based bypass the
     // algorithm does not have.
+    /**
+     * Contract 13 remediation (Category C): "every business in workspace"
+     * used to mean two sibling Businesses — impossible now
+     * (businesses_workspace_id_unique). All-scope's own property (grants
+     * access unconditionally, regardless of which specific Business
+     * occupies the Workspace) is unaffected by there being only one.
+     */
     public function test_active_admin_membership_accesses_every_business_in_workspace(): void
     {
         $owner = $this->createCustomer();
@@ -121,11 +128,9 @@ class WorkspaceEffectiveAccessTest extends TestCase
             'role' => WorkspaceMembershipRole::Admin,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
         ]);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
-        $this->assertTrue($this->manager()->userCanAccessBusiness($admin->id, $businessA));
-        $this->assertTrue($this->manager()->userCanAccessBusiness($admin->id, $businessB));
+        $this->assertTrue($this->manager()->userCanAccessBusiness($admin->id, $business));
     }
 
     // role is not consulted at all by §14.1 — an admin with scope=selected
@@ -147,6 +152,11 @@ class WorkspaceEffectiveAccessTest extends TestCase
     }
 
     // 5. An active staff membership with scope=all has access to every Business.
+    /**
+     * Contract 13 remediation (Category C): same reasoning as the Admin
+     * version above — "every business" now trivially means the Workspace's
+     * one, but All-scope's own unconditional-access property is unchanged.
+     */
     public function test_active_staff_scope_all_accesses_every_business_in_workspace(): void
     {
         $owner = $this->createCustomer();
@@ -156,16 +166,26 @@ class WorkspaceEffectiveAccessTest extends TestCase
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
         ]);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
-        $this->assertTrue($this->manager()->userCanAccessBusiness($staff->id, $businessA));
-        $this->assertTrue($this->manager()->userCanAccessBusiness($staff->id, $businessB));
+        $this->assertTrue($this->manager()->userCanAccessBusiness($staff->id, $business));
     }
 
     // 6/11. An active staff membership with scope=selected has access only
     // when the exact grant exists — a grant for another Business does not
     // leak access to the tested Business.
+    /**
+     * Contract 13 remediation (Category B/C): "the ungranted sibling" used
+     * to be a second Business in the SAME Workspace — impossible now, and
+     * independently the pivot's own assignment repository requires an
+     * assigned Business to belong to the membership's own Workspace
+     * (EloquentWorkspaceMembershipBusinessRepository::guardSameWorkspace()),
+     * so under one-Business-per-Workspace there is no valid "granted one,
+     * ungranted sibling" pair left inside a single Workspace at all. An
+     * independent Business in its own separate Workspace proves the exact
+     * same denial (and more strongly: denied by both non-grant and
+     * ordinary cross-Workspace tenancy).
+     */
     public function test_active_staff_scope_selected_accesses_only_the_granted_business(): void
     {
         $owner = $this->createCustomer();
@@ -176,7 +196,7 @@ class WorkspaceEffectiveAccessTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
         $granted = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $notGranted = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $notGranted = $this->createBusinessForCustomer($this->createCustomer()->user_id, $this->createWorkspace($this->createCustomer()->user)->id);
 
         app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $granted);
 

@@ -67,8 +67,18 @@ class DashboardQueryBudgetTest extends TestCase
      */
     private const BUSINESS_HOME_CONVERSATIONS = 4;
 
-    /** Observed: status read, Workspace, three capacity reads, outreach, two Agency-wide control reads. */
-    private const AGENCY_HOME_DASHBOARD_OWNED = 8;
+    /**
+     * Observed: the portfolio's two bounded client-resolution reads (V1: the
+     * ACTIVE Agency→Client relationships, then ONE joined read of those
+     * client Workspaces with their Businesses), the status read, Workspace,
+     * three capacity reads, outreach, and two Agency-wide control reads.
+     *
+     * The two client-resolution reads are what replaced deriving clients from
+     * Businesses inside the Agency Workspace. Both are flat: the assertions
+     * below re-measure with three times the clients and require the SAME
+     * count, and the ceiling stays where it was.
+     */
+    private const AGENCY_HOME_DASHBOARD_OWNED = 10;
 
     /**
      * Unified Home §3.1 (A-1) — cross-client performance costs exactly one
@@ -186,7 +196,7 @@ class DashboardQueryBudgetTest extends TestCase
 
         $before = $this->businessHomeCost($customer->user);
 
-        $sibling = $this->addBusiness($customer, $workspace, 'Sibling Venue');
+        $sibling = $this->createIndependentWorkspaceBusiness(businessName: 'Sibling Venue', workspaceName: 'Sibling Account')['business'];
         $this->populate($sibling, 1);
         $this->populate($business, 1);
         $this->switchTo($workspace, $business)->assertRedirect(route('user.home'));
@@ -204,10 +214,15 @@ class DashboardQueryBudgetTest extends TestCase
 
     public function test_the_agency_account_home_is_one_bounded_read_set_whatever_the_number_of_clients(): void
     {
-        [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        // V1 (Contract 13): each client is its own Workspace, reached through
+        // an ACTIVE relationship — so "the number of clients" is the number of
+        // relationships, and resolving them must not scale with it either.
+        $fixture = $this->createAgencyManagedClient(null, 'Alpha Dental', 'Alpha Dental Account', 'Northwind HQ', 'Northwind Agency');
+        [$agency, $workspace, $alpha] = [$fixture['agencyOwner'], $fixture['agencyWorkspace'], $fixture['clientBusiness']];
+        $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account');
         $this->wallet($alpha, ['billing_status' => 'suspended']);
         $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
 
         $two = $this->agencyHomeCost($agency->user);
 
@@ -220,7 +235,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertLessThanOrEqual(12, $two['dashboard']);
 
         foreach (['Charlie Cafe', 'Delta Deli', 'Echo Eats', 'Foxtrot Florist'] as $name) {
-            $client = $this->addBusiness($agency, $workspace, $name);
+            $client = $this->createAgencyManagedClient($workspace, $name, $name . ' Account')['clientBusiness'];
             $this->wallet($client, ['debt_balance_micro' => 5]);
             $this->website($client, 'draft');
             $this->sent($client, 3, '2026-09-01');
@@ -242,10 +257,11 @@ class DashboardQueryBudgetTest extends TestCase
     public function test_the_dashboard_views_execute_no_query(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
-        $second = $this->addBusiness($customer, $workspace, 'Bravo Bistro');
+        $second = $this->createAgencyManagedClient($workspace, 'Bravo Bistro', 'Bravo Bistro Account')['clientBusiness'];
         $this->populate($business, 1);
         $this->website($business, 'draft');
         $this->authenticateAs($customer);
+        $this->switchToAccount($workspace);
 
         $agencySnapshot = $this->dashboardFor($customer->user);
         $this->assertSame(DashboardSnapshot::KIND_AGENCY, $agencySnapshot->kind);

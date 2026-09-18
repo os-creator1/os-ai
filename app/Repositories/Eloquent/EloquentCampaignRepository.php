@@ -110,8 +110,11 @@
          *
          *   - the ACTING user (Auth::user(), never the supplied user_id)
          *     must be authorized for the supplied Business, through
-         *     WorkspaceManager — the same single authority the Outreach
-         *     controller uses; and
+         *     BusinessRouteAccess — the same single authority every
+         *     Business-addressed surface uses: ordinary WorkspaceManager
+         *     tenancy, or the exact currently-valid View-As target, which is
+         *     how an Agency actor sends for the Client it is genuinely
+         *     viewing without ever becoming a tenant of it; and
          *   - a supplied user_id may only ever be that Business's own owner.
          *
          * A console or queued caller has no authenticated actor and supplies
@@ -152,7 +155,7 @@
 
             abort_if($business === null, 404);
             abort_unless(
-                app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $actorId, $business),
+                app(\App\Library\Workspace\BusinessRouteAccess::class)->actorMayUseBusiness(Auth::user(), $business),
                 404,
             );
 
@@ -235,7 +238,7 @@
 
             if ($actorId !== null) {
                 abort_unless(
-                    app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $actorId, $business),
+                    app(\App\Library\Workspace\BusinessRouteAccess::class)->actorMayUseBusiness(Auth::user(), $business),
                     404,
                 );
             }

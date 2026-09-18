@@ -7,6 +7,7 @@ use App\Http\Requests\Analytics\AnalyticsRangeRequest;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -23,10 +24,12 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  * B5 Business Analytics — the one Business-scoped Analytics surface
  * (contract §1, §2, §12, §13).
  *
- * Every Business action, without exception, resolves the target exactly
- * as UsageBillingController::resolveViewableBusiness() does: Workspace by
- * uid → Business INSIDE that Workspace → WorkspaceManager::
- * userCanAccessBusiness() → abort(404), never 403, on any mismatch. Only
+ * Every Business action, without exception, resolves the target the same
+ * way every other Business-addressed surface does: Workspace by uid →
+ * Business INSIDE that Workspace → the canonical
+ * BusinessRouteAccess::actorMayUseBusinessRoute() decision (ordinary
+ * WorkspaceManager tenancy, or the exact currently-valid View-As target) →
+ * abort(404), never 403, on any mismatch. Only
  * after that chain is the range validated, so a foreign identifier can
  * never be probed through a validation answer. Auth::id() is the
  * capability/actor argument only, never a tenant key; there is no
@@ -181,7 +184,7 @@ class AnalyticsController extends CustomerBaseController
         $business = $this->workspaceRepository->businessesForWorkspace($workspace)
             ->firstWhere('uid', $businessUid);
 
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness($userId, $business)) {
+        if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
             abort(404);
         }
 
