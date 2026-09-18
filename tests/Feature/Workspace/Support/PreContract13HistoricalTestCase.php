@@ -31,21 +31,27 @@ use Tests\TestCase;
  * shared test connection is never touched.
  *
  * CLEANUP GUARANTEE — covers BOTH failure shapes, not just an ordinary
- * test outcome:
+ * test outcome, and treats a FAILED cleanup differently depending on which
+ * shape it happens in:
  *
  *  A. setUp() itself fails partway (a migrate:fresh/rollback/verification/
  *     config error) AFTER the disposable database already exists. PHPUnit
  *     never calls tearDown() when setUp() throws, so relying on tearDown()
  *     alone would leak the database here. setUp() therefore wraps every
  *     step after database creation in its own try/catch: on failure it
- *     restores config('database.default'), purges connections, drops the
- *     disposable database itself, and only then rethrows the ORIGINAL
- *     exception — a secondary failure while cleaning up is swallowed
- *     rather than allowed to replace it, so the real cause is always what
- *     the test run reports.
+ *     attempts the same cleanup tearDown() uses, but a FAILURE during that
+ *     cleanup is deliberately suppressed — an already-in-flight setup
+ *     exception is the one the test run must report, never a secondary
+ *     cleanup failure that would otherwise replace it — and only then
+ *     rethrows the ORIGINAL exception.
  *  B. setUp() completes successfully. Ordinary tearDown() owns cleanup
  *     exactly once, exactly as before, regardless of whether the test
- *     itself passed, failed an assertion, or threw.
+ *     itself passed, failed an assertion, or threw — but here a cleanup
+ *     failure is NOT suppressed: there is no earlier exception to protect,
+ *     so a database that fails to drop (or a connection that fails to
+ *     restore) must surface and fail the test, never be silently
+ *     swallowed into a false green. parent::tearDown() still runs first,
+ *     via finally, regardless.
  *
  * $historicalDatabaseName/$historicalConnectionName are nullable and start
  * null specifically so cleanup logic — in either path above — can tell
@@ -92,7 +98,10 @@ abstract class PreContract13HistoricalTestCase extends TestCase
             config(['database.default' => $this->historicalConnectionName]);
             DB::purge($this->historicalConnectionName);
         } catch (\Throwable $setupException) {
-            $this->cleanupHistoricalDatabase();
+            // suppressErrors: true — an already-in-flight setup exception
+            // must be what the test run reports, never a secondary
+            // cleanup failure.
+            $this->cleanupHistoricalDatabase(suppressErrors: true);
 
             throw $setupException;
         }
@@ -101,7 +110,10 @@ abstract class PreContract13HistoricalTestCase extends TestCase
     protected function tearDown(): void
     {
         try {
-            $this->cleanupHistoricalDatabase();
+            // suppressErrors: false — nothing earlier to protect here, so
+            // a cleanup failure must surface and fail the test rather than
+            // be silently swallowed into a false green.
+            $this->cleanupHistoricalDatabase(suppressErrors: false);
         } finally {
             parent::tearDown();
         }
@@ -111,44 +123,55 @@ abstract class PreContract13HistoricalTestCase extends TestCase
      * Idempotent and safe to call from either setUp()'s catch block or
      * ordinary tearDown() — never both meaningfully for the same test,
      * since PHPUnit skips tearDown() whenever setUp() threw, but written
-     * so a future refactor calling it twice would still only drop once.
-     * Any exception raised while cleaning up (e.g. the drop itself fails)
-     * is swallowed here rather than propagated, so it can never mask a
-     * real setup or test failure the caller is already handling — the
-     * shared/default test database this disposable one was created
-     * alongside is never touched by any of this.
+     * so a future refactor calling it twice would still only attempt each
+     * step once. Both cleanup steps (restoring the connection, dropping
+     * the database) are always attempted regardless of whether the other
+     * one failed.
+     *
+     * $suppressErrors decides what happens to a failure in either step:
+     * true swallows it (setUp()'s catch block already has the real
+     * exception to report and a cleanup failure must never replace it);
+     * false rethrows the first one encountered, once both steps have been
+     * attempted, so a database that fails to drop is never silently
+     * treated as clean. The shared/default test database this disposable
+     * one was created alongside is never touched by either step.
      */
-    private function cleanupHistoricalDatabase(): void
+    private function cleanupHistoricalDatabase(bool $suppressErrors): void
     {
+        $failure = null;
+
         if ($this->originalDefaultConnection !== null) {
-            try {
-                config(['database.default' => $this->originalDefaultConnection]);
-                DB::purge('mysql');
-            } catch (\Throwable) {
-                // Swallowed — see method docblock.
-            }
-
+            $originalDefaultConnection = $this->originalDefaultConnection;
             $this->originalDefaultConnection = null;
+
+            try {
+                config(['database.default' => $originalDefaultConnection]);
+                DB::purge('mysql');
+            } catch (\Throwable $e) {
+                $failure ??= $e;
+            }
         }
 
-        if ($this->historicalDatabaseName === null || $this->historicalConnectionName === null) {
-            return;
+        if ($this->historicalDatabaseName !== null && $this->historicalConnectionName !== null) {
+            $databaseName = $this->historicalDatabaseName;
+            $connectionName = $this->historicalConnectionName;
+
+            // Cleared before the drop itself, not after: this method must
+            // never be re-entrant on the same database (no double-drop
+            // attempt) regardless of whether the drop below succeeds,
+            // fails, or is never reached at all.
+            $this->historicalDatabaseName = null;
+            $this->historicalConnectionName = null;
+
+            try {
+                $this->dropHistoricalDatabase($databaseName, $connectionName);
+            } catch (\Throwable $e) {
+                $failure ??= $e;
+            }
         }
 
-        $databaseName = $this->historicalDatabaseName;
-        $connectionName = $this->historicalConnectionName;
-
-        // Cleared before the drop itself, not after: if the drop below
-        // throws, this method must still never be re-entrant on the same
-        // database (no double-drop attempt), and the exception is
-        // swallowed immediately below regardless.
-        $this->historicalDatabaseName = null;
-        $this->historicalConnectionName = null;
-
-        try {
-            TemporaryTestDatabase::endEnforcementDatabase($databaseName, $connectionName);
-        } catch (\Throwable) {
-            // Swallowed — see method docblock.
+        if ($failure !== null && ! $suppressErrors) {
+            throw $failure;
         }
     }
 
@@ -156,15 +179,31 @@ abstract class PreContract13HistoricalTestCase extends TestCase
      * Test-only extension point, a no-op by default: called immediately
      * after the disposable database exists and is registered, before
      * anything else in setUp() runs. Exists solely so
-     * PreContract13HistoricalTestCaseLifecycleTest's dedicated probe
-     * subclass can throw here to prove — against this class's own real
-     * setUp()/cleanupHistoricalDatabase() flow, never a reimplementation
-     * of it — that a setup failure after database creation still drops
-     * the database and still reports the original exception. No shipped
-     * subclass overrides this.
+     * PreContract13SetupFailureProbe can throw here to prove — against
+     * this class's own real setUp()/cleanupHistoricalDatabase() flow,
+     * never a reimplementation of it — that a setup failure after
+     * database creation still drops the database and still reports the
+     * original exception. No shipped subclass overrides this.
      */
     protected function afterHistoricalDatabaseCreated(): void
     {
+    }
+
+    /**
+     * Test-only extension point, delegating straight to
+     * TemporaryTestDatabase::endEnforcementDatabase() by default: the one
+     * place cleanupHistoricalDatabase() actually drops the disposable
+     * database. Exists solely so
+     * PreContract13OrdinaryCleanupFailureProbe can prove that a cleanup
+     * failure during ORDINARY tearDown() (never a suppressed setup-failure
+     * cleanup) surfaces and fails the test rather than being silently
+     * swallowed — its override still performs the REAL drop via parent::
+     * before throwing a synthetic failure, so exercising this path never
+     * actually leaks a database. No shipped subclass overrides this.
+     */
+    protected function dropHistoricalDatabase(string $databaseName, string $connectionName): void
+    {
+        TemporaryTestDatabase::endEnforcementDatabase($databaseName, $connectionName);
     }
 
     /**

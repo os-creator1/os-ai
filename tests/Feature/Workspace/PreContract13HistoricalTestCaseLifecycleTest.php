@@ -5,21 +5,28 @@ namespace Tests\Feature\Workspace;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Feature\Workspace\Support\PreContract13OrdinaryCleanupFailureProbe;
 use Tests\Feature\Workspace\Support\PreContract13SetupFailureProbe;
 use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
 use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
- * Review correction (R5) — proves PreContract13HistoricalTestCase's cleanup
- * guarantee holds for BOTH shapes a historical test's setUp() can end in,
- * not merely the ordinary one: (A) a setup failure occurring AFTER the
- * disposable database already exists, and (B) an ordinary pass/fail/throw
- * once setUp() has completed. A test cannot observe its own class's setUp()
- * throwing from within its own test method (the method body never runs),
- * so (A) is proven by spawning PreContract13SetupFailureProbe as a
- * genuinely separate PHPUnit child process and inspecting PHPUnit's own
- * reported outcome — never a reimplementation of the lifecycle under test.
+ * Review correction (R5, round 2) — proves PreContract13HistoricalTestCase's
+ * cleanup guarantee holds for all three shapes a historical test's
+ * lifecycle can end in: (A) a setup failure occurring AFTER the disposable
+ * database already exists, where a cleanup failure must be SUPPRESSED so
+ * the original setup exception is what gets reported; (B) an ordinary
+ * pass/fail/throw once setUp() has completed, where a cleanup failure must
+ * instead SURFACE and fail the test rather than be silently swallowed into
+ * a false green; and (C) the unchanged pre-existing callback-based
+ * withEnforcementDatabase() primitive. A test cannot observe its own
+ * class's setUp()/tearDown() outcome from within its own test method (in
+ * (A) the method body never runs at all; in (B) the method body itself
+ * genuinely passes, and only tearDown() afterward fails), so (A) and (B)
+ * are each proven by spawning a dedicated probe as a genuinely separate
+ * PHPUnit child process and inspecting PHPUnit's own reported outcome —
+ * never a reimplementation of the lifecycle under test.
  */
 class PreContract13HistoricalTestCaseLifecycleTest extends TestCase
 {
@@ -78,8 +85,46 @@ class PreContract13HistoricalTestCaseLifecycleTest extends TestCase
     }
 
     /**
-     * 4. Contract 13's constraint on the SHARED database — never touched by
-     * any of the above — remains present throughout.
+     * 3 & 4. An ordinary cleanup failure — setUp() having already
+     * completed successfully, so there is no earlier exception to protect
+     * — must surface and fail the test, never be silently swallowed into
+     * a false green; and parent::tearDown() must still have run (proven
+     * indirectly: the probe's own disposable database is genuinely gone
+     * afterward, which only parent::tearDown() completing without being
+     * skipped, plus the probe's own real drop-then-throw override,
+     * guarantees).
+     */
+    public function test_an_ordinary_cleanup_failure_surfaces_and_fails_the_test_while_parent_teardown_still_runs(): void
+    {
+        $before = $this->enforcementDatabaseCount();
+
+        $process = $this->runPhpUnit(['tests/Feature/Workspace/Support/PreContract13OrdinaryCleanupFailureProbe.php']);
+        $output = $process->getOutput() . $process->getErrorOutput();
+
+        $this->assertFalse(
+            $process->isSuccessful(),
+            "A cleanup failure during ordinary tearDown() must fail the test, never pass silently:\n{$output}"
+        );
+        $this->assertStringContainsString(
+            PreContract13OrdinaryCleanupFailureProbe::CLEANUP_FAILURE_MARKER,
+            $output,
+            "The cleanup failure itself must be what PHPUnit reports:\n{$output}"
+        );
+
+        // The probe's dropHistoricalDatabase() override performs the REAL
+        // drop before throwing its synthetic failure, so nothing was
+        // actually leaked by exercising this path — the count is
+        // unaffected by the failure it deliberately injects afterward.
+        $this->assertSame(
+            $before,
+            $this->enforcementDatabaseCount(),
+            "The probe's own real drop must still have happened despite the synthetic failure layered on top of it."
+        );
+    }
+
+    /**
+     * 4 (continued). Contract 13's constraint on the SHARED database —
+     * never touched by any of the above — remains present throughout.
      */
     public function test_the_shared_database_still_enforces_the_contract_13_unique_constraint_afterward(): void
     {
