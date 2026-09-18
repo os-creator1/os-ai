@@ -4,11 +4,11 @@ namespace Tests\Feature\Workspace;
 
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\AgencyClientRelationshipStatus;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Navigation\ContextSource;
 use App\Library\Navigation\CustomerContext;
-use App\Library\Navigation\CustomerContextPreference;
 use App\Library\Support\RequestScopedCache;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
@@ -17,7 +17,6 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Business;
 use App\Models\Customer;
-use App\Models\User;
 use App\Models\ViewAsSession;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
@@ -288,7 +287,7 @@ class AgencyViewAsContextResolutionTest extends TestCase
 
         $this->assertSame(ViewAsSession::END_REASON_AGENCY_ENTITLEMENT_LOST, ViewAsSession::query()->sole()->end_reason);
         $this->assertSame(
-            \App\Enums\Workspace\AgencyClientRelationshipStatus::Active,
+            AgencyClientRelationshipStatus::Active,
             $pair['relationship']->fresh()->status,
             'The relationship itself is untouched — only eligibility was lost.',
         );
