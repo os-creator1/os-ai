@@ -5,7 +5,6 @@ namespace Tests\Feature\Usage;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\PayerType;
 use App\Http\Controllers\Customer\Business\UsageBillingController;
-use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\UsageBillingPresenter;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -76,27 +75,45 @@ class AgencyRebillPresentationTest extends TestCase
         $this->assertStringNotContainsString(e(__('locale.usage_billing.responsibility.you_pay')), $html);
     }
 
-    public function test_the_agency_account_frame_shows_agency_rebill_read_only_and_never_as_a_selector_option(): void
+    /**
+     * `WorkspaceController::billingResponsibilityViewData()` (the account
+     * frame's "Client accounts" panel, reached via `customer.workspaces.show`)
+     * only ever lists a Business whose `customer_id` differs from ITS OWN
+     * Workspace's `owner_user_id`. A real managed client built by
+     * rebilledClient() is a SEPARATE Client Workspace whose one Business
+     * (Contract 13) is, as always, owned by that same Client Workspace's own
+     * owner — there is no "different customer" divergence to show, rebilled
+     * or not. So a real AgencyRebill relationship never surfaces through this
+     * legacy same-Workspace selector at all: the panel renders for the
+     * Client Workspace's own owner (Agency tier + manages), but its business
+     * list stays empty. That absence — not a read-only row — is the true V1
+     * presentation fact, and is exactly what distinguishes real
+     * relationship-backed AgencyRebill from the old same-Workspace payer
+     * selector. See AgencyBillingResponsibilityTest for the sibling coverage
+     * of the same panel's one legitimate (non-managed-client) precondition.
+     */
+    public function test_the_client_account_frame_never_surfaces_a_real_agency_rebill_relationship_through_the_legacy_selector(): void
     {
-        // An Agency-tier Client Workspace managed by another Agency, so its own
-        // account frame lists client accounts; one of them is AgencyRebill.
-        $m = $this->managedClient(WorkspacePlanTier::Agency);
-        [, $rebilled] = $this->clientBusiness($m['client'], 'Rebilled Client');
-        [, $selfPaying] = $this->clientBusiness($m['client'], 'Self Paying Client');
-        app(BillingProfileManager::class)->assignPayer($rebilled, PayerType::AgencyRebill, (int) $m['agencyOwner']->user_id, 'Agency funds this client.');
-        $this->setPayer($selfPaying, PayerType::Business);
-
+        $m = $this->rebilledClient(WorkspacePlanTier::Agency);
         $this->authenticateAs($m['clientOwner']);
-        $html = $this->get(route('customer.workspaces.show', $m['client']->uid))->assertOk()->getContent();
 
-        $this->assertStringContainsString('data-role="billing-responsibility-managing-agency" data-business-uid="' . $rebilled->uid . '"', $html);
-        $this->assertStringContainsString(e(__('locale.usage_billing.responsibility.managing_agency_option')), $html);
-        $this->assertStringNotContainsString('billing-responsibility-agency-' . $rebilled->uid, $html);
-        $this->assertStringNotContainsString('billing-responsibility-client-' . $rebilled->uid, $html);
-        $this->assertStringNotContainsString('data-business-uid="' . $rebilled->uid . '" data-role="billing-responsibility-form"', $html);
+        $response = $this->get(route('customer.workspaces.show', [$m['client']->uid]))->assertOk();
+        $html = $response->getContent();
 
-        // The ordinary client account keeps its selector.
-        $this->assertStringContainsString('billing-responsibility-client-' . $selfPaying->uid, $html);
+        // The panel itself renders (Agency tier + owner), but lists no
+        // business at all: this Business's customer_id is its own Client
+        // Workspace's owner_user_id, so it never meets the panel's
+        // different-direct-owner precondition, AgencyRebill or not.
+        $this->assertStringContainsString('data-role="billing-responsibility"', $html);
+        $this->assertStringContainsString(__('locale.usage_billing.responsibility.account_frame_empty'), $html);
+        $this->assertSame(['businesses' => []], $response->original->getData()['billingResponsibility']);
+
+        // No read-only "managing agency" row and no legacy agency/client
+        // selector form exist for this Business anywhere on the page (the
+        // panel has zero rows, so neither can be present for any uid).
+        $this->assertStringNotContainsString('data-role="billing-responsibility-managing-agency"', $html);
+        $this->assertStringNotContainsString('data-role="billing-responsibility-form"', $html);
+        $this->assertStringNotContainsString('name="billing_responsibility"', $html);
     }
 
     public function test_the_legacy_payer_selector_still_rejects_agency_rebill(): void

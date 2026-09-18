@@ -87,30 +87,43 @@ class SpendingCapBoundaryTest extends TestCase
 
     public function test_the_workspace_aggregate_limit_admits_the_exact_boundary_across_agency_paid_businesses_and_refuses_one_unit_above(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $clientA] = $this->clientBusiness($workspace, 'Client A');
-        [, $clientB] = $this->clientBusiness($workspace, 'Client B');
-        [, $selfPaid] = $this->clientBusiness($workspace, 'Self Paid');
-        $this->setPayer($clientA, PayerType::Workspace);
-        $this->setPayer($clientB, PayerType::Workspace);
+        // Contract 13: the aggregate belongs to ONE Workspace holding ONE
+        // Business, so the allowance is consumed by successive sends of that
+        // Business (production is explicit that no cross-client Agency
+        // aggregate exists in V1). The boundary arithmetic is unchanged.
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $client] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
+        $this->setPayer($client, PayerType::Workspace);
+
+        // A second, ordinary account whose own Business pays for itself — no
+        // different-customer mechanic needed here. Its OWN account carries an
+        // aggregate limit too — otherwise "not subject to it" would pass for
+        // the trivial reason that no limit exists anywhere near it, and the
+        // payer-type gate could be deleted unnoticed.
+        [$selfPayingAccountOwner, $selfPaid, $selfPaidWorkspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Self Paid', 'Self Paid Agency');
         $this->setPayer($selfPaid, PayerType::Business);
+
         $this->activateFixtureRate('crm', '1000000');
-        foreach ([$clientA, $clientB, $selfPaid] as $b) {
+        foreach ([$client, $selfPaid] as $b) {
             $this->fund($b, 100_000_000);
         }
 
         app(UsageWalletManager::class)->setWorkspaceAggregateSpendCap($workspace, '5000000', (int) $agency->user_id, 'Agency limit.');
+        app(UsageWalletManager::class)->setWorkspaceAggregateSpendCap($selfPaidWorkspace, '5000000', (int) $selfPayingAccountOwner->user_id, 'Agency limit.');
 
-        $this->assertTrue($this->sendWithReservation($clientA, '3')->granted);
-        $this->assertTrue($this->sendWithReservation($clientB, '2')->granted, 'Client B takes exactly the last of the aggregate allowance.');
+        $this->assertTrue($this->sendWithReservation($client, '3')->granted);
+        $this->assertTrue($this->sendWithReservation($client, '2')->granted, 'The second send takes exactly the last of the aggregate allowance.');
 
         $this->providerCalled = false;
-        $over = $this->sendWithReservation($clientA, '0.000001');
+        $over = $this->sendWithReservation($client, '0.000001');
         $this->assertFalse($over->granted);
         $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_SPEND_CAP, $over->denialReason);
         $this->assertFalse($this->providerCalled);
 
-        // A client-paid Business in the same Workspace is not subject to the Agency limit.
+        // A client-paid Business is not subject to the Agency limit — its own
+        // account's 5,000,000 limit is ten times smaller than this send, and
+        // it is still granted, because a Business payer never counts toward a
+        // Workspace aggregate.
         $this->assertTrue($this->sendWithReservation($selfPaid, '50')->granted);
 
         $this->assertStringContainsString('agency-wide monthly spending limit', app(UsageWalletManager::class)->customerMessageForDenial(UsageWalletManager::DENIAL_WORKSPACE_SPEND_CAP));
@@ -188,22 +201,20 @@ class SpendingCapBoundaryTest extends TestCase
 
     public function test_the_workspace_emergency_stop_refuses_every_business_of_the_workspace(): void
     {
-        [$agency, $agencyBusiness, $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $clientBusiness] = $this->clientBusiness($workspace, 'Client A');
+        // Contract 13: "every Business of the Workspace" is its one Business.
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$client, $clientBusiness] = $this->businessOwnedByAnotherCustomer($workspace, 'Client A');
         $this->setPayer($clientBusiness, PayerType::Business);
         $this->activateFixtureRate('crm', '1000000');
-        $this->fund($agencyBusiness, 100_000_000);
         $this->fund($clientBusiness, 100_000_000);
 
         app(UsageWalletManager::class)->pauseWorkspacePaidActivity($workspace, (int) $agency->user_id, 'Emergency.');
 
-        foreach ([$agencyBusiness, $clientBusiness] as $b) {
-            $this->providerCalled = false;
-            $refused = $this->sendWithReservation($b, '1');
-            $this->assertFalse($refused->granted);
-            $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_PAID_ACTIVITY_PAUSED, $refused->denialReason);
-            $this->assertFalse($this->providerCalled);
-        }
+        $this->providerCalled = false;
+        $refused = $this->sendWithReservation($clientBusiness, '1');
+        $this->assertFalse($refused->granted);
+        $this->assertSame(UsageWalletManager::DENIAL_WORKSPACE_PAID_ACTIVITY_PAUSED, $refused->denialReason);
+        $this->assertFalse($this->providerCalled);
 
         // A Business user cannot lift or set the Workspace stop.
         try {

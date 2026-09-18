@@ -8,6 +8,7 @@ use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Jobs\Coo\GenerateCooInsight;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\ViewAs\ViewAsManager;
 use App\Library\ViewAs\ViewAsProhibitedActions;
 use App\Models\Business;
 use App\Models\Workspace;
@@ -124,14 +125,33 @@ class ExplainThisChangeTest extends TestCase
     {
         $this->assertContains('customer.workspaces.businesses.performance.explain', ViewAsProhibitedActions::EXACT);
 
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Client', 'Northwind Agency');
-        $viewed = $this->addBusiness($agency, $workspace, 'Viewed Client');
-        $this->authenticateAs($agency);
-        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        // Contract 13: a client is a Business in its OWN Workspace, reached
+        // through a real Agency relationship — never a second Business inside
+        // the Agency's own Workspace. The viewed AI spend would be the
+        // client's, which is exactly what must not happen.
+        $managed = $this->createAgencyManagedClient(
+            clientBusinessName: 'Viewed Client',
+            clientWorkspaceName: 'Viewed Client Workspace',
+            agencyBusinessName: 'Agency Own Business',
+            agencyWorkspaceName: 'Northwind Agency',
+        );
+        $viewed = $managed['clientBusiness'];
+        $clientWorkspace = $managed['clientWorkspace'];
 
-        $response = $this->explain($workspace, $viewed);
+        $this->authenticateAs($managed['agencyOwner']);
+        app(ViewAsManager::class)->startAgencyView(
+            $managed['agencyOwner']->user,
+            $managed['agencyWorkspace']->uid,
+            $clientWorkspace->uid,
+        );
+
+        $response = $this->explain($clientWorkspace, $viewed);
 
         $this->assertNotSame(200, $response->status());
+        // Refused BECAUSE it is a prohibited action while viewing — not
+        // merely because an Agency owner is no member of a Client Workspace.
+        $response->assertRedirect(route('user.home'))
+            ->assertSessionHas('message', app(ViewAsProhibitedActions::class)->refusalMessage());
         Queue::assertNothingPushed();
     }
 

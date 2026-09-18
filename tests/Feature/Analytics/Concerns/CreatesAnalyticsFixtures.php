@@ -52,6 +52,25 @@ trait CreatesAnalyticsFixtures
         return [$customer, $business->fresh(), Workspace::query()->findOrFail($business->workspace_id)];
     }
 
+    /**
+     * A SECOND active Business of the same customer.
+     *
+     * Contract 13: one Business per Workspace, so "another Business under the
+     * same customer" is another Workspace the same customer owns. The
+     * Business-scoping and per-Business cache assertions built on it are
+     * unchanged — and still cross a real tenancy boundary.
+     *
+     * @return array{0: Business, 1: Workspace}
+     */
+    protected function otherBusinessOf(Customer $customer, string $timezone = 'America/New_York', string $name = 'Other Venue'): array
+    {
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['timezone' => $timezone, 'name' => $name]));
+
+        DB::table('businesses')->where('id', $business->id)->update(['status' => BusinessStatus::Active->value]);
+
+        return [$business->fresh(), Workspace::query()->findOrFail($business->workspace_id)];
+    }
+
     protected function authenticateAsCustomer(Customer $customer, array $permissions = ['view_reports']): void
     {
         $this->authenticateAsUser($customer->user, $permissions);

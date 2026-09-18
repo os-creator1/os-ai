@@ -383,10 +383,13 @@ class GenerateCooInsightTest extends TestCase
 
     public function test_a_plan_suspended_between_two_worker_jobs_denies_the_second_insight_and_spends_nothing(): void
     {
-        [$customer, $first, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'First Venue', 'Shared Account');
-        $second = $this->addBusiness($customer, $workspace, 'Second Venue');
-        $this->materialPeriod($first);
-        $this->materialPeriod($second);
+        // Contract 13: one Workspace holds exactly one Business, so the two
+        // jobs are two jobs for THAT Business — which is what this test needs
+        // anyway. The defect it guards is a plan read memoized by job 1 and
+        // reused by job 2 in the same worker process, and the memo is keyed
+        // by Workspace, so both jobs must share one Workspace to exercise it.
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'First Venue', 'Shared Account');
+        $this->materialPeriod($business);
 
         // At each provider call, record whether this worker process holds the plan read memoized.
         $planMemoKey = 'workspace_plan_assignment:find:' . $workspace->id;
@@ -407,31 +410,38 @@ class GenerateCooInsightTest extends TestCase
         });
 
         // JOB 1 — plan active: ai_coo_basic allowed, the plan read memoized, one insight bought.
-        $this->pushInsightJob($first);
+        $this->pushInsightJob($business);
         $this->workOneInsightJob();
 
         $this->assertSame(1, $this->fakeAi->callCount(), 'Precondition: job 1 was entitled and paid.');
         $this->assertSame([true], $memoizedAtProviderCall, 'Precondition: job 1 memoized the plan read in this worker process.');
         $ledgerAfterJobOne = AiUsageLedgerEntry::query()->count();
+        $insightsAfterJobOne = CooInsight::query()->pluck('id')->all();
+
+        // New signals arrive, so jobs 2 and 3 ask for a genuinely new insight
+        // rather than being served job 1's cached one: the generator dedups on
+        // the facts fingerprint, and reusing job 1's facts would skip job 2
+        // for that reason instead of the entitlement one under test.
+        $this->contactsAdded($business, 9, '2026-09-08');
 
         // Between jobs — suspended by another process, not through this worker's repository.
         $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => WorkspacePlanAssignmentStatus::Suspended->value]));
 
         // JOB 2 — same worker, container and console request; nothing in the job or the test clears the memo.
-        $this->pushInsightJob($second);
+        $this->pushInsightJob($business);
         $this->workOneInsightJob();
 
         $this->assertSame(1, $this->fakeAi->callCount(), 'Job 2 made no provider call.');
         $this->assertSame($ledgerAfterJobOne, AiUsageLedgerEntry::query()->count(), 'Job 2 reserved nothing and wrote no ledger row.');
-        $this->assertSame(0, CooInsight::query()->where('business_id', $second->id)->count(), 'Job 2 cached no insight.');
+        $this->assertSame(0, CooInsight::query()->whereNotIn('id', $insightsAfterJobOne)->count(), 'Job 2 cached no insight.');
 
         // JOB 3 — reactivated the same way: the same Business, same facts, now pays. Job 2's refusal was entitlement alone.
         DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['status' => WorkspacePlanAssignmentStatus::Active->value]);
-        $this->pushInsightJob($second);
+        $this->pushInsightJob($business);
         $this->workOneInsightJob();
 
         $this->assertSame(2, $this->fakeAi->callCount(), 'The next job sees the reactivation, too.');
-        $this->assertSame(1, CooInsight::query()->where('business_id', $second->id)->count());
+        $this->assertSame(1, CooInsight::query()->whereNotIn('id', $insightsAfterJobOne)->count(), 'Job 3 cached exactly the insight job 2 was refused.');
         $this->assertSame(0, DB::table('jobs')->count(), 'Every job was processed by the worker.');
         $this->assertSame(0, DB::table('failed_jobs')->count(), 'None failed.');
     }

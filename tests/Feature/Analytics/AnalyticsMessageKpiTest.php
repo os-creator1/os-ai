@@ -137,7 +137,7 @@ class AnalyticsMessageKpiTest extends TestCase
     public function test_another_business_rows_never_appear_even_under_the_same_customer(): void
     {
         [$customer, $businessA, $workspace] = $this->tenant();
-        $businessB = app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Other Venue']));
+        [$businessB] = $this->otherBusinessOf($customer);
         $u = $businessA->customer_id;
 
         $this->report($businessA, $u);

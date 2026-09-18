@@ -161,37 +161,51 @@ class AiRefusalScopeTest extends TestCase
 
     public function test_a_business_at_its_own_cap_is_limit_reached_on_its_row_and_not_on_the_account(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Row Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        // Contract 13: an account is one Workspace holding one Business, so
+        // the business row and the account headline describe the SAME pair —
+        // which is the point: the per-Business allowance is exhausted while
+        // the Workspace allowance is not. A second, unrelated account proves
+        // the refusal does not leak beyond the Business that earned it.
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Row Agency');
         $this->openPeriod(AiUsagePeriod::SCOPE_WORKSPACE, (int) $workspace->id, $workspace, $this->workspaceCap(), intdiv($this->workspaceCap(), 10));
         // Own allowance spent by all but one micro-unit: committed says
         // "nearing"; only the recorded refusal can say "reached".
-        $this->openPeriod(AiUsagePeriod::SCOPE_BUSINESS, (int) $second->id, $workspace, $this->businessCap(), $this->businessCap() - 1);
+        $this->openPeriod(AiUsagePeriod::SCOPE_BUSINESS, (int) $business->id, $workspace, $this->businessCap(), $this->businessCap() - 1);
 
-        $this->refusedCall($workspace, $second);
+        $unrelated = $this->createIndependentWorkspaceBusiness(businessName: 'Client Two', workspaceName: 'Unrelated Agency');
+        $this->assignTier($unrelated['workspace'], WorkspacePlanTier::Agency);
+
+        $this->refusedCall($workspace, $business);
 
         $this->authenticateAs($owner);
-        $section = $this->section($workspace, $first);
+        $section = $this->section($workspace, $business);
 
         $this->assertStringContainsString(self::NORMAL, $this->text($section), 'The account headline follows the Workspace allowance.');
-        $this->assertSame('limit_reached', $this->rowStates($section)[$second->uid]);
-        $this->assertSame('normal', $this->rowStates($section)[$first->uid]);
+        $this->assertSame('limit_reached', $this->rowStates($section)[$business->uid]);
+
+        $this->authenticateAs($unrelated['customer']);
+        $otherSection = $this->section($unrelated['workspace'], $unrelated['business']);
+
+        $this->assertSame('normal', $this->rowStates($otherSection)[$unrelated['business']->uid], 'Another account\'s Business is untouched by this one\'s refusal.');
+        $this->assertStringContainsString(self::NORMAL, $this->text($otherSection));
     }
 
     public function test_the_workspace_cap_refusing_a_business_scoped_call_makes_the_account_limit_reached(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Headline Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        // The Workspace allowance is what refuses the Business-scoped call;
+        // the Business's own allowance is barely touched, so its row must not
+        // claim otherwise. One Workspace, one Business (Contract 13).
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Headline Agency');
         $this->openPeriod(AiUsagePeriod::SCOPE_WORKSPACE, (int) $workspace->id, $workspace, $this->workspaceCap(), $this->workspaceCap() - 1);
-        $this->openPeriod(AiUsagePeriod::SCOPE_BUSINESS, (int) $second->id, $workspace, $this->businessCap(), intdiv($this->businessCap(), 5));
+        $this->openPeriod(AiUsagePeriod::SCOPE_BUSINESS, (int) $business->id, $workspace, $this->businessCap(), intdiv($this->businessCap(), 5));
 
-        $this->refusedCall($workspace, $second);
+        $this->refusedCall($workspace, $business);
 
         $this->authenticateAs($owner);
-        $section = $this->section($workspace, $first);
+        $section = $this->section($workspace, $business);
 
         $this->assertStringContainsString(self::LIMIT, $this->text($section), 'Committed is one micro-unit under the cap, and the account is used up.');
-        $this->assertSame('normal', $this->rowStates($section)[$second->uid], 'Client Two\'s own allowance is at 20%; its row stays truthful.');
+        $this->assertSame('normal', $this->rowStates($section)[$business->uid], 'The Business\'s own allowance is at 20%; its row stays truthful.');
     }
 
     public function test_an_agency_workspace_level_refusal_makes_the_account_limit_reached(): void

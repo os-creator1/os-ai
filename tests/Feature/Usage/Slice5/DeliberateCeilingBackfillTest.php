@@ -31,10 +31,10 @@ class DeliberateCeilingBackfillTest extends TestCase
 
     public function test_the_backfill_disables_only_non_compliant_enabled_rows_and_preserves_everything_else(): void
     {
-        [$owner, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
         $this->assertTrue(Schema::hasColumn('business_usage_wallets', 'auto_recharge_refusal_notified_at'));
 
         $rows = [];
+        $accountOwners = [];
         foreach ([
             'compliant' => ['auto_recharge_enabled' => true, 'monthly_recharge_cap_micro' => 100_000_000],
             'missing_ceiling' => ['auto_recharge_enabled' => true, 'monthly_recharge_cap_micro' => null],
@@ -43,7 +43,11 @@ class DeliberateCeilingBackfillTest extends TestCase
             'zero_ceiling' => ['auto_recharge_enabled' => true, 'monthly_recharge_cap_micro' => 0],
             'already_off' => ['auto_recharge_enabled' => false, 'monthly_recharge_cap_micro' => null],
         ] as $label => $columns) {
-            [, $business] = $this->clientBusiness($workspace, 'Client ' . $label);
+            // Contract 13: each of these Businesses is its own ordinary
+            // account; the backfill reads wallet rows and $owner is only ever
+            // used as this account's own payer authority below, so no
+            // different-customer mechanic is needed here at all.
+            [$owner, $business] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Client ' . $label, 'Client ' . $label . ' Agency');
             $this->setPayer($business, $label === 'below_preset' ? PayerType::Business : PayerType::Workspace);
             DB::table('business_usage_wallets')->where('business_id', $business->id)->update(array_merge([
                 'auto_recharge_threshold_micro' => 2_000_000,
@@ -60,6 +64,7 @@ class DeliberateCeilingBackfillTest extends TestCase
                 'currency_id' => $this->usd(), 'correlation_key' => 'backfill-fixture-' . $business->id, 'created_at' => now(),
             ]);
             $rows[$label] = $business;
+            $accountOwners[$label] = $owner;
         }
 
         $walletsBefore = collect($rows)->map(fn ($b) => (array) $this->walletRow($b))->all();
@@ -91,14 +96,16 @@ class DeliberateCeilingBackfillTest extends TestCase
 
         // From here on the manager keeps the invariant: the switched-off row re-enables only with a compliant ceiling.
         $this->fakeProvider();
-        $this->attachFakeCard($rows['missing_ceiling'], (int) $owner->user_id);
+        // Its OWN account's owner — the payer authority for that Business.
+        $reEnablingOwner = (int) $accountOwners['missing_ceiling']->user_id;
+        $this->attachFakeCard($rows['missing_ceiling'], $reEnablingOwner);
         try {
-            app(UsageWalletManager::class)->configureAutoRecharge($rows['missing_ceiling'], true, '2000000', '5000000', null, (int) $owner->user_id);
+            app(UsageWalletManager::class)->configureAutoRecharge($rows['missing_ceiling'], true, '2000000', '5000000', null, $reEnablingOwner);
             $this->fail('Re-enabling without a ceiling must be refused.');
         } catch (\InvalidArgumentException $e) {
             $this->assertSame('monthly_cap_required', $e->getMessage());
         }
-        app(UsageWalletManager::class)->configureAutoRecharge($rows['missing_ceiling'], true, '2000000', '5000000', '100000000', (int) $owner->user_id);
+        app(UsageWalletManager::class)->configureAutoRecharge($rows['missing_ceiling'], true, '2000000', '5000000', '100000000', $reEnablingOwner);
         $this->assertSame(1, (int) $this->walletRow($rows['missing_ceiling'])->auto_recharge_enabled);
     }
 }

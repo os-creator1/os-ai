@@ -491,6 +491,26 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     /**
      * @return array{business: \App\Models\Business, user: User, country: Country, sendingServer: SendingServer, meterKey: string}
      */
+    /**
+     * Makes the fixture's send NON-qualifying for M5.
+     *
+     * These tests used to do it with a second Business in the same Workspace
+     * (cardinality 2). Contract 13 holds exactly one Business per Workspace,
+     * so that lever cannot be built any more — and the gate's own pilot tuple
+     * is the reachable one: the pilot names a DIFFERENT Business, so this send
+     * is outside the pilot and falls through to the legacy path, which is
+     * precisely the behaviour these tests assert.
+     */
+    private function leaveTheM5Pilot(): void
+    {
+        $outsideThePilot = $this->createBusinessWithWorkspace(
+            $this->createCustomer(),
+            $this->businessAttributes(['name' => 'Outside The Pilot ' . uniqid(), 'currency_code' => 'M5T']),
+        );
+
+        config(['usage_billing.conversations_metering.pilot_business_id' => (int) $outsideThePilot->id]);
+    }
+
     private function buildQualifyingQuickSendFixture(
         int $availableBalanceMicro = 10_000_000,
         string $twilioAccountSid = 'ACtest',
@@ -784,8 +804,8 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     }
 
     /**
-     * Exceptional correction, Defect 1 — a non-M5-qualifying send (here,
-     * a multi-Business Workspace, so $m5TokenAction stays null) must keep
+     * Exceptional correction, Defect 1 — a non-M5-qualifying send (here, a
+     * send outside the pilot tuple, so $m5TokenAction stays null) must keep
      * its existing legacy response status exactly as before this
      * correction: 'success' for a Delivered provider result, and no
      * m5_token_action attached at all.
@@ -795,11 +815,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $fixture = $this->buildQualifyingQuickSendFixture();
         $fixture['user']->update(['sms_unit' => 1000]);
 
-        app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace(
-            \App\Models\Customer::where('user_id', $fixture['business']->customer_id)->first(),
-            $fixture['business']->workspace,
-            $this->businessAttributes(['name' => 'Second Business Legacy', 'currency_code' => 'M5T']),
-        );
+        $this->leaveTheM5Pilot();
 
         $campaign = $this->mockCampaignReturning('accepted', 'Delivered');
 
@@ -967,24 +983,19 @@ class ConversationsPlainSmsMeteringTest extends TestCase
      * exactly matches the pilot Business id: no guessed attribution, no
      * reservation, legacy behavior fully preserved.
      */
-    public function test_multi_business_workspace_never_engages_m5_metering(): void
+    public function test_a_send_outside_the_pilot_never_engages_m5_metering(): void
     {
         $fixture = $this->buildQualifyingQuickSendFixture();
         $fixture['user']->update(['sms_unit' => 1000]);
 
-        // A second Business in the identical Workspace makes cardinality 2.
-        app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace(
-            \App\Models\Customer::where('user_id', $fixture['business']->customer_id)->first(),
-            $fixture['business']->workspace,
-            $this->businessAttributes(['name' => 'Second Business', 'currency_code' => 'M5T']),
-        );
+        $this->leaveTheM5Pilot();
 
         $campaign = $this->mockCampaignReturning('accepted', 'Delivered');
 
         $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $this->baseQuickSendInput($fixture), true);
         $payload = $response->getData();
 
-        $this->assertObjectNotHasProperty('m5_token_action', $payload, 'A non-qualifying multi-Business send must never carry an m5_token_action.');
+        $this->assertObjectNotHasProperty('m5_token_action', $payload, 'A non-qualifying send must never carry an m5_token_action.');
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
 
         $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
@@ -1101,15 +1112,11 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $walletA = DB::table('business_usage_wallets')->where('business_id', $fixtureA['business']->id)->first();
         $this->assertLessThan(10_000_000, (int) $walletA->available_balance_micro, 'Wallet must have been charged.');
 
-        // B — non-qualifying legacy send (multi-Business, so M5 never
-        // engages), provider succeeds.
+        // B — non-qualifying legacy send (outside the pilot tuple, so M5
+        // never engages), provider succeeds.
         $fixtureB = $this->buildQualifyingQuickSendFixture();
         $fixtureB['user']->update(['sms_unit' => 1000]);
-        app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace(
-            \App\Models\Customer::where('user_id', $fixtureB['business']->customer_id)->first(),
-            $fixtureB['business']->workspace,
-            $this->businessAttributes(['name' => 'Second Business B', 'currency_code' => 'M5T']),
-        );
+        $this->leaveTheM5Pilot();
         $campaignB = $this->mockCampaignReturning('accepted', 'Delivered');
 
         app(EloquentCampaignRepository::class)->quickSend($campaignB, $this->baseQuickSendInput($fixtureB), true);

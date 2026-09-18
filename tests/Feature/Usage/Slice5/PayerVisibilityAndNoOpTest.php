@@ -46,8 +46,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_an_agency_paid_client_reads_billing_managed_by_your_agency_and_no_funding_controls(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace);
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
         $this->fakeProvider();
@@ -66,8 +66,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_a_client_paid_business_sees_its_own_funding_controls_but_never_the_payer_control(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace);
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Business);
         $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
         $this->fakeProvider();
@@ -83,8 +83,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_a_business_scoped_actor_cannot_mutate_the_payer_by_direct_post(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace);
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
         $this->authenticateAs($client);
@@ -133,8 +133,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_submitting_the_unchanged_payer_is_a_true_no_op(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace);
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
         Event::fake([BusinessPayerChanged::class]);
@@ -167,8 +167,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_a_real_payer_change_by_the_agency_owner_is_audited_and_announced(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace);
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
         Event::fake([BusinessPayerChanged::class]);
@@ -189,8 +189,8 @@ class PayerVisibilityAndNoOpTest extends TestCase
 
     public function test_the_agency_owner_sees_agency_wide_controls_and_the_agency_paid_client_page_shows_funding_controls_to_the_payer_only(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace);
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->fakeProvider();
         $this->authenticateAs($agency);

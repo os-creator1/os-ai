@@ -94,8 +94,8 @@ class WorkspaceUsageControlsTest extends TestCase
 
     public function test_agency_wide_controls_are_saved_by_the_agency_owner_and_refused_to_a_business_user(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace);
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$client, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->setPayer($business, PayerType::Workspace);
         $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
 
@@ -132,11 +132,11 @@ class WorkspaceUsageControlsTest extends TestCase
 
     public function test_an_agency_wide_admin_may_manage_the_workspace_controls_but_a_scoped_admin_may_not(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
         $agencyAdmin = $this->createCustomer();
         $this->member($workspace, $agencyAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
         $scopedAdmin = $this->createCustomer();
-        [, $business] = $this->clientBusiness($workspace);
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace);
         $this->assign($this->member($workspace, $scopedAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected), $business);
 
         app(UsageWalletManager::class)->setWorkspaceAggregateSpendCap($workspace, '10000000', (int) $agencyAdmin->user_id, 'Agency admin.');

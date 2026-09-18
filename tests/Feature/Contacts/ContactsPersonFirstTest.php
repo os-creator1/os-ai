@@ -88,7 +88,7 @@ class ContactsPersonFirstTest extends TestCase
     public function test_the_list_holds_only_the_selected_businesss_contacts(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $other = $this->addBusiness($owner, $workspace, 'Client Two');
+        $other = $this->otherBusinessOf($owner)['business'];
         $this->person($this->group($business, 'One'), ['FIRST_NAME' => 'Visible']);
         $this->person($this->group($other, 'Two'), ['FIRST_NAME' => 'Elsewhere', 'EMAIL' => 'elsewhere@example.test']);
         $this->authenticateAs($owner);
@@ -164,14 +164,15 @@ class ContactsPersonFirstTest extends TestCase
     /**
      * Tenancy (item 5): the redirect a person-first create lands on is
      * built from THIS request's own Business, never inferred from the
-     * customer — so an Agency Business's newly added contact is invisible
-     * through a sibling Business's own route, exactly like every other
-     * Contacts lookup already is.
+     * customer — so a Business's newly added contact is invisible through
+     * ANOTHER Business's own route, even one the same customer owns and may
+     * legitimately open, exactly like every other Contacts lookup already is.
      */
     public function test_the_new_contact_redirect_stays_scoped_to_the_business_that_created_it(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $other = $this->addBusiness($owner, $workspace, 'Client Two');
+        $otherAccount = $this->otherBusinessOf($owner);
+        $other = $otherAccount['business'];
         $group = $this->group($business, 'Customers');
         $this->authenticateAs($owner);
 
@@ -181,7 +182,7 @@ class ContactsPersonFirstTest extends TestCase
         $created = Contacts::query()->where('group_id', $group->id)->where('phone', $phone)->sole();
         $response->assertRedirect(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $created->uid]));
 
-        $this->get(route('customer.workspaces.businesses.people.show', [$workspace->uid, $other->uid, $created->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.people.show', [$otherAccount['workspace']->uid, $other->uid, $created->uid]))->assertNotFound();
     }
 
     /**
@@ -252,7 +253,7 @@ class ContactsPersonFirstTest extends TestCase
     public function test_the_profile_shows_this_businesss_campaign_messages_and_conversation_only(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $other = $this->addBusiness($owner, $workspace, 'Client Two');
+        $other = $this->otherBusinessOf($owner)['business'];
         $ana = $this->person($this->group($business, 'Customers'), ['FIRST_NAME' => 'Ana']);
         $lookalike = $this->person($this->group($other, 'Theirs'), ['FIRST_NAME' => 'Ana elsewhere'], (string) $ana->phone);
 
@@ -290,7 +291,7 @@ class ContactsPersonFirstTest extends TestCase
     public function test_a_contact_of_another_business_is_not_found_exactly_like_an_unknown_one(): void
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $other = $this->addBusiness($owner, $workspace, 'Client Two');
+        $other = $this->otherBusinessOf($owner)['business'];
         $foreign = $this->person($this->group($other, 'Theirs'), ['FIRST_NAME' => 'Foreign']);
         $this->authenticateAs($owner);
 
@@ -502,6 +503,22 @@ class ContactsPersonFirstTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+
+    /**
+     * A SECOND Business of the same customer. Contract 13 gives each Business
+     * its own Workspace, so "another Business of mine" is another account the
+     * same person owns and may legitimately open — which is exactly what makes
+     * these Business-scoping assertions worth making.
+     *
+     * @return array{customer: Customer, business: Business, workspace: Workspace}
+     */
+    private function otherBusinessOf(Customer $owner, string $businessName = 'Client Two', string $workspaceName = 'Client Two Workspace'): array
+    {
+        $other = $this->createIndependentWorkspaceBusiness($owner, $businessName, $workspaceName);
+        $this->assignTier($other['workspace'], WorkspacePlanTier::Agency);
+
+        return $other;
+    }
 
     private function peopleUrl(Workspace $workspace, Business $business): string
     {

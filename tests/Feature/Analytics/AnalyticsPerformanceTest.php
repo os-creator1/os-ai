@@ -66,7 +66,7 @@ class AnalyticsPerformanceTest extends TestCase
     public function test_cache_is_business_scoped_and_carries_the_range(): void
     {
         [$customer, $businessA, $workspace] = $this->tenant();
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Other Venue']));
+        [$businessB] = $this->otherBusinessOf($customer);
         $u = $businessA->customer_id;
         $this->report($businessA, $u);
         $this->report($businessB, $u);

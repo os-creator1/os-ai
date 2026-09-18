@@ -51,22 +51,40 @@ class ProviderCustomerOwnershipTest extends TestCase
         return $workspace->fresh();
     }
 
-    public function test_workspace_paying_businesses_share_one_workspace_scoped_provider_customer(): void
+    /**
+     * Contract 13 gives every Business its own Workspace, so "shared across
+     * the Workspace's Businesses" is now proven by the scope itself: a
+     * Workspace-paying Business resolves a WORKSPACE-owned provider customer
+     * (never a Business-owned one), the same row every time it is asked, and
+     * a different Workspace's Workspace-paying Business never lands on it.
+     */
+    public function test_a_workspace_paying_business_resolves_one_workspace_scoped_provider_customer(): void
     {
         $customer = $this->createCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
         $businessA = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'A']));
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'B']));
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
-        app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
         app(BillingProfileManager::class)->changePayer($businessA, PayerType::Workspace, $customer->user_id, 'Test.');
+
+        $otherWorkspace = $this->entitledWorkspace($customer->user);
+        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $otherWorkspace, $this->businessAttributes(['name' => 'B']));
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
         app(BillingProfileManager::class)->changePayer($businessB, PayerType::Workspace, $customer->user_id, 'Test.');
 
         $instrumentManager = app(PaymentInstrumentManager::class);
         $customerA = $instrumentManager->resolveProviderCustomer($businessA, $customer->user_id);
-        $customerB = $instrumentManager->resolveProviderCustomer($businessB, $customer->user_id);
 
-        $this->assertSame($customerA->id, $customerB->id);
+        // Owned by the Workspace, not by the Business.
+        $this->assertSame((int) $workspace->id, (int) $customerA->workspace_id);
+        $this->assertNull($customerA->business_id);
+
+        // Asked again, the same row is reused rather than a second one created.
+        $this->assertSame($customerA->id, $instrumentManager->resolveProviderCustomer($businessA, $customer->user_id)->id);
+
+        // Another Workspace's Workspace-paying Business is a different owner.
+        $customerB = $instrumentManager->resolveProviderCustomer($businessB, $customer->user_id);
+        $this->assertNotSame($customerA->id, $customerB->id, 'A Workspace-scoped provider customer never crosses Workspaces.');
+        $this->assertSame((int) $otherWorkspace->id, (int) $customerB->workspace_id);
     }
 
     public function test_business_paying_businesses_never_share_a_provider_customer(): void
@@ -74,7 +92,9 @@ class ProviderCustomerOwnershipTest extends TestCase
         $customer = $this->createCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
         $businessA = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'A']));
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'B']));
+        // Contract 13: each Business has its own Workspace; both still pay for
+        // themselves, which is what must keep their provider customers apart.
+        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $this->entitledWorkspace($customer->user), $this->businessAttributes(['name' => 'B']));
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
         // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
@@ -87,6 +107,8 @@ class ProviderCustomerOwnershipTest extends TestCase
         $customerB = $instrumentManager->resolveProviderCustomer($businessB, $customer->user_id);
 
         $this->assertNotSame($customerA->id, $customerB->id);
+        $this->assertSame((int) $businessA->id, (int) $customerA->business_id, 'Business-paying: owned by the Business itself.');
+        $this->assertSame((int) $businessB->id, (int) $customerB->business_id);
     }
 
     public function test_unique_provider_and_active_business_id_rejects_a_second_active_row(): void

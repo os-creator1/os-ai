@@ -40,12 +40,27 @@ class PayerConsentAuthorizationTest extends TestCase
     {
         Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
 
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        // Contract 13: ONE Business in this Agency-tier Workspace. The matrix
+        // needs the Business's own direct customer_id owner to differ from
+        // the account/Workspace owner — exactly the pair
+        // `isCurrentPayer()` distinguishes — which is a real, supported V1
+        // shape (WorkspaceManager::createBusinessInWorkspace(): "Business.
+        // customer_id stays fully independent of Workspace ownership"), NOT
+        // an Agency-managed-client relationship: no
+        // AgencyClientWorkspaceRelationship is created, this account manages
+        // its own Business directly, and that is exactly what keeps
+        // AgencyRebill refused below.
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user, ['name' => 'Northwind Agency']);
+        $this->assignTier($workspace, WorkspacePlanTier::Agency);
         $ownerId = (int) $owner->user_id;
 
-        $client = $this->createCustomer();
-        $business = $this->addBusiness($client, $workspace, 'Client Bakery');
-        $directOwnerId = (int) $client->user_id;
+        $directOwner = $this->createCustomer();
+        $business = $this->addBusiness($directOwner, $workspace, 'Riverside Bakery');
+        $directOwnerId = (int) $directOwner->user_id;
 
         $agencyAdmin = $this->createCustomer();
         $this->member($workspace, $agencyAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);

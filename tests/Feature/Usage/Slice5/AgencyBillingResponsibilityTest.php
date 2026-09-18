@@ -56,10 +56,24 @@ class AgencyBillingResponsibilityTest extends TestCase
         $this->assertStringNotContainsStringIgnoringCase('assignment id', $html);
     }
 
-    public function test_the_agency_owner_sees_the_control_in_client_accounts_with_the_active_option_marked(): void
+    /**
+     * This is the ordinary V1 divergence, NOT an Agency-managed-client
+     * relationship: one Agency-tier Workspace, its one Business (Contract
+     * 13), created for a different direct customer than the Workspace owner
+     * (businessOwnedByAnotherCustomer() — a real, supported
+     * WorkspaceManager::createBusinessInWorkspace() shape). It is exactly
+     * the precondition billingResponsibilityViewData() needs to list a row
+     * at all, and exactly the PayerType::Workspace/PayerType::Business
+     * distinction BillingProfileManager::isCurrentPayer() exists to tell
+     * apart. A real Agency-managed client (a separate Client Workspace
+     * reached through an AgencyClientWorkspaceRelationship) is never
+     * represented this way — see businessOwnedByAnotherCustomer()'s own
+     * docblock.
+     */
+    public function test_the_agency_owner_sees_the_control_for_a_different_direct_owner_business_with_the_active_option_marked(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
 
@@ -67,7 +81,7 @@ class AgencyBillingResponsibilityTest extends TestCase
         $html = $response->getContent();
 
         $this->assertCustomerVocabularyOnly($html);
-        $this->assertStringContainsString('Client Bakery', $html);
+        $this->assertStringContainsString('Riverside Bakery', $html);
         $this->assertSame(1, preg_match('/<input[^>]*name="billing_responsibility"[^>]*value="agency"[^>]*>/', $html, $agencyRadio));
         $this->assertStringContainsString('checked', $agencyRadio[0]);
         $this->assertSame(1, preg_match('/<input[^>]*name="billing_responsibility"[^>]*value="client"[^>]*>/', $html, $clientRadio));
@@ -76,13 +90,14 @@ class AgencyBillingResponsibilityTest extends TestCase
 
         // Presentation facts only: uid, name, customer-facing responsibility.
         $rows = $response->original->getData()['billingResponsibility']['businesses'];
-        $this->assertSame([['uid' => $business->uid, 'name' => 'Client Bakery', 'responsibility' => 'agency']], $rows);
+        $this->assertSame([['uid' => $business->uid, 'name' => 'Riverside Bakery', 'responsibility' => 'agency']], $rows);
     }
 
+    /** Same generic different-direct-owner shape as the owner-visibility test above; see its docblock. */
     public function test_an_agency_wide_active_admin_sees_the_control(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $admin = $this->createCustomer();
         $this->member($workspace, $admin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
@@ -91,7 +106,7 @@ class AgencyBillingResponsibilityTest extends TestCase
         $html = $this->get($this->accountFrameUrl($workspace))->assertOk()->getContent();
 
         $this->assertCustomerVocabularyOnly($html);
-        $this->assertStringContainsString('Client Bakery', $html);
+        $this->assertStringContainsString('Riverside Bakery', $html);
     }
 
     public function test_core_and_growth_accounts_never_see_it(): void
@@ -111,14 +126,26 @@ class AgencyBillingResponsibilityTest extends TestCase
         }
     }
 
-    public function test_business_clients_staff_selected_scope_admins_and_strangers_never_see_it(): void
+    /**
+     * The Business's own direct owner (businessOwnedByAnotherCustomer() —
+     * the ordinary different-direct-owner V1 shape, not an Agency-managed
+     * client) is not a member of this Workspace at all: the account frame
+     * itself is concealed (S-6), and even their own Business's usage-billing
+     * page never shows the control, which only the Workspace owner/admin may
+     * see. The staff/scoped-admin/inactive-admin/stranger denials below need
+     * no different-owner concept at all — they hold for the Agency's own
+     * ordinary Business — and remain fully proven.
+     */
+    public function test_staff_selected_scope_admins_and_strangers_never_see_it(): void
     {
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [$client, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$directOwner, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Workspace);
 
-        // The Business client: the account frame itself is concealed (S-6).
-        $this->authenticateAs($client);
+        // The Business's own direct owner: the account frame itself is
+        // concealed (S-6), and their own Business's usage-billing page never
+        // shows the control.
+        $this->authenticateAs($directOwner);
         $this->get($this->accountFrameUrl($workspace))->assertNotFound();
         $this->assertStringNotContainsString('name="billing_responsibility"', $this->get($this->usageBillingUrl($workspace, $business))->assertOk()->getContent());
 
@@ -150,8 +177,16 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_a_genuine_change_through_the_new_form_is_audited_once_and_repeating_it_is_a_complete_no_op(): void
     {
-        [$agency, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        // Unlike the mutation-only tests elsewhere in this file, this one
+        // also reads the account-frame's OWN rendered radio button back after
+        // the change — which billingResponsibilityViewData() only ever
+        // renders for a Business owned by a different customer than the
+        // Workspace owner (an ordinary V1 shape, not an Agency-managed-client
+        // relationship — see businessOwnedByAnotherCustomer()'s own
+        // docblock). An owner-owned Business would never be listed at all,
+        // so the mechanic is genuinely needed here.
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
         $this->setPayer($business, PayerType::Workspace);
         $this->authenticateAs($agency);
         Event::fake([BusinessPayerChanged::class]);
@@ -207,10 +242,12 @@ class AgencyBillingResponsibilityTest extends TestCase
 
     public function test_cross_workspace_and_cross_business_mutations_are_concealed_with_404(): void
     {
-        [$agencyA, , $workspaceA] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency A', 'Agency A Workspace');
-        [, $businessA] = $this->clientBusiness($workspaceA, 'Client A');
-        [, , $workspaceB] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency B', 'Agency B Workspace');
-        [, $businessB] = $this->clientBusiness($workspaceB, 'Client B');
+        // Two ordinary, unrelated Agency-tier accounts — no relationship
+        // between them, and no different-customer mechanic needed: this
+        // tests cross-Workspace concealment of the mutation route, not the
+        // account frame's list of Businesses.
+        [$agencyA, $businessA, $workspaceA] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Client A', 'Agency A Workspace');
+        [, $businessB, $workspaceB] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Client B', 'Agency B Workspace');
         $this->setPayer($businessA, PayerType::Workspace);
         $this->setPayer($businessB, PayerType::Workspace);
         Event::fake([BusinessPayerChanged::class]);
@@ -244,9 +281,10 @@ class AgencyBillingResponsibilityTest extends TestCase
             $this->assertDatabaseHas('business_payer_assignments', ['business_id' => $business->id, 'payer_type' => 'workspace']);
         }
 
-        // A selected-scope Admin of an Agency Workspace cannot either.
-        [, , $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        [, $business] = $this->clientBusiness($workspace, 'Client Bakery');
+        // A selected-scope Admin of an Agency Workspace cannot either — this
+        // needs only an ordinary Agency-tier account and a scoped-admin
+        // membership, no different-customer mechanic.
+        [, $business, $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Northwind Bakery', 'Northwind Agency');
         $this->setPayer($business, PayerType::Workspace);
         $scoped = $this->createCustomer();
         $membership = $this->member($workspace, $scoped->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected);

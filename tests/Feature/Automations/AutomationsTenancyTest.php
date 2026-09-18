@@ -370,10 +370,10 @@ class AutomationsTenancyTest extends TestCase
 
     public function test_chooser_lists_multiple_businesses_without_guessing(): void
     {
-        [$customer, $first, $workspace] = $this->entitledTenant();
-        $second = app(\App\Repositories\Contracts\BusinessRepository::class)
-            ->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Second Venue']));
-        DB::table('businesses')->where('id', $second->id)->update(['status' => BusinessStatus::Active->value]);
+        [$customer, $first] = $this->entitledTenant();
+        // Contract 13: a customer's second Business lives in its own entitled
+        // Workspace. The chooser must still list both and guess neither.
+        $this->entitledBusinessFor($customer, 'Second Venue');
         $this->authenticateAsCustomer($customer);
 
         $this->get(route('customer.automations.index'))

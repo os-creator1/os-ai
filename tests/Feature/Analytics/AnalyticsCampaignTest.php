@@ -90,7 +90,7 @@ class AnalyticsCampaignTest extends TestCase
     public function test_foreign_business_campaigns_and_their_aggregates_never_appear_even_when_injected(): void
     {
         [$customer, $businessA, $workspace] = $this->tenant();
-        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Other Venue']));
+        [$businessB] = $this->otherBusinessOf($customer);
         $u = $businessA->customer_id;
 
         $mine = $this->campaign($businessA, ['campaign_name' => 'Mine']);

@@ -179,7 +179,6 @@ class AiUsageSettingsTest extends TestCase
     public function test_a_growth_owner_nearing_the_limit_reads_the_nearing_sentence(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
-        $this->addBusiness($customer, $workspace, 'Second Growth Business');
         $cap = (int) config('ai.budgets.growth.workspace_cap_microusd');
         $this->openWorkspacePeriod($workspace, WorkspacePlanTier::Growth, $cap, intdiv($cap * 85, 100));
         $this->authenticateAs($customer);
@@ -187,7 +186,7 @@ class AiUsageSettingsTest extends TestCase
         $section = (string) $this->aiUsageSection($this->billingPage($workspace, $business)->assertOk()->getContent());
 
         $this->assertStringContainsString(self::NEARING, $this->text($section));
-        $this->assertStringNotContainsString('ai-usage-business-row', $section, 'Growth with two Businesses still has one allowance.');
+        $this->assertStringNotContainsString('ai-usage-business-row', $section, 'Growth has one allowance, so no per-Business list.');
     }
 
     public function test_limit_reached_by_committed_usage_and_by_a_refusal_alone(): void
@@ -221,46 +220,56 @@ class AiUsageSettingsTest extends TestCase
     // Agency
     // =================================================================
 
-    public function test_an_agency_owner_sees_the_account_state_and_one_row_per_business(): void
+    /**
+     * Contract 13: the per-Business list is the account's OWN Workspace's
+     * Businesses, and a Workspace holds exactly one — so each Agency account
+     * renders exactly one row, showing that Business's own allowance while the
+     * headline stays with the Workspace allowance. The three row states are
+     * therefore proven across three separate accounts, which also proves one
+     * account's spend never colours another's row.
+     */
+    public function test_an_agency_account_row_shows_its_own_businesss_allowance_state(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
-        $third = $this->addBusiness($this->createCustomer(), $workspace, 'Client Three');
-
         $businessCap = (int) config('ai.budgets.agency.business_cap_microusd');
-        $this->openBusinessPeriod($workspace, $second, $businessCap, $businessCap); // at its own cap
-        $this->openBusinessPeriod($workspace, $third, $businessCap, intdiv($businessCap * 9, 10)); // 90%
-        $this->authenticateAs($owner);
 
-        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->assertOk()->getContent());
+        [$normalOwner, $normalBusiness, $normalWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+
+        [$reachedOwner, $reachedBusiness, $reachedWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Two', 'Second Agency');
+        $this->openBusinessPeriod($reachedWorkspace, $reachedBusiness, $businessCap, $businessCap); // at its own cap
+
+        [$nearingOwner, $nearingBusiness, $nearingWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Three', 'Third Agency');
+        $this->openBusinessPeriod($nearingWorkspace, $nearingBusiness, $businessCap, intdiv($businessCap * 9, 10)); // 90%
+
+        $this->authenticateAs($normalOwner);
+        $section = (string) $this->aiUsageSection($this->billingPage($normalWorkspace, $normalBusiness)->assertOk()->getContent());
 
         $this->assertStringContainsString(self::NORMAL, $this->text($section), 'The account headline is the Workspace allowance.');
+        $this->assertSame([$normalBusiness->uid => 'normal'], $this->rowStates($section));
+        $this->assertStringContainsString('Client One', $this->text($section));
 
-        $rows = $this->rowStates($section);
-        $this->assertSame([
-            $first->uid => 'normal',
-            $second->uid => 'limit_reached',
-            $third->uid => 'nearing_limit',
-        ], $rows);
+        $this->authenticateAs($reachedOwner);
+        $reachedSection = (string) $this->aiUsageSection($this->billingPage($reachedWorkspace, $reachedBusiness)->assertOk()->getContent());
 
-        $text = $this->text($section);
-        $this->assertStringContainsString('Client One', $text);
-        $this->assertStringContainsString('Limit reached', $text);
-        $this->assertStringContainsString('Nearing limit', $text);
+        $this->assertSame([$reachedBusiness->uid => 'limit_reached'], $this->rowStates($reachedSection));
+        $this->assertStringContainsString('Limit reached', $this->text($reachedSection));
+        $this->assertStringContainsString(self::NORMAL, $this->text($reachedSection), 'Its own allowance ran out; the account allowance did not.');
+
+        $this->authenticateAs($nearingOwner);
+        $nearingSection = (string) $this->aiUsageSection($this->billingPage($nearingWorkspace, $nearingBusiness)->assertOk()->getContent());
+
+        $this->assertSame([$nearingBusiness->uid => 'nearing_limit'], $this->rowStates($nearingSection));
+        $this->assertStringContainsString('Nearing limit', $this->text($nearingSection));
     }
 
     public function test_a_business_refused_for_budget_this_period_shows_limit_reached_in_its_row(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Refusal Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
-        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'business'); // its own $6 cap
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Refusal Agency');
+        $this->recordRefusal($workspace, $business, 'budget_exhausted', self::PERIOD, 'business'); // its own $6 cap
         $this->authenticateAs($owner);
 
-        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
-        $rows = $this->rowStates($section);
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent());
 
-        $this->assertSame('normal', $rows[$first->uid]);
-        $this->assertSame('limit_reached', $rows[$second->uid]);
+        $this->assertSame('limit_reached', $this->rowStates($section)[$business->uid]);
 
         // One client reaching its own allowance is not the agency's whole
         // allowance running out: the headline stays with the account.
@@ -287,34 +296,31 @@ class AiUsageSettingsTest extends TestCase
      */
     public function test_a_business_scoped_call_refused_by_the_workspace_cap_makes_the_account_limit_reached(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Workspace Cap Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Workspace Cap Agency');
         $workspaceCap = (int) config('ai.budgets.agency.workspace_cap_microusd');
         $businessCap = (int) config('ai.budgets.agency.business_cap_microusd');
 
         $this->openWorkspacePeriod($workspace, WorkspacePlanTier::Agency, $workspaceCap, $workspaceCap - 1);
-        $this->openBusinessPeriod($workspace, $second, $businessCap, intdiv($businessCap, 10));
-        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'workspace');
+        $this->openBusinessPeriod($workspace, $business, $businessCap, intdiv($businessCap, 10));
+        $this->recordRefusal($workspace, $business, 'budget_exhausted', self::PERIOD, 'workspace');
         $this->authenticateAs($owner);
 
-        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent());
 
         $this->assertStringContainsString(self::LIMIT, $this->text($section), 'Committed is under 100%, but the Workspace allowance refused a call.');
-        $this->assertSame('normal', $this->rowStates($section)[$second->uid], 'Client Two\'s own allowance is at 10%, and its row stays truthful.');
+        $this->assertSame('normal', $this->rowStates($section)[$business->uid], 'The Business\'s own allowance is at 10%, and its row stays truthful.');
     }
 
     public function test_a_call_both_caps_refused_is_shown_on_the_account_and_on_the_business(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Both Caps Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
-        $this->recordRefusal($workspace, $second, 'budget_exhausted', self::PERIOD, 'workspace_and_business');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Both Caps Agency');
+        $this->recordRefusal($workspace, $business, 'budget_exhausted', self::PERIOD, 'workspace_and_business');
         $this->authenticateAs($owner);
 
-        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->getContent());
+        $section = (string) $this->aiUsageSection($this->billingPage($workspace, $business)->getContent());
 
         $this->assertStringContainsString(self::LIMIT, $this->text($section));
-        $this->assertSame('limit_reached', $this->rowStates($section)[$second->uid]);
-        $this->assertSame('normal', $this->rowStates($section)[$first->uid]);
+        $this->assertSame('limit_reached', $this->rowStates($section)[$business->uid]);
     }
 
     public function test_an_interactive_share_refusal_is_neither_the_account_nor_the_business_limit(): void
@@ -366,37 +372,47 @@ class AiUsageSettingsTest extends TestCase
 
     public function test_an_agency_wide_admin_sees_rows_but_a_scoped_admin_a_client_owner_and_staff_do_not(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Matrix Agency');
-        $clientOwner = $this->createCustomer();
-        $second = $this->addBusiness($clientOwner, $workspace, 'Client Two');
+        // Contract 13: the Agency Workspace holds exactly one Business, and a
+        // managed client is a Business in its OWN Workspace reached through a
+        // real relationship — so "never sees the other clients" is proven
+        // across Workspaces, where it now lives.
+        $managed = $this->createAgencyManagedClient(
+            clientBusinessName: 'Client Two',
+            clientWorkspaceName: 'Client Two Workspace',
+            agencyBusinessName: 'Client One',
+            agencyWorkspaceName: 'Matrix Agency',
+        );
+        $workspace = $managed['agencyWorkspace'];
+        $agencyBusiness = $managed['agencyBusiness'];
+        $clientOwner = $managed['clientOwner'];
 
         $agencyAdmin = $this->createCustomer();
         $this->member($workspace, $agencyAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
 
         $scopedAdmin = $this->createCustomer();
-        $this->assign($this->member($workspace, $scopedAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected), $second);
+        $this->assign($this->member($workspace, $scopedAdmin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected), $agencyBusiness);
 
         $staff = $this->createCustomer();
         $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
 
         $this->authenticateAs($agencyAdmin);
-        $section = $this->aiUsageSection($this->billingPage($workspace, $second)->assertOk()->getContent());
+        $section = $this->aiUsageSection($this->billingPage($workspace, $agencyBusiness)->assertOk()->getContent());
         $this->assertNotNull($section);
-        $this->assertCount(2, $this->rowStates((string) $section), 'An Agency-wide admin sees every Business.');
+        $this->assertSame([$agencyBusiness->uid => 'normal'], $this->rowStates((string) $section), 'An Agency-wide admin sees every Business of this account — which is its one Business.');
 
         $this->authenticateAs($scopedAdmin);
-        $section = $this->aiUsageSection($this->billingPage($workspace, $second)->assertOk()->getContent());
+        $section = $this->aiUsageSection($this->billingPage($workspace, $agencyBusiness)->assertOk()->getContent());
         $this->assertNotNull($section, 'A scoped admin may manage this Business’s billing, so sees its state.');
-        $this->assertSame([], $this->rowStates((string) $section), 'But not the other clients.');
+        $this->assertSame([], $this->rowStates((string) $section), 'But never a per-Business list.');
 
+        // A managed client's owner is no member of the Agency account at all:
+        // its billing page is as absent as a stranger's.
         $this->authenticateAs($clientOwner);
-        $section = $this->aiUsageSection($this->billingPage($workspace, $second)->assertOk()->getContent());
-        $this->assertNotNull($section);
-        $this->assertSame([], $this->rowStates((string) $section), 'A client never sees the other clients.');
+        $this->billingPage($workspace, $agencyBusiness)->assertNotFound();
 
         $this->authenticateAs($staff);
         $this->assertNull(
-            $this->aiUsageSection($this->billingPage($workspace, $second)->assertOk()->getContent()),
+            $this->aiUsageSection($this->billingPage($workspace, $agencyBusiness)->assertOk()->getContent()),
             'Staff may open the page but are outside the billing authority, so see no AI usage.'
         );
     }
@@ -451,8 +467,7 @@ class AiUsageSettingsTest extends TestCase
 
     public function test_the_ai_usage_section_shows_no_figure_provider_model_or_meter_in_any_state(): void
     {
-        [$owner, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Figures Agency');
-        $second = $this->addBusiness($this->createCustomer(), $workspace, 'Client Two');
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Figures Agency');
         $workspaceCap = (int) config('ai.budgets.agency.workspace_cap_microusd');
         $businessCap = (int) config('ai.budgets.agency.business_cap_microusd');
         $this->authenticateAs($owner);
@@ -467,9 +482,9 @@ class AiUsageSettingsTest extends TestCase
         foreach ([0, intdiv($workspaceCap * 85, 100), $workspaceCap] as $committed) {
             DB::table('ai_usage_periods')->delete();
             $this->openWorkspacePeriod($workspace, WorkspacePlanTier::Agency, $workspaceCap, $committed);
-            $this->openBusinessPeriod($workspace, $second, $businessCap, $businessCap);
+            $this->openBusinessPeriod($workspace, $business, $businessCap, $businessCap);
 
-            $section = (string) $this->aiUsageSection($this->billingPage($workspace, $first)->assertOk()->getContent());
+            $section = (string) $this->aiUsageSection($this->billingPage($workspace, $business)->assertOk()->getContent());
             $text = strtolower($this->text($section));
 
             $this->assertNotSame('', $text);
