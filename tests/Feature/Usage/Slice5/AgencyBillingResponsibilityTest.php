@@ -57,38 +57,56 @@ class AgencyBillingResponsibilityTest extends TestCase
     }
 
     /**
-     * BLOCKED (Contract 14) — dead-model coverage, not restorable without
-     * reintroducing the invalid topology.
-     *
-     * `WorkspaceController::billingResponsibilityViewData()` only ever lists
-     * a Business whose `customer_id` differs from ITS OWN Workspace's
-     * `owner_user_id`. Under Contract 13 a Workspace holds exactly one
-     * Business, so the ONLY way to make this panel non-empty is to give a
-     * Workspace a Business owned by a different customer than that
-     * Workspace's own owner — which is exactly the "Agency Workspace
-     * contains a client-owned Business" shape Contract 13 forbids using to
-     * represent a managed client (see AgencyClientPortfolio.php: "under the
-     * V1 topology an Agency Workspace holds exactly one Business, its OWN").
-     * There is no canonical V1 equivalent that both (a) genuinely represents
-     * an Agency-managed client (a separate Client Workspace reached through
-     * a real AgencyClientWorkspaceRelationship) and (b) satisfies this
-     * panel's own precondition — a real managed client's own Business is,
-     * as always, owned by that Client Workspace's own owner, so the panel
-     * would never show it either way.
-     *
-     * Reserved for Contract 14 to decide: either retire this panel (it can
-     * no longer fire for any real V1 account) or give it a genuine
-     * relationship-backed data source.
+     * This is the ordinary V1 divergence, NOT an Agency-managed-client
+     * relationship: one Agency-tier Workspace, its one Business (Contract
+     * 13), created for a different direct customer than the Workspace owner
+     * (businessOwnedByAnotherCustomer() — a real, supported
+     * WorkspaceManager::createBusinessInWorkspace() shape). It is exactly
+     * the precondition billingResponsibilityViewData() needs to list a row
+     * at all, and exactly the PayerType::Workspace/PayerType::Business
+     * distinction BillingProfileManager::isCurrentPayer() exists to tell
+     * apart. A real Agency-managed client (a separate Client Workspace
+     * reached through an AgencyClientWorkspaceRelationship) is never
+     * represented this way — see businessOwnedByAnotherCustomer()'s own
+     * docblock.
      */
-    public function test_the_agency_owner_sees_the_control_in_client_accounts_with_the_active_option_marked(): void
+    public function test_the_agency_owner_sees_the_control_for_a_different_direct_owner_business_with_the_active_option_marked(): void
     {
-        $this->markTestSkipped('Contract 14: billingResponsibilityViewData()\'s "Client accounts" panel cannot fire for any real V1 account without the forbidden Business-inside-Agency-Workspace shape; see docblock.');
+        [$agency, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
+        $this->setPayer($business, PayerType::Workspace);
+        $this->authenticateAs($agency);
+
+        $response = $this->get($this->accountFrameUrl($workspace))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertCustomerVocabularyOnly($html);
+        $this->assertStringContainsString('Riverside Bakery', $html);
+        $this->assertSame(1, preg_match('/<input[^>]*name="billing_responsibility"[^>]*value="agency"[^>]*>/', $html, $agencyRadio));
+        $this->assertStringContainsString('checked', $agencyRadio[0]);
+        $this->assertSame(1, preg_match('/<input[^>]*name="billing_responsibility"[^>]*value="client"[^>]*>/', $html, $clientRadio));
+        $this->assertStringNotContainsString('checked', $clientRadio[0]);
+        $this->assertStringContainsString('<input type="hidden" name="return_to" value="account">', $html);
+
+        // Presentation facts only: uid, name, customer-facing responsibility.
+        $rows = $response->original->getData()['billingResponsibility']['businesses'];
+        $this->assertSame([['uid' => $business->uid, 'name' => 'Riverside Bakery', 'responsibility' => 'agency']], $rows);
     }
 
-    /** BLOCKED (Contract 14) — same root cause as the owner-visibility test above; see its docblock. */
+    /** Same generic different-direct-owner shape as the owner-visibility test above; see its docblock. */
     public function test_an_agency_wide_active_admin_sees_the_control(): void
     {
-        $this->markTestSkipped('Contract 14: billingResponsibilityViewData()\'s "Client accounts" panel cannot fire for any real V1 account without the forbidden Business-inside-Agency-Workspace shape.');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
+        $this->setPayer($business, PayerType::Workspace);
+        $admin = $this->createCustomer();
+        $this->member($workspace, $admin->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All);
+        $this->authenticateAs($admin);
+
+        $html = $this->get($this->accountFrameUrl($workspace))->assertOk()->getContent();
+
+        $this->assertCustomerVocabularyOnly($html);
+        $this->assertStringContainsString('Riverside Bakery', $html);
     }
 
     public function test_core_and_growth_accounts_never_see_it(): void
@@ -109,20 +127,27 @@ class AgencyBillingResponsibilityTest extends TestCase
     }
 
     /**
-     * NOTE (Contract 13): this test used to also prove that the Business's
-     * own direct customer (owned inside the SAME Agency Workspace, distinct
-     * from the workspace owner — the pre-Contract-13 "Business client" shape)
-     * is denied the account frame. That specific case is dropped: it is the
-     * same "Agency Workspace contains a client-owned Business" shape Contract
-     * 13 forbids using to represent a managed client (see
-     * AgencyBillingResponsibilityTest's other BLOCKED tests, and
-     * AgencyClientPortfolio.php). The staff/scoped-admin/inactive-admin/
-     * stranger denials below need no client concept at all — they hold for
-     * the Agency's own ordinary Business — and remain fully proven.
+     * The Business's own direct owner (businessOwnedByAnotherCustomer() —
+     * the ordinary different-direct-owner V1 shape, not an Agency-managed
+     * client) is not a member of this Workspace at all: the account frame
+     * itself is concealed (S-6), and even their own Business's usage-billing
+     * page never shows the control, which only the Workspace owner/admin may
+     * see. The staff/scoped-admin/inactive-admin/stranger denials below need
+     * no different-owner concept at all — they hold for the Agency's own
+     * ordinary Business — and remain fully proven.
      */
     public function test_staff_selected_scope_admins_and_strangers_never_see_it(): void
     {
-        [, $business, $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Agency, 'Northwind Bakery', 'Northwind Agency');
+        [, $workspace] = $this->agencyAccountWithWallet('Northwind Agency');
+        [$directOwner, $business] = $this->businessOwnedByAnotherCustomer($workspace, 'Riverside Bakery');
+        $this->setPayer($business, PayerType::Workspace);
+
+        // The Business's own direct owner: the account frame itself is
+        // concealed (S-6), and their own Business's usage-billing page never
+        // shows the control.
+        $this->authenticateAs($directOwner);
+        $this->get($this->accountFrameUrl($workspace))->assertNotFound();
+        $this->assertStringNotContainsString('name="billing_responsibility"', $this->get($this->usageBillingUrl($workspace, $business))->assertOk()->getContent());
 
         // Staff (scope all) reaches the frame but never the control.
         $staff = $this->createCustomer();
