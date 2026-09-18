@@ -6,7 +6,6 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Workspace\WorkspaceManager;
-use App\Models\Business;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -51,9 +50,9 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
         $page->assertDontSee('href="' . route('customer.workspaces.index') . '"', false);
     }
 
-    public function test_a_direct_post_cannot_create_a_second_account_for_core_or_growth(): void
+    public function test_a_direct_post_cannot_create_a_second_account_for_any_tier(): void
     {
-        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Own Account');
             $this->authenticateAs($owner);
             $before = Workspace::query()->count();
@@ -81,25 +80,36 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
     }
 
     /**
-     * Agency client accounts are Businesses inside the one Agency account:
-     * the Workspace POST is refused, the Business flow is untouched.
+     * Contract 13 remediation (Category E): this test's own premise —
+     * "Agency client accounts are Businesses inside the one Agency
+     * account" — was the pre-Contract-10 model. Contracts 01/07/10 reversed
+     * it: an Agency's clients are now separate Client Workspaces linked via
+     * AgencyClientRelationshipManager, never a second Business POSTed into
+     * the Agency's own Workspace. That POST path (customer.workspaces.
+     * businesses.store) still exists only for a Workspace's FIRST Business
+     * (see createBusinessInWorkspace()'s live caller in
+     * WorkspaceController::storeBusiness()) — attempting it against an
+     * already-occupied Workspace is now a data-integrity impossibility
+     * (businesses_workspace_id_unique), not a supported "add a client"
+     * flow, and the customer-facing "Create Business" form itself is
+     * already hidden once a Workspace has its one Business. No current
+     * behavior corresponds to what this test asserted (a successful
+     * second-Business creation), so that half is removed rather than
+     * redesigned. Its still-current other half — an Agency owner, like
+     * Core/Growth, cannot create a second Workspace via direct POST — was
+     * previously untested by the sibling
+     * test_a_direct_post_cannot_create_a_second_account_for_core_or_growth
+     * (Core/Growth only); that test was widened to
+     * test_a_direct_post_cannot_create_a_second_account_for_any_tier and
+     * now also covers Agency, so no coverage is lost.
+     *
+     * Separately observed, out of this remediation's scope: a direct POST
+     * to customer.workspaces.businesses.store against an already-occupied
+     * Workspace currently surfaces a raw 500 (UniqueConstraintViolationException)
+     * rather than a friendly validation error — unreachable through the
+     * ordinary UI (the form is hidden once a Workspace has a Business), but
+     * worth a follow-up defensive-check ticket.
      */
-    public function test_agency_adds_client_accounts_as_businesses_never_as_workspaces(): void
-    {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->authenticateAs($owner);
-
-        $this->post(route('customer.workspaces.store'), ['name' => 'Client Two Account'])
-            ->assertSessionHas('flash_error', 'You already have an account.');
-        $this->assertSame(1, Workspace::query()->where('owner_user_id', $owner->user_id)->count());
-
-        $this->post(route('customer.workspaces.businesses.store', $workspace->uid), $this->businessAttributes(['name' => 'Client Two']))
-            ->assertRedirect(route('customer.workspaces.show', $workspace->uid))
-            ->assertSessionHasNoErrors();
-
-        $this->assertSame($workspace->id, (int) Business::query()->where('name', 'Client Two')->value('workspace_id'));
-        $this->assertSame(1, Workspace::query()->where('owner_user_id', $owner->user_id)->count());
-    }
 
     /**
      * An owner who was also invited into another account has a real choice:
@@ -163,13 +173,18 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
     /**
      * An Agency's client who was invited to their own Business only is not
      * offered to start a separate account from the account list.
+     *
+     * Contract 13 remediation (Category C): under one-Business-per-Workspace,
+     * "invited to their own Business only" is expressed by Selected-scope
+     * assignment to the Workspace's own sole Business, not a now-impossible
+     * sibling — this test asserts no account-creation affordance is offered,
+     * not a business-name leak, so the redesign carries the same property.
      */
     public function test_an_invited_client_is_not_offered_to_create_an_account(): void
     {
-        [, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
         $client = $this->createCustomer();
-        $clientBusiness = $this->addBusiness($client, $workspace, 'Client Bakery');
-        $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $clientBusiness);
+        $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $business);
         $this->authenticateAs($client);
 
         $index = $this->get(route('customer.workspaces.index'))->assertOk();
@@ -220,12 +235,25 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
             ->assertSessionHas('flash_error', 'This account is inactive, so it can\'t be renamed.');
     }
 
+    /**
+     * Contract 13 remediation (Category C): the old fixture reached the
+     * Account frame incidentally, by giving the sole Workspace a second
+     * sibling Business, which made business selection ambiguous
+     * (CustomerContextResolver's "exactly one selectable Business" rule
+     * auto-collapses into the Business frame otherwise). That ambiguity is
+     * now permanently impossible (businesses_workspace_id_unique). The
+     * CURRENT, deliberate way to stand in the Account frame regardless of
+     * Business count is the context switcher's own "account" option
+     * (switchToAccount(), Lane E) — using it here proves the exact same
+     * property (an Agency account frame links its own account page
+     * directly) without relying on a now-dead reachability path.
+     */
     public function test_settings_account_opens_the_current_account_directly(): void
     {
         // An Agency account frame links its own account page directly.
         [$agency, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $agencyWorkspace, 'Client Two');
         $this->authenticateAs($agency);
+        $this->switchToAccount($agencyWorkspace)->assertRedirect(route('user.home'));
 
         $links = $this->menuLinks($this->home()->assertOk()->getContent());
 

@@ -8,7 +8,7 @@ use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Contacts\ContactDirectory;
 use App\Library\Entitlement\EntitlementManager;
-use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
 use App\Models\ContactGroups;
 use App\Models\Workspace;
@@ -38,7 +38,6 @@ class ContactDirectoryController extends CustomerBaseController
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
-        private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
         private readonly ContactsRepository $contactGroups,
         private readonly ContactDirectory $directory,
@@ -155,7 +154,7 @@ class ContactDirectoryController extends CustomerBaseController
 
         $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
 
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+        if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
             abort(404);
         }
 

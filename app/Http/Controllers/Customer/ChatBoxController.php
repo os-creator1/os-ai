@@ -15,6 +15,7 @@
     use App\Library\Navigation\CustomerContext;
     use App\Library\Timeline\ContactActivityTimeline;
     use App\Library\Tool;
+    use App\Library\Workspace\BusinessRouteAccess;
     use App\Library\Workspace\LocationAccessGuard;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
@@ -1470,15 +1471,23 @@
 
             $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
 
-            if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+            // The canonical Business-route decision: ordinary tenancy, or the
+            // exact currently-valid View-As target. An Agency actor viewing a
+            // managed Client cross-Workspace is deliberately NOT an ordinary
+            // tenant of that Client Workspace, so asking tenancy alone here
+            // refused the reply and retry that View As is meant to allow.
+            // BusinessRouteAccess is the one place that rule lives — shared
+            // with ResolvesBusinessTenancy and the inbox channel callback.
+            if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
                 return null;
             }
 
             // Defence in depth for view-as. The middleware already refuses a
-            // Business route whose pair is not the viewed one; this states the
-            // same rule where the Business is resolved, so a future change to
-            // the middleware cannot quietly let an agency escape the client it
-            // is viewing.
+            // Business route whose pair is not the viewed one, and the decision
+            // above independently admits a session only for its exact target;
+            // this states the same rule once more where the Business is
+            // resolved, so a future change to either cannot quietly let an
+            // agency escape the client it is viewing.
             $context = app()->bound(CustomerContext::class) ? app(CustomerContext::class) : null;
 
             if ($context?->viewAs !== null

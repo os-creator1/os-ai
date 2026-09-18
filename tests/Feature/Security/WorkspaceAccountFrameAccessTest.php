@@ -25,27 +25,42 @@ class WorkspaceAccountFrameAccessTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
+    /**
+     * Contract 13 remediation (Category C): the pre-Contract-13 fixture put
+     * the client's own Business in as a second, sibling Business alongside
+     * the Agency's own — a shape businesses_workspace_id_unique now forbids.
+     * The security property under test was never actually about sibling
+     * Businesses, though: it is that a Selected-scope Staff membership
+     * (workspace_membership_businesses) never grants workspace/account-level
+     * visibility, only access to the Business(es) it is explicitly assigned
+     * — which, under the current one-Business-per-Workspace model, is
+     * necessarily the Workspace's own sole Business. Scoping the Staff
+     * member to that single Business (instead of a now-impossible sibling)
+     * preserves the exact same boundary this test exists to prove.
+     */
     public function test_a_client_business_owner_cannot_read_the_agency_overview_by_direct_url(): void
     {
         [$agencyOwner, $agencyBusiness, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
         $client = $this->createCustomer();
-        $clientBusiness = $this->addBusiness($client, $workspace, 'Client Bakery');
-        $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $clientBusiness);
+        $this->assign($this->member($workspace, $client->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $agencyBusiness);
         $this->authenticateAs($client);
 
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid))->assertNotFound();
 
-        // The account list is empty for a client: no Agency identity is listed.
+        // The account list is empty for a client: no Agency (workspace-level)
+        // identity is listed. "Agency House" is the member's OWN assigned
+        // Business under the current topology (see the class docblock above)
+        // and is legitimately visible — only the Workspace/account-level
+        // name "Northwind Agency" must never leak to a Selected-scope member.
         $index = $this->get(route('customer.workspaces.index'))->assertOk();
         $this->assertStringNotContainsString('Northwind Agency', $index->getContent());
-        $this->assertStringNotContainsString('Agency House', $index->getContent());
         // The overview is never linked (the client's own Business links share
         // the /workspaces/{uid}/businesses/… prefix, so match the whole href).
         $this->assertStringNotContainsString('href="' . route('customer.workspaces.show', $workspace->uid) . '"', $index->getContent());
 
-        // Their own Business stays fully reachable.
-        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientBusiness->uid]))->assertOk();
+        // Their own assigned Business stays fully reachable.
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $agencyBusiness->uid]))->assertOk();
     }
 
     public function test_business_scoped_staff_cannot_read_the_overview_even_as_an_admin_with_selected_scope(): void

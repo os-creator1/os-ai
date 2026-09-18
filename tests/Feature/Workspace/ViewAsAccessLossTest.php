@@ -94,10 +94,17 @@ class ViewAsAccessLossTest extends TestCase
         $this->assertViewEndedAsAccessLost($agency);
     }
 
+    /**
+     * Contract 13 remediation (Category B): the destination Workspace only
+     * needs to be a Workspace $client does not currently occupy — it never
+     * needed a Business of its own, and businesses_workspace_id_unique
+     * would now refuse the raw move below into an already-occupied one.
+     * An empty Workspace proves the exact same "moved out" property.
+     */
     public function test_a_business_moved_out_of_the_workspace_ends_the_view(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        [, , $otherWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Elsewhere Client', 'Other Agency');
+        $otherWorkspace = $this->createWorkspace($this->createCustomer()->user);
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
 

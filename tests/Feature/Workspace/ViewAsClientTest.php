@@ -8,6 +8,8 @@ use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\ViewAs\ViewAsManager;
+use App\Models\Business;
+use App\Models\Customer;
 use App\Models\ViewAsSession;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -29,7 +31,6 @@ class ViewAsClientTest extends TestCase
     public function test_view_as_writes_an_audit_row_on_entry_and_exit_and_never_changes_the_actor(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Florist');
         $this->authenticateAs($agency);
         $actorId = (int) $agency->user_id;
 
@@ -66,8 +67,15 @@ class ViewAsClientTest extends TestCase
     public function test_view_as_expires_at_its_ttl_and_returns_the_actor_to_the_agency_frame(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Client Florist');
         $this->authenticateAs($agency);
+        // Contract 13 remediation: reaching the Agency account frame to
+        // return to used to be incidental (a second sibling Business made
+        // the frame resolver's business selection ambiguous), which is now
+        // impossible under one-Business-per-Workspace. The context
+        // switcher's own deliberate "account" choice (switchToAccount(),
+        // Lane E) is the current way to stand in that frame regardless of
+        // Business count, and it is what T-VIEW-2 needs restored on expiry.
+        $this->switchToAccount($workspace)->assertRedirect(route('user.home'));
         $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
 
         $this->travel(ViewAsManager::DEFAULT_TTL_MINUTES - 1)->minutes();
@@ -87,7 +95,7 @@ class ViewAsClientTest extends TestCase
     public function test_each_prohibited_action_is_refused_and_audited_while_viewing(): void
     {
         [$agency, $client, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $other = $this->addBusiness($agency, $workspace, 'Client Florist');
+        $other = $this->anotherReachableBusiness($agency);
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
 
@@ -102,8 +110,8 @@ class ViewAsClientTest extends TestCase
             'plan' => fn () => $this->post(route('customer.workspaces.rename', $workspace->uid), ['name' => 'Renamed']),
             'provider' => fn () => $this->get(route('customer.workspaces.businesses.channels.index', [$workspace->uid, $client->uid])),
             'delete' => fn () => $this->delete(route('customer.workspaces.businesses.contacts.destroy', [$workspace->uid, $client->uid, 'any'])),
-            'another view-as' => fn () => $this->startViewAs($workspace, $other),
-            'switch' => fn () => $this->switchTo($workspace, $other),
+            'another view-as' => fn () => $this->startViewAs($other->workspace, $other),
+            'switch' => fn () => $this->switchTo($other->workspace, $other),
         ];
 
         $expectedRefusals = 0;
@@ -161,12 +169,12 @@ class ViewAsClientTest extends TestCase
     public function test_starting_again_replaces_the_previous_session_and_logout_ends_it(): void
     {
         [$agency, $first, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $second = $this->addBusiness($agency, $workspace, 'Client Florist');
+        $second = $this->anotherReachableBusiness($agency);
         $this->authenticateAs($agency);
 
         $this->startViewAs($workspace, $first)->assertRedirect(route('user.home'));
         $this->post(route('customer.view-as.exit'));
-        $this->startViewAs($workspace, $second)->assertRedirect(route('user.home'));
+        $this->startViewAs($second->workspace, $second)->assertRedirect(route('user.home'));
 
         $rows = ViewAsSession::query()->orderBy('id')->get();
         $this->assertCount(2, $rows);
@@ -223,6 +231,26 @@ class ViewAsClientTest extends TestCase
         $this->assertNotNull($row->ended_at, 'Exit must still end the View-as session while the viewed Workspace is locked.');
         $this->assertSame(ViewAsSession::END_REASON_EXIT, $row->end_reason);
         $this->assertSame((int) $agency->user_id, Auth::id(), 'Exit never logs the actor out.');
+    }
+
+    /**
+     * Contract 13 remediation (Category C): "another Business the same
+     * actor can reach" used to be a second sibling in the SAME Workspace —
+     * a shape businesses_workspace_id_unique now forbids. What these tests
+     * actually need is a genuinely different, ordinarily-reachable Business
+     * to attempt switching/viewing to while a View As session is active
+     * (proving the prohibition/session-replacement behavior), which a
+     * separate Workspace with an ordinary Admin membership provides just
+     * as well — start()'s own authorization never depended on same-
+     * Workspace siblings, only on owner/active-Admin status of whichever
+     * Workspace holds the target Business.
+     */
+    private function anotherReachableBusiness(Customer $agency, string $name = 'Client Florist'): Business
+    {
+        $another = $this->createIndependentWorkspaceBusiness(businessName: $name, workspaceName: $name . ' Workspace');
+        $this->member($another['workspace'], $agency->user, WorkspaceMembershipRole::Admin);
+
+        return $another['business'];
     }
 
     private function lockWorkspace(Workspace $workspace, WorkspacePlanAssignmentStatus $status): void

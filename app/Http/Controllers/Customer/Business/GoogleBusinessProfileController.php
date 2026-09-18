@@ -24,6 +24,7 @@ use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileMirrorService;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
@@ -280,7 +281,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
-        if (! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+        if (! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
             abort(404);
         }
 
