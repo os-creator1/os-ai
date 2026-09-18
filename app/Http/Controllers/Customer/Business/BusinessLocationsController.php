@@ -12,7 +12,7 @@ use App\Http\Requests\Business\ArchiveBusinessLocationRequest;
 use App\Http\Requests\Business\StoreBusinessLocationRequest;
 use App\Http\Requests\Business\UpsertBusinessLocationRequest;
 use App\Library\Business\BusinessLocationManager;
-use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Workspace;
@@ -46,7 +46,6 @@ class BusinessLocationsController extends Controller
 {
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
-        private readonly WorkspaceManager $workspaceManager,
         private readonly BusinessLocationManager $locationManager,
         private readonly BusinessLocationRepository $locationRepository,
     ) {
@@ -245,7 +244,7 @@ class BusinessLocationsController extends Controller
 
         $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
 
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+        if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute(Auth::user(), $workspace, $business)) {
             abort(404);
         }
 

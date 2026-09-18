@@ -6,7 +6,7 @@ use App\Library\Entitlement\CustomerAccountAccessDecision;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Workspace\AccountFrameAccess;
-use App\Library\Workspace\WorkspaceManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -91,7 +91,9 @@ use Symfony\Component\HttpFoundation\Response;
  *    FRAME" (owner, or an active all-scope member) — it says nothing about
  *    a direct Business owner or a selected-scope member authorized for
  *    exactly this Business, both of which the routed controller itself
- *    authorizes via the canonical WorkspaceManager::userCanAccessBusiness().
+ *    authorizes via the canonical BusinessRouteAccess decision (ordinary
+ *    WorkspaceManager tenancy, or the exact valid View-As target, so a
+ *    viewed Client account's own state is the one evaluated).
  *    Treating "fails AccountFrameAccess" as "foreign Workspace, pass
  *    through unevaluated" let such an actor's operational Business writes
  *    (e.g. a location update) bypass the lock entirely. When {businessUid}
@@ -99,7 +101,8 @@ use Symfony\Component\HttpFoundation\Response;
  *    routed Workspace (WorkspaceRepository::businessesForWorkspace(),
  *    the same lookup ContactsController::currentBusinessContext() and
  *    ResolvesBusinessTenancy already use) and then proven reachable via
- *    userCanAccessBusiness() — never a second tenancy algorithm — before
+ *    that same BusinessRouteAccess decision — never a second tenancy
+ *    algorithm — before
  *    the Workspace lock is evaluated. Failing either still passes through
  *    unevaluated, exactly like finding C's foreign-Workspace case: the
  *    route's own tenancy authorization decides what happens next.
@@ -175,7 +178,6 @@ class CustomerAccountAccessGate
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly CustomerAccountAccessResolver $resolver,
         private readonly AccountFrameAccess $accountFrameAccess,
-        private readonly WorkspaceManager $workspaceManager,
     ) {
     }
 
@@ -243,7 +245,7 @@ class CustomerAccountAccessGate
             if (is_string($routeBusinessUid) && $routeBusinessUid !== '') {
                 $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $routeBusinessUid);
 
-                if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) $user->id, $business)) {
+                if ($business === null || ! app(BusinessRouteAccess::class)->actorMayUseBusinessRoute($user, $workspace, $business)) {
                     return CustomerAccountAccessDecision::usable();
                 }
 

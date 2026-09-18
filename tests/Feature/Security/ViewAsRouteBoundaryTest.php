@@ -3,10 +3,13 @@
 namespace Tests\Feature\Security;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\ViewAs\ViewAsProhibitedActions;
 use App\Library\ViewAs\ViewAsRouteClass;
 use App\Library\ViewAs\ViewAsRouteClassification;
+use App\Models\Business;
 use App\Models\Campaigns;
+use App\Models\Customer;
 use App\Models\ViewAsSession;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RoutingRoute;
@@ -174,7 +177,7 @@ class ViewAsRouteBoundaryTest extends TestCase
     public function test_business_scoped_routes_are_narrowed_to_the_viewed_pair(): void
     {
         [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
-        $sibling = $this->addBusiness($agency, $workspace, 'Sibling Client');
+        $sibling = $this->addSiblingBusiness($agency);
         [, $foreignBusiness, $foreignWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Foreign Client', 'Foreign Agency');
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
@@ -218,7 +221,7 @@ class ViewAsRouteBoundaryTest extends TestCase
     public function test_bare_module_entries_redirect_into_the_viewed_business(): void
     {
         [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Sibling Client');
+        $this->addSiblingBusiness($agency);
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
@@ -230,7 +233,7 @@ class ViewAsRouteBoundaryTest extends TestCase
     public function test_global_and_workspace_frame_routes_are_denied_while_viewing(): void
     {
         [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Sibling Client');
+        $this->addSiblingBusiness($agency);
         $this->authenticateAs($agency);
 
         // Reachable before viewing…
@@ -270,7 +273,7 @@ class ViewAsRouteBoundaryTest extends TestCase
     public function test_the_menu_offers_only_routes_reachable_inside_the_viewed_business(): void
     {
         [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
-        $this->addBusiness($agency, $workspace, 'Sibling Client');
+        $this->addSiblingBusiness($agency);
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
@@ -292,6 +295,26 @@ class ViewAsRouteBoundaryTest extends TestCase
         foreach ($this->menuLinks($home->getContent()) as $link) {
             $this->assertContains($this->get($link)->getStatusCode(), [200, 302], 'Every offered link resolves while viewing: ' . $link);
         }
+    }
+
+    /**
+     * Contract 13 remediation (Category C): every "sibling" fixture in
+     * this file used to be a second Business inside the Agency's own
+     * Workspace, alongside the one being viewed — a shape
+     * businesses_workspace_id_unique now forbids. The property under test
+     * (an otherwise-ordinarily-accessible-but-different Business is denied
+     * while a View As session narrows the actor to one specific Business)
+     * does not depend on that Business living in the SAME Workspace as the
+     * viewed one — only on the actor having ordinary access to it. A
+     * genuinely separate Workspace, reached via an ordinary Admin
+     * membership, preserves the exact same narrowing property.
+     */
+    private function addSiblingBusiness(Customer $agency, string $name = 'Sibling Client'): Business
+    {
+        $sibling = $this->createIndependentWorkspaceBusiness(businessName: $name, workspaceName: $name . ' Workspace');
+        $this->member($sibling['workspace'], $agency->user, WorkspaceMembershipRole::Admin);
+
+        return $sibling['business'];
     }
 
     private function routeByAction(string $actionSuffix): RoutingRoute

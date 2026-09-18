@@ -55,10 +55,19 @@ class CustomerContextSecurityTest extends TestCase
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspaceB->uid, $businessB->uid]))->assertNotFound();
     }
 
+    /**
+     * Contract 13 remediation (Category C): "unassigned" used to be a
+     * sibling Business in the SAME Workspace — impossible now. The
+     * property under test is that Selected-scope grants nothing beyond its
+     * explicit assignment; an entirely independent Business (not even a
+     * member of this Workspace) is at least as strong a proof of that,
+     * since it is denied by both the Selected-scope check and ordinary
+     * tenancy.
+     */
     public function test_selected_scope_staff_cannot_enumerate_or_switch_into_unassigned_businesses(): void
     {
         [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
-        $unassigned = $this->addBusiness($owner, $workspace, 'Unassigned Client');
+        $unassigned = $this->createIndependentWorkspaceBusiness(businessName: 'Unassigned Client')['business'];
         $staff = $this->createCustomer();
         $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
         $this->assign($membership, $assigned);
@@ -76,31 +85,48 @@ class CustomerContextSecurityTest extends TestCase
     /**
      * T-CTX-3 — Agency isolation: client A's actor cannot read, write or
      * discover client B's Business; the response is 404.
+     *
+     * Contract 13 remediation (Category A + C): the old fixture put both
+     * clients as sibling Businesses inside the Agency's own Workspace,
+     * each reached via Selected-scope Staff membership of THAT Workspace —
+     * impossible now (one Business per Workspace) and, independently,
+     * already reversed by Contracts 01/07/10 (an Agency's clients are
+     * separate Client Workspaces, not sibling Businesses). The redesign
+     * uses two real, current Agency-managed Client Workspaces sharing one
+     * Agency, each with its own Selected-scope Staff member — proving the
+     * property this test exists for (Agency isolation between two clients
+     * of the SAME Agency, not merely two unrelated random tenants) rather
+     * than the retired row shape. Client A's Staff has no membership in
+     * Client B's Workspace, nor in the Agency's own Workspace, so every
+     * denial below is ordinary tenancy AND the Agency's own identity is
+     * never reachable at all, not merely hidden.
      */
     public function test_agency_clients_cannot_read_write_or_discover_each_other(): void
     {
-        [$agencyOwner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency House', 'Northwind Agency');
-        $clientA = $this->createCustomer();
-        $clientB = $this->createCustomer();
-        $businessA = $this->addBusiness($clientA, $workspace, 'Client A Bakery');
-        $businessB = $this->addBusiness($clientB, $workspace, 'Client B Florist');
-        $this->assign($this->member($workspace, $clientA->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $businessA);
-        $this->assign($this->member($workspace, $clientB->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $businessB);
+        [, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Business', 'Northwind Agency');
+        $pairA = $this->createAgencyManagedClient(agencyWorkspace: $agencyWorkspace, clientBusinessName: 'Client A Bakery', clientWorkspaceName: 'Client A Workspace');
+        $pairB = $this->createAgencyManagedClient(agencyWorkspace: $agencyWorkspace, clientBusinessName: 'Client B Florist', clientWorkspaceName: 'Client B Workspace');
 
-        $this->authenticateAs($clientA);
+        $staffA = $this->createCustomer();
+        $this->assign($this->member($pairA['clientWorkspace'], $staffA->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $pairA['clientBusiness']);
+
+        $this->authenticateAs($staffA);
 
         $home = $this->home()->assertOk();
         $this->assertStringNotContainsString('Client B Florist', $home->getContent());
         $this->assertStringNotContainsString('Northwind Agency', $home->getContent());
-        $this->assertStringNotContainsString('Agency House', $home->getContent());
+        $this->assertStringNotContainsString('Agency Business', $home->getContent());
 
-        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $businessB->uid]))->assertNotFound();
-        $this->get(route('customer.workspaces.businesses.outreach.campaigns', [$workspace->uid, $businessB->uid]))->assertNotFound();
-        $this->get(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $businessB->uid]))->assertNotFound();
-        $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $businessB->uid]))->assertNotFound();
-        $this->post(route('customer.workspaces.businesses.usage-billing.payer', [$workspace->uid, $businessB->uid]), ['payer_type' => 'business'])->assertNotFound();
-        $this->switchTo($workspace, $businessB)->assertNotFound();
-        $this->startViewAs($workspace, $businessB)->assertNotFound();
+        $businessB = $pairB['clientBusiness'];
+        $workspaceB = $pairB['clientWorkspace'];
+
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspaceB->uid, $businessB->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.outreach.campaigns', [$workspaceB->uid, $businessB->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.gbp.index', [$workspaceB->uid, $businessB->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspaceB->uid, $businessB->uid]))->assertNotFound();
+        $this->post(route('customer.workspaces.businesses.usage-billing.payer', [$workspaceB->uid, $businessB->uid]), ['payer_type' => 'business'])->assertNotFound();
+        $this->switchTo($workspaceB, $businessB)->assertNotFound();
+        $this->startViewAs($workspaceB, $businessB)->assertNotFound();
 
         // The shell never leads a client to the Agency's account surface,
         // and (Correction Round 1) the account surface itself refuses a
@@ -108,9 +134,9 @@ class CustomerContextSecurityTest extends TestCase
         $keys = $this->menuKeys($home->getContent());
         $this->assertNotContains('team', $keys);
         $this->assertNotContains('accounts', $keys);
-        $this->assertNotContains(route('customer.workspaces.show', $workspace->uid), $this->menuLinks($home->getContent()));
+        $this->assertNotContains(route('customer.workspaces.show', $agencyWorkspace->uid), $this->menuLinks($home->getContent()));
         $this->assertNotContains(route('customer.workspaces.index'), $this->menuLinks($home->getContent()));
-        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+        $this->get(route('customer.workspaces.show', $agencyWorkspace->uid))->assertNotFound();
         $this->assertStringNotContainsString('Northwind Agency', $this->get(route('customer.workspaces.index'))->assertOk()->getContent());
     }
 
@@ -122,7 +148,7 @@ class CustomerContextSecurityTest extends TestCase
     public function test_cross_tenant_direct_requests_fail_even_when_the_menu_hides_the_feature(): void
     {
         [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
-        $unassigned = $this->addBusiness($owner, $workspace, 'Unassigned Client');
+        $unassigned = $this->createIndependentWorkspaceBusiness(businessName: 'Unassigned Client')['business'];
         $staff = $this->createCustomer();
         $this->assign($this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $assigned);
         $this->authenticateAs($staff, ['view_contact', 'view_contact_group']);
@@ -153,9 +179,13 @@ class CustomerContextSecurityTest extends TestCase
         [$growth, , ] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Business', 'Growth Account');
         $experiences['growth owner'] = [$growth, null];
 
+        // Contract 13 remediation (Category C): reaching the Account frame
+        // used to be incidental (a second sibling Business made selection
+        // ambiguous) — impossible now. The context switcher's own
+        // deliberate "account" choice (switchToAccount(), Lane E) is the
+        // current way to stand in it regardless of Business count.
         [$agency, $clientOne, $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($agency, $agencyWorkspace, 'Client Two');
-        $experiences['agency owner (account frame)'] = [$agency, null];
+        $experiences['agency owner (account frame)'] = [$agency, 'account'];
         $experiences['agency owner (business frame)'] = [$agency, [$agencyWorkspace, $clientOne]];
 
         $staff = $this->createCustomer();
@@ -165,7 +195,9 @@ class CustomerContextSecurityTest extends TestCase
         foreach ($experiences as $label => [$customer, $switch]) {
             $this->authenticateAs($customer);
 
-            if ($switch !== null) {
+            if ($switch === 'account') {
+                $this->switchToAccount($agencyWorkspace)->assertRedirect(route('user.home'));
+            } elseif ($switch !== null) {
                 $this->switchTo($switch[0], $switch[1])->assertRedirect(route('user.home'));
             }
 
@@ -217,10 +249,23 @@ class CustomerContextSecurityTest extends TestCase
      * cannot reach is still 404 while viewing, and so is every OTHER
      * Business while the view is active.
      */
+    /**
+     * Contract 13 remediation (Category C): "clientTwo" used to be a
+     * sibling Business in the Agency's own Workspace — impossible now. The
+     * property under test needs a Business the actor ordinarily reaches
+     * (unlike $foreignBusiness, which they never can) but that becomes
+     * unreachable ONLY while narrowed by an active View As session, and
+     * reachable again once it ends — a genuinely separate Workspace with
+     * an ordinary Admin membership proves exactly that, same as the
+     * equivalent fix in ViewAsRouteBoundaryTest.
+     */
     public function test_view_as_cannot_widen_authorization(): void
     {
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $clientTwo = $this->addBusiness($agency, $workspace, 'Client Two');
+        $clientTwoSetup = $this->createIndependentWorkspaceBusiness(businessName: 'Client Two', workspaceName: 'Client Two Workspace');
+        $this->member($clientTwoSetup['workspace'], $agency->user, WorkspaceMembershipRole::Admin);
+        $clientTwo = $clientTwoSetup['business'];
+        $clientTwoWorkspace = $clientTwoSetup['workspace'];
         [, $foreignBusiness, $foreignWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Foreign Business', 'Foreign Account');
         $this->authenticateAs($agency);
 
@@ -228,11 +273,11 @@ class CustomerContextSecurityTest extends TestCase
         $this->startViewAs($workspace, $clientOne)->assertRedirect(route('user.home'));
 
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]))->assertOk();
-        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientTwo->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$clientTwoWorkspace->uid, $clientTwo->uid]))->assertNotFound();
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$foreignWorkspace->uid, $foreignBusiness->uid]))->assertNotFound();
 
         $this->post(route('customer.view-as.exit'))->assertRedirect(route('user.home'));
-        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientTwo->uid]))->assertOk();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$clientTwoWorkspace->uid, $clientTwo->uid]))->assertOk();
         $this->get(route('customer.workspaces.businesses.analytics.overview', [$foreignWorkspace->uid, $foreignBusiness->uid]))->assertNotFound();
     }
 }

@@ -586,15 +586,15 @@ class AgencyViewAsTest extends TestCase
         $this->assertStartRefused($owner, $agency->uid, $emptyClient->uid);
     }
 
-    public function test_a_client_workspace_with_more_than_one_business_fails_closed_rather_than_choosing_one(): void
-    {
-        $pair = $this->linkedPair();
-        $this->addBusiness($pair['clientOwner']->customer, $pair['client'], 'Second Clinic');
-        $this->nextRequest();
-
-        $this->assertSame(2, Business::query()->where('workspace_id', $pair['client']->id)->count());
-        $this->assertStartRefused($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
-    }
+    // Contract 13 remediation: this test constructed "a Client Workspace
+    // with more than one Business" — businesses_workspace_id_unique makes
+    // that unconditionally impossible now (not merely via addBusiness(),
+    // but via any insert whatsoever), so the scenario startAgencyView()'s
+    // defensive "more than one Business" check exists to catch can never
+    // occur again. The check itself is left in place as harmless defense
+    // in depth (untouched production code, per this remediation's default
+    // posture), but the test that exercised it is deleted rather than
+    // redesigned: there is no current data shape it could construct.
 
     public function test_a_client_workspace_whose_sole_business_is_not_active_fails_closed(): void
     {
@@ -848,42 +848,52 @@ class AgencyViewAsTest extends TestCase
         $this->assertSessionEndedWith($session, $pair['owner'], ViewAsSession::END_REASON_ACCESS_LOST);
     }
 
-    public function test_the_client_gaining_a_second_business_mid_session_fails_closed(): void
-    {
-        $pair = $this->linkedPair();
-        $session = $this->viewAs()->startAgencyView($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
-
-        $this->addBusiness($pair['clientOwner']->customer, $pair['client'], 'Unexpected Second Clinic');
-
-        $this->assertSessionEndedWith($session, $pair['owner'], ViewAsSession::END_REASON_ACCESS_LOST);
-    }
+    // Contract 13 remediation: same reasoning as the deleted
+    // test_a_client_workspace_with_more_than_one_business_fails_closed_rather_than_choosing_one
+    // above — "the Client Workspace gains a second Business mid-session" is
+    // now unconditionally impossible (businesses_workspace_id_unique), so
+    // there is no current data shape left to construct this scenario with.
 
     // ------------------------------------------------------------------
     // The existing same-Workspace path is unchanged
     // ------------------------------------------------------------------
 
+    /**
+     * Contract 13 remediation (Category C): the old fixture reached
+     * start()'s same-Workspace path via a sibling Business inside the
+     * Agency's own Workspace — a shape businesses_workspace_id_unique now
+     * forbids. start() was never actually about sibling Businesses,
+     * though (see its own docblock): it authorizes an active owner/Admin
+     * of the VIEWED Workspace viewing one of ITS Businesses, entirely
+     * independent of any Agency relationship. That remains a real, live,
+     * distinct scenario from startAgencyView()'s cross-Workspace path — a
+     * plain Admin of ANOTHER Workspace (no Agency relationship at all)
+     * viewing that Workspace's own sole Business. Redesigning around that
+     * scenario preserves the exact property this test exists to pin: the
+     * same-Workspace path is unchanged, still viewing_agency_workspace_id
+     * = null, and still ends as access_lost on ordinary access loss.
+     */
     public function test_the_same_workspace_view_as_path_is_unchanged(): void
     {
-        [$agencyCustomer, $clientBusiness, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Bakery', 'Northwind Agency');
-        $this->addBusiness($agencyCustomer, $workspace, 'Client Florist');
-        $actor = $agencyCustomer->user;
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Lane Studios', 'Harbor Lane');
+        $admin = $this->memberOf($workspace, WorkspaceMembershipRole::Admin);
 
-        $session = $this->viewAs()->start($actor, $workspace->uid, $clientBusiness->uid, 'Legacy path');
+        $session = $this->viewAs()->start($admin, $workspace->uid, $business->uid, 'Legacy path');
 
         $this->assertNull($session->viewing_agency_workspace_id, 'A same-Workspace session is never an Agency session.');
         $this->assertSame((int) $workspace->id, (int) $session->workspace_id);
 
         $this->nextRequest();
-        $context = $this->viewAs()->current($actor);
+        $context = $this->viewAs()->current($admin);
 
         $this->assertNotNull($context);
         $this->assertNull($context->viewingAgencyWorkspaceId);
         $this->assertNull($context->viewingAgencyWorkspaceUid);
 
         // Its ordinary access loss still ends as access_lost.
-        DB::table('businesses')->where('id', $clientBusiness->id)->update(['status' => BusinessStatus::Inactive->value]);
+        DB::table('businesses')->where('id', $business->id)->update(['status' => BusinessStatus::Inactive->value]);
 
-        $this->assertSessionEndedWith($session, $actor, ViewAsSession::END_REASON_ACCESS_LOST);
+        $this->assertSessionEndedWith($session, $admin, ViewAsSession::END_REASON_ACCESS_LOST);
     }
 
     // ------------------------------------------------------------------
