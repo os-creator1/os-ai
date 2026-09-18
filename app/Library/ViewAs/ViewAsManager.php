@@ -32,13 +32,25 @@ use Illuminate\Http\Request;
  *
  * V1 Contract 04 adds a second, separately-named entry, startAgencyView(),
  * for CROSS-Workspace Agency View As through an Active Contract 01
- * relationship, revalidated on every read by its own chain. The
- * same-Workspace start()/actorMayView()/accessChainStillHolds() path above is
- * left unchanged until Contract 14 retires it. No route, controller or UI
- * reaches startAgencyView() yet (Contract 07/08A); the HTTP resolver, the
- * View As middleware and the broadcast channel are deliberately unchanged
- * and stay fail-closed for an Agency session, since each still checks the
- * actor's ordinary tenancy of the viewed Business.
+ * relationship, revalidated on every read by its own chain — now the
+ * actual "view as a client" path (Contract 08A's Agency Clients UI calls
+ * it directly), since Contract 10 migrated every managed client out of the
+ * Agency's own Workspace into its own Client Workspace.
+ *
+ * Contract 14 review: with Contract 13 (businesses_workspace_id_unique)
+ * permanently capping a Workspace at one Business, the same-Workspace
+ * start() path above can now only ever narrow an owner/admin's session to
+ * their OWN Workspace's own sole Business — a Business they already fully
+ * access directly, making it purposeless as a genuine "view as a DIFFERENT
+ * actor/Business" mechanism. It was NOT retired in Contract 14, though:
+ * ~45 already-merged tests across the Dashboards/Navigation/Theme/
+ * DesignSystem domains (R3/R4) still call it, several using it as their
+ * own "view as a client" idiom; safely retiring start() requires auditing
+ * and very likely rewriting all of them — out of proportion to a final,
+ * narrow cleanup pass. Left mechanically functioning and documented here
+ * as a confirmed-dead-in-purpose finding for its own dedicated slice, not
+ * assumed safe to delete merely because this comment once said Contract 14
+ * would.
  */
 final class ViewAsManager
 {

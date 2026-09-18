@@ -215,6 +215,22 @@ class WorkspaceMembershipBusinessRepositoryTest extends TestCase
         $this->assertSame(1, $repository->assignedBusinessIds($membership)->count());
     }
 
+    /**
+     * Contract 14 review: assign()/syncForMembership() both require every
+     * Business to belong to the membership's OWN Workspace
+     * (guardSameWorkspace()), so "keep one, drop one, add a third" — three
+     * DISTINCT Businesses all valid for one membership — needed three
+     * Businesses genuinely coexisting in that one Workspace. Contract 13
+     * (businesses_workspace_id_unique) permanently caps a Workspace at
+     * one, so this specific diff/atomicity shape can no longer be
+     * constructed at all — not by a different actor, a different
+     * Workspace, or any other substitution, since the whole point is one
+     * membership's own set changing size. Left as documented, permanently
+     * unreachable V1 test scope; not deleted, since the underlying
+     * syncForMembership() diff logic itself is still real production code,
+     * still exercised (in its degenerate 0-or-1-element form) by this
+     * file's other tests.
+     */
     public function test_sync_replaces_grants_atomically_after_successful_validation(): void
     {
         $owner = $this->createCustomer();

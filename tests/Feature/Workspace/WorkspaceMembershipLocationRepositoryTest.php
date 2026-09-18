@@ -245,32 +245,44 @@ class WorkspaceMembershipLocationRepositoryTest extends TestCase
         $this->assertSame(1, $repository->assignedLocationIds($membership)->count());
     }
 
+    /**
+     * guardAssignable()'s two-step check (Contract 02 §5): step 1 is
+     * CROSS-WORKSPACE (a different exception, WorkspaceCrossAssignment...),
+     * step 2 — CrossBusinessLocationAssignmentException, what this proves —
+     * is reached only once a location's Business genuinely belongs to the
+     * membership's OWN Workspace. Contract 13 makes that Workspace's own
+     * Business the ONLY Business any location here could ever belong to,
+     * so "one already-reachable location plus one unreachable one from a
+     * sibling Business" (the original two-Business shape) can no longer be
+     * constructed: reachability is a property of the membership's OWN
+     * Business-level grant, all-or-nothing over the Workspace's one
+     * Business, never a per-location split anymore. What remains provable,
+     * and is proven here, is step 2 itself: a Selected-scope membership
+     * with NO Business-level grant at all is refused a Location-level one
+     * for the Workspace's own Business, and nothing is assigned.
+     */
     public function test_sync_rejects_a_business_unreachable_location_before_changing_assignments(): void
     {
         $owner = $this->createCustomer();
         $repository = app(WorkspaceMembershipLocationRepository::class);
         $workspace = $this->createWorkspace($owner->user);
-        $reachableBusiness = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $unreachableBusiness = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $soleBusiness = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $membership = $this->createMembership($workspace, $this->createCustomer()->user, [
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
-        app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $reachableBusiness);
 
-        $existing = $this->location($reachableBusiness);
-        $repository->assign($membership, $existing);
-        $unreachableLocation = $this->location($unreachableBusiness);
+        $unreachableLocation = $this->location($soleBusiness);
 
         try {
-            $repository->syncForMembership($membership, [$existing->id, $unreachableLocation->id]);
+            $repository->syncForMembership($membership, [$unreachableLocation->id]);
             $this->fail('Expected CrossBusinessLocationAssignmentException was not thrown.');
         } catch (CrossBusinessLocationAssignmentException $e) {
             // expected
         }
 
-        $this->assertTrue($repository->isAssigned($membership, $existing->id));
-        $this->assertSame(1, $repository->assignedLocationIds($membership)->count());
+        $this->assertFalse($repository->isAssigned($membership, $unreachableLocation->id));
+        $this->assertSame(0, $repository->assignedLocationIds($membership)->count());
     }
 
     public function test_sync_replaces_grants_atomically_after_successful_validation(): void

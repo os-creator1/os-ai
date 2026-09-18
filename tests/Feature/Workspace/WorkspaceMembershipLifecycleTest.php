@@ -357,6 +357,18 @@ class WorkspaceMembershipLifecycleTest extends TestCase
     }
 
     // 21. BusinessAssigned fires once per initial selected grant in deterministic order.
+    /**
+     * Contract 14 review: addMember() grants at most one Business per
+     * membership now (Contract 13 caps a Workspace at one), so "several
+     * grants in one addMember() call, dispatched in ascending order" can
+     * no longer be constructed — not a fixture gap, the underlying event
+     * sequence this proved genuinely cannot have more than one element
+     * anymore. Left as documented, permanently unreachable V1 test scope
+     * (WorkspaceOwnershipTransferTest::
+     * test_created_event_fires_before_assignment_events_for_new_row covers
+     * the still-live "created fires before assigned" ordering for a
+     * single grant).
+     */
     public function test_business_assigned_fires_once_per_grant_in_ascending_order(): void
     {
         Event::fake(self::ALL_MEMBERSHIP_EVENTS);

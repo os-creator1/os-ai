@@ -618,6 +618,14 @@ class WorkspaceOwnershipTransferTest extends TestCase
     }
 
     // 37. Selected assignment additions/removals match exact set diff.
+    /**
+     * Contract 14 review: this needs THREE distinct Businesses valid for
+     * one disposition (A, B kept/dropped from an existing assignment; C
+     * newly added) — Contract 13 permanently caps a Workspace at one, so
+     * "diff between two non-trivial Business sets for one Workspace" can
+     * no longer be constructed by any substitution. Left as documented,
+     * permanently unreachable V1 test scope.
+     */
     public function test_convert_to_admin_selected_assignment_diff_matches_exactly(): void
     {
         $owner = $this->createCustomer();
@@ -670,6 +678,16 @@ class WorkspaceOwnershipTransferTest extends TestCase
     }
 
     // 39. Event order matches the approved deterministic order.
+    /**
+     * Contract 14 review: needs an assign AND an unassign in the SAME
+     * reconciliation, which needs two distinct Businesses (one kept/added,
+     * one dropped) valid for the same Workspace — impossible now for the
+     * same reason as #37 above. Left as documented, permanently
+     * unreachable V1 test scope; this file's other tests each still prove
+     * one of the surrounding deactivated/reactivated/role_changed/
+     * scope_changed events individually, just not this one's full combined
+     * ordering across all of them plus an assign/unassign pair.
+     */
     public function test_full_event_order_for_existing_previous_owner_reconciliation(): void
     {
         $owner = $this->createCustomer();

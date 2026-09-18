@@ -305,6 +305,15 @@
                                 <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
                                 <p class="text-caption mb-1" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }}.</p>
                             @else
+                                {{-- Contract 14 — the checkbox list Contract 13's frozen
+                                     1 Workspace : 1 Business topology retired is gone: the
+                                     multi-select branch is reachable only when
+                                     $manageableBusinesses holds MORE THAN ONE Business, and
+                                     manageableBusinesses() is always scoped to this single
+                                     Workspace's own Businesses (at most one, ever, now), so
+                                     that branch could never render. This @else itself is
+                                     still reached — the count-0 case, an actor with nothing
+                                     to grant — where the scope selector alone remains. --}}
                                 <div class="mb-1">
                                     <label class="form-label" for="member-scope">Business access</label>
                                     <select class="form-control" id="member-scope" name="business_access_scope">
@@ -312,17 +321,6 @@
                                         <option value="selected">Selected Businesses</option>
                                     </select>
                                 </div>
-
-                                @if (! empty($manageableBusinesses))
-                                    <div class="mb-1">
-                                        @foreach ($manageableBusinesses as $business)
-                                            <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
-                                                <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                            </div>
-                                        @endforeach
-                                    </div>
-                                @endif
                             @endif
 
                             <x-button type="submit" variant="outline">Add member</x-button>

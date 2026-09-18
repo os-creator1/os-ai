@@ -1378,26 +1378,40 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
     // --- Member-management view rendering -----------------------------------
 
+    /**
+     * The checkbox id is keyed by BOTH the member and the Business
+     * (`access-{member uid}-{business uid}`), so "checked vs unchecked"
+     * was never really about telling two Businesses apart — it is about
+     * whether THIS member's own assignment includes THIS Business. Contract
+     * 13 leaves the Workspace only its one Business, so that same
+     * distinction is proven with two members sharing it: one assigned
+     * (checked), one not (unchecked) — the identical id-per-member-and-
+     * Business shape, just varying the member instead of a now-impossible
+     * second Business.
+     */
     public function test_access_form_pre_checks_currently_assigned_businesses(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
-        $member = $this->createNamedMember($workspace, 'Priya', 'Shah', [
+        $soleBusiness = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+        $assignedMember = $this->createNamedMember($workspace, 'Priya', 'Shah', [
             'role' => WorkspaceMembershipRole::Admin,
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
-        $assignedBusiness = $this->createBusinessForCustomer($member->user->id, $workspace->id);
-        $unassignedBusiness = $this->createBusinessForCustomer($member->user->id, $workspace->id);
+        $unassignedMember = $this->createNamedMember($workspace, 'Omar', 'Reyes', [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
         WorkspaceMembershipBusiness::create([
-            'workspace_membership_id' => $member->id,
-            'business_id' => $assignedBusiness->id,
+            'workspace_membership_id' => $assignedMember->id,
+            'business_id' => $soleBusiness->id,
         ]);
 
         $response = $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertOk();
         $html = $response->getContent();
 
-        $assignedInputId = 'access-' . $member->user->uid . '-' . $assignedBusiness->uid;
-        $unassignedInputId = 'access-' . $member->user->uid . '-' . $unassignedBusiness->uid;
+        $assignedInputId = 'access-' . $assignedMember->user->uid . '-' . $soleBusiness->uid;
+        $unassignedInputId = 'access-' . $unassignedMember->user->uid . '-' . $soleBusiness->uid;
 
         $this->assertMatchesRegularExpression(
             '/id="' . preg_quote($assignedInputId, '/') . '"[^>]*\schecked/',
