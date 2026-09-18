@@ -429,17 +429,15 @@ class BusinessManagerTest extends TestCase
         );
 
         $businessRepository = app(\App\Repositories\Contracts\BusinessRepository::class);
-        $primary = null;
 
-        for ($i = 0; $i < 5; $i++) {
-            $created = $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
+        // Core's own slot capacity is exactly one Business (business_slot_
+        // included = 1) — this Workspace's Business already fills it, and
+        // Contract 13 leaves no way to construct several existing
+        // Businesses under one Workspace to reach "at capacity" with
+        // anymore; one is already the whole capacity.
+        $primary = $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Existing']));
 
-            if ($i === 0) {
-                $primary = $created;
-            }
-        }
-
-        // Exactly one preferred candidate for the legacy resolver: this
+        // The one preferred candidate for the legacy resolver: this
         // customer's single primary Business, already linked to this
         // at-capacity Workspace.
         $this->assertNotNull($primary);
@@ -449,9 +447,9 @@ class BusinessManagerTest extends TestCase
         $this->expectException(\App\Exceptions\Entitlement\BusinessSlotLimitExceededException::class);
 
         try {
-            $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes(['name' => 'Sixth']));
+            $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes(['name' => 'Second']));
         } finally {
-            $this->assertSame(5, Business::where('workspace_id', $workspace->id)->count());
+            $this->assertSame(1, Business::where('workspace_id', $workspace->id)->count());
             Event::assertNotDispatched(BusinessCreated::class);
         }
     }

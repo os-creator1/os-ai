@@ -212,7 +212,6 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
         $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $membership = $this->manager()->addMember(
             $owner->user_id,
@@ -220,10 +219,10 @@ class WorkspaceMembershipLifecycleTest extends TestCase
             $newMember->id,
             WorkspaceMembershipRole::Staff,
             WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All,
-            [$businessA->id, $businessB->id]);
+            [$businessA->id]);
 
         $assignedIds = app(WorkspaceMembershipBusinessRepository::class)->assignedBusinessIds($membership)->sort()->values()->all();
-        $this->assertSame([$businessA->id, $businessB->id], collect($assignedIds)->sort()->values()->all());
+        $this->assertSame([$businessA->id], collect($assignedIds)->sort()->values()->all());
     }
 
     // 13. Cross-Workspace ID rolls back Membership and all assignments.
@@ -309,15 +308,19 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
         $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        // The two calls' id SETS must genuinely differ (addMember() is a
+        // true no-op, not a throw, when role/scope/ids all match exactly)
+        // — an empty set the first time, the Workspace's one Business the
+        // second, since Contract 13 leaves no second Business to submit a
+        // different non-empty set with.
         $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id]);
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, []);
 
         $this->expectException(WorkspaceMembershipAlreadyExistsException::class);
         $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
-            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessB->id]);
+            WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessA->id]);
     }
 
     // 19. Existing inactive membership throws.

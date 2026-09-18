@@ -8,20 +8,30 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use RuntimeException;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\PreContract13HistoricalTestCase;
 
 /**
  * Customer Experience Slice 1A — the additive capacity migration
  * (contract §23.2, §23.3; RFC-004 §33.5–§33.6). T-LOC-8, T-BIZ-2 at
  * migration time, plus forward, rollback, replay and idempotence.
  *
- * Deliberately does NOT use RefreshDatabase: the migration performs real
- * DDL, which implicitly commits in MySQL. Each test moves the schema to the
- * state it needs, commits its own fixture rows, and tearDown() removes
- * those rows and restores the fully migrated schema unconditionally — every
- * other test file assumes it — mirroring UsageMeterBackfillPreflightTest.
+ * legacyFixture() below seeds a genuine pre-Contract-13 Core Workspace
+ * holding THREE Businesses — the exact historical topology this capacity
+ * migration must grandfather correctly. Contract 13 permanently enforces
+ * one Business per Workspace on the shared ultimatesms_testing-family
+ * database, so this class runs entirely against
+ * PreContract13HistoricalTestCase's own disposable, per-test database —
+ * migrated fully fresh (this migration included) with only Contract 13's
+ * own constraint rolled back, matching the "fully migrated" schema state
+ * every test here already assumed before Contract 13 existed.
+ *
+ * Deliberately does NOT use RefreshDatabase: this migration performs real
+ * DDL mid-test, which implicitly commits in MySQL and cannot be
+ * transaction-rolled-back — exactly why each test gets its own disposable
+ * database instead, dropped unconditionally in tearDown() rather than
+ * relying on row-level cleanup within a shared one.
  */
-class BusinessLocationCapacityMigrationTest extends TestCase
+class BusinessLocationCapacityMigrationTest extends PreContract13HistoricalTestCase
 {
     private const MIGRATION = '2026_09_15_100001_add_physical_location_capacity_and_lifecycle.php';
 

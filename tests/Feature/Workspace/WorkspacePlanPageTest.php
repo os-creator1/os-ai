@@ -54,7 +54,6 @@ class WorkspacePlanPageTest extends TestCase
     public function test_agency_resolves_to_the_agency_accounts_own_plan(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
 
         $page = $this->planPage($workspace);
@@ -113,7 +112,6 @@ class WorkspacePlanPageTest extends TestCase
     public function test_agency_shows_unlimited_businesses_and_unlimited_locations(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
         $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
         $catalog = $this->catalogFor(WorkspacePlanTier::Agency);
@@ -334,7 +332,6 @@ class WorkspacePlanPageTest extends TestCase
     public function test_agency_account_frame_links_the_agency_accounts_plan(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
-        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
 
         // The Agency account's own Settings name its plan.

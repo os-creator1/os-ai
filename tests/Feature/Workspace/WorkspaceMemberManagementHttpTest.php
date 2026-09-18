@@ -338,19 +338,18 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $target = $this->createTargetUser('Sel', 'Ected');
         $businessA = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
             'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
-            'business_uids' => [$businessA->uid, $businessB->uid],
+            'business_uids' => [$businessA->uid],
         ])->assertRedirect();
 
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $target->id)->first();
         $this->assertSame(WorkspaceBusinessAccessScope::Selected, $membership->business_access_scope);
         $this->assertEqualsCanonicalizing(
-            [$businessA->id, $businessB->id],
+            [$businessA->id],
             WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->all()
         );
     }
@@ -761,21 +760,23 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $owner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
-        $admin = $this->createMembership($workspace, $customer->user, [
+        // Selected scope with ZERO assignments: the admin's own effective
+        // access is empty, so even the Workspace's one Business is outside
+        // it — Contract 13 leaves no second, in-Workspace "forbidden"
+        // Business to construct this boundary with anymore.
+        $this->createMembership($workspace, $customer->user, [
             'role' => WorkspaceMembershipRole::Admin,
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
             'is_active' => true,
         ]);
-        $allowedBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $forbiddenBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $admin->id, 'business_id' => $allowedBusiness->id]);
+        $soleBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
         $target = $this->createTargetUser('Scoped', 'Admin');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
             'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
-            'business_uids' => [$forbiddenBusiness->uid],
+            'business_uids' => [$soleBusiness->uid],
         ]);
 
         $response->assertNotFound();
@@ -911,11 +912,10 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $member = $this->createNamedMember($workspace, 'Sco', 'Peme', ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
         $businessA = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $response = $this->post(route('customer.workspaces.members.access', [$workspace->uid, $member->user->uid]), [
             'business_access_scope' => 'selected',
-            'business_uids' => [$businessA->uid, $businessB->uid],
+            'business_uids' => [$businessA->uid],
         ]);
 
         $response->assertRedirect(route('customer.workspaces.team.show', $workspace->uid));
@@ -923,7 +923,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $fresh = $member->fresh();
         $this->assertSame(WorkspaceBusinessAccessScope::Selected, $fresh->business_access_scope);
         $this->assertEqualsCanonicalizing(
-            [$businessA->id, $businessB->id],
+            [$businessA->id],
             WorkspaceMembershipBusiness::where('workspace_membership_id', $fresh->id)->pluck('business_id')->all()
         );
     }
@@ -990,19 +990,19 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $owner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner);
-        $admin = $this->createMembership($workspace, $customer->user, [
+        // Selected scope with ZERO assignments — see the identical note on
+        // test_add_member_business_selection_outside_admin_effective_access_writes_nothing().
+        $this->createMembership($workspace, $customer->user, [
             'role' => WorkspaceMembershipRole::Admin,
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
             'is_active' => true,
         ]);
-        $allowedBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $forbiddenBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $admin->id, 'business_id' => $allowedBusiness->id]);
+        $soleBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
         $member = $this->createNamedMember($workspace, 'Tar', 'Get', ['business_access_scope' => WorkspaceBusinessAccessScope::All]);
 
         $response = $this->post(route('customer.workspaces.members.access', [$workspace->uid, $member->user->uid]), [
             'business_access_scope' => 'selected',
-            'business_uids' => [$forbiddenBusiness->uid],
+            'business_uids' => [$soleBusiness->uid],
         ]);
 
         $response->assertNotFound();
@@ -1512,7 +1512,6 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'is_active' => true,
         ]);
         $visibleBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
-        $hiddenBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $admin->id, 'business_id' => $visibleBusiness->id]);
 
         $target = $this->createNamedMember($workspace, 'Hid', 'Den', [
@@ -1520,7 +1519,6 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $visibleBusiness->id]);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $hiddenBusiness->id]);
 
         // Customer Experience Slice 1B, Correction Round 1 (contract §5.2,
         // §5.4): a selected-scope Admin never reads the overview (the

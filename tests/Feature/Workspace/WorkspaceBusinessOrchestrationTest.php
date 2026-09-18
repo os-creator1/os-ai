@@ -396,16 +396,17 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $this->createMembership($workspaceA, $inactiveAdmin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => false]);
 
         $unrelated = $this->createCustomer();
+        $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         foreach ([$staff->user_id, $inactiveAdmin->user_id, $unrelated->user_id] as $actorId) {
-            $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
-
             try {
                 $this->manager()->reassignBusiness($actorId, $business, $workspaceB);
                 $this->fail("Expected UnauthorizedWorkspaceManagementException for actor [{$actorId}].");
             } catch (UnauthorizedWorkspaceManagementException $e) {
                 $this->assertSame($actorId, $e->actorUserId);
             }
+
+            $this->assertSame($workspaceA->id, $business->fresh()->workspace_id, 'A refused attempt must never move the Business.');
         }
     }
 
@@ -576,21 +577,17 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $workspaceC = $this->entitledWorkspace($owner->user);
 
         $member1 = $this->createCustomer()->user;
-        $member2 = $this->createCustomer()->user;
         $member3 = $this->createCustomer()->user;
 
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
-        $otherBusinessInA = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes(['name' => 'Other In A']));
         $businessInC = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceC, $this->businessAttributes(['name' => 'In C']));
 
         $membershipInA1 = $this->manager()->addMember($owner->user_id, $workspaceA, $member1->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$business->id]);
-        $membershipInA2 = $this->manager()->addMember($owner->user_id, $workspaceA, $member2->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$otherBusinessInA->id]);
         $membershipInC = $this->manager()->addMember($owner->user_id, $workspaceC, $member3->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All, [$businessInC->id]);
 
         $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
 
         $this->assertSame(0, WorkspaceMembershipBusiness::where('workspace_membership_id', $membershipInA1->id)->count());
-        $this->assertSame(1, WorkspaceMembershipBusiness::where('workspace_membership_id', $membershipInA2->id)->count());
         $this->assertSame(1, WorkspaceMembershipBusiness::where('workspace_membership_id', $membershipInC->id)->count());
     }
 
@@ -775,25 +772,37 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $this->assertLessThan($workspaceHigh->id, $workspaceLow->id);
 
         $businessInLow = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceLow, $this->businessAttributes(['name' => 'In Low']));
-        $businessInHigh = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceHigh, $this->businessAttributes(['name' => 'In High']));
 
+        // Direction 1: Low -> High (High starts empty; a reassignment's
+        // destination must be, Contract 13). Low is empty afterward.
         $queriesLowToHigh = $this->captureQueries(function () use ($owner, $businessInLow, $workspaceHigh) {
             $this->manager()->reassignBusiness($owner->user_id, $businessInLow, $workspaceHigh);
         });
 
-        $queriesHighToLow = $this->captureQueries(function () use ($owner, $businessInHigh, $workspaceLow) {
-            $this->manager()->reassignBusiness($owner->user_id, $businessInHigh, $workspaceLow);
+        // Direction 2: a fresh, even-higher Workspace -> Low (now empty
+        // again). Its Business genuinely starts higher than both existing
+        // Workspaces and moves to the lowest id, exercising the opposite
+        // (high-to-low) direction with a still-valid empty destination.
+        $workspaceHigher = $this->roomyWorkspace($owner->user);
+        $this->assertLessThan($workspaceHigher->id, $workspaceHigh->id);
+        $businessInHigher = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceHigher, $this->businessAttributes(['name' => 'In Higher']));
+
+        $queriesHigherToLow = $this->captureQueries(function () use ($owner, $businessInHigher, $workspaceLow) {
+            $this->manager()->reassignBusiness($owner->user_id, $businessInHigher, $workspaceLow);
         });
 
-        foreach ([$queriesLowToHigh, $queriesHighToLow] as $queries) {
+        foreach ([
+            [$queriesLowToHigh, $workspaceLow, $workspaceHigh],
+            [$queriesHigherToLow, $workspaceLow, $workspaceHigher],
+        ] as [$queries, $lowerWorkspace, $higherWorkspace]) {
             $workspaceLockQueries = array_values(array_filter(
                 $queries,
                 fn ($q) => str_contains(strtolower($q['sql']), 'for update') && str_contains($q['sql'], '`workspaces`')
             ));
 
             $this->assertCount(2, $workspaceLockQueries);
-            $this->assertSame([$workspaceLow->id], $workspaceLockQueries[0]['bindings']);
-            $this->assertSame([$workspaceHigh->id], $workspaceLockQueries[1]['bindings']);
+            $this->assertSame([$lowerWorkspace->id], $workspaceLockQueries[0]['bindings']);
+            $this->assertSame([$higherWorkspace->id], $workspaceLockQueries[1]['bindings']);
         }
     }
 

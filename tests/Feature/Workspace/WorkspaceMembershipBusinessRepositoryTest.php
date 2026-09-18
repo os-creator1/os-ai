@@ -27,21 +27,32 @@ class WorkspaceMembershipBusinessRepositoryTest extends TestCase
         );
     }
 
+    /**
+     * assign()'s own guardSameWorkspace() means a membership can only ever
+     * be assigned a Business from its OWN Workspace, and Contract 13 caps
+     * that at one — so two differently-assigned memberships can no longer
+     * share one Workspace. The isolation this proves is unchanged: two
+     * independent Workspace+Business+membership triples, each assigned its
+     * own sole Business, with assignedBusinessIds() for one never leaking
+     * the other's.
+     */
     public function test_assigned_business_ids_is_scoped_to_one_membership(): void
     {
-        $owner = $this->createCustomer();
         $repository = app(WorkspaceMembershipBusinessRepository::class);
-        $workspace = $this->createWorkspace($owner->user);
 
-        $membershipA = $this->createMembership($workspace, $this->createCustomer()->user, [
+        $ownerA = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($ownerA->user);
+        $membershipA = $this->createMembership($workspaceA, $this->createCustomer()->user, [
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
-        $membershipB = $this->createMembership($workspace, $this->createCustomer()->user, [
+        $businessA = $this->createBusinessForCustomer($ownerA->user_id, $workspaceA->id);
+
+        $ownerB = $this->createCustomer();
+        $workspaceB = $this->createWorkspace($ownerB->user);
+        $membershipB = $this->createMembership($workspaceB, $this->createCustomer()->user, [
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
-
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $businessB = $this->createBusinessForCustomer($ownerB->user_id, $workspaceB->id);
 
         $repository->assign($membershipA, $businessA);
         $repository->assign($membershipB, $businessB);

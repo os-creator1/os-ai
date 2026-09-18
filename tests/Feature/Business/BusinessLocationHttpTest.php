@@ -231,8 +231,9 @@ class BusinessLocationHttpTest extends TestCase
     public function test_a_location_of_another_business_is_404_even_inside_an_accessible_business(): void
     {
         [$customer, $business, $workspace] = $this->locationTenant(WorkspacePlanTier::Agency, 1);
-        $clientTwo = $this->addBusiness($customer, $workspace, 'Client Two');
-        $this->locations()->createLocation($clientTwo, $this->locationAttributes('Elsewhere'), (int) $customer->user_id);
+        $foreignAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Client Two', workspaceName: 'Client Two Workspace');
+        $clientTwo = $foreignAccount['business'];
+        $this->locations()->createLocation($clientTwo, $this->locationAttributes('Elsewhere'), (int) $foreignAccount['customer']->user_id);
         $this->authenticateAs($customer);
 
         $foreign = $this->locationNamed($clientTwo, 'Elsewhere');
@@ -284,14 +285,15 @@ class BusinessLocationHttpTest extends TestCase
     public function test_view_as_client_reaches_only_the_viewed_business_locations(): void
     {
         [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
-        $sibling = $this->addBusiness($agency, $workspace, 'Sibling Client');
+        $managed = $this->createAgencyManagedClient($workspace, 'Sibling Client', 'Sibling Client Workspace');
+        $sibling = $managed['clientBusiness'];
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
         $this->get($this->url($workspace, $viewed))->assertOk();
         $hub = $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $viewed->uid]))->assertOk()->getContent();
         $this->assertContains('locations', $this->settingsHubModuleKeys($hub), 'The existing view-as classification keeps the module for the viewed Business.');
-        $this->get($this->url($workspace, $sibling))->assertNotFound();
+        $this->get($this->url($managed['clientWorkspace'], $sibling))->assertNotFound();
     }
 
     private function url($workspace, $business, ?string $locationUid = null, ?string $action = null): string

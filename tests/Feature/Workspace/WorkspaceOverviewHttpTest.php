@@ -300,9 +300,7 @@ class WorkspaceOverviewHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
         $businessA = $this->createBusinessForCustomer($member->user->id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($member->user->id, $workspace->id);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $member->id, 'business_id' => $businessA->id]);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $member->id, 'business_id' => $businessB->id]);
 
         $response = $this->get(route('customer.workspaces.team.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
@@ -314,8 +312,8 @@ class WorkspaceOverviewHttpTest extends TestCase
             'name' => 'Priya Shah',
             'role' => 'Admin',
             'scope' => 'Selected Businesses',
-            'assigned_business_count' => 2,
-            'assigned_business_uids' => [$businessA->uid, $businessB->uid],
+            'assigned_business_count' => 1,
+            'assigned_business_uids' => [$businessA->uid],
             'is_active' => true,
         ], $rows[0]);
         $response->assertDontSee($member->user->email);

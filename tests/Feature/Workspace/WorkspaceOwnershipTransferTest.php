@@ -478,16 +478,15 @@ class WorkspaceOwnershipTransferTest extends TestCase
         $newOwner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
         $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $this->manager()->transferOwnership(
             $owner->user_id, $workspace, $newOwner->id,
-            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$businessB->id, $businessA->id, $businessB->id]),
+            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$businessA->id, $businessA->id]),
         );
 
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $owner->user_id)->first();
         $persistedIds = WorkspaceMembershipBusiness::where('workspace_membership_id', $membership->id)->pluck('business_id')->sort()->values()->all();
-        $this->assertSame(collect([$businessA->id, $businessB->id])->sort()->values()->all(), $persistedIds);
+        $this->assertSame([$businessA->id], $persistedIds);
     }
 
     // 31. Created event fires before assignment events.
@@ -497,8 +496,6 @@ class WorkspaceOwnershipTransferTest extends TestCase
         $newOwner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
         $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $orderedIds = collect([$businessA->id, $businessB->id])->sort()->values()->all();
 
         $order = [];
         Event::listen(WorkspaceMembershipCreated::class, function () use (&$order) {
@@ -510,10 +507,10 @@ class WorkspaceOwnershipTransferTest extends TestCase
 
         $this->manager()->transferOwnership(
             $owner->user_id, $workspace, $newOwner->id,
-            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$orderedIds[1], $orderedIds[0]]),
+            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$businessA->id]),
         );
 
-        $this->assertSame(['created', "assigned:{$orderedIds[0]}", "assigned:{$orderedIds[1]}"], $order);
+        $this->assertSame(['created', "assigned:{$businessA->id}"], $order);
     }
 
     // 32. No role/scope-change event fires for a newly-created row.
