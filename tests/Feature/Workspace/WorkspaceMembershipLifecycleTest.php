@@ -356,42 +356,38 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         });
     }
 
-    // 21. BusinessAssigned fires once per initial selected grant in deterministic order.
+    // 21. BusinessAssigned fires once for the initial selected grant, with the correct payload.
     /**
-     * Contract 14 review: addMember() grants at most one Business per
-     * membership now (Contract 13 caps a Workspace at one), so "several
-     * grants in one addMember() call, dispatched in ascending order" can
-     * no longer be constructed — not a fixture gap, the underlying event
-     * sequence this proved genuinely cannot have more than one element
-     * anymore. Left as documented, permanently unreachable V1 test scope
-     * (WorkspaceOwnershipTransferTest::
-     * test_created_event_fires_before_assignment_events_for_new_row covers
-     * the still-live "created fires before assigned" ordering for a
-     * single grant).
+     * addMember() grants at most one Business per membership now (Contract
+     * 13 caps a Workspace at one), so "several grants in one addMember()
+     * call, dispatched in ascending order" can no longer be constructed —
+     * the underlying event sequence this proved genuinely cannot have more
+     * than one element anymore. What survives, and was not otherwise
+     * proven anywhere in this file (test_membership_created_fires_once
+     * uses All scope, so WorkspaceMembershipBusinessAssigned never fires
+     * there), is that addMember()'s Selected-scope single grant dispatches
+     * WorkspaceMembershipBusinessAssigned exactly once, with the correct
+     * membership/business payload.
      */
-    public function test_business_assigned_fires_once_per_grant_in_ascending_order(): void
+    public function test_business_assigned_fires_once_for_the_initial_selected_grant(): void
     {
         Event::fake(self::ALL_MEMBERSHIP_EVENTS);
         $owner = $this->createCustomer();
         $newMember = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $orderedIds = collect([$businessA->id, $businessB->id])->sort()->values()->all();
+        $soleBusiness = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $membership = $this->manager()->addMember(
             $owner->user_id, $workspace, $newMember->id,
             WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, LocationAccessScope::All,
-            [$orderedIds[1], $orderedIds[0]], // supplied out of order
+            [$soleBusiness->id],
         );
 
-        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, 2);
-
-        $dispatchedIds = [];
-        foreach (Event::dispatched(WorkspaceMembershipBusinessAssigned::class) as [$event]) {
-            $dispatchedIds[] = $event->businessId;
-        }
-        $this->assertSame($orderedIds, $dispatchedIds);
+        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, 1);
+        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, function (WorkspaceMembershipBusinessAssigned $event) use ($membership, $soleBusiness) {
+            return $event->membershipId === $membership->id
+                && $event->businessId === $soleBusiness->id;
+        });
     }
 
     // 22. No event fires on exact-match no-op or rollback.

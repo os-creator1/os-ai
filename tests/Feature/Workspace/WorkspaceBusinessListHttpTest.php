@@ -145,8 +145,9 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'is_active' => true,
         ]);
         $granted = $this->createNamedBusiness($owner->id, $workspace->id, 'Granted Co');
-        $unrelatedWorkspace = $this->createWorkspace($this->createCustomer()->user);
-        $unrelated = $this->createNamedBusiness($owner->id, $unrelatedWorkspace->id, 'Unrelated Co');
+        $foreignCustomer = $this->createCustomer();
+        $unrelatedWorkspace = $this->createWorkspace($foreignCustomer->user);
+        $unrelated = $this->createNamedBusiness($foreignCustomer->user_id, $unrelatedWorkspace->id, 'Unrelated Co');
 
         app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $granted);
 
@@ -166,8 +167,9 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'is_active' => true,
         ]);
         $granted = $this->createNamedBusiness($owner->id, $workspace->id, 'Granted Co');
-        $unrelatedWorkspace = $this->createWorkspace($this->createCustomer()->user);
-        $unrelated = $this->createNamedBusiness($owner->id, $unrelatedWorkspace->id, 'Unrelated Co');
+        $foreignCustomer = $this->createCustomer();
+        $unrelatedWorkspace = $this->createWorkspace($foreignCustomer->user);
+        $unrelated = $this->createNamedBusiness($foreignCustomer->user_id, $unrelatedWorkspace->id, 'Unrelated Co');
 
         app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $granted);
 

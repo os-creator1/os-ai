@@ -617,43 +617,40 @@ class WorkspaceOwnershipTransferTest extends TestCase
         Event::assertNotDispatched(WorkspaceMembershipBusinessUnassigned::class);
     }
 
-    // 37. Selected assignment additions/removals match exact set diff.
+    // 37. Selected scope drops a no-longer-selected assignment.
     /**
-     * Contract 14 review: this needs THREE distinct Businesses valid for
-     * one disposition (A, B kept/dropped from an existing assignment; C
-     * newly added) — Contract 13 permanently caps a Workspace at one, so
-     * "diff between two non-trivial Business sets for one Workspace" can
-     * no longer be constructed by any substitution. Left as documented,
-     * permanently unreachable V1 test scope.
+     * A three-Business diff (A, B kept/dropped from an existing
+     * assignment; C newly added) needs three distinct Businesses valid
+     * for one disposition — Contract 13 permanently caps a Workspace at
+     * one, so that shape can no longer be constructed by any
+     * substitution. What survives, and is not otherwise proven anywhere
+     * in this file (WorkspaceMembershipBusinessUnassigned is never
+     * dispatched-and-asserted elsewhere here), is the 1-to-0 half of the
+     * diff: an existing previous-owner row's sole assignment is removed
+     * when the new disposition's Selected set no longer includes it.
      */
-    public function test_convert_to_admin_selected_assignment_diff_matches_exactly(): void
+    public function test_convert_to_admin_selected_scope_unassigns_a_dropped_business(): void
     {
         $owner = $this->createCustomer();
         $newOwner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessC = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
         $existing = $this->createAnomalousPreviousOwnerMembership($workspace, $owner->user_id, [
             'role' => WorkspaceMembershipRole::Admin,
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
         ]);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $existing->id, 'business_id' => $businessA->id]);
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $existing->id, 'business_id' => $businessB->id]);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $existing->id, 'business_id' => $business->id]);
 
         Event::fake(self::ALL_EVENTS);
 
         $this->manager()->transferOwnership(
             $owner->user_id, $workspace, $newOwner->id,
-            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$businessB->id, $businessC->id]),
+            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, []),
         );
 
-        $persistedIds = WorkspaceMembershipBusiness::where('workspace_membership_id', $existing->id)->pluck('business_id')->sort()->values()->all();
-        $this->assertSame(collect([$businessB->id, $businessC->id])->sort()->values()->all(), $persistedIds);
-        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, 1);
-        Event::assertDispatched(WorkspaceMembershipBusinessAssigned::class, fn (WorkspaceMembershipBusinessAssigned $e) => $e->businessId === $businessC->id);
+        $this->assertSame(0, WorkspaceMembershipBusiness::where('workspace_membership_id', $existing->id)->count());
         Event::assertDispatched(WorkspaceMembershipBusinessUnassigned::class, 1);
-        Event::assertDispatched(WorkspaceMembershipBusinessUnassigned::class, fn (WorkspaceMembershipBusinessUnassigned $e) => $e->businessId === $businessA->id);
+        Event::assertDispatched(WorkspaceMembershipBusinessUnassigned::class, fn (WorkspaceMembershipBusinessUnassigned $e) => $e->businessId === $business->id);
     }
 
     // 38. All scope clears stale assignments.
@@ -679,33 +676,31 @@ class WorkspaceOwnershipTransferTest extends TestCase
 
     // 39. Event order matches the approved deterministic order.
     /**
-     * Contract 14 review: needs an assign AND an unassign in the SAME
-     * reconciliation, which needs two distinct Businesses (one kept/added,
-     * one dropped) valid for the same Workspace — impossible now for the
-     * same reason as #37 above. Left as documented, permanently
-     * unreachable V1 test scope; this file's other tests each still prove
-     * one of the surrounding deactivated/reactivated/role_changed/
-     * scope_changed events individually, just not this one's full combined
-     * ordering across all of them plus an assign/unassign pair.
+     * The original scenario needed an assign AND an unassign in the SAME
+     * reconciliation — two distinct Businesses (one kept/added, one
+     * dropped) valid for the same Workspace — impossible now for the same
+     * reason as #37 above. What survives at 0-or-1 cardinality, and is not
+     * otherwise proven anywhere in this file (the other tests each prove
+     * one of deactivated/reactivated/role_changed/scope_changed/assigned
+     * individually, never all of them together in one reconciliation
+     * call), is the full deterministic ordering across a deactivation, a
+     * reactivation, a role change, a scope change, and a single fresh
+     * assignment, ending in the ownership-transferred event.
      */
     public function test_full_event_order_for_existing_previous_owner_reconciliation(): void
     {
         $owner = $this->createCustomer();
         $newOwner = $this->createCustomer()->user;
         $workspace = $this->createWorkspace($owner->user);
-        $businessA = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
-        $businessB = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+        $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
 
         $incomingMembership = $this->createMembership($workspace, $newOwner, ['is_active' => true]);
 
-        $previousMembership = $this->createAnomalousPreviousOwnerMembership($workspace, $owner->user_id, [
+        $this->createAnomalousPreviousOwnerMembership($workspace, $owner->user_id, [
             'role' => WorkspaceMembershipRole::Staff,
             'business_access_scope' => WorkspaceBusinessAccessScope::All,
             'is_active' => false,
         ]);
-        // Anomalous stray grant under All scope, to exercise both an
-        // addition and a removal in the same reconciliation below.
-        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $previousMembership->id, 'business_id' => $businessA->id]);
 
         $order = [];
         Event::listen(WorkspaceMembershipDeactivated::class, function (WorkspaceMembershipDeactivated $e) use (&$order) {
@@ -723,16 +718,13 @@ class WorkspaceOwnershipTransferTest extends TestCase
         Event::listen(WorkspaceMembershipBusinessAssigned::class, function (WorkspaceMembershipBusinessAssigned $e) use (&$order) {
             $order[] = "assigned:{$e->businessId}";
         });
-        Event::listen(WorkspaceMembershipBusinessUnassigned::class, function (WorkspaceMembershipBusinessUnassigned $e) use (&$order) {
-            $order[] = "unassigned:{$e->businessId}";
-        });
         Event::listen(WorkspaceOwnershipTransferred::class, function () use (&$order) {
             $order[] = 'ownership_transferred';
         });
 
         $this->manager()->transferOwnership(
             $owner->user_id, $workspace, $newOwner->id,
-            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$businessB->id]),
+            WorkspaceOwnershipTransferDisposition::convertToAdmin(WorkspaceBusinessAccessScope::Selected, [$business->id]),
         );
 
         $this->assertSame([
@@ -740,8 +732,7 @@ class WorkspaceOwnershipTransferTest extends TestCase
             'reactivated',
             'role_changed',
             'scope_changed',
-            "assigned:{$businessB->id}",
-            "unassigned:{$businessA->id}",
+            "assigned:{$business->id}",
             'ownership_transferred',
         ], $order);
     }

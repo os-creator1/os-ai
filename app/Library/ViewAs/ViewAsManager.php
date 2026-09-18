@@ -41,16 +41,18 @@ use Illuminate\Http\Request;
  * permanently capping a Workspace at one Business, the same-Workspace
  * start() path above can now only ever narrow an owner/admin's session to
  * their OWN Workspace's own sole Business — a Business they already fully
- * access directly, making it purposeless as a genuine "view as a DIFFERENT
- * actor/Business" mechanism. It was NOT retired in Contract 14, though:
- * ~45 already-merged tests across the Dashboards/Navigation/Theme/
- * DesignSystem domains (R3/R4) still call it, several using it as their
- * own "view as a client" idiom; safely retiring start() requires auditing
- * and very likely rewriting all of them — out of proportion to a final,
- * narrow cleanup pass. Left mechanically functioning and documented here
- * as a confirmed-dead-in-purpose finding for its own dedicated slice, not
- * assumed safe to delete merely because this comment once said Contract 14
- * would.
+ * access directly. That narrowed shape is not what makes it worth keeping,
+ * though: start() has a genuine, current production caller. Route
+ * customer.view-as.start (routes/customer.php) dispatches to
+ * StartViewAsAction, which calls ViewAsManager::start() directly, and
+ * ContextSwitcherPresenter builds that same route's URL for the account
+ * shell's view-as control. Per this contract's own §4 procedure, one
+ * remaining production caller is category (a) — STOP, do not delete —
+ * regardless of how narrow the resulting behavior now is. Cross-Workspace
+ * Agency View As (startAgencyView()) is the canonical managed-client path
+ * post-Contract-10; same-Workspace start() is retained alongside it because
+ * a live caller still depends on it, not because retiring it would be
+ * risky or out of proportion.
  */
 final class ViewAsManager
 {

@@ -742,21 +742,6 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->assertAccountAccessGateBlocksOnboarding($workspace, $onboarding);
     }
 
-    /**
-     * Contract 14 review: this denial reason requires
-     * business_slot_included < business_slot_max for some tier — currently
-     * true for none (Core/Growth: included == max == 1; Agency: unlimited,
-     * confirmed directly against workspace_plan_catalog). But that gap is
-     * a business_slot_max/business_slot_included catalog-SEED coincidence
-     * from an earlier, unrelated migration (2026_09_15, Customer
-     * Experience Slice 1A) — not a consequence of Contract 13's Workspace:
-     * Business 1:1 constraint or anything Contracts 1-13's own multi-
-     * Business-per-Workspace migration series made dead. Both the catalog
-     * seed and this denial path are outside Contract 14's own scope (§1:
-     * "entirely defined by what [Contracts 1-13] left behind"); left
-     * failing and undecided here, not classified as V1-dead by this
-     * contract.
-     */
     public function test_capacity_denial_business_slot_allocation_required_redirects_with_the_safe_message(): void
     {
         [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('business_slot_allocation_required');
