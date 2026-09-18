@@ -8,6 +8,7 @@ use App\Exceptions\Entitlement\LastActiveLocationCannotBeArchivedException;
 use App\Exceptions\Entitlement\PrimaryLocationCannotBeArchivedException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Workspace\BusinessRouteAccess;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -51,6 +52,7 @@ final class BusinessLocationManager
         private readonly WorkspaceManager $workspaceManager,
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
+        private readonly BusinessRouteAccess $businessRouteAccess,
     ) {
     }
 
@@ -69,9 +71,31 @@ final class BusinessLocationManager
      * access to the Business AND Workspace owner-or-active-Admin authority —
      * the same authority every other Business-level entitlement mutation
      * uses. Restricted and staff members read; they do not change.
+     *
+     * That rule is for ORDINARY requests and is unchanged. An active
+     * cross-Workspace Agency View As answers for its own exact Business
+     * instead, per the comment below.
      */
     public function canManage(int $actorUserId, Business $business): bool
     {
+        // V1 Contract 04 — the physical-location routes are allowed
+        // BusinessScoped actions while viewing (they are not in
+        // ViewAsProhibitedActions; only the separate locations.allocations.*
+        // plan/slot family is), and an allowed action operates AS the viewed
+        // Client. The actor is deliberately not a tenant, owner or Admin of
+        // that Client Workspace, so both rules below refuse them; the session
+        // stands in for the authority instead, for its exact Business only and
+        // no other — including a Business this actor really does own, since
+        // View As narrows in both directions. The audited actor is unchanged:
+        // every mutation below still records this real Agency user's id. No
+        // membership row is created, and no financial or structural authority
+        // follows — slot allocation stays prohibited.
+        $viewedBusinessId = $this->businessRouteAccess->viewedBusinessIdFor($actorUserId);
+
+        if ($viewedBusinessId !== null) {
+            return $viewedBusinessId === (int) $business->id;
+        }
+
         if (! $this->workspaceManager->userCanAccessBusiness($actorUserId, $business)) {
             return false;
         }

@@ -7,6 +7,7 @@ use App\Library\ViewAs\ViewAsManager;
 use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
+use Illuminate\Support\Facades\Auth;
 
 /**
  * The ONE decision every Business-addressed customer surface asks before it
@@ -105,6 +106,49 @@ final class BusinessRouteAccess
     public function viewAsTargets(?ViewAsContext $viewAs, Workspace $workspace, Business $business): bool
     {
         return $this->targets($viewAs, (int) $workspace->id, $business);
+    }
+
+    /**
+     * The Business a valid View-As session currently points this actor at, or
+     * null when there is no such session.
+     *
+     * For the OPERATIONAL services beneath the route — the Location ACL guard
+     * and the Business location manager — whose own authority tables are
+     * richer than "can reach the Business" and whose signatures carry an actor
+     * id rather than a User. They need two facts in one answer: whether a
+     * session is narrowing this actor at all (so they know to set their
+     * ordinary table aside rather than consult it), and which single Business
+     * it names (so they can admit exactly that one).
+     *
+     * This is the SAME canonical authority the decisions above use, exposed as
+     * a target rather than a verdict — never a second algorithm, and never an
+     * Agency-relationship read of its own. A caller can do exactly one thing
+     * with the answer: compare it to the Business in front of it. Ordinary
+     * requests get null and keep their existing rules untouched, which is why
+     * nothing here can loosen ordinary tenancy or the Location ACL.
+     */
+    public function viewedBusinessIdFor(int $actorId): ?int
+    {
+        // ONLY ever asked about the authenticated actor. A View-As session
+        // lives in the browser session of the user who started it, so "is
+        // some OTHER user being viewed-as right now" is not a question this
+        // request can answer — and asking it is actively harmful: current()
+        // looks the session row up by uid AND actor_user_id, so a mismatched
+        // id finds nothing and FORGETS the session key, silently ending the
+        // real actor's live session mid-request. (That is not hypothetical:
+        // it is exactly what happened when a service resolved one user's
+        // authority while another was signed in.) Anyone who is not the
+        // authenticated user is simply not viewing, and falls through to the
+        // caller's ordinary rules.
+        $actor = Auth::user();
+
+        if (! $actor instanceof User || (int) $actor->id !== $actorId) {
+            return null;
+        }
+
+        $viewAs = $this->viewAs->current($actor);
+
+        return $viewAs === null ? null : (int) $viewAs->businessId;
     }
 
     private function decide(User $actor, int $workspaceId, Business $business): bool
