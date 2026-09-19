@@ -374,7 +374,12 @@ class SeoFoundationBoundaryTest extends TestCase
             // SEO's own tables. The manager is therefore held to the same
             // rules with the table-scoped write rule substituted, in
             // SeoCitationsBoundaryTest.
-            if (basename($file) === 'SeoCitationManager.php') {
+            //
+            // Sub-slice 18F's SeoReviewLinkManager and SeoReviewRequestManager
+            // are the same case: they write only `seo_location_review_links`
+            // and `seo_review_requests`, held to the table-scoped and no-send
+            // rules in SeoReviewsBoundaryTest.
+            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php'], true)) {
                 continue;
             }
 
