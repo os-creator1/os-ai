@@ -151,10 +151,24 @@ Session request payload keys in `StripePaymentProviderGateway` and five
 legacy `Eloquent*Repository` classes (lane A/D), never a local model,
 table or column.
 
-Contract 16 itself is **not implemented**: no `catalog_items`,
-`catalog_item_location_overrides`, or `package_snapshots` migration; no
-`app/Library/Catalog/` directory; no `CatalogItem` or `PackageSnapshot`
-model. This is a hard prerequisite, not a formality (§16).
+Contract 16 itself is **not implemented** as of `30ad21c7`: no
+`catalog_items`, `catalog_item_location_overrides`, or `package_snapshots`
+migration; no `app/Library/Catalog/` directory; no `CatalogItem` or
+`PackageSnapshot` model. This is a hard prerequisite, not a formality
+(§16).
+
+> **Amendment, recorded rather than silently folded in.** Between this
+> contract being written against `30ad21c7` and being pushed, **Contract 16
+> Sub-slice A merged to `main` in PR #330**: `catalog_items`,
+> `catalog_item_location_overrides` and `package_snapshots` and their
+> models now exist, along with the Packages & Products entitlement
+> identity. The paragraph above is left as written because it is this
+> contract's dated recon evidence, and because the conclusion it supports
+> is unchanged: Contract 16 Sub-slices **B, C and D remain unimplemented**,
+> `app/Library/Catalog/PackageSnapshotService` still does not exist, and
+> §16's prerequisite therefore still gates this slice's Sub-slice B. The
+> implementer of Sub-slice B re-verifies all four at the time, per 18.B —
+> they do not trust this paragraph or this amendment.
 
 **No "Signature" match in the codebase relates to human signing.** The
 matches are Artisan `$signature` command declarations, PHP method-signature
