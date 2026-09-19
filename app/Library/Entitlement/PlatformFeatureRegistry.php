@@ -80,6 +80,12 @@ final class PlatformFeatureRegistry
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AgencyPackageCapabilities->value => PlatformFeatureAvailability::Planned,
+        // Implementation Contract 16, Sub-slice A: schema and inert
+        // entitlement identity only — no controller, route, or view exists
+        // yet. Stays Planned through Sub-slices B/C/D (domain managers with
+        // no customer HTTP surface); only Sub-slice E, once A-D are merged
+        // and verified end-to-end, performs the Planned -> Available flip.
+        PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Planned,
     ];
 
     /**

@@ -54,4 +54,16 @@ enum PlatformFeature: string
      * fields.
      */
     case MessagingTransport = 'messaging_transport';
+
+    /**
+     * Implementation Contract 16 (Packages & Products catalog), Sub-slice A.
+     * Starts `Planned` in PlatformFeatureRegistry — no controller, route, or
+     * customer-facing surface exists yet (that is Sub-slice E's job, after
+     * Sub-slices B/C/D land). Packaged for Core, Growth and Agency
+     * (Blueprint §21) by this same sub-slice's plan-packaging migration,
+     * independently of the availability flip, matching the
+     * `GoogleBusinessProfileModule` precedent of packaging and availability
+     * being seeded/flipped separately.
+     */
+    case PackagesProducts = 'packages_products';
 }
