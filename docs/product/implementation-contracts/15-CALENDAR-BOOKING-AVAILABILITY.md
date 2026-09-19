@@ -1488,7 +1488,13 @@ appointment counts.
 
 1. Lock the Booking Type's `booking_type_round_robin_state` row (tier 1,
    same ensure-then-lock discipline as §7.2), then the tier-2 locks for
-   every member of `E` in ascending order.
+   every member of `E` in ascending order. The `insertOrIgnore` ensure runs
+   OUTSIDE the transaction and the tier-1 `lockForUpdate` is the
+   transaction's FIRST statement: under REPEATABLE READ the first plain
+   SELECT pins the snapshot, and a snapshot pinned before the tier-1 wait
+   ends cannot see the booking the previous holder committed, so the
+   overlap check would miss it and double-book. No plain read may precede
+   any tier's lock inside the transaction.
 2. Let `c = last_assigned_staff_user_id`. The **candidate order** is every
    member of `E` with `staff_user_id > c`, ascending, followed by every
    member with `staff_user_id <= c`, ascending — i.e. the rotation
@@ -2629,7 +2635,12 @@ two Contact rows, and that is correct. Specifics you must not improvise:
   (app/Library/Ai/AiUsageLedgerManager.php:441-474) EXACTLY, including its
   ordering: unlocked existence probe, then insertOrIgnore, then
   lockForUpdate(). The probe-first order is not stylistic -- that docblock
-  explains the InnoDB gap-lock deadlock it avoids.
+  explains the InnoDB gap-lock deadlock it avoids. CAUTION (found in the
+  Sub-slice C concurrency review): run that probe and the insertOrIgnore
+  OUTSIDE the transaction (as StaffBookingLockManager::ensure() does), never
+  as plain reads inside it -- an in-transaction plain SELECT pins the
+  REPEATABLE READ snapshot before the lock wait ends and hides rows the
+  previous lock holder committed.
 - RESOLUTION (SS5.8.4): under the lock, query contacts by location_id +
   normalized phone, orderBy('id')->first(). Several legitimate matches can
   exist; take the OLDEST deterministically. Do not merge, rewrite or delete

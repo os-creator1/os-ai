@@ -9,6 +9,7 @@ use App\Events\Calendar\AppointmentNoShow;
 use App\Events\Calendar\AppointmentRescheduled;
 use App\Events\Calendar\AppointmentScheduled;
 use App\Exceptions\Calendar\AppointmentSlotUnavailableException;
+use App\Exceptions\Calendar\AppointmentStaffChangedException;
 use App\Exceptions\Calendar\InvalidAppointmentTransitionException;
 use App\Exceptions\Calendar\NoEligibleStaffAvailableException;
 use App\Exceptions\Calendar\StaffNotAvailableException;
@@ -155,6 +156,7 @@ class AppointmentBookingService
         // §7.2 step 1 — ensure for EVERY staff member the operation could
         // bind, in one batch, outside the transaction.
         $this->locks->ensure($pool);
+        $this->ensureRoundRobinState($bookingType);
 
         $appointment = DB::transaction(function () use (
             $bookingType, $location, $pool, $contactId, $startAt, $endAt, $createdByUserId, $crmOpportunityId
@@ -230,7 +232,7 @@ class AppointmentBookingService
      * old staff member is locked too, because their timeline is also changing:
      * the interval is leaving it.
      *
-     * @throws InvalidAppointmentTransitionException|StaffNotAvailableException|AppointmentSlotUnavailableException|StaffNotEligibleForLocationException
+     * @throws InvalidAppointmentTransitionException|AppointmentStaffChangedException|StaffNotAvailableException|AppointmentSlotUnavailableException|StaffNotEligibleForLocationException
      */
     public function reschedule(
         Appointment $appointment,
@@ -251,8 +253,8 @@ class AppointmentBookingService
         $this->locks->ensure($staffToLock);
 
         $result = DB::transaction(function () use (
-            $appointmentId, $staffToLock, $targetStaffUserId, $bookingType, $location,
-            $newStartAt, $newEndAt, $rescheduledByUserId
+            $appointmentId, $currentStaffUserId, $staffToLock, $targetStaffUserId, $bookingType, $location,
+            $newStartAt, $newEndAt
         ): array {
             // Tier 2 before tier 3, always.
             $this->locks->lockAscending($staffToLock);
@@ -260,6 +262,18 @@ class AppointmentBookingService
             $locked = $this->lockAppointment($appointmentId);
 
             $this->assertScheduled($locked, 'rescheduled');
+
+            // The staff member was read from the caller's model BEFORE the
+            // locks were granted. If a competing reschedule moved the row
+            // while this one waited, the timeline just locked is not the one
+            // the appointment is on; refuse before writing anything.
+            if ((int) $locked->staff_user_id !== $currentStaffUserId) {
+                throw AppointmentStaffChangedException::forAppointment(
+                    $appointmentId,
+                    $currentStaffUserId,
+                    (int) $locked->staff_user_id
+                );
+            }
 
             $previousStaffUserId = (int) $locked->staff_user_id;
             $previousStartAt = Carbon::parse($locked->start_at);
@@ -295,22 +309,22 @@ class AppointmentBookingService
             ];
         }, self::TRANSACTION_ATTEMPTS);
 
-        $fresh = Appointment::query()->findOrFail($appointmentId);
-
         // §10 — both staff ids are ALWAYS populated; equal on a same-staff
-        // reschedule, so a consumer detects a move by comparing them.
+        // reschedule, so a consumer detects a move by comparing them. The
+        // payload is built from the values THIS transaction wrote, never from
+        // a re-read after commit, which could already reflect a later change.
         AppointmentRescheduled::dispatch(
             $appointmentId,
             $result['previousStaffUserId'],
-            (int) $fresh->staff_user_id,
+            $targetStaffUserId,
             $this->format($result['previousStartAt']),
             $this->format($result['previousEndAt']),
-            $this->format($fresh->start_at),
-            $this->format($fresh->end_at),
+            $this->format($newStartAt),
+            $this->format($newEndAt),
             $rescheduledByUserId
         );
 
-        return $fresh;
+        return Appointment::query()->findOrFail($appointmentId);
     }
 
     /** @throws InvalidAppointmentTransitionException */
@@ -451,27 +465,46 @@ class AppointmentBookingService
     }
 
     /**
-     * Tier 1, with §7.2's identical ensure-then-lock discipline: an unlocked
-     * existence probe, an insertOrIgnore that tolerates losing the race (the
-     * unique key on booking_type_id is what makes that safe), then the locking
-     * read. The probe-first ordering avoids InnoDB's gap-lock deadlock on a
-     * row that does not exist yet.
+     * Tier 1, step 1 — §7.2's ensure, OUTSIDE the transaction, for the
+     * round-robin state row: an insertOrIgnore that tolerates losing the race
+     * (the unique key on booking_type_id is what makes that safe).
+     *
+     * It must not run inside the transaction, and no plain SELECT may precede
+     * the tier-1 lock there: under REPEATABLE READ the first plain read pins
+     * the transaction's snapshot, and a snapshot taken before this request's
+     * lock wait ends cannot see the booking the previous tier-1 holder
+     * committed — so the conflict check would miss it and double-book.
+     */
+    private function ensureRoundRobinState(BookingType $bookingType): void
+    {
+        DB::table('booking_type_round_robin_state')->insertOrIgnore([[
+            'booking_type_id' => (int) $bookingType->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]]);
+    }
+
+    /**
+     * Tier 1, step 2 — the locking read, inside the transaction and as its
+     * FIRST statement. A locking read is a current read and does not pin the
+     * snapshot, so the snapshot is taken only after the lock is granted.
      */
     private function lockRoundRobinState(BookingType $bookingType): object
     {
         $bookingTypeId = (int) $bookingType->id;
 
-        $exists = DB::table('booking_type_round_robin_state')
+        $locked = DB::table('booking_type_round_robin_state')
             ->where('booking_type_id', $bookingTypeId)
-            ->exists();
+            ->lockForUpdate()
+            ->first();
 
-        if (! $exists) {
-            DB::table('booking_type_round_robin_state')->insertOrIgnore([[
-                'booking_type_id' => $bookingTypeId,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]]);
+        if ($locked !== null) {
+            return $locked;
         }
+
+        // Only possible if the row was deleted after ensureRoundRobinState():
+        // one re-ensure and one re-select (§7.2 step 3), then fail closed.
+        $this->ensureRoundRobinState($bookingType);
 
         $locked = DB::table('booking_type_round_robin_state')
             ->where('booking_type_id', $bookingTypeId)

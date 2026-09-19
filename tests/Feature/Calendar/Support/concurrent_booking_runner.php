@@ -30,7 +30,7 @@
  * Usage:
  *   php concurrent_booking_runner.php book        <startAtEpochMicros> <bookingTypeId> <staffUserId> <contactId> <slotIso>
  *   php concurrent_booking_runner.php roundrobin  <startAtEpochMicros> <bookingTypeId> <contactId> <slotIso>
- *   php concurrent_booking_runner.php reschedule  <startAtEpochMicros> <appointmentId> <newSlotIso>
+ *   php concurrent_booking_runner.php reschedule  <startAtEpochMicros> <appointmentId> <newSlotIso> [newStaffUserId]
  *   php concurrent_booking_runner.php cancel      <startAtEpochMicros> <appointmentId>
  */
 
@@ -111,7 +111,11 @@ try {
         },
         'reschedule' => static function () use ($engine, $argv): string {
             $appointment = App\Models\Appointment::query()->findOrFail((int) $argv[3]);
-            $moved = $engine->reschedule($appointment, Illuminate\Support\Carbon::parse($argv[4]));
+            $moved = $engine->reschedule(
+                $appointment,
+                Illuminate\Support\Carbon::parse($argv[4]),
+                isset($argv[5]) ? (int) $argv[5] : null
+            );
 
             return 'appointment_id=' . $moved->id . ' start_at=' . $moved->start_at->utc()->toDateTimeString();
         },

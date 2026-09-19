@@ -3,8 +3,13 @@
 namespace Tests\Feature\Calendar;
 
 use App\Enums\Calendar\AppointmentStatus;
+use App\Events\Calendar\AppointmentRescheduled;
+use App\Library\Calendar\AppointmentBookingService;
+use App\Models\Appointment;
+use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
@@ -334,6 +339,260 @@ class AppointmentBookingConcurrencyTest extends TestCase
             ->value('last_assigned_staff_user_id');
 
         $this->assertSame(end($assigned), $cursor);
+    }
+
+    // -----------------------------------------------------------------
+    // E — hold-point races: a peer commits WHILE a child is blocked
+    // -----------------------------------------------------------------
+    //
+    // Races A–D synchronize the START of two children, but they cannot
+    // arrange for one child to commit at a chosen instant relative to the
+    // other's snapshot — and InnoDB's REPEATABLE READ makes that instant
+    // decisive: a snapshot is fixed by the first plain SELECT of a
+    // transaction and is NOT refreshed after a lock wait, so a plain read
+    // taken before a lock is granted can miss a row the lock's previous holder
+    // committed. These tests make the parent hold the row the child needs,
+    // wait until the child is provably blocked on it (it must still be running
+    // after the hold), commit a conflicting change, and only then release.
+
+    /**
+     * Tier-1 holder commits a booking for the only staff member while a
+     * round-robin child waits on the tier-1 row. The child must see that
+     * committed appointment when it finally gets the lock and refuse, exactly
+     * as `book()` does. A plain probe of the state row BEFORE the lock would
+     * pin the child's snapshot to a moment before the holder committed, and the
+     * child would then double-book the staff member.
+     */
+    public function test_round_robin_waiting_on_tier_one_sees_the_booking_committed_while_it_waited(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $holderContact = $this->insertContact($locationId);
+        $childContact = $this->insertContact($locationId);
+        $slot = $this->slot('10:00:00');
+
+        DB::table('booking_type_round_robin_state')->insert([
+            'booking_type_id' => $bookingTypeId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $child = $this->raceAgainstHeldLock(
+            ['roundrobin', (string) $bookingTypeId, (string) $childContact, $slot],
+            fn () => DB::table('booking_type_round_robin_state')
+                ->where('booking_type_id', $bookingTypeId)
+                ->lockForUpdate()
+                ->first(),
+            fn () => $this->insertAppointment($bookingTypeId, $staffUserId, $locationId, $holderContact, $slot)
+        );
+
+        $this->assertSame(4, $child['exitCode'], 'The waiting child must be refused by the domain rule: ' . $child['stdout']);
+        $this->assertStringContainsString('NoEligibleStaffAvailableException', $child['stdout']);
+        $this->assertSame(
+            1,
+            DB::table('appointments')->where('staff_user_id', $staffUserId)->count(),
+            'A round-robin request that waited on tier 1 double-booked a staff member whose appointment committed while it waited.'
+        );
+        $this->assertNull(
+            DB::table('booking_type_round_robin_state')->where('booking_type_id', $bookingTypeId)->value('last_assigned_staff_user_id'),
+            'A refused round-robin request must not advance the cursor.'
+        );
+    }
+
+    /**
+     * Control for the test above on the explicit-staff path, which takes only
+     * tier 2 and therefore establishes its snapshot after the lock is granted.
+     */
+    public function test_explicit_booking_waiting_on_the_staff_lock_sees_the_booking_committed_while_it_waited(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $holderContact = $this->insertContact($locationId);
+        $childContact = $this->insertContact($locationId);
+        $slot = $this->slot('10:00:00');
+
+        $this->insertStaffLockRow($staffUserId);
+
+        $child = $this->raceAgainstHeldLock(
+            ['book', (string) $bookingTypeId, (string) $staffUserId, (string) $childContact, $slot],
+            fn () => DB::table('staff_booking_locks')->where('staff_user_id', $staffUserId)->lockForUpdate()->first(),
+            fn () => $this->insertAppointment($bookingTypeId, $staffUserId, $locationId, $holderContact, $slot)
+        );
+
+        $this->assertSame(4, $child['exitCode'], $child['stdout']);
+        $this->assertStringContainsString('AppointmentSlotUnavailableException', $child['stdout']);
+        $this->assertSame(1, DB::table('appointments')->where('staff_user_id', $staffUserId)->count());
+    }
+
+    /**
+     * A time-only reschedule locks the staff member it saw on the appointment.
+     * If a competing reschedule moved the appointment to ANOTHER staff member
+     * while this one waited, the appointment is no longer on the timeline that
+     * was locked. Writing `staff_user_id = <the stale staff>` would silently
+     * undo the competing staff move (a lost update) and place the interval on
+     * a timeline whose lock the winner, not this transaction, owned. The engine
+     * must refuse and write nothing.
+     */
+    public function test_time_only_reschedule_refuses_when_the_appointment_changed_staff_while_it_waited(): void
+    {
+        [$bookingTypeId, $firstStaffId, $locationId, $secondStaffId] = $this->scenario(withSecondStaff: true);
+        $contactId = $this->insertContact($locationId);
+        $originalSlot = $this->slot('10:00:00');
+
+        $appointmentId = $this->insertAppointment($bookingTypeId, $firstStaffId, $locationId, $contactId, $originalSlot);
+        $this->insertStaffLockRow($firstStaffId);
+        $this->insertStaffLockRow($secondStaffId);
+
+        $child = $this->raceAgainstHeldLock(
+            ['reschedule', (string) $appointmentId, $this->slot('14:00:00')],
+            fn () => DB::table('staff_booking_locks')->where('staff_user_id', $firstStaffId)->lockForUpdate()->first(),
+            // The competing reschedule: same time, moved to the second staff member.
+            fn () => DB::table('appointments')->where('id', $appointmentId)->update([
+                'staff_user_id' => $secondStaffId,
+                'reschedule_count' => 1,
+            ])
+        );
+
+        $this->assertSame(4, $child['exitCode'], 'The stale reschedule must be refused by the domain rule: ' . $child['stdout']);
+        $this->assertStringContainsString('AppointmentStaffChangedException', $child['stdout']);
+
+        $row = DB::table('appointments')->where('id', $appointmentId)->first();
+
+        $this->assertSame($secondStaffId, (int) $row->staff_user_id, 'The competing staff move must not be undone.');
+        $this->assertSame(1, (int) $row->reschedule_count, 'A refused reschedule must not count as a reschedule.');
+        $this->assertSame(
+            Carbon::parse($originalSlot)->toDateTimeString(),
+            Carbon::parse($row->start_at)->toDateTimeString(),
+            'A refused reschedule must leave the interval untouched.'
+        );
+    }
+
+    /**
+     * The event describes the transition THIS transaction committed. A write
+     * that lands between the commit and any later re-read must not leak into
+     * the payload. The interleaving is forced deterministically: a listener on
+     * the outermost commit moves the appointment again, as another process
+     * could at that instant.
+     */
+    public function test_rescheduled_event_reports_the_committed_transition_not_a_later_state(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contactId = $this->insertContact($locationId);
+        $originalSlot = $this->slot('10:00:00');
+        $committedSlot = $this->slot('14:00:00');
+        $laterSlot = $this->slot('16:00:00');
+
+        $appointmentId = $this->insertAppointment($bookingTypeId, $staffUserId, $locationId, $contactId, $originalSlot);
+
+        $interfered = false;
+        Event::listen(TransactionCommitted::class, function () use (&$interfered, $appointmentId, $laterSlot): void {
+            if ($interfered) {
+                return;
+            }
+
+            $interfered = true;
+
+            DB::table('appointments')->where('id', $appointmentId)->update([
+                'start_at' => Carbon::parse($laterSlot),
+                'end_at' => Carbon::parse($laterSlot)->addMinutes(60),
+            ]);
+        });
+
+        $captured = [];
+        Event::listen(AppointmentRescheduled::class, function (AppointmentRescheduled $event) use (&$captured): void {
+            $captured[] = $event;
+        });
+
+        app(AppointmentBookingService::class)->reschedule(
+            Appointment::query()->findOrFail($appointmentId),
+            Carbon::parse($committedSlot)
+        );
+
+        $this->assertTrue($interfered, 'The interleaving listener never ran, so this test proved nothing.');
+        $this->assertCount(1, $captured);
+        $this->assertSame(Carbon::parse($committedSlot)->toDateTimeString(), $captured[0]->newStartAt);
+        $this->assertSame(Carbon::parse($committedSlot)->addMinutes(60)->toDateTimeString(), $captured[0]->newEndAt);
+        $this->assertSame(Carbon::parse($originalSlot)->toDateTimeString(), $captured[0]->previousStartAt);
+    }
+
+    /**
+     * Parent holds a row lock in an open transaction, starts one child, waits
+     * until the child has entered the engine and had time to reach the lock,
+     * asserts it is STILL RUNNING (blocked — not finished, not sequential),
+     * performs a conflicting write, commits (releasing the lock), and returns
+     * the child's outcome.
+     *
+     * Lock-wait state is not observable from the test database user (no
+     * PROCESS privilege), so blocked-ness is proven by the child not having
+     * exited after a hold far longer than its uncontended runtime.
+     *
+     * @param  array<int, string>  $operation
+     * @return array{exitCode: int, stdout: string, stderr: string}
+     */
+    private function raceAgainstHeldLock(array $operation, \Closure $holdLock, \Closure $conflictingWrite): array
+    {
+        $runner = __DIR__ . '/Support/concurrent_booking_runner.php';
+        $php = (new PhpExecutableFinder())->find() ?: 'php';
+        $startAt = (int) (microtime(true) * 1_000_000) + 2_000_000;
+
+        $child = new Process(
+            array_merge([$php, $runner, array_shift($operation), (string) $startAt], $operation),
+            null,
+            $this->childEnvironment(),
+            null,
+            60.0
+        );
+
+        DB::beginTransaction();
+
+        try {
+            $holdLock();
+
+            $child->start();
+
+            $deadline = microtime(true) + 30;
+
+            while (! str_contains($child->getOutput(), 'ENTERED') && $child->isRunning() && microtime(true) < $deadline) {
+                usleep(20_000);
+            }
+
+            $this->assertStringContainsString('ENTERED', $child->getOutput(), 'The child never entered the engine: ' . $child->getErrorOutput());
+
+            usleep(2_000_000);
+
+            $this->assertTrue(
+                $child->isRunning(),
+                'The child finished while the parent still held the lock, so it was not blocked on it: '
+                . $child->getOutput() . $child->getErrorOutput()
+            );
+
+            $conflictingWrite();
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            $child->stop(0);
+
+            throw $e;
+        }
+
+        $child->wait();
+
+        $this->assertNotSame(3, $child->getExitCode(), 'Child refused to run against an unexpected database: ' . $child->getErrorOutput());
+        $this->assertNotSame(1, $child->getExitCode(), 'Child failed unexpectedly: ' . $child->getErrorOutput());
+
+        return [
+            'exitCode' => (int) $child->getExitCode(),
+            'stdout' => $child->getOutput(),
+            'stderr' => $child->getErrorOutput(),
+        ];
+    }
+
+    private function insertStaffLockRow(int $staffUserId): void
+    {
+        DB::table('staff_booking_locks')->insertOrIgnore([[
+            'staff_user_id' => $staffUserId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]]);
     }
 
     // -----------------------------------------------------------------
