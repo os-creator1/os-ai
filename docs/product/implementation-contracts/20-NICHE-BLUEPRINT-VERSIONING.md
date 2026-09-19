@@ -440,7 +440,7 @@ created_at / updated_at
 
 UNIQUE (blueprint_version_id, component_key)
 FOREIGN KEY (blueprint_version_id, blueprint_id)
-        REFERENCES niche_blueprint_versions(id, blueprint_id)  restrictOnDelete
+        REFERENCES niche_blueprint_versions(id, blueprint_id)  cascadeOnDelete
 ```
 
 - **`required_feature_key` is `NOT NULL`, and there is no such thing as an
