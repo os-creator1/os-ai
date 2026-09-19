@@ -96,6 +96,7 @@ final class ViewAsRouteClassification
         'customer.analytics.entry' => 'customer.workspaces.businesses.analytics.overview',
         'customer.website.index' => 'customer.workspaces.businesses.website.show',
         'customer.gbp.index' => 'customer.workspaces.businesses.gbp.index',
+        'customer.seo.index' => 'customer.workspaces.businesses.seo.index',
         'customer.automations.index' => 'customer.workspaces.businesses.automations.index',
         'customer.outreach.index' => 'customer.workspaces.businesses.outreach.index',
         'customer.outreach.campaigns.entry' => 'customer.workspaces.businesses.outreach.campaigns',

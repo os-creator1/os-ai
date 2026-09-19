@@ -408,13 +408,36 @@ published_guard  unsignedBigInteger AS (CASE WHEN state='published' THEN bluepri
   fourth state and no separate archive table: a version is retired by being
   superseded, and it is retained forever because installation records
   reference its `version_number` as provenance (§5.4).
-- **Immutability:** once `state` leaves `draft`, this row and its component
-  rows are never written again. Enforced by the same technique
-  `WebsiteRevision` and `AutomationWorkflowVersion` use — the publishing
-  service is the only writer, and a source-boundary test proves no other
-  production path calls `update()`/`save()` on a non-draft version or its
-  components (§13). **This contract claims no stronger guarantee than its
-  own precedents actually provide**, and says so here deliberately.
+- **Immutability — stated precisely, because the loose version of this
+  sentence contradicted this same document.** An earlier revision said "once
+  `state` leaves `draft`, this row and its component rows are never written
+  again", which cannot be true alongside the `published → superseded`
+  transition this contract itself defines and §12.B's own `supersede()`.
+  What is actually immutable is the version's **authoring content and its
+  component snapshot** — not the physical row.
+
+  Once a version is published, these are **immutable forever**:
+  `notes`, `version_number`, `blueprint_id`, `published_at`,
+  `published_by_user_id`, and every one of its `niche_blueprint_components`
+  rows — `component_key`, `component_type`, `required_feature_key`,
+  `payload` and `position`.
+
+  Exactly one field may still move, and only one way:
+
+  > **`state`: `published → superseded`.** That is the whole authorized
+  > lifecycle-metadata transition. A version never returns to `draft`, and a
+  > `superseded` version never changes again.
+
+  (The two STORED guard columns are generated *from* `state`, so freeing the
+  `published_guard` slot is part of that same transition, not a separate
+  write.)
+
+  Enforced by the same technique `WebsiteRevision` and
+  `AutomationWorkflowVersion` use — the publishing service is the only
+  writer, and a source-boundary test proves no other production path writes
+  a version or component, through either the query builder or Eloquent
+  (§13). **This contract claims no stronger guarantee than its own
+  precedents actually provide**, and says so here deliberately.
 - **`down()` ordering note** for the implementer: the generated columns and
   their unique indexes are added in the same migration that creates the
   table, mirroring `2026_09_15_100002`'s structure; `down()` drops the
@@ -440,7 +463,7 @@ created_at / updated_at
 
 UNIQUE (blueprint_version_id, component_key)
 FOREIGN KEY (blueprint_version_id, blueprint_id)
-        REFERENCES niche_blueprint_versions(id, blueprint_id)  restrictOnDelete
+        REFERENCES niche_blueprint_versions(id, blueprint_id)  cascadeOnDelete
 ```
 
 - **`required_feature_key` is `NOT NULL`, and there is no such thing as an
@@ -1190,9 +1213,16 @@ the two surfaces.
   `published_guard`.
 - **Tests**: every §6.2 refusal (unknown adapter type; unknown feature key;
   Workspace-scoped feature key; adapter descriptor rejection; duplicate
-  `component_key`); non-admin refused on every method; a published version
-  and its components are immutable afterwards (source-boundary test);
-  publishing v2 supersedes v1 and v1's components are untouched;
+  `component_key`); non-admin refused on every method; an issued version's
+  **authoring content and component snapshot** are immutable afterwards —
+  no authoring method may touch a `published` or `superseded` version, and
+  a source-boundary test proves no production code outside the publisher
+  writes a Blueprint table or model, through the query builder **or**
+  Eloquent; the one authorized `published → superseded` transition changes
+  `state` and nothing else, proven field by field, and a second
+  `supersede()` refuses; publishing v2 supersedes v1 and v1's components
+  are untouched; an **empty draft publishes normally** (§6.2 states six
+  component gates and no minimum component count — do not invent one);
   **publishing writes to no `business_*` table at all** (the Acceptance
   Matrix's own "without touching any live Business" language, tested
   directly).
@@ -1379,10 +1409,17 @@ Per `CLAUDE.md`, every one of these must report a **positive test count**;
    Blueprint table to determine a Business's current configuration
    (§5.4, §14.5).
 4. At most one `draft` and at most one `published` version per Blueprint,
-   enforced by MySQL (§5.2); a non-draft version and its components are
-   never updated by any production code path, proven by a source-boundary
-   test of the same kind `WebsiteRevision`'s invariant already uses — **and
-   claimed at exactly that strength, not stronger**.
+   enforced by MySQL (§5.2). An issued version's **authoring content is
+   immutable**: its `notes`, `version_number`, `blueprint_id`,
+   `published_at`, `published_by_user_id` and every component row
+   (`component_key`, `component_type`, `required_feature_key`, `payload`,
+   `position`) are never rewritten. The single authorized exception is the
+   lifecycle-metadata transition `published → superseded`, which changes
+   `state` and nothing else — proven field by field by a dedicated test —
+   and is never reversed. Enforced by a source-boundary test of the same
+   kind `WebsiteRevision`'s invariant already uses, covering both
+   query-builder and Eloquent write paths — **and claimed at exactly that
+   strength, not stronger**.
 5. A platform-side publish writes to **zero** business-owned tables
    (§13.12).
 6. A plan upgrade installs and activates **nothing**. `WorkspacePlanChanged`
@@ -1549,8 +1586,17 @@ refuse the publish, atomically, if any component has an unregistered
 rejects, or a duplicate `component_key`. Never substitute a default or
 fallback feature for a missing one. **Do NOT
 check `isAvailable()` at publish** — §6.2 explains why a `Planned` feature
-is legitimately publishable. Write the §12.B tests, including the one
-proving a publish writes to zero business-owned tables. **No HTTP surface.**
+is legitimately publishable. **Do NOT add a minimum component count
+either**: §6.2's six gates are each a statement about a component that
+exists, so an empty draft satisfies them vacuously and publishes normally.
+Inventing a rule the contract does not state is as much a defect as
+omitting one it does.
+
+Treat "immutable" exactly as §5.2 defines it: an issued version's authoring
+content and component snapshot never change, while `state` may make the one
+authorized move `published → superseded` and no other. Write the §12.B
+tests, including the one proving a publish writes to zero business-owned
+tables. **No HTTP surface.**
 
 ### 18.C — Installation engine
 

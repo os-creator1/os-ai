@@ -380,6 +380,12 @@
             // and controller sees.
             $this->app->singleton(\App\Library\Crm\Templates\BusinessTemplateRegistry::class);
 
+            // Niche Blueprint (Contract 20 §10) — one registry of component
+            // adapters per container, so an adapter registered once is the one
+            // every publisher and installer sees. Ships empty: the first real
+            // adapter arrives in Sub-slice D.
+            $this->app->singleton(\App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry::class);
+
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
 
