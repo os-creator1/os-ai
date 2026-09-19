@@ -746,8 +746,10 @@ permanently consume the slot.** Because a `pending` row occupies
    happen in one transaction under `lock_version`, so two concurrent
    initiations cannot both reclaim.
 5. **Reconnect and provider switch then proceed normally** (below), and
-   **every terminal row is retained forever** as durable audit: the history
-   of when a connection existed is never overwritten or deleted.
+   **every terminal row is retained as durable audit while the User exists**:
+   ordinary disconnect/revoke flows never overwrite or delete that history;
+   deleting the owning User deliberately cascades the connection row, per the
+   FK posture above, so connection history does not survive User deletion.
 
 No scheduled sweep is specified, and none is needed: the only operation the
 slot blocks is that same User's own next initiation, and step 4 releases it
