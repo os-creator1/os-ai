@@ -252,8 +252,11 @@ class BlueprintComponentAdapterSeamTest extends TestCase
      */
     public function test_no_publisher_installer_or_http_surface_exists_yet(): void
     {
+        // NicheBlueprintPublisher was on this list until Sub-slice B, which is
+        // the sub-slice that introduces it; it moved to the assertion below.
+        // Everything still listed belongs to C, D, E or F, and must not appear
+        // before the gates that protect it do.
         foreach ([
-            'App\\Library\\NicheBlueprint\\NicheBlueprintPublisher',
             'App\\Library\\NicheBlueprint\\NicheBlueprintInstaller',
             'App\\Jobs\\NicheBlueprint\\InstallNicheBlueprintForBusiness',
             'App\\Http\\Controllers\\Customer\\Business\\NicheBlueprintController',
@@ -262,6 +265,10 @@ class BlueprintComponentAdapterSeamTest extends TestCase
         ] as $class) {
             $this->assertFalse(class_exists($class), $class . ' belongs to a later sub-slice.');
         }
+
+        // Sub-slice B's own deliverable: present, and the only Blueprint
+        // service that may exist at this point.
+        $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintPublisher'));
     }
 
     public function test_no_niche_blueprint_route_is_registered(): void
