@@ -357,7 +357,7 @@ final class CatalogItemManager
             $magnitude = ltrim($digits, '-');
 
             if (strlen($magnitude) > strlen((string) PHP_INT_MAX)
-                || (strlen($magnitude) === strlen((string) PHP_INT_MAX) && $magnitude > (string) PHP_INT_MAX)) {
+                || (strlen($magnitude) === strlen((string) PHP_INT_MAX) && strcmp($magnitude, (string) PHP_INT_MAX) > 0)) {
                 throw new CatalogRuleException('The price is too large to store.');
             }
 
