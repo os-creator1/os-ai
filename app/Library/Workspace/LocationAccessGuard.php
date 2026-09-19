@@ -7,6 +7,8 @@ use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Exceptions\Workspace\LocationAccessDeniedException;
 use App\Models\Business;
 use App\Models\BusinessLocation;
+use App\Models\Workspace;
+use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
@@ -91,6 +93,80 @@ class LocationAccessGuard
             return false;
         }
 
+        $reach = $this->resolveLocationReach($userId, $business, $workspace);
+
+        return match ($reach['mode']) {
+            'all' => true,
+            'selected' => $this->membershipLocationRepository->isAssigned($reach['membership'], $currentLocation->id),
+            default => false,
+        };
+    }
+
+    /**
+     * Slice 18A — the ids of every Location of $business this actor may
+     * access, resolved in a constant number of queries however many
+     * Locations the Business has.
+     *
+     * This is NOT a second access algorithm. It runs the very same
+     * resolveLocationReach() decision userCanAccessLocation() runs — one
+     * shared, private source of truth — and only differs in how the final,
+     * per-Location axis is applied: once against the whole Location list
+     * instead of once per Location. A caller that would otherwise loop
+     * userCanAccessLocation() over N Locations (N+1 queries) uses this
+     * instead; the two are proven equivalent for every actor class by test.
+     *
+     * Like userCanAccessLocation() it re-derives the Business and Workspace
+     * fresh, never trusts the passed-in models, and fails closed at every
+     * branch. It does not filter by Location lifecycle: an archived
+     * Location's access answer is the same as the per-Location method's.
+     *
+     * @return array<int, int> Location ids, in BusinessLocationRepository::forBusiness() order
+     */
+    public function accessibleLocationIdsForBusiness(int $userId, Business $business): array
+    {
+        $currentBusiness = $this->businessRepository->findById($business->id);
+
+        if ($currentBusiness === null || $currentBusiness->workspace_id === null) {
+            return [];
+        }
+
+        $workspace = $this->workspaceRepository->findById($currentBusiness->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return [];
+        }
+
+        $reach = $this->resolveLocationReach($userId, $currentBusiness, $workspace);
+
+        if ($reach['mode'] === 'none') {
+            return [];
+        }
+
+        $locationIds = $this->locationRepository->forBusiness($currentBusiness)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($reach['mode'] === 'all') {
+            return $locationIds;
+        }
+
+        $assigned = $this->membershipLocationRepository->assignedLocationIds($reach['membership'])
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return array_values(array_filter($locationIds, fn (int $id) => in_array($id, $assigned, true)));
+    }
+
+    /**
+     * The whole of Contract 02 §6's authority table EXCEPT the final
+     * per-Location assignment check, which the two public methods apply
+     * differently (one Location vs the whole list).
+     *
+     * @return array{mode: 'all'|'selected'|'none', membership: ?WorkspaceMembership}
+     */
+    private function resolveLocationReach(int $userId, Business $business, Workspace $workspace): array
+    {
         // V1 Contract 04 — a cross-Workspace Agency View As deliberately makes
         // the actor no ordinary tenant of the viewed Client Workspace, so
         // every row of the table below correctly refuses them: they own no
@@ -110,39 +186,39 @@ class LocationAccessGuard
         $viewedBusinessId = $this->businessRouteAccess->viewedBusinessIdFor($userId);
 
         if ($viewedBusinessId !== null) {
-            return $viewedBusinessId === (int) $business->id;
+            return ['mode' => $viewedBusinessId === (int) $business->id ? 'all' : 'none', 'membership' => null];
         }
 
         if ((int) $business->customer_id === $userId) {
-            return true;
+            return ['mode' => 'all', 'membership' => null];
         }
 
         if ((int) $workspace->owner_user_id === $userId) {
-            return true;
+            return ['mode' => 'all', 'membership' => null];
         }
 
         $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
 
         if ($membership === null || ! $membership->is_active) {
-            return false;
+            return ['mode' => 'none', 'membership' => null];
         }
 
         $canReachBusiness = $membership->business_access_scope === WorkspaceBusinessAccessScope::All
             || $this->membershipBusinessRepository->isAssigned($membership, $business->id);
 
         if (! $canReachBusiness) {
-            return false;
+            return ['mode' => 'none', 'membership' => null];
         }
 
         if ($membership->location_access_scope === LocationAccessScope::All) {
-            return true;
+            return ['mode' => 'all', 'membership' => $membership];
         }
 
         if ($membership->location_access_scope === LocationAccessScope::Selected) {
-            return $this->membershipLocationRepository->isAssigned($membership, $currentLocation->id);
+            return ['mode' => 'selected', 'membership' => $membership];
         }
 
-        return false;
+        return ['mode' => 'none', 'membership' => null];
     }
 
     /**

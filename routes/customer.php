@@ -481,6 +481,25 @@
 
     /*
     |--------------------------------------------------------------------------
+    | SEO entry (Contract 18, Sub-slice 18A)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the read-only Overview lives at
+    | customer.workspaces.businesses.seo.*. Never guesses a Business: zero
+    | accessible show an empty state, exactly one redirects through, several
+    | show a chooser. "Accessible" includes ENTITLEMENT. Before any of that,
+    | the entry checks the registry's implementation-availability floor
+    | FIRST: SeoBasicVisibility stays Planned until Sub-slice H, so today the
+    | whole route is 404 for every caller (no 200 empty state, and no 401 that
+    | would reveal the surface exists). The name is customer.seo.index —
+    | never customer.keywords.*, the legacy inbound-SMS keyword namespace.
+    | See Business\SeoController.
+    |
+    */
+    Route::get('seo', 'Business\SeoController@entry')->name('seo.index');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
@@ -891,6 +910,34 @@
         });
 
         /*
+        |----------------------------------------------------------------------
+        | SEO Overview (Contract 18, Sub-slice 18A) — READ-ONLY.
+        |
+        | Every action runs Workspace -> Business -> userCanAccessBusiness()
+        | -> active Business -> SeoBasicVisibility entitlement -> view_seo.
+        | Every tenancy/entitlement failure is 404, never 403. SeoBasicVisibility
+        | is Planned until Sub-slice H, so every route here is 404 today.
+        |
+        | There is no write route in this sub-slice and no implicit route-model
+        | binding. Later sub-slices add their sections beneath this prefix
+        | (keywords, search-console, citations, reviews, site-audit); nothing
+        | here is, or may ever begin with, customer.keywords.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
+            Route::get('/', 'Business\SeoController@overview')->name('index');
+
+            // Sub-slice D — SEO keywords (NOT the legacy inbound-SMS
+            // customer.keywords.* namespace). Reads need view_seo, writes
+            // manage_seo; Location access is enforced by SeoKeywordManager.
+            Route::get('/keywords', 'Business\SeoKeywordsController@listing')->name('keywords.index');
+            Route::post('/keywords', 'Business\SeoKeywordsController@store')->middleware('throttle:30,1')->name('keywords.store');
+            Route::post('/keywords/{keywordUid}/update', 'Business\SeoKeywordsController@update')->middleware('throttle:30,1')->name('keywords.update');
+            Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
+            Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
+        });
+
+        /*
         |----------------------------------------------------------------
         | Automations V2-E — visual workflows (contract §20.2)
         |----------------------------------------------------------------
@@ -1126,6 +1173,46 @@
             Route::post('/{opportunityUid}/lost', 'Business\CrmOpportunitiesController@lost')->name('opportunities.lost');
             Route::post('/{opportunityUid}/reopen', 'Business\CrmOpportunitiesController@reopen')->name('opportunities.reopen');
             Route::post('/{opportunityUid}/contact-status', 'Business\CrmOpportunitiesController@contactStatus')->name('opportunities.contact-status');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | Calendar — Booking Types + Staff Availability (Contract 15, 15B)
+        |----------------------------------------------------------------
+        |
+        | Location-bound by construction: every path carries the Location's
+        | uid, because Booking Types and availability rules belong to one
+        | Location (§5.1/§5.2, Addendum §5). Time off is the deliberate
+        | exception — it is User-global (§5.3) and writes no Location — but
+        | it is still REACHED through a Location, because that is how §6
+        | establishes the actor's authority over the staff member.
+        |
+        | Each action runs three gates in order: the canonical
+        | Workspace/Business tenancy chain, the Calendar entitlement
+        | decision, then LocationAccessGuard for the exact Location. While
+        | PlatformFeature::Calendar is Planned (§11) the entitlement gate
+        | refuses every one of these routes with 404, including for an
+        | account owner — intended, and the reason building them now is
+        | safe. Sub-slice E's flip is what makes them executable.
+        |
+        | No booking engine, no appointment lifecycle, no calendar grid and
+        | no public scheduler: Sub-slices C, D and E own those.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/calendar/locations/{locationUid}')->name('businesses.calendar.')->group(function () {
+            Route::get('/booking-types', 'Business\BookingTypesController@index')->name('booking-types.index');
+            Route::get('/booking-types/new', 'Business\BookingTypesController@create')->name('booking-types.create');
+            Route::post('/booking-types', 'Business\BookingTypesController@store')->name('booking-types.store');
+            Route::get('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@edit')->name('booking-types.edit');
+            Route::post('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@update')->name('booking-types.update');
+            Route::post('/booking-types/{bookingTypeUid}/active', 'Business\BookingTypesController@toggleActive')->name('booking-types.active');
+            Route::post('/booking-types/{bookingTypeUid}/staff', 'Business\BookingTypesController@syncStaff')->name('booking-types.staff');
+
+            Route::get('/availability', 'Business\StaffAvailabilityController@index')->name('availability.index');
+            Route::post('/availability/rules', 'Business\StaffAvailabilityController@storeRule')->name('availability.rules.store');
+            Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
+            Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
+            Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');
         });
 
         /*

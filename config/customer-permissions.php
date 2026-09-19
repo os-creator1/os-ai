@@ -51,6 +51,58 @@
             'category'     => 'Google Business Profile',
             'default'      => false,
         ],
+        // SEO (Contract 18 §10.2). Three independent capabilities, none of
+        // which reuses view_keywords (the legacy inbound-SMS keyword
+        // product), view_reports, website or any Google Business Profile
+        // key. A capability answers "may this actor use this FEATURE at
+        // all"; tenancy and entitlement are checked separately.
+        //
+        // view_seo / manage_seo default TRUE, like `website` and
+        // `automations`: reading the SEO overview and editing the
+        // customer's own keywords/citations/review records are ordinary
+        // day-to-day work. manage_search_console defaults FALSE, like
+        // manage_google_business_profile: it will govern connecting a Google
+        // account, which is credential-class. It is declared now so the
+        // identity exists; nothing consumes it until the Search Console
+        // sub-slice.
+        'view_seo'              => [
+            'display_name' => 'view_seo',
+            'category'     => 'SEO',
+            'default'      => true,
+        ],
+        'manage_seo'            => [
+            'display_name' => 'manage_seo',
+            'category'     => 'SEO',
+            'default'      => true,
+        ],
+        'manage_search_console' => [
+            'display_name' => 'manage_search_console',
+            'category'     => 'SEO',
+            'default'      => false,
+        ],
+        /*
+         * Implementation Contract 17 §6.1 — Payments & Contracts (Proposal /
+         * Contract / e-signature / Invoice). ONE capability for the whole
+         * module, the simple single-key shape `website`/`automations` use —
+         * deliberately not a CRUD matrix of per-operation keys (Contract 16
+         * §15's precedent).
+         *
+         * Default true: it follows the `website` precedent, and the backfill
+         * migration grants it to existing customers so the persisted
+         * per-customer permission list does not refuse a surface their plan
+         * entitles them to. It is necessary but never sufficient — the
+         * canonical gate chain (§6.1) is tenancy, THIS capability, the
+         * EntitlementManager check for the exact PlatformFeature, then
+         * LocationAccessGuard for the document's Location. While the
+         * PlatformFeature is Planned (until Sub-slice G) this key opens
+         * nothing: every authenticated route fails closed at the entitlement
+         * gate.
+         */
+        'payments_contracts'             => [
+            'display_name' => 'payments_contracts',
+            'category'     => 'Payments & Contracts',
+            'default'      => true,
+        ],
         /*
          * Customer Experience Slice 3 §4.7 — advanced / BYO provider settings.
          *

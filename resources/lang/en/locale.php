@@ -1575,6 +1575,9 @@
             'read_google_business_profile'       => 'read_google_business_profile',
             'manage_google_business_profile'     => 'manage_google_business_profile',
             'manage_advanced_provider'           => 'manage_advanced_provider',
+            'view_seo'                           => 'view_seo',
+            'manage_seo'                         => 'manage_seo',
+            'manage_search_console'              => 'manage_search_console',
         ],
 
         'contacts'  => [

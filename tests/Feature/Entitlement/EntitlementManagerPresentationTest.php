@@ -272,7 +272,8 @@ class EntitlementManagerPresentationTest extends TestCase
         // still not see it here).
         $this->assertArrayHasKey(PlatformFeature::GoogleBusinessProfileModule->value, $result);
 
-        $this->assertCount(5, $result);
+        $this->assertArrayHasKey(PlatformFeature::AiCooBasic->value, $result);
+        $this->assertCount(6, $result);
     }
 
     /**

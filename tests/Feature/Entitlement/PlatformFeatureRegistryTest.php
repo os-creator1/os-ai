@@ -40,9 +40,13 @@ class PlatformFeatureRegistryTest extends TestCase
             // entitlement identity only; stays Planned until Sub-slice E's
             // final flip, after Sub-slices B/C/D are merged and verified.
             PlatformFeature::PackagesProducts,
+            // Implementation Contract 17, Sub-slice A — schema and inert
+            // entitlement identity only; stays Planned until Sub-slice G's
+            // final flip, after A-F are merged and verified end to end.
+            PlatformFeature::PaymentsContracts,
         ];
 
-        $this->assertCount(10, $planned);
+        $this->assertCount(11, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
