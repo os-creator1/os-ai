@@ -926,6 +926,15 @@
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
             Route::get('/', 'Business\SeoController@overview')->name('index');
+
+            // Sub-slice 18E — Citations. Its own controller, so the 18A
+            // read-only invariant on SeoController still holds. Reads need
+            // view_seo, the write needs manage_seo; both need the SeoModule
+            // entitlement (Planned until Sub-slice H, so 404 today). A
+            // citation is addressed by (Location uid, directory key), never
+            // by a guessable id, and both are resolved through the Business.
+            Route::get('/citations', 'Business\SeoCitationController@citations')->name('citations.index');
+            Route::put('/citations/{locationUid}/{directoryKey}', 'Business\SeoCitationController@saveCitation')->name('citations.update');
         });
 
         /*

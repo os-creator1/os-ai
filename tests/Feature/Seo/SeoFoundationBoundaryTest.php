@@ -348,6 +348,18 @@ class SeoFoundationBoundaryTest extends TestCase
         $cases = [];
 
         foreach ($files as $file) {
+            // Sub-slice 18E's SeoCitationManager is the one SEO class that
+            // legitimately writes — to its OWN table, `seo_citations`. The
+            // blanket "no write call at all" pattern below was written for
+            // 18A, where nothing wrote anything; Contract 18 §12.1 forbids a
+            // write path to Website/Business/Location/Google data, not to
+            // SEO's own tables. The manager is therefore held to the same
+            // rules with the table-scoped write rule substituted, in
+            // SeoCitationsBoundaryTest.
+            if (basename($file) === 'SeoCitationManager.php') {
+                continue;
+            }
+
             $cases[basename($file)] = [$file];
         }
 
