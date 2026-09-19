@@ -46,6 +46,13 @@ final class CatalogItemPricingResolver
      * There is no currency override (§5.2) — whenever a fixed price
      * resolves, its currency is always the CatalogItem's own
      * `currency_code`; no FX, no per-Location divergence.
+     *
+     * Fails closed rather than ever returning a fixed amount with a null
+     * currency: `CatalogItemLocationOverrideManager` refuses to create
+     * that combination going forward, but this resolver does not trust
+     * that as its only safeguard — corrupt or legacy data with a non-null
+     * `price_minor_override` against a quote-only (null-currency)
+     * CatalogItem is refused here too, never silently resolved.
      */
     public function resolve(Business $business, CatalogItem $item, BusinessLocation $location): CatalogItemEffectivePrice
     {
@@ -75,6 +82,10 @@ final class CatalogItemPricingResolver
         }
 
         $priceMinor = $override?->price_minor_override ?? $freshItem->price_minor;
+
+        if ($priceMinor !== null && $freshItem->currency_code === null) {
+            throw new CatalogRuleException('That catalog item has a price with no currency — refusing to resolve a corrupt price.');
+        }
 
         return new CatalogItemEffectivePrice(
             priceMinor: $priceMinor,

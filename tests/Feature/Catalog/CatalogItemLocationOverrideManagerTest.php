@@ -119,17 +119,89 @@ class CatalogItemLocationOverrideManagerTest extends TestCase
         $this->assertSame(4200, $updated->price_minor_override, 'Setting enabled alone must not revert the previously-set price.');
     }
 
-    public function test_set_price_override_null_clears_a_previously_set_amount(): void
+    // -----------------------------------------------------------------
+    // Sparse invariant (§5.2): a resulting (true, null) is never persisted
+    // -----------------------------------------------------------------
+
+    public function test_set_enabled_true_with_no_row_creates_zero_rows(): void
     {
         $business = $this->business();
         $item = $this->item($business);
         $location = $this->location($business);
 
+        $result = $this->manager()->setEnabled($business, $item, $location, true);
+
+        $this->assertNull($result, 'The canonical default is never a persisted row.');
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')->where('catalog_item_id', $item->id)->count());
+    }
+
+    public function test_set_price_override_null_with_no_row_creates_zero_rows(): void
+    {
+        $business = $this->business();
+        $item = $this->item($business);
+        $location = $this->location($business);
+
+        $result = $this->manager()->setPriceOverride($business, $item, $location, null);
+
+        $this->assertNull($result);
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')->where('catalog_item_id', $item->id)->count());
+    }
+
+    public function test_clearing_the_final_deviation_deletes_the_row(): void
+    {
+        $business = $this->business();
+        $item = $this->item($business);
+        $location = $this->location($business);
+
+        // row(true, 4200) -> clear price -> merged result is (true, null),
+        // the canonical default, so the row must be deleted entirely.
         $this->manager()->setPriceOverride($business, $item, $location, 4200);
         $cleared = $this->manager()->setPriceOverride($business, $item, $location, null);
 
+        $this->assertNull($cleared);
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')
+            ->where('catalog_item_id', $item->id)
+            ->where('business_location_id', $location->id)
+            ->count());
+    }
+
+    public function test_clearing_only_one_of_two_deviations_preserves_the_other(): void
+    {
+        $business = $this->business();
+        $item = $this->item($business);
+        $location = $this->location($business);
+
+        // row(false, 4200) -> clear price only -> row(false, null) remains,
+        // since is_enabled = false is still itself a deviation.
+        $this->manager()->setEnabled($business, $item, $location, false);
+        $this->manager()->setPriceOverride($business, $item, $location, 4200);
+        $cleared = $this->manager()->setPriceOverride($business, $item, $location, null);
+
+        $this->assertNotNull($cleared);
+        $this->assertFalse($cleared->is_enabled);
         $this->assertNull($cleared->price_minor_override);
-        $this->assertTrue($cleared->is_enabled, 'Clearing price alone must not revert the enabled flag.');
+        $this->assertSame(1, DB::table('catalog_item_location_overrides')
+            ->where('catalog_item_id', $item->id)
+            ->where('business_location_id', $location->id)
+            ->count());
+    }
+
+    public function test_re_enabling_after_a_price_override_alone_deletes_the_row(): void
+    {
+        $business = $this->business();
+        $item = $this->item($business);
+        $location = $this->location($business);
+
+        // row(false, null) -> setEnabled(true) -> merged result (true,
+        // null), the canonical default: the row is deleted.
+        $this->manager()->setEnabled($business, $item, $location, false);
+        $result = $this->manager()->setEnabled($business, $item, $location, true);
+
+        $this->assertNull($result);
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')
+            ->where('catalog_item_id', $item->id)
+            ->where('business_location_id', $location->id)
+            ->count());
     }
 
     public function test_only_one_override_row_exists_per_item_location_pair_after_repeated_writes(): void
@@ -206,6 +278,64 @@ class CatalogItemLocationOverrideManagerTest extends TestCase
 
         $this->expectException(CatalogRuleException::class);
         $this->manager()->setOverride($business, $item, $location, ['is_enabled' => 'yes']);
+    }
+
+    public function test_set_price_override_refuses_the_first_integer_beyond_php_int_max(): void
+    {
+        $business = $this->business();
+        $item = $this->item($business);
+        $location = $this->location($business);
+
+        // The equal-length boundary matters: comparing two digit strings
+        // with PHP's numeric `>` can coerce them to a floating-point value
+        // once the candidate is beyond PHP_INT_MAX. The domain validator
+        // must make this decision lexically after the length check
+        // instead (strcmp(), never a numeric comparison of the strings).
+        // Routed through setOverride()'s untyped array, like the other
+        // malformed-input cases above — setPriceOverride()'s own `?int`
+        // signature is a caller convenience for already-well-typed
+        // integers, not the validation boundary itself.
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->setOverride($business, $item, $location, ['price_minor_override' => '9223372036854775808']);
+    }
+
+    // -----------------------------------------------------------------
+    // A Location price override cannot exist without a currency (§5.2)
+    // -----------------------------------------------------------------
+
+    public function test_set_price_override_refuses_on_a_quote_only_item(): void
+    {
+        $business = $this->business();
+        $item = $this->items()->create($business, ['type' => 'package', 'name' => 'Custom Wedding Package']);
+        $location = $this->location($business);
+
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->setPriceOverride($business, $item, $location, 3000);
+    }
+
+    public function test_set_price_override_null_on_a_quote_only_item_stays_the_canonical_default(): void
+    {
+        $business = $this->business();
+        $item = $this->items()->create($business, ['type' => 'package', 'name' => 'Custom Wedding Package']);
+        $location = $this->location($business);
+
+        $result = $this->manager()->setPriceOverride($business, $item, $location, null);
+
+        $this->assertNull($result);
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')->where('catalog_item_id', $item->id)->count());
+    }
+
+    public function test_set_enabled_is_allowed_on_a_quote_only_item(): void
+    {
+        $business = $this->business();
+        $item = $this->items()->create($business, ['type' => 'package', 'name' => 'Custom Wedding Package']);
+        $location = $this->location($business);
+
+        $override = $this->manager()->setEnabled($business, $item, $location, false);
+
+        $this->assertNotNull($override);
+        $this->assertFalse($override->is_enabled);
+        $this->assertNull($override->price_minor_override);
     }
 
     // -----------------------------------------------------------------

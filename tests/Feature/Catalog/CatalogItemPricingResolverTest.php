@@ -143,6 +143,28 @@ class CatalogItemPricingResolverTest extends TestCase
         $this->assertSame(5000, $effective->priceMinor);
     }
 
+    public function test_after_clearing_a_deviation_back_to_default_the_resolver_treats_it_as_no_override(): void
+    {
+        $business = $this->business();
+        $item = $this->pricedItem($business, 5000, 'USD');
+        $location = $this->location($business);
+
+        // Create a deviation, then clear it back to the canonical default
+        // — the override row is deleted (§5.2 sparse invariant) — and
+        // confirm the resolver's result is indistinguishable from a
+        // Location that never had an override row at all.
+        $this->overrides()->setPriceOverride($business, $item, $location, 3000);
+        $cleared = $this->overrides()->setPriceOverride($business, $item, $location, null);
+        $this->assertNull($cleared);
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')->where('catalog_item_id', $item->id)->count());
+
+        $effective = $this->resolver()->resolve($business, $item, $location);
+
+        $this->assertSame(5000, $effective->priceMinor);
+        $this->assertSame('USD', $effective->currencyCode);
+        $this->assertFalse($effective->isQuoteOnly);
+    }
+
     public function test_a_quote_only_item_resolves_with_no_fixed_price(): void
     {
         $business = $this->business();
@@ -154,6 +176,56 @@ class CatalogItemPricingResolverTest extends TestCase
         $this->assertNull($effective->priceMinor);
         $this->assertNull($effective->currencyCode);
         $this->assertTrue($effective->isQuoteOnly);
+    }
+
+    public function test_a_quote_only_item_with_a_non_null_location_override_is_refused_at_write_time(): void
+    {
+        $business = $this->business();
+        $item = $this->quoteOnlyItem($business);
+        $location = $this->location($business);
+
+        // The manager, not the resolver, is where this is refused (§5.2:
+        // a Location override cannot exist without a CatalogItem
+        // currency to express it in). Proven here so this file documents
+        // the resolver's own precondition, not just the manager's.
+        $this->expectException(CatalogRuleException::class);
+        $this->overrides()->setPriceOverride($business, $item, $location, 3000);
+    }
+
+    public function test_a_quote_only_item_with_a_null_or_default_override_remains_valid_quote_only(): void
+    {
+        $business = $this->business();
+        $item = $this->quoteOnlyItem($business);
+        $location = $this->location($business);
+        $result = $this->overrides()->setPriceOverride($business, $item, $location, null);
+        $this->assertNull($result, 'null on a quote-only item is still the canonical default — no row.');
+
+        $effective = $this->resolver()->resolve($business, $item, $location);
+
+        $this->assertNull($effective->priceMinor);
+        $this->assertNull($effective->currencyCode);
+        $this->assertTrue($effective->isQuoteOnly);
+    }
+
+    public function test_a_manually_inserted_impossible_override_state_causes_resolver_refusal(): void
+    {
+        $business = $this->business();
+        $item = $this->quoteOnlyItem($business);
+        $location = $this->location($business);
+
+        // Bypasses CatalogItemLocationOverrideManager entirely — the
+        // manager can no longer create this row, but the resolver must
+        // still fail closed against corrupt/legacy data that somehow
+        // contains it, rather than ever returning a fixed amount with a
+        // null currency.
+        DB::table('catalog_item_location_overrides')->insert([
+            'catalog_item_id' => $item->id, 'business_location_id' => $location->id,
+            'is_enabled' => true, 'price_minor_override' => 3000,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->expectException(CatalogRuleException::class);
+        $this->resolver()->resolve($business, $item, $location);
     }
 
     // -----------------------------------------------------------------

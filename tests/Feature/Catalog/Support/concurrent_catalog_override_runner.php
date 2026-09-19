@@ -66,7 +66,9 @@ function runMode(string $mode, array $argv, $app): void
                 App\Models\BusinessLocation::findOrFail((int) $locationId),
                 $isEnabled === '1',
             );
-            fwrite(STDOUT, sprintf("OK override_id=%d\n", $override->id));
+            // null is the honest, expected result when the merged state is
+            // the canonical sparse default (§5.2) -- not an error.
+            fwrite(STDOUT, $override === null ? "OK override_id=none\n" : sprintf("OK override_id=%d\n", $override->id));
 
             return;
 
@@ -78,7 +80,7 @@ function runMode(string $mode, array $argv, $app): void
                 App\Models\BusinessLocation::findOrFail((int) $locationId),
                 $price === 'null' ? null : (int) $price,
             );
-            fwrite(STDOUT, sprintf("OK override_id=%d\n", $override->id));
+            fwrite(STDOUT, $override === null ? "OK override_id=none\n" : sprintf("OK override_id=%d\n", $override->id));
 
             return;
     }

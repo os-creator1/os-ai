@@ -40,6 +40,17 @@ use Illuminate\Support\Facades\DB;
  * a defense-in-depth backstop for the first-create race that lock
  * discipline should already make unreachable — never the primary
  * mechanism.
+ *
+ * SPARSE INVARIANT (§5.2). "Holds ONLY Locations that deviate from the
+ * Business-wide default" is enforced here, not merely described: after
+ * merging a caller's partial update onto the row's current (or sparse-
+ * default) state, a resulting state of `(is_enabled: true,
+ * price_minor_override: null)` IS the canonical default, so no row may
+ * persist in that shape — an existing row is deleted, and a would-be
+ * insert is skipped entirely. Every public method therefore returns
+ * `?CatalogItemLocationOverride`: `null` is the honest representation of
+ * "canonical sparse default; there is no override row," never an invented
+ * tombstone/no-op row.
  */
 final class CatalogItemLocationOverrideManager
 {
@@ -48,9 +59,12 @@ final class CatalogItemLocationOverrideManager
     /**
      * Location-specific enable/disable (§5.2/§12.C). `null` for the item's
      * `price_minor_override` is left untouched — this is a thin,
-     * single-field wrapper over the shared upsert in setOverride().
+     * single-field wrapper over the shared upsert in setOverride(). Returns
+     * `null` when the merged result is the canonical sparse default (see
+     * the class docblock) — most commonly `setEnabled($b, $i, $l, true)`
+     * clearing the last remaining deviation.
      */
-    public function setEnabled(Business $business, CatalogItem $item, BusinessLocation $location, bool $isEnabled): CatalogItemLocationOverride
+    public function setEnabled(Business $business, CatalogItem $item, BusinessLocation $location, bool $isEnabled): ?CatalogItemLocationOverride
     {
         return $this->setOverride($business, $item, $location, ['is_enabled' => $isEnabled]);
     }
@@ -59,24 +73,31 @@ final class CatalogItemLocationOverrideManager
      * Location-specific price override (§5.2/§12.C). `null` clears any
      * previously-set override amount, falling back to the Business-wide
      * `CatalogItem::price_minor` (or quote-only, if that is itself null) —
-     * `CatalogItemPricingResolver`'s own fallback chain.
+     * `CatalogItemPricingResolver`'s own fallback chain. Returns `null`
+     * when the merged result is the canonical sparse default.
      */
-    public function setPriceOverride(Business $business, CatalogItem $item, BusinessLocation $location, ?int $priceMinorOverride): CatalogItemLocationOverride
+    public function setPriceOverride(Business $business, CatalogItem $item, BusinessLocation $location, ?int $priceMinorOverride): ?CatalogItemLocationOverride
     {
         return $this->setOverride($business, $item, $location, ['price_minor_override' => $priceMinorOverride]);
     }
 
     /**
-     * Creates or updates the sparse override row for one (CatalogItem,
-     * BusinessLocation) pair. Either key in `$attributes` may be omitted;
-     * an omitted key keeps its CURRENT value — the row's persisted value
-     * if one already exists, else this table's own sparse defaults
-     * (`is_enabled = true`, `price_minor_override = null`) — mirroring
-     * `CatalogItemManager::update()`'s merged-state semantics exactly, so
-     * a caller can never clear one field by omission while accidentally
-     * reverting the other to a stale value.
+     * Creates, updates, or deletes the sparse override row for one
+     * (CatalogItem, BusinessLocation) pair. Either key in `$attributes`
+     * may be omitted; an omitted key keeps its CURRENT value — the row's
+     * persisted value if one already exists, else this table's own sparse
+     * defaults (`is_enabled = true`, `price_minor_override = null`) —
+     * mirroring `CatalogItemManager::update()`'s merged-state semantics
+     * exactly, so a caller can never clear one field by omission while
+     * accidentally reverting the other to a stale value.
+     *
+     * §5.2's sparse invariant is enforced on the MERGED result, not the
+     * caller's raw input: if that result is `(true, null)` — the canonical
+     * default — no row is written, and any existing row for this pair is
+     * deleted instead. `null` is returned in that case; any other merged
+     * result is persisted (created or updated) and that row is returned.
      */
-    public function setOverride(Business $business, CatalogItem $item, BusinessLocation $location, array $attributes): CatalogItemLocationOverride
+    public function setOverride(Business $business, CatalogItem $item, BusinessLocation $location, array $attributes): ?CatalogItemLocationOverride
     {
         return DB::transaction(function () use ($business, $item, $location, $attributes) {
             $lockedItem = $this->lockItemForBusiness($business, $item);
@@ -88,9 +109,16 @@ final class CatalogItemLocationOverrideManager
                 ->first();
 
             $validated = $this->validate(
+                $lockedItem,
                 array_key_exists('is_enabled', $attributes) ? $attributes['is_enabled'] : ($existing->is_enabled ?? true),
                 array_key_exists('price_minor_override', $attributes) ? $attributes['price_minor_override'] : ($existing->price_minor_override ?? null),
             );
+
+            if ($this->isCanonicalDefault($validated)) {
+                $existing?->delete();
+
+                return null;
+            }
 
             if ($existing !== null) {
                 $existing->fill($validated);
@@ -101,6 +129,15 @@ final class CatalogItemLocationOverrideManager
 
             return $this->createOverrideWithDuplicateBackstop($lockedItem, $lockedLocation, $validated);
         });
+    }
+
+    /**
+     * §5.2 — "no row present means enabled at the Business-wide default":
+     * the one shape a persisted row must never take.
+     */
+    private function isCanonicalDefault(array $validated): bool
+    {
+        return $validated['is_enabled'] === true && $validated['price_minor_override'] === null;
     }
 
     /**
@@ -126,6 +163,13 @@ final class CatalogItemLocationOverrideManager
                 throw $e;
             }
 
+            // Defense-in-depth path only (see the class docblock) — the
+            // item-row lock this method is always called from within
+            // should make this branch unreachable. $validated is not the
+            // canonical default here (setOverride() already returned early
+            // for that case before ever calling this method), so the row
+            // the other writer just committed is updated to it, never
+            // deleted.
             $override = CatalogItemLocationOverride::query()
                 ->where('catalog_item_id', $lockedItem->id)
                 ->where('business_location_id', $lockedLocation->id)
@@ -177,15 +221,32 @@ final class CatalogItemLocationOverrideManager
         return $locked;
     }
 
-    private function validate(mixed $isEnabled, mixed $priceMinorOverride): array
+    /**
+     * §5.2 — "Location override changes the amount only, never the
+     * currency": a non-null `price_minor_override` therefore requires the
+     * locked `CatalogItem` to already have a canonical fixed-price
+     * currency (its own `price_minor`/`currency_code` co-nullable
+     * invariant, §5.1, means "has a currency" and "is not quote-only" are
+     * the same fact). A quote-only item's Business currency is NEVER
+     * substituted here — that would silently turn a quote-only item into a
+     * half-defined fixed price, which Contract 16D's snapshot service
+     * handles through its own, explicit quote-only path instead.
+     */
+    private function validate(CatalogItem $lockedItem, mixed $isEnabled, mixed $priceMinorOverride): array
     {
         if (! is_bool($isEnabled)) {
             throw new CatalogRuleException('Enabled must be true or false.');
         }
 
+        $parsedPrice = $this->parsePriceMinorOverride($priceMinorOverride);
+
+        if ($parsedPrice !== null && $lockedItem->currency_code === null) {
+            throw new CatalogRuleException('This catalog item has no Business-wide price or currency yet, so it cannot have a Location price override.');
+        }
+
         return [
             'is_enabled' => $isEnabled,
-            'price_minor_override' => $this->parsePriceMinorOverride($priceMinorOverride),
+            'price_minor_override' => $parsedPrice,
         ];
     }
 
@@ -209,7 +270,7 @@ final class CatalogItemLocationOverrideManager
             $magnitude = ltrim($digits, '-');
 
             if (strlen($magnitude) > strlen((string) PHP_INT_MAX)
-                || (strlen($magnitude) === strlen((string) PHP_INT_MAX) && $magnitude > (string) PHP_INT_MAX)) {
+                || (strlen($magnitude) === strlen((string) PHP_INT_MAX) && strcmp($magnitude, (string) PHP_INT_MAX) > 0)) {
                 throw new CatalogRuleException('The price override is too large to store.');
             }
 

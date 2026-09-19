@@ -19,6 +19,10 @@ use Tests\TestCase;
  * needs committed rows, which an open RefreshDatabase transaction would
  * hide entirely. Fixture rows are inserted directly (auto-committed) and
  * explicitly cleaned up in tearDown().
+ *
+ * Also proves the §5.2 sparse invariant composes correctly across two
+ * SEPARATE processes: the row is deleted only once BOTH concurrent
+ * partial clears land on the canonical default, never after just one.
  */
 class CatalogItemLocationOverrideManagerConcurrencyTest extends TestCase
 {
@@ -53,7 +57,7 @@ class CatalogItemLocationOverrideManagerConcurrencyTest extends TestCase
         [, $businessId, $itemId, $locationId] = $this->raceFixture();
         // A pre-existing override row: this test is specifically update-vs-
         // update, not first-create (that is covered separately below).
-        $this->insertOverride($itemId, $locationId, true, null);
+        $this->insertOverride($itemId, $locationId, true, 4200);
 
         // Holder sets a price override; waiter, started while the holder
         // still holds the catalog_items row lock, only disables the item at
@@ -74,6 +78,65 @@ class CatalogItemLocationOverrideManagerConcurrencyTest extends TestCase
         $this->assertSame(0, (int) $row->is_enabled, 'The waiter\'s own field must still land.');
         $this->assertSame(3000, (int) $row->price_minor_override, 'The holder\'s committed price must never be lost or reverted.');
         $this->assertSame(1, DB::table('catalog_item_location_overrides')->where('catalog_item_id', $itemId)->count(), 'Exactly one override row, never a duplicate.');
+    }
+
+    // ------------------------------------------------------------------
+    // Return-to-default: the row must disappear only once BOTH concurrent
+    // partial clears have landed, never after just one of them.
+    // ------------------------------------------------------------------
+
+    public function test_a_held_return_to_default_deletes_the_row_only_once_both_deviations_are_cleared(): void
+    {
+        [, $businessId, $itemId, $locationId] = $this->raceFixture();
+        // Two deviations to start: disabled AND a price surcharge.
+        $this->insertOverride($itemId, $locationId, false, 4200);
+
+        // Holder clears the enabled deviation alone -- merged result
+        // (true, 4200) is NOT canonical (the price deviation remains), so
+        // the row must still exist after the holder commits. Only once the
+        // waiter, observing that committed (true, 4200) state, also clears
+        // the price does the merged result finally become the canonical
+        // default and the row gets deleted. If the waiter instead read a
+        // stale pre-lock snapshot (is_enabled still false), the final
+        // merge would wrongly look like (false, null) -- still a
+        // deviation -- and the row would incorrectly survive.
+        $holder = $this->holderOnItem($itemId, ['set-enabled', (string) $businessId, (string) $itemId, (string) $locationId, '1']);
+        $waiter = $this->runner(['set-price', (string) $businessId, (string) $itemId, (string) $locationId, 'null']);
+        $waiter->start();
+        $holder->wait();
+        $waiter->wait();
+
+        $this->assertTrue($holder->isSuccessful(), 'Holder: ' . $holder->getErrorOutput());
+        $this->assertTrue($waiter->isSuccessful(), 'Waiter: ' . $waiter->getErrorOutput());
+
+        $this->assertSame(0, DB::table('catalog_item_location_overrides')
+            ->where('catalog_item_id', $itemId)
+            ->where('business_location_id', $locationId)
+            ->count(), 'Both deviations cleared: the canonical default must never persist as a row.');
+    }
+
+    public function test_a_held_partial_clear_alone_never_deletes_the_row(): void
+    {
+        [, $businessId, $itemId, $locationId] = $this->raceFixture();
+        $this->insertOverride($itemId, $locationId, false, 4200);
+
+        // Same starting state as above, but the waiter's own change does
+        // NOT clear the remaining deviation -- the row must still exist,
+        // proving the manager is not simply deleting on any write to a
+        // row that started with a deviation.
+        $holder = $this->holderOnItem($itemId, ['set-enabled', (string) $businessId, (string) $itemId, (string) $locationId, '1']);
+        $waiter = $this->runner(['set-price', (string) $businessId, (string) $itemId, (string) $locationId, '4200']);
+        $waiter->start();
+        $holder->wait();
+        $waiter->wait();
+
+        $this->assertTrue($holder->isSuccessful(), 'Holder: ' . $holder->getErrorOutput());
+        $this->assertTrue($waiter->isSuccessful(), 'Waiter: ' . $waiter->getErrorOutput());
+
+        $row = DB::table('catalog_item_location_overrides')->where('catalog_item_id', $itemId)->where('business_location_id', $locationId)->first();
+        $this->assertNotNull($row, 'Only one of the two deviations cleared: the row must still exist.');
+        $this->assertSame(1, (int) $row->is_enabled);
+        $this->assertSame(4200, (int) $row->price_minor_override);
     }
 
     // ------------------------------------------------------------------
