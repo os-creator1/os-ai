@@ -941,6 +941,18 @@ business_document_refunds
   index (business_document_payment_id, status)
 ```
 
+**There is deliberately no `client_secret` column, and never will be.** A
+PaymentIntent's `client_secret` is transient presentation material handed
+to one browser (§7.2.1); the durable local identity of a payment is
+`uid` + `provider_payment_intent_id` + `business_stripe_connection_id`,
+which is everything any later retrieval, finalization or refund needs
+(§11.8).
+
+**`status` is a local vocabulary, not Stripe's.** The six values above are
+ours; the provider's own status strings are mapped onto them in exactly
+one place, the lane-B gateway seam (§11.8). No provider-specific status
+string appears anywhere in domain code, manager code, or this schema.
+
 **Deposit + balance, and nothing more.** Blueprint §34 puts "Deposit +
 balance (§18)" in V1 and "Complex installment plans" in V2. A version
 therefore has **either** one `full` item **or** exactly two items
@@ -1123,6 +1135,31 @@ anything:
 **No customer feature-permission check is applied to the end customer** —
 they hold no capability and are not a platform user. Every failure above
 returns the same uniform, non-enumerating refusal as §6.3.
+
+#### 6.3.2 The public payment surface: a read-only page and one POST
+
+The public surface has exactly two payment-relevant endpoints, and the
+split is load-bearing:
+
+- **`GET documents/{uid}/{token}`** — renders the frozen issued version
+  and, additionally, the payment *state*: the amount due, **which schedule
+  item is currently payable** (§7.3), whether the Business is
+  payment-ready (§11.4), and a **Pay action**. It **creates no
+  PaymentIntent, makes no provider call and mutates nothing** (§10). A
+  customer may open, refresh and revisit it any number of times with zero
+  side effects.
+- **`POST` payment-start** — the *only* entry point permitted to invoke
+  §7.2's PAY START. It is authenticated by the same `{uid}/{token}`
+  possession, re-runs §6.3.1's five rechecks, and returns §7.2.1's
+  transient browser material.
+
+**The Laravel endpoint never accepts card data.** It has no card number,
+expiry, CVC, or raw payment-method field in its request schema; such input
+is not "validated and discarded", it simply has no place in the contract
+and any request carrying it is rejected by the endpoint's own strict input
+schema. Card details are collected **exclusively** by Stripe.js in the
+customer's browser (§11.8) and never enter a Laravel request body, log,
+exception, or this database.
 
 ### 6.4 Entitlement
 
@@ -1320,6 +1357,49 @@ Forced-concurrency tests are required (§12.E): two first clicks → one
 active row and one provider operation; lost provider response → retry uses
 the same key; only a terminal failure/cancel permits a new row.
 
+#### 7.2.1 What PAY START returns, and the two re-drive cases
+
+§7.2 creates or re-drives the one durable attempt. Only after the provider
+PaymentIntent exists does the **public payment-start POST** respond with
+the **minimum transient browser material** needed to confirm it:
+
+- `payment_uid` (the durable local identity);
+- the PaymentIntent **`client_secret`**;
+- the **connected-account context** current Stripe.js requires, derived
+  **server-side** from the row's own `business_stripe_connection_id`
+  (§7.2.2);
+- the **publishable-key / config identity** appropriate to that context.
+
+**The platform secret key is never returned.**
+
+**Re-driving an existing active attempt (step 10) has exactly two shapes:**
+
+- **Case A — `provider_payment_intent_id` is known.** Retrieve/reconcile
+  **that same** PaymentIntent on the connected account recorded on the row
+  (§7.2.2), and return **that same** intent's `client_secret`. A second
+  PaymentIntent is never created.
+- **Case B — the creation call returned an uncertain result, so the row
+  does not yet know the intent id.** Repeat the creation request with the
+  **same `document-payment:{payment_uid}` Stripe idempotency key**.
+  Stripe's own idempotency returns the original intent, which is
+  reconciled into that **same** local row, and its `client_secret` is
+  returned.
+
+In neither case is a random retry key used, and in neither case does a
+second active local row come into existence.
+
+#### 7.2.2 The connected account is server-derived and browser-immutable
+
+The connected-account context handed to the browser is derived
+**server-side** from `business_document_payments.business_stripe_connection_id`
+— the exact connection used to create that PaymentIntent (§5.7). Confirmation
+must target that same account.
+
+**A browser can never choose, submit, or influence which connected account
+is used.** No request parameter names an account, and no account identifier
+supplied by a client is ever trusted; the server reads the persisted
+connection row. This is enforced by test (§12.E).
+
 ### 7.3 Signature is a payability gate
 
 - **`requires_signature = true`** — payable **only** when
@@ -1344,6 +1424,39 @@ outside the transaction, against the payment's **historical** connection
 than the document's frozen `currency_code` is a refusal at add-time, not a
 conversion — there is no FX in this slice and none is authorized.
 
+### 7.5 Abandoned attempts — bounded reconciliation, one authority
+
+A customer who closes the tab mid-Payment-Element leaves a local attempt
+in `created` or `requires_action`, still holding
+`active_schedule_item_id`. Two rules resolve this without inventing a
+second payment lifecycle:
+
+**Reopening is not a new attempt.** Returning to the secure document and
+pressing Pay again runs §7.2, finds the active row at step 9, and
+re-drives it per §7.2.1 Case A/B. A refresh, a back-button, or a second
+tab therefore never creates a second PaymentIntent.
+
+**A stale attempt cannot hold the schedule forever.** A bounded
+reconciliation sweep (§12.F's command surface, `config/documents.php`
+threshold) picks up attempts that have sat in a non-terminal local status
+past that threshold and, for each one under §7.0's lock order:
+
+- **retrieves the authoritative PaymentIntent from Stripe** on the row's
+  own recorded connection, and
+- resolves the row **through the same shared idempotent finalizer** every
+  other path uses (§8.2/§8.3), with the same
+  amount/currency/account/`app_operation_id` cross-checks.
+
+The sweep therefore **introduces no second authority**: it does not decide
+outcomes, it only asks the provider and hands the answer to the existing
+finalizer. Specifically it must **never** locally mark an attempt `failed`
+or `canceled` merely because time passed — a customer may complete an
+authentication step late, and a locally-invented terminal state would
+release `active_schedule_item_id` while a real charge was still live.
+Only a provider-verified terminal outcome (or a provider-confirmed
+cancellation the sweep requests explicitly) frees the slot, after which
+§7.2 permits exactly one new deliberate attempt.
+
 ## 8. Provider integration, idempotency and replay safety
 
 ### 8.1 Outbound calls are idempotent by construction
@@ -1362,6 +1475,16 @@ is not idempotency, it is the appearance of idempotency."
 A new provider attempt happens only by way of a **new durable row**
 (§7.2), which is what makes "deliberate retry" and "retry after an
 uncertain response" mechanically distinguishable.
+
+**Re-driving reuses the key, never regenerates it.** Because the key is
+derived from the row's own UID, §7.2.1's Case B — repeating a creation
+call whose result was uncertain — necessarily sends the **same**
+`document-payment:{payment_uid}` value, so Stripe's own idempotency
+returns the original PaymentIntent rather than creating a second one.
+Case A does not re-create at all; it retrieves the known intent. Neither
+path may mint a fresh key "to be safe": that would convert a lost response
+into a real second charge, which is exactly what this rule exists to
+prevent.
 
 ### 8.2 Inbound events: the claim/lease pattern
 
@@ -1395,6 +1518,8 @@ Mirroring §3.5's proven mechanism, in the lane-B-owned table:
 | Duplicate a reminder or receipt | Durable markers on the owning rows (`reminder_last_sent_at`/`reminder_count`, `expiry_reminder_*`, `receipt_sent_at`) written by the manager, never by the job (§8.4) |
 | Move a terminal document backward | `paid`, `void` and `expired` accept **no** inbound transition. A late or replayed event against a terminal document is recorded `ignored` with a reason code. A refund never moves a document out of `paid` (§5.9) |
 | Pay a superseded version | Every pay path re-checks the item belongs to `current_version_id` under the document lock (§7.2 step 5) |
+| Mark a payment succeeded because a browser came back | A Stripe return/redirect carries **no authority** (§8.5, §11.8). The return route re-renders persisted state only; success is written solely by the verified webhook path or a verified server-to-Stripe retrieval through the same finalizer |
+| Create a second intent from a refresh, an SCA step, or an abandoned tab | The active row is re-driven, never re-created (§7.2.1, §7.5); `unique(active_schedule_item_id)` makes a second live attempt impossible |
 
 **Cross-checks before any mutation**, mirroring lane D's own list: the
 event's `account` must match the **connection recorded on the local row**
@@ -1736,6 +1861,56 @@ If the verified Stripe event stream includes dispute events, they may be
 handles the dispute in its own Stripe Dashboard. Any future in-app dispute
 workflow is separate scope.
 
+### 11.8 How the customer actually pays — Stripe.js Payment Element
+
+The PaymentIntent architecture (§7.2, §8) said *what* is created and *who*
+is authoritative, but not how the end customer supplies a payment method.
+Locked for V1, without redesigning around Checkout Sessions:
+
+**The customer pays with Stripe.js + the Stripe Payment Element**, mounted
+in the public document page against the Business's **connected account** in
+the direct-charge context (§11.2), initialized with the `client_secret`
+returned by the payment-start POST (§7.2.1).
+
+- **This application never collects raw card numbers, expiry or CVC.** No
+  card data enters a Laravel request body, log, exception, cache, session
+  or this database (§6.3.2). The Element talks to Stripe directly.
+- **Stripe.js performs the confirmation**, including **SCA / 3-D Secure or
+  any other customer authentication**. That is Stripe's client-side flow;
+  **this server never implements card authentication**, and an
+  authentication step is not a new payment attempt — the same local row and
+  same PaymentIntent carry through it (§7.5).
+- **The exact current Stripe.js connected-account initialization API is
+  verified against official Stripe documentation when Sub-slice E is
+  implemented** (§11.6). This contract deliberately does **not** freeze a
+  guessed JS option name; it fixes the *posture*, not the parameter
+  spelling.
+- **Any Stripe return/redirect URL** may bring the customer back to the
+  secure document route, but **carries no authority whatsoever**: arriving
+  there transitions nothing. The page simply re-renders, or re-polls,
+  persisted state (§8.5, §8.3).
+
+**Provider status → local status is mapped in exactly one seam.** The
+lane-B gateway (`App\Library\Payments\**`) is the only place that knows
+Stripe's status vocabulary; it maps onto this contract's six local values
+(§5.9), and **no provider status string may leak into manager, domain,
+controller or Blade code**:
+
+| Situation | Local status |
+|---|---|
+| Intent created, awaiting browser confirmation | `created` |
+| Customer authentication required (SCA/3DS or equivalent) | `requires_action` |
+| Provider is processing / async settlement in flight | `processing` |
+| Verified success (webhook or verified retrieval) | `succeeded` |
+| Terminal provider failure | `failed` |
+| Terminal cancellation | `canceled` |
+
+The mapping table above is the contract; the exact provider strings it
+reads are whatever the verified current API reports at implementation time
+(§11.6). Adding a provider status this table does not cover is a
+fail-closed condition — the gateway raises rather than guessing a local
+state.
+
 ## 12. Exact implementation allowlist — seven dependency-ordered sub-slices
 
 Seven, because **Stripe Connect onboarding (D) is separated from charging
@@ -1897,14 +2072,24 @@ surface.
 ### Sub-slice E — Payment schedule execution, PaymentIntents, webhook ingestion
 
 - **Files/domains**: `App\Library\Payments\PaymentManager` implementing
-  **§7.2's PAY START algorithm verbatim** and the shared idempotent
-  finalizer; the public payment `POST` (with §6.3.1's rechecks and §7.3's
-  payability gate); the lane-B webhook route, controller and
+  **§7.2's PAY START algorithm verbatim** (including §7.2.1's Case A/B
+  re-drive and the server-derived connected-account context of §7.2.2) and
+  the shared idempotent finalizer; **the provider→local status mapping
+  seam in the lane-B gateway (§11.8), the only place Stripe status strings
+  exist**; the **public payment-start `POST`** (§6.3.2 — with §6.3.1's
+  rechecks and §7.3's payability gate, a strict input schema that accepts
+  **no** card fields, and §7.2.1's transient response); the public
+  document page's payment-state rendering and **Stripe.js Payment Element
+  front-end** (§11.8), plus the no-authority return route; the lane-B
+  webhook route, controller and
   `App\Jobs\BusinessPayments\ProcessBusinessPaymentEvent` implementing
   §8.2 in full under §7.0's lock order; the receipt email job dispatched
   from `DocumentPaymentSucceeded`, deduped by `receipt_sent_at`; the
   `DocumentPaymentSucceeded` / `DocumentFullyPaid` events;
   `VerifyCsrfToken` exception and `STRIPE_CONNECT_WEBHOOK_SECRET`.
+  **Verify the current Stripe.js connected-account initialization API
+  against official Stripe documentation before writing it** (§11.6,
+  §11.8) — this contract fixes the posture, not the option spelling.
 - **Prerequisites**: A, B, C, D (hard).
 - **Schema**: none new — consumes A's tables.
 - **Tenancy/security**: §6.3.1 for the public pay action; §11.4's
@@ -1934,20 +2119,50 @@ surface.
   finalizes its own older payment** (§5.7); paying a document linked to an
   Opportunity leaves that opportunity's stage unchanged (Blueprint §9); the
   §11.1 lane source-boundary test.
+  **Plus the payment-collection set (§11.8), all against the fake
+  gateway — no live network test:**
+  (a) the public `GET` document page creates **zero** payment rows and
+  makes **zero** provider calls;
+  (b) payment-start returns a `client_secret` belonging to the **exact**
+  durable attempt identified by `payment_uid`;
+  (c) the Laravel endpoint **rejects** any request carrying card
+  number/expiry/CVC-shaped fields — they are not in its schema;
+  (d) `client_secret` is **never** persisted to any table, written to any
+  log, included in an exception message, or placed in a timeline/audit
+  row (assert across the payments table, the events table and the log
+  sink);
+  (e) refresh/reopen re-drives the **same** local row and the **same**
+  PaymentIntent (§7.2.1 Case A);
+  (f) an uncertain creation response re-drives with the **same**
+  `document-payment:{payment_uid}` key and yields one intent
+  (§7.2.1 Case B);
+  (g) a browser-supplied account identifier **cannot** change the
+  connected account used — it is read from the persisted connection row
+  (§7.2.2);
+  (h) a `requires_action`/SCA cycle creates **no** second attempt;
+  (i) hitting the Stripe return URL alone **never** marks a payment
+  succeeded;
+  (j) the verified webhook completes **that same** row;
+  (k) after a terminal provider failure, exactly **one** new deliberate
+  attempt is permitted;
+  (l) each provider status maps to the correct local status per §11.8's
+  table, and an unmapped provider status **fails closed** rather than
+  guessing.
 - **Risk**: **Critical** — real customer money, replay safety, lock
   ordering and the lane boundary all land here.
 - **Model**: **Opus 5 warranted.**
 
 ### Sub-slice F — Reminders, offer expiration, refunds
 
-- **Files/domains**: two scheduled commands following the
+- **Files/domains**: **three** scheduled commands following the
   `SweepExpiredOpportunitySnoozes` convention exactly (§3.5) —
-  `documents:expire-due` and `documents:dispatch-due-reminders`, separate
-  because they select disjoint row sets; refund issuance and admission in
+  `documents:expire-due`, `documents:dispatch-due-reminders`, and
+  `documents:reconcile-stale-payments` (§7.5) — separate because they
+  select disjoint row sets; refund issuance and admission in
   `App\Library\Payments\PaymentManager` (§7.4, §8.7) plus refund webhook
-  handling routed by `event_type` (§8.3); the sweep/reminder keys added to
-  the `config/documents.php` Sub-slice A created; the `DocumentExpired` /
-  `DocumentRefunded` events.
+  handling routed by `event_type` (§8.3); the sweep/reminder/stale-payment
+  keys added to the `config/documents.php` Sub-slice A created; the
+  `DocumentExpired` / `DocumentRefunded` events.
 - **Prerequisites**: A, B, C, E (hard).
 - **Schema**: none new — consumes A's tables.
 - **Tenancy/security**: refunds per §6.1 (capability + confirmation).
@@ -1971,10 +2186,15 @@ surface.
   capacity, an over-refund is refused, a failed refund releases capacity,
   and a forced race of two simultaneous refunds cannot reserve beyond the
   captured amount**; a refund targets the payment's **historical**
-  connection; refunds are idempotent under replay.
+  connection; refunds are idempotent under replay; **§7.5's stale-payment
+  set — the sweep retrieves the provider intent and resolves it through
+  the shared finalizer, never inventing a terminal state; an abandoned
+  `created`/`requires_action` row does not block its schedule item
+  forever; and a row whose customer completes authentication late is
+  finalized correctly rather than having been locally killed**.
 - **Risk**: Medium–High (the refund concurrency set is the hard part).
-- **Model**: **Opus 5 warranted** for the refund-admission and expiration
-  invariants.
+- **Model**: **Opus 5 warranted** for the refund-admission, expiration and
+  stale-payment invariants.
 
 ### Sub-slice G — Integration hardening and the entitlement flip
 
@@ -2020,7 +2240,14 @@ Beyond each sub-slice's own suite:
    longer payable, while the new version's schedule is.
 5. **The money-serialization proof**: §7.2's forced-concurrency set and
    §8.7's refund-admission race.
-6. A Location-ACL and §6.1-gate-chain regression across every
+6. **The payment-collection proof** (§12.E's (a)–(l), §11.8): the public
+   `GET` makes no provider call; the Laravel endpoint accepts no card
+   data; `client_secret` is never persisted or logged; refresh, SCA and
+   abandonment all re-drive the same attempt rather than creating another;
+   a browser return alone never marks a payment succeeded; and the
+   connected account cannot be influenced by browser input. All against
+   the fake gateway — **no live network test anywhere in this slice**.
+7. A Location-ACL and §6.1-gate-chain regression across every
    authenticated surface this slice adds.
 
 ## 14. Acceptance criteria
@@ -2043,27 +2270,42 @@ Beyond each sub-slice's own suite:
    paid.
 6. At most one live payment attempt exists per schedule item, enforced by
    `unique(active_schedule_item_id)`, and two concurrent first clicks
-   produce exactly one provider operation.
-7. Replaying any webhook event produces no duplicate payment, transition,
+   produce exactly one provider operation. A refresh, an SCA step, an
+   abandoned tab, or an uncertain provider response all **re-drive that
+   same attempt** and never create a second PaymentIntent (§7.2.1, §7.5).
+7. Card data is collected only by Stripe.js in the browser; no card field
+   is accepted by any endpoint in this slice, and `client_secret` is never
+   persisted, logged, or placed in an exception, timeline or audit row
+   (§6.3.2, §11.8). The connected account used for confirmation is
+   server-derived from the payment row and cannot be influenced by the
+   browser (§7.2.2).
+8. Provider status strings exist only in the lane-B gateway seam and map
+   onto this contract's six local statuses; an unmapped provider status
+   fails closed (§11.8).
+9. Replaying any webhook event produces no duplicate payment, transition,
    refund or receipt, and never moves a terminal document backward (§8.3).
-8. All multi-row locking follows §7.0's canonical order; no provider
-   network call occurs inside a transaction or under a row lock.
-9. A `requires_signature` document cannot be paid before it is signed, and
-   a balance cannot be paid before its deposit succeeds (§7.3).
-10. Cumulative succeeded refunds never exceed a payment's captured amount,
+   A Stripe return/redirect alone transitions nothing (§8.5, §11.8).
+10. All multi-row locking follows §7.0's canonical order; no provider
+    network call occurs inside a transaction or under a row lock.
+11. A `requires_signature` document cannot be paid before it is signed, and
+    a balance cannot be paid before its deposit succeeds (§7.3).
+12. Cumulative succeeded refunds never exceed a payment's captured amount,
     and admission accounts for pending refunds (§8.7).
-11. `expires_at` expires only unsigned, unpaid `sent` documents (§8.6).
-12. The public link is non-guessable, hashed at rest, expiring, rotatable,
+13. `expires_at` expires only unsigned, unpaid `sent` documents (§8.6), and
+    an abandoned payment attempt is reconciled from the provider rather
+    than locally invented, so it neither blocks its schedule item forever
+    nor kills a late-completing authentication (§7.5).
+14. The public link is non-guessable, hashed at rest, expiring, rotatable,
     throttled, returns one uniform refusal for every failure reason, and
     **re-checks account lifecycle and entitlement on every request**
     (§6.3.1).
-13. Every authenticated route carries the full §6.1 gate chain, including
+15. Every authenticated route carries the full §6.1 gate chain, including
     the entitlement gate, from the sub-slice that introduces it.
-14. Document lifecycle changes never auto-advance a CRM pipeline stage
+16. Document lifecycle changes never auto-advance a CRM pipeline stage
     (Blueprint §9).
-15. The entitlement flips to `Available` only after A–F are merged and the
+17. The entitlement flips to `Available` only after A–F are merged and the
     end-to-end path passes.
-16. `git diff --check` clean and a clean working tree per sub-slice commit.
+18. `git diff --check` clean and a clean working tree per sub-slice commit.
 
 ## 15. Non-goals
 
@@ -2428,6 +2670,51 @@ payment row with status `created`; derive the provider key from that row's
 UID; commit; call the provider OUTSIDE the transaction; finalize through
 the shared idempotent finalizer.
 
+HOW THE CUSTOMER ACTUALLY PAYS (SS11.8) -- read it before building the
+public surface:
+- The customer pays via Stripe.js + the Stripe Payment Element, against
+  the Business's CONNECTED account in the direct-charge context. Do NOT
+  redesign around Checkout Sessions.
+- VERIFY the current Stripe.js connected-account initialization API
+  against official Stripe docs before writing it (SS11.6). This contract
+  fixes the posture, not the option spelling -- do not copy a guessed
+  option name from memory.
+- This application NEVER collects raw card number/expiry/CVC. Your
+  payment-start endpoint's input schema has no card fields at all; a
+  request carrying them is rejected. No card data may reach a Laravel
+  request body, log, exception, cache, session or the database.
+- Two public endpoints only (SS6.3.2): the GET document page renders
+  amount due, which schedule item is payable, payment readiness and a Pay
+  action, and makes ZERO provider calls and ZERO mutations; the
+  payment-start POST is the ONLY thing that may invoke PAY START.
+- The payment-start response returns ONLY (SS7.2.1): payment_uid, the
+  PaymentIntent client_secret, the connected-account context current
+  Stripe.js requires, and the publishable-key/config identity. NEVER the
+  platform secret key.
+- client_secret is TRANSIENT. It must not be stored in
+  business_document_payments or business_payment_events, logged, put in an
+  exception message, written to a timeline/audit row, or cached "for
+  convenience". Durable identity is uid + provider_payment_intent_id +
+  business_stripe_connection_id.
+- Re-drive has exactly two shapes (SS7.2.1). Case A: the intent id is
+  known -> retrieve/reconcile THAT SAME intent on the row's recorded
+  connection and return its client_secret. Case B: the creation result was
+  uncertain and the id is unknown -> repeat creation with the SAME
+  document-payment:{payment_uid} key so Stripe returns the original
+  intent. Never a fresh key, never a second active row.
+- The connected-account context is derived SERVER-SIDE from the row's
+  business_stripe_connection_id (SS7.2.2). No request parameter may name
+  an account; never trust a client-supplied account identifier.
+- SCA/3DS belongs to Stripe's client-side confirmation. Your server
+  implements no card authentication, and requires_action is NOT a new
+  attempt -- same row, same intent.
+- Any Stripe return/redirect URL may bring the customer back to the secure
+  document route but carries NO authority: arriving there transitions
+  nothing. Re-render or re-poll persisted state.
+- Map provider statuses to our six local statuses in ONE gateway seam
+  (SS11.8's table). No Stripe status string may appear in manager, domain,
+  controller or Blade code. An unmapped provider status fails closed.
+
 Provider keys are document-payment:{payment_uid} and
 document-refund:{refund_uid}. NEVER an independently guessed ordinal. A
 deliberate retry after a terminal failed/canceled attempt creates a NEW
@@ -2486,18 +2773,34 @@ prerequisites: Sub-slices A, B, C, E merged.
 
 Read SS8.4, SS8.6, SS8.7, SS7.4 and SS5.9's refund rules before coding.
 
-Build two SEPARATE scheduled commands -- documents:expire-due and
-documents:dispatch-due-reminders -- because they select disjoint row sets.
-Follow app/Console/Commands/SweepExpiredOpportunitySnoozes.php exactly:
-domain logic in the manager; the command owns the config feature-flag
-no-op (exact message + self::SUCCESS + zero mutation and zero manager
+Build THREE SEPARATE scheduled commands -- documents:expire-due,
+documents:dispatch-due-reminders and documents:reconcile-stale-payments --
+because they select disjoint row sets. Follow
+app/Console/Commands/SweepExpiredOpportunitySnoozes.php exactly: domain
+logic in the manager; the command owns the config feature-flag no-op
+(exact message + self::SUCCESS + zero mutation and zero manager
 invocation); strict --limit validation returning self::INVALID on anything
 not a positive integer; a BOUNDED batch that never drains to empty;
 per-row transaction + lockForUpdate() + re-verify the precondition under
-the lock; Throwable per row logged and the loop continues. Register both
-unconditionally in Kernel::schedule() with a comment justifying the
-cadence. Add your sweep/reminder keys to the config/documents.php that
-Sub-slice A created.
+the lock; Throwable per row logged and the loop continues. Register all
+three unconditionally in Kernel::schedule() with a comment justifying the
+cadence. Add your sweep/reminder/stale-payment keys to the
+config/documents.php that Sub-slice A created.
+
+STALE PAYMENTS (SS7.5): documents:reconcile-stale-payments picks up
+payment attempts sitting in a non-terminal local status past the
+configured threshold. For each, under SS7.0's lock order, RETRIEVE the
+authoritative PaymentIntent from Stripe on the row's OWN recorded
+connection and resolve it through the SAME shared idempotent finalizer
+Sub-slice E built -- with the same amount/currency/account/
+app_operation_id cross-checks. This command decides nothing itself: it
+asks the provider and hands the answer to the existing finalizer, so it
+introduces no second payment lifecycle authority. It must NEVER locally
+mark an attempt failed or canceled merely because time passed -- a
+customer may complete authentication late, and inventing a terminal state
+would free active_schedule_item_id while a real charge was still live.
+Only a provider-verified terminal outcome (or a provider-confirmed
+cancellation you explicitly request) frees the slot.
 
 EXPIRATION (SS8.6): expires_at is an OFFER expiry. Expire ONLY documents
 that are status=sent AND have no signature AND have zero succeeded
@@ -2529,9 +2832,13 @@ refunded on a first partial refund. Cumulative succeeded refunds never
 exceed the captured amount.
 
 Tests per SS12.F, including the expiration set, the partial-refund set,
-and the forced race proving two simultaneous refunds cannot reserve beyond
-the captured amount. Write BOTH test classes per command -- behavior and
-ReflectionMethod-based schedule registration.
+the forced race proving two simultaneous refunds cannot reserve beyond the
+captured amount, and the stale-payment set (an abandoned attempt is
+resolved from the provider and never locally invented; it does not block
+its schedule item forever; a late-completing authentication still
+finalizes correctly). Write BOTH test classes for EACH of the three
+commands -- behavior and ReflectionMethod-based schedule registration. Use
+the fake gateway; no live network test.
 
 Run tests, git diff --check, commit, push. Do NOT create a PR. Do NOT
 merge.
