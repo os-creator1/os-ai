@@ -35,7 +35,8 @@ class WorkspacePlanFeatureRepositoryTest extends TestCase
 
         $expected = [
             'ads_basic_visibility', 'ai_coo_basic', 'automations', 'calendar',
-            'conversations', 'crm', 'forms', 'seo_basic_visibility', 'website_generation',
+            'conversations', 'crm', 'forms', 'packages_products', 'payments_contracts',
+            'seo_basic_visibility', 'website_generation',
         ];
         sort($expected);
 
