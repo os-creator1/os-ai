@@ -27,6 +27,17 @@ class EntitlementBypassSeoController extends SeoController
         return $this->resolveBusinessTenancy($workspaceUid, $businessUid);
     }
 
+    /**
+     * Simulates the post-flip state of the bare entry's availability floor so
+     * its selector logic (zero / one / many) can be tested WITHOUT flipping
+     * the registry, which Sub-slice H owns. The production floor itself is
+     * proven, tier by tier, against the real controller.
+     */
+    protected function seoIsImplementedAndAvailable(): bool
+    {
+        return true;
+    }
+
     protected function seoEntitlementAllows(Workspace $workspace, Business $business, int $userId): bool
     {
         return true;

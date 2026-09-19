@@ -9,6 +9,7 @@ use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Seo\SeoOverviewReader;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -61,10 +62,23 @@ class SeoController extends CustomerBaseController
      * The bare /seo entry. NEVER guesses a Business: zero accessible shows an
      * empty state, exactly one redirects through, several show a chooser.
      * "Accessible" includes entitlement, so a Business that is not entitled
-     * never appears (and while the feature is Planned, none does).
+     * never appears.
+     *
+     * ORDER IS LOAD-BEARING. The implementation-availability floor comes
+     * FIRST, before the capability check and before any Business is touched:
+     * while SeoBasicVisibility is Planned the whole surface is 404 for every
+     * caller, so neither a 200 empty state nor a different (401) response for
+     * a caller who lacks `view_seo` can reveal that the SEO surface exists
+     * (Contract 18 §14.1). The bare route has no Business yet, so
+     * EntitlementManager cannot decide anything per Business here; the
+     * registry is the one implementation-availability authority and is asked
+     * directly. Only once the feature is Available do the capability check
+     * and the 0 / 1 / many selector run.
      */
     public function entry(): View|RedirectResponse
     {
+        abort_unless($this->seoIsImplementedAndAvailable(), 404);
+
         $this->authorize('view_seo');
 
         $accessible = $this->entitledBusinesses();
@@ -90,6 +104,18 @@ class SeoController extends CustomerBaseController
             'business' => $business,
             'overview' => $this->overviewReader->read($workspace, $business, Auth::user()),
         ]);
+    }
+
+    /**
+     * The implementation-availability floor for the bare entry: is
+     * SeoBasicVisibility Available in PlatformFeatureRegistry? Its own
+     * method, exactly like the entitlement step below, so tests can reach the
+     * post-floor selector logic without flipping the registry (Sub-slice H
+     * owns the flip). Production never overrides it.
+     */
+    protected function seoIsImplementedAndAvailable(): bool
+    {
+        return PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value);
     }
 
     /**

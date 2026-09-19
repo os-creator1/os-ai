@@ -487,10 +487,13 @@
     | Bare selector only — the read-only Overview lives at
     | customer.workspaces.businesses.seo.*. Never guesses a Business: zero
     | accessible show an empty state, exactly one redirects through, several
-    | show a chooser. "Accessible" includes ENTITLEMENT, and
-    | SeoBasicVisibility stays Planned until Sub-slice H, so today nobody is
-    | accessible. The name is customer.seo.index — never customer.keywords.*,
-    | the legacy inbound-SMS keyword namespace. See Business\SeoController.
+    | show a chooser. "Accessible" includes ENTITLEMENT. Before any of that,
+    | the entry checks the registry's implementation-availability floor
+    | FIRST: SeoBasicVisibility stays Planned until Sub-slice H, so today the
+    | whole route is 404 for every caller (no 200 empty state, and no 401 that
+    | would reveal the surface exists). The name is customer.seo.index —
+    | never customer.keywords.*, the legacy inbound-SMS keyword namespace.
+    | See Business\SeoController.
     |
     */
     Route::get('seo', 'Business\SeoController@entry')->name('seo.index');

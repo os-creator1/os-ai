@@ -48,18 +48,142 @@ class SeoFoundationBoundaryTest extends TestCase
         }
     }
 
-    public function test_the_bare_entry_offers_no_business_while_the_feature_is_planned(): void
+    public function test_the_bare_entry_is_a_404_for_every_tier_while_the_feature_is_planned(): void
+    {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+            [$customer, $business] = $this->entitledTenant($tier);
+            $this->createLocation($business);
+            // A fully-permitted owner with full tenancy: still no SEO surface.
+            $this->authenticateAsSeoCustomer($customer);
+
+            $this->get(route('customer.seo.index'))->assertNotFound();
+        }
+    }
+
+    public function test_the_bare_entry_is_a_404_without_view_seo_too_so_the_surface_is_not_revealed(): void
+    {
+        // The availability floor runs BEFORE the capability check. If it did
+        // not, a caller lacking view_seo would get a 401 while one holding it
+        // got a 404 — and that difference would prove the surface exists.
+        [$holder, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->createLocation($business);
+        [$lacking] = $this->entitledTenant(WorkspacePlanTier::Growth);
+
+        $this->authenticateAsSeoCustomer($holder);
+        $holderStatus = $this->get(route('customer.seo.index'))->assertNotFound()->getStatusCode();
+
+        $this->authenticateAsSeoCustomer($lacking, ['view_google_business_profile', 'website']);
+        $lackingStatus = $this->get(route('customer.seo.index'))->assertNotFound()->getStatusCode();
+
+        $this->assertSame($holderStatus, $lackingStatus, 'Holding view_seo must make no observable difference while Planned.');
+
+        // A customer with no tenancy and no SEO permission at all: same answer.
+        $stranger = $this->createCustomer();
+        $this->authenticateAsSeoCustomer($stranger, []);
+        $this->get(route('customer.seo.index'))->assertNotFound();
+    }
+
+    public function test_the_bare_entry_exposes_no_route_into_the_overview_while_planned(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $this->authenticateAsSeoCustomer($customer);
 
+        $content = $this->get(route('customer.seo.index'))->assertNotFound()->getContent();
+
+        $this->assertStringNotContainsString('Choose a Business to continue', $content);
+        $this->assertStringNotContainsString('No Business available yet', $content);
+        $this->assertStringNotContainsString(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]), $content);
+    }
+
+    public function test_the_production_controller_uses_the_registry_as_its_availability_floor(): void
+    {
+        // The floor is the registry itself — not a plan-mapping inspection and
+        // not a per-Business entitlement decision — and it is asked first.
+        $source = file_get_contents(dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/SeoController.php');
+
+        $this->assertStringContainsString('PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value)', $source);
+
+        $entry = substr($source, (int) strpos($source, 'public function entry()'));
+        $entry = substr($entry, 0, (int) strpos($entry, "\n    }\n") + 7);
+
+        $floor = strpos($entry, 'seoIsImplementedAndAvailable()');
+        $this->assertNotFalse($floor);
+        $this->assertLessThan(strpos($entry, "authorize('view_seo')"), $floor, 'The availability floor must run before the capability check.');
+        $this->assertLessThan(strpos($entry, 'entitledBusinesses()'), $floor, 'The availability floor must run before any Business is enumerated.');
+    }
+
+    // -----------------------------------------------------------------
+    // The post-floor selector (zero / one / many) is intact. The floor is
+    // simulated as passed by the test-only subclass; the feature is NOT
+    // flipped (Sub-slice H owns that).
+    // -----------------------------------------------------------------
+
+    public function test_once_the_floor_is_passed_the_capability_check_still_applies(): void
+    {
+        $this->bypassSeoEntitlementForTest();
+        [$customer] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->authenticateAsSeoCustomer($customer, ['view_google_business_profile', 'website']);
+
+        $this->get(route('customer.seo.index'))->assertUnauthorized();
+    }
+
+    public function test_once_the_floor_is_passed_zero_accessible_businesses_shows_the_empty_selector(): void
+    {
+        $this->bypassSeoEntitlementForTest();
+        // entitledTenant() normally does this setup; a customer with no
+        // Business needs it explicitly (required config rows, and user id 1
+        // burned so the super-admin permission short-circuit cannot apply).
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        $customerWithNoBusiness = $this->createCustomer();
+        $this->authenticateAsSeoCustomer($customerWithNoBusiness);
+
         $html = $this->get(route('customer.seo.index'))->assertOk()->getContent();
 
         $this->assertStringContainsString('No Business available yet', $html);
-        // The app shell legitimately renders account links elsewhere on the
-        // page; what must be absent is any route INTO the SEO Overview.
-        $this->assertStringNotContainsString("/businesses/{$business->uid}/seo", $html);
-        $this->assertStringNotContainsString(route("customer.workspaces.businesses.seo.index", [$workspace->uid, $business->uid]), $html);
+    }
+
+    public function test_once_the_floor_is_passed_exactly_one_business_redirects_through(): void
+    {
+        $this->bypassSeoEntitlementForTest();
+        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->createLocation($business);
+        $this->authenticateAsSeoCustomer($customer);
+
+        $this->get(route('customer.seo.index'))
+            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
+    }
+
+    public function test_once_the_floor_is_passed_several_businesses_show_a_chooser(): void
+    {
+        $this->bypassSeoEntitlementForTest();
+        [$customer, $first, $firstWorkspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        [, $second, $secondWorkspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->addMember($secondWorkspace, $customer->user, \App\Enums\Workspace\WorkspaceMembershipRole::Staff);
+        $this->authenticateAsSeoCustomer($customer);
+
+        $html = $this->get(route('customer.seo.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Choose a Business to continue', $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$firstWorkspace->uid, $first->uid]), $html);
+        $this->assertStringContainsString(route('customer.workspaces.businesses.seo.index', [$secondWorkspace->uid, $second->uid]), $html);
+    }
+
+    public function test_the_selector_never_lists_a_business_the_actor_cannot_access(): void
+    {
+        $this->bypassSeoEntitlementForTest();
+        [$customer, $mine, $myWorkspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        [, $foreign, $foreignWorkspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->authenticateAsSeoCustomer($customer);
+
+        $response = $this->get(route('customer.seo.index'));
+
+        // Exactly one accessible Business, so it redirects to MINE — never the foreign one.
+        $response->assertRedirect(route('customer.workspaces.businesses.seo.index', [$myWorkspace->uid, $mine->uid]));
+        $this->assertNotSame(
+            route('customer.workspaces.businesses.seo.index', [$foreignWorkspace->uid, $foreign->uid]),
+            $response->headers->get('Location'),
+        );
     }
 
     // -----------------------------------------------------------------
