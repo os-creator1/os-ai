@@ -51,6 +51,8 @@
                         @can('access_backend')
                             <a class="text-caption" href="{{ route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]) }}" data-role="readiness-fix">Open Business settings</a>
                         @endcan
+                    @elseif($item->fix === SeoReadinessItem::FIX_SEO_KEYWORDS)
+                        <a class="text-caption" href="{{ route('customer.workspaces.businesses.seo.keywords.index', [$workspaceUid, $businessUid]) }}" data-role="readiness-fix">Add search keywords</a>
                     @elseif($item->fix === SeoReadinessItem::FIX_WEBSITE)
                         @can('website')
                             <a class="text-caption" href="{{ route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]) }}" data-role="readiness-fix">Open your website</a>

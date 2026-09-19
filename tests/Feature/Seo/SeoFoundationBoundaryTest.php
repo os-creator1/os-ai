@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Http\Controllers\Customer\Business\SeoController;
+use App\Http\Controllers\Customer\Business\SeoKeywordsController;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -99,7 +100,7 @@ class SeoFoundationBoundaryTest extends TestCase
     {
         // The floor is the registry itself — not a plan-mapping inspection and
         // not a per-Business entitlement decision — and it is asked first.
-        $source = file_get_contents(dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/SeoController.php');
+        $source = str_replace("\r\n", "\n", (string) file_get_contents(dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/SeoController.php'));
 
         $this->assertStringContainsString('PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value)', $source);
 
@@ -275,14 +276,14 @@ class SeoFoundationBoundaryTest extends TestCase
     public function test_seo_shares_no_route_namespace_permission_or_table_with_legacy_keywords(): void
     {
         $seoRoutes = collect(Route::getRoutes()->getRoutes())
-            ->filter(fn ($route) => str_contains((string) $route->getActionName(), SeoController::class));
+            ->filter(fn ($route) => str_contains((string) $route->getActionName(), SeoController::class)
+                || str_contains((string) $route->getActionName(), SeoKeywordsController::class));
 
-        $this->assertGreaterThanOrEqual(2, $seoRoutes->count(), 'The SEO entry and Overview routes must exist.');
+        $this->assertGreaterThanOrEqual(7, $seoRoutes->count(), 'The SEO entry, Overview and keyword routes must exist.');
 
         foreach ($seoRoutes as $route) {
             $name = (string) $route->getName();
 
-            $this->assertStringNotContainsString('keywords', $name);
             $this->assertFalse(str_starts_with($name, 'customer.keywords.'), "[{$name}] collides with the legacy Keywords route namespace.");
             $this->assertTrue(
                 str_starts_with($name, 'customer.seo.') || str_starts_with($name, 'customer.workspaces.businesses.seo.'),
@@ -331,6 +332,22 @@ class SeoFoundationBoundaryTest extends TestCase
         }
     }
 
+    public function test_the_keyword_routes_write_only_by_post_and_never_delete(): void
+    {
+        $keywordRoutes = collect(Route::getRoutes()->getRoutes())
+            ->filter(fn ($route) => str_contains((string) $route->getActionName(), SeoKeywordsController::class));
+
+        $this->assertCount(5, $keywordRoutes, 'index, store, update, archive, reactivate — and nothing else.');
+
+        foreach ($keywordRoutes as $route) {
+            $this->assertEmpty(
+                array_diff($route->methods(), ['GET', 'HEAD', 'POST']),
+                '[' . $route->getName() . '] must be GET or POST only: keywords are archived, never deleted.'
+            );
+            $this->assertStringStartsWith('customer.workspaces.businesses.seo.keywords.', (string) $route->getName());
+        }
+    }
+
     /**
      * @return array<string, array{0: string}>
      */
@@ -341,6 +358,7 @@ class SeoFoundationBoundaryTest extends TestCase
             glob($root . '/app/Library/Seo/*.php') ?: [],
             [
                 $root . '/app/Http/Controllers/Customer/Business/SeoController.php',
+                $root . '/app/Http/Controllers/Customer/Business/SeoKeywordsController.php',
                 $root . '/app/Library/GoogleBusinessProfile/GoogleBusinessProfileStatusReader.php',
             ],
         );
@@ -358,6 +376,12 @@ class SeoFoundationBoundaryTest extends TestCase
     public function test_seo_code_has_no_write_path_no_network_call_no_ai_and_no_dispatch(string $file): void
     {
         $code = $this->codeWithoutComments($file);
+
+        if (basename($file) === 'SeoKeywordsController.php') {
+            // It writes only THROUGH SeoKeywordManager; those call names are
+            // not table writes (the manager's own writes are pinned separately).
+            $code = (string) preg_replace('/\$this->keywords->(create|update|archive|reactivate)\s*\(/', '', $code);
+        }
 
         $this->assertNotSame('', $code);
 
@@ -377,13 +401,61 @@ class SeoFoundationBoundaryTest extends TestCase
             '/WebsiteDraftPageService/', '/WebsitePublisher/',
         ];
 
-        foreach ($forbidden as $pattern) {
+        foreach ($forbidden as $index => $pattern) {
+            // The first three patterns forbid ANY write. SeoKeywordManager is the
+            // one class permitted to write, and only seo_keywords — which
+            // test_the_keyword_manager_writes_only_seo_keywords pins separately.
+            if ($index < 3 && basename($file) === 'SeoKeywordManager.php') {
+                continue;
+            }
+
             $this->assertSame(
                 0,
                 preg_match($pattern, $code),
                 basename($file) . ' must not match ' . $pattern . ' (Contract 18 §12).'
             );
         }
+    }
+
+    public function test_the_keyword_manager_writes_only_seo_keywords(): void
+    {
+        $code = $this->codeWithoutComments(dirname(__DIR__, 3) . '/app/Library/Seo/SeoKeywordManager.php');
+
+        // No raw table writes, and no write to any other domain's model.
+        $this->assertStringNotContainsString('DB::table', $code);
+        $this->assertDoesNotMatchRegularExpression('/\b(Website|WebsitePage|WebsiteRevision|BusinessGoogle\w*|BusinessLocationManager|BusinessManager)\b/', $code);
+        $this->assertDoesNotMatchRegularExpression('/\$(business|lockedBusiness|location)->(save|update|fill|forceFill|delete)\s*\(/', $code, 'Only SeoKeyword rows may be written.');
+        $this->assertDoesNotMatchRegularExpression('/\b(Business|BusinessLocation)::(create|insert|update|upsert|destroy)\b/', $code);
+
+        // The Business row is only LOCKED and read.
+        $this->assertStringContainsString('lockForUpdate()', $code);
+    }
+
+    public function test_seo_keyword_code_never_references_the_legacy_keywords_product(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $files = [
+            $root . '/app/Models/SeoKeyword.php',
+            $root . '/app/Library/Seo/SeoKeywordManager.php',
+            $root . '/app/Library/Seo/SeoKeywordCoverageReader.php',
+            $root . '/app/Library/Seo/SeoPhraseNormalizer.php',
+            $root . '/app/Exceptions/Seo/SeoKeywordException.php',
+            $root . '/app/Http/Controllers/Customer/Business/SeoKeywordsController.php',
+            $root . '/resources/views/customer/business/seo/keywords.blade.php',
+            $root . '/database/migrations/2026_09_25_110001_create_seo_keywords_table.php',
+        ];
+
+        foreach ($files as $file) {
+            $code = $this->codeWithoutComments($file);
+
+            foreach (['App\\Models\\Keywords', 'KeywordRepository', 'view_keywords', 'customer.keywords', 'CustomerKeywordController', 'keyword_name', 'sender_id', 'contact_groups_optin', "table('keywords'", "Schema::create('keywords'", "from('keywords'", 'text in', 'text-in'] as $legacy) {
+                $this->assertStringNotContainsString($legacy, $code, basename($file) . ' must not reference the legacy Keywords product [' . $legacy . '].');
+            }
+        }
+
+        // ... and the legacy routes and permission are untouched.
+        $this->assertTrue(Route::has('customer.keywords.index'));
+        $this->assertArrayHasKey('view_keywords', config('customer-permissions'));
     }
 
     public function test_the_gbp_status_reader_does_not_depend_on_the_seo_module(): void
@@ -399,6 +471,10 @@ class SeoFoundationBoundaryTest extends TestCase
     {
         $source = file_get_contents($path);
         $this->assertNotFalse($source);
+
+        if (str_ends_with($path, '.blade.php')) {
+            $source = (string) preg_replace('/\{\{--.*?--\}\}/s', '', $source);
+        }
 
         $code = '';
 

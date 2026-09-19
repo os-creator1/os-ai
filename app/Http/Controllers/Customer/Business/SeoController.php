@@ -7,6 +7,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesSeoBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
@@ -49,6 +50,7 @@ use Illuminate\Support\Facades\Auth;
 class SeoController extends CustomerBaseController
 {
     use ResolvesBusinessTenancy;
+    use ResolvesSeoBusinessTenancy;
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
@@ -116,17 +118,6 @@ class SeoController extends CustomerBaseController
     protected function seoIsImplementedAndAvailable(): bool
     {
         return PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value);
-    }
-
-    /**
-     * The chain through entitlement. Its own method so the single place that
-     * decides "is SEO reachable for this Business" is not duplicated.
-     *
-     * @return array{0: Workspace, 1: Business}
-     */
-    protected function resolveSeoTenancy(string $workspaceUid, string $businessUid): array
-    {
-        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::SeoBasicVisibility->value);
     }
 
     /**

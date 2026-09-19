@@ -15,6 +15,7 @@ final class SeoReadinessItem
 {
     public const FIX_BUSINESS_SETTINGS = 'business_settings';
     public const FIX_WEBSITE = 'website';
+    public const FIX_SEO_KEYWORDS = 'seo_keywords';
 
     public function __construct(
         public readonly string $key,

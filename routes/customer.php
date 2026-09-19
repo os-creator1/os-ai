@@ -926,6 +926,15 @@
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
             Route::get('/', 'Business\SeoController@overview')->name('index');
+
+            // Sub-slice D — SEO keywords (NOT the legacy inbound-SMS
+            // customer.keywords.* namespace). Reads need view_seo, writes
+            // manage_seo; Location access is enforced by SeoKeywordManager.
+            Route::get('/keywords', 'Business\SeoKeywordsController@listing')->name('keywords.index');
+            Route::post('/keywords', 'Business\SeoKeywordsController@store')->middleware('throttle:30,1')->name('keywords.store');
+            Route::post('/keywords/{keywordUid}/update', 'Business\SeoKeywordsController@update')->middleware('throttle:30,1')->name('keywords.update');
+            Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
+            Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
         });
 
         /*
