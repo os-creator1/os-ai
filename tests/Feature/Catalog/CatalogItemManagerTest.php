@@ -159,6 +159,83 @@ class CatalogItemManagerTest extends TestCase
         $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => -1, 'currency_code' => 'USD']);
     }
 
+    public function test_create_refuses_a_negative_price_given_as_a_numeric_string(): void
+    {
+        $business = $this->business();
+
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => '-1', 'currency_code' => 'USD']);
+    }
+
+    public function test_create_refuses_a_non_numeric_price_string_instead_of_coercing_it_to_zero(): void
+    {
+        $business = $this->business();
+
+        // (int) 'abc' silently coerces to 0 — a legitimate free price. The
+        // canonical domain validator must refuse malformed input outright
+        // rather than normalize it into a valid price.
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => 'abc', 'currency_code' => 'USD']);
+    }
+
+    public function test_create_refuses_a_decimal_price_string(): void
+    {
+        $business = $this->business();
+
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => '12.5', 'currency_code' => 'USD']);
+    }
+
+    public function test_create_refuses_a_boolean_price(): void
+    {
+        $business = $this->business();
+
+        // (int) true coerces to 1 — again a silently-valid price the
+        // validator must refuse instead of accepting.
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => true, 'currency_code' => 'USD']);
+    }
+
+    public function test_create_refuses_an_array_price(): void
+    {
+        $business = $this->business();
+
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => [500], 'currency_code' => 'USD']);
+    }
+
+    public function test_create_refuses_a_price_beyond_php_int_max(): void
+    {
+        $business = $this->business();
+
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, [
+            'type' => 'product',
+            'name' => 'X',
+            'price_minor' => '99999999999999999999',
+            'currency_code' => 'USD',
+        ]);
+    }
+
+    public function test_create_accepts_a_valid_zero_price(): void
+    {
+        $business = $this->business();
+
+        $item = $this->manager()->create($business, ['type' => 'product', 'name' => 'Free Sample', 'price_minor' => 0, 'currency_code' => 'USD']);
+
+        $this->assertSame(0, $item->price_minor);
+        $this->assertSame('USD', $item->currency_code);
+    }
+
+    public function test_create_accepts_a_price_given_as_a_digit_only_string(): void
+    {
+        $business = $this->business();
+
+        $item = $this->manager()->create($business, ['type' => 'product', 'name' => 'X', 'price_minor' => '1500', 'currency_code' => 'USD']);
+
+        $this->assertSame(1500, $item->price_minor);
+    }
+
     public function test_create_refuses_a_currency_code_that_is_not_three_characters(): void
     {
         $business = $this->business();

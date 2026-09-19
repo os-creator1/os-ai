@@ -7,6 +7,7 @@ use App\Enums\Catalog\CatalogItemType;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
 use App\Models\Business;
 use App\Models\CatalogItem;
+use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -39,13 +40,24 @@ use Illuminate\Support\Facades\DB;
  * — create, update, archive, reactivate, reorder — takes `lockForUpdate()`
  * before writing, so `PackageSnapshotService` (Sub-slice D), which takes the
  * same lock before it reads, can never observe a half-applied combination
- * of old/new price, lifecycle or currency.
+ * of old/new price, lifecycle or currency. update()/archive()/reactivate()/
+ * reorder() lock the existing `catalog_items` row(s) they mutate; create()
+ * cannot, since a brand-new row (or a Business whose active set has just
+ * been fully archived) has no such row to lock, so it instead locks the
+ * Business row itself as its deterministic parent serialization point
+ * before computing the next position — proven by
+ * `CatalogItemManagerConcurrencyTest`'s genuine cross-process tests, not
+ * just the `DB::listen()` structural checks in this class's own test file.
  */
 final class CatalogItemManager
 {
     public const NAME_MAX = 160;
 
     public const DESCRIPTION_MAX = 5000;
+
+    public function __construct(private readonly BusinessRepository $businessRepository)
+    {
+    }
 
     /**
      * Contract §12.B — Business-wide create. `$actorUserId` is the optional
@@ -65,16 +77,20 @@ final class CatalogItemManager
 
         return DB::transaction(function () use ($business, $validated, $actorUserId) {
             // A brand-new row has no prior snapshot-relevant state (§7) to
-            // race against, so this is not the §7 serialization lock — it
-            // exists purely so two concurrent creates for the same Business
-            // cannot both compute the same "next" position. Locking the
-            // active set is the same mechanism reorder() already needs.
-            $this->lockActiveItems($business);
+            // race against, and a Business's active catalog-item set can
+            // legitimately be empty (its first item ever, or every existing
+            // item archived) — locking that set is then no lock at all,
+            // leaving two concurrent creates free to compute the same
+            // "next" position. The one row guaranteed to exist and be
+            // shared by every create for this Business is the Business row
+            // itself, so that is the deterministic parent serialization
+            // point, mirroring BusinessLocationManager::lockBusiness().
+            $lockedBusiness = $this->lockBusiness($business);
 
-            $nextPosition = (int) (CatalogItem::query()->where('business_id', $business->id)->max('position') ?? -1) + 1;
+            $nextPosition = (int) (CatalogItem::query()->where('business_id', $lockedBusiness->id)->max('position') ?? -1) + 1;
 
             $item = CatalogItem::create($validated + [
-                'business_id' => $business->id,
+                'business_id' => $lockedBusiness->id,
                 'position' => $nextPosition,
                 'created_by_user_id' => $actorUserId,
             ]);
@@ -217,6 +233,23 @@ final class CatalogItemManager
         return $locked;
     }
 
+    /**
+     * Contract §7's creation-only parent serialization point (see the
+     * comment in create()): re-loads the Business fresh, under lock, by
+     * primary key, mirroring `BusinessLocationManager::lockBusiness()`
+     * exactly.
+     */
+    private function lockBusiness(Business $business): Business
+    {
+        $locked = $this->businessRepository->findForUpdate($business->id);
+
+        if ($locked === null) {
+            throw new CatalogRuleException('That Business no longer exists.');
+        }
+
+        return $locked;
+    }
+
     /** @return Collection<int, CatalogItem> */
     private function lockActiveItems(Business $business): Collection
     {
@@ -271,12 +304,8 @@ final class CatalogItemManager
             throw new CatalogRuleException('Use a description of at most ' . self::DESCRIPTION_MAX . ' characters.');
         }
 
-        $priceMinor = $priceMinor !== null && $priceMinor !== '' ? (int) $priceMinor : null;
+        $priceMinor = $this->parsePriceMinor($priceMinor);
         $currencyCode = $currencyCode !== null && $currencyCode !== '' ? strtoupper(trim((string) $currencyCode)) : null;
-
-        if ($priceMinor !== null && $priceMinor < 0) {
-            throw new CatalogRuleException('The price cannot be negative.');
-        }
 
         if (($priceMinor === null) !== ($currencyCode === null)) {
             throw new CatalogRuleException('Set both a price and a currency, or leave both blank for a quote-only item.');
@@ -293,5 +322,54 @@ final class CatalogItemManager
             'price_minor' => $priceMinor,
             'currency_code' => $currencyCode,
         ];
+    }
+
+    /**
+     * `price_minor` is a whole count of minor currency units
+     * (`unsignedBigInteger`, Contract §5.1) — this manager is the canonical
+     * domain validator, so it must REFUSE malformed input rather than
+     * normalize it into a valid free price. `(int) $priceMinor` alone would
+     * silently coerce "abc" to 0, true to 1, or an array/object to a
+     * meaningless integer — indistinguishable from a caller who genuinely
+     * meant zero or one. Deliberately no floating-point money parsing: a
+     * decimal/fractional value ("12.5") is refused outright rather than
+     * truncated or rounded, since only a whole minor-unit count is a valid
+     * catalog price.
+     *
+     * Accepts only: null/blank (a quote-only candidate), a PHP int, or a
+     * string of digits only (an optional leading "-" is accepted here so a
+     * negative amount reaches the existing "cannot be negative" message
+     * rather than this method's generic parse failure). Refuses booleans,
+     * arrays, objects, floats, non-numeric or decimal strings, and any
+     * magnitude PHP cannot represent as a native int (this application
+     * never parses money as a string/bcmath value beyond that domain).
+     */
+    private function parsePriceMinor(mixed $priceMinor): ?int
+    {
+        if ($priceMinor === null || $priceMinor === '') {
+            return null;
+        }
+
+        if (is_int($priceMinor)) {
+            $parsed = $priceMinor;
+        } elseif (is_string($priceMinor) && preg_match('/^-?\d+$/', trim($priceMinor)) === 1) {
+            $digits = trim($priceMinor);
+            $magnitude = ltrim($digits, '-');
+
+            if (strlen($magnitude) > strlen((string) PHP_INT_MAX)
+                || (strlen($magnitude) === strlen((string) PHP_INT_MAX) && $magnitude > (string) PHP_INT_MAX)) {
+                throw new CatalogRuleException('The price is too large to store.');
+            }
+
+            $parsed = (int) $digits;
+        } else {
+            throw new CatalogRuleException('The price must be a whole, non-negative number of minor currency units.');
+        }
+
+        if ($parsed < 0) {
+            throw new CatalogRuleException('The price cannot be negative.');
+        }
+
+        return $parsed;
     }
 }
