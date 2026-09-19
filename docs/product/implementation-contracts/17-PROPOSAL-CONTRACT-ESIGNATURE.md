@@ -538,7 +538,7 @@ structure than V1 needs; a clean additive migration later.)*
 ```
 id
 uid                        uuid, unique
-business_document_id        FK -> business_documents, cascadeOnDelete, NOT NULL
+business_document_id        FK -> business_documents, restrictOnDelete, NOT NULL
 version_number               unsignedInteger
 state                         string(16): draft | issued | superseded
 content                        json            -- rendered body/terms, denormalized
@@ -557,6 +557,15 @@ unique (business_document_id, version_number)
 unique (draft_guard)          -- at most ONE draft version per document, enforced by the DB
 index (business_document_id, state)
 ```
+
+**Parent FK implementation note.** MySQL forbids `ON DELETE CASCADE` on
+`business_document_id` because it is a base column of the STORED
+`draft_guard` generated column. `restrictOnDelete` is therefore required,
+not optional, and matches the existing `automation_workflow_versions`
+precedent. Physical deletion is not the document lifecycle mechanism:
+documents move to void or other terminal states, while RESTRICT preserves
+their audit/history. Any future physical purge must explicitly delete
+dependent rows in order rather than rely on a parent cascade.
 
 The `draft_guard` generated column is the `automation_workflow_versions`
 technique (§3.5): MySQL has no partial unique index, so "at most one draft
