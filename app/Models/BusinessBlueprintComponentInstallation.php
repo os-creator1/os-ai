@@ -44,20 +44,33 @@ class BusinessBlueprintComponentInstallation extends Model
 {
     protected $table = 'business_blueprint_component_installations';
 
+    /**
+     * DESCRIPTOR/IDENTITY INPUTS ONLY — never the outcome.
+     *
+     * `state`, `decision_reason`, `installed_record_type`,
+     * `installed_record_id`, `error_code`, `installed_at` and
+     * `installed_by_user_id` are all deliberately absent. Every one of them
+     * is a FACT THE INSTALLER ESTABLISHED (§6.3, §7.2): the entitlement
+     * decision it received, the row it actually created, the actor it ran as,
+     * the moment the write stuck. A mass-assignable route to any of them is a
+     * route around the installer's own state machine — it would let a caller
+     * write `state => 'installed'` with a fabricated target and actor, and the
+     * `(business_id, blueprint_id, component_key)` unique key would then make
+     * that lie permanent, because an automated run never revisits an
+     * `installed` row.
+     *
+     * The Sub-slice C installer sets these internally through `forceFill()`
+     * or direct trusted assignment inside its canonical write path. That is
+     * intentional and is the ONLY sanctioned way they are written; this model
+     * simply declines to offer a casual second one.
+     */
     protected $fillable = [
         'business_id',
         'blueprint_id',
         'component_key',
         'component_type',
         'installed_from_version',
-        'state',
         'required_feature_key',
-        'decision_reason',
-        'installed_record_type',
-        'installed_record_id',
-        'error_code',
-        'installed_at',
-        'installed_by_user_id',
     ];
 
     protected $casts = [

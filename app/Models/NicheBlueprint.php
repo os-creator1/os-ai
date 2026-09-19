@@ -30,12 +30,23 @@ class NicheBlueprint extends Model
 
     protected $table = 'niche_blueprints';
 
+    /**
+     * DELIBERATELY EXCLUDES `is_active`. Whether a Blueprint is live is a
+     * platform lifecycle/control decision owned by the later platform-side
+     * manager (Sub-slice B), not something any caller may flip in passing: a
+     * mass-assignable `is_active` would let an ordinary create/update
+     * silently publish or retire a niche for every future signup that
+     * resolves to it (§7.1).
+     *
+     * Ordinary creation takes the column's database default of `true`. The
+     * platform manager sets it explicitly through its own controlled write
+     * path, which Sub-slice A deliberately does not build.
+     */
     protected $fillable = [
         'key',
         'display_name',
         'vertical_key',
         'broad_industry',
-        'is_active',
     ];
 
     protected $casts = [
