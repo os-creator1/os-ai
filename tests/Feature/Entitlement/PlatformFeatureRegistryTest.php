@@ -36,9 +36,13 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::MetaAdsModule,
             PlatformFeature::WhiteLabel,
             PlatformFeature::AgencyPackageCapabilities,
+            // Implementation Contract 16, Sub-slice A — schema and inert
+            // entitlement identity only; stays Planned until Sub-slice E's
+            // final flip, after Sub-slices B/C/D are merged and verified.
+            PlatformFeature::PackagesProducts,
         ];
 
-        $this->assertCount(9, $planned);
+        $this->assertCount(10, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -57,6 +61,16 @@ class PlatformFeatureRegistryTest extends TestCase
         // were already held to — this assertion reflects that direct
         // repository evidence, not an inherited product-intent assumption.
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
+    }
+
+    public function test_packages_products_exists_and_starts_planned(): void
+    {
+        // Implementation Contract 16, Sub-slice A: schema and inert
+        // entitlement identity only. Must remain unreachable — Planned,
+        // not Available — until Sub-slice E's final flip.
+        $this->assertSame('packages_products', PlatformFeature::PackagesProducts->value);
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PackagesProducts->value));
+        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void
