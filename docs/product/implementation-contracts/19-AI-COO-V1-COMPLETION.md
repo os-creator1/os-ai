@@ -466,9 +466,11 @@ that contains Client Business facts contains exactly one Business's
 facts, always; Agency-scope prompts contain the Agency's own operational
 facts only; Platform-scope prompts contain platform-operational facts
 only. No prompt in any scope ever contains more than one Client
-Business's facts. The original prohibition on an Agency portfolio prompt
-over several clients is preserved **verbatim in force** (R-16). Encoded
-as rules R-14…R-17 (§5.6) with their own test battery (§13.3).
+Business's facts. The original prohibition is preserved in force and made
+precise: an Agency-scope prompt may carry Agency-**owned** relationship
+metadata, and may never carry operational facts derived from multiple —
+or any — Client Business (R-16's permitted/forbidden table). Encoded as
+rules R-14…R-17 (§5.6) with their own test battery (§13.3).
 
 **A-2 — View As.** §23 requires the Agency owner to reach "one client at
 a time" through View As. The merged contract's blanket "view-as sessions
@@ -566,7 +568,8 @@ the admin boundary) and never widened downstream.
 | `authorized_location_ids` | `LocationAccessGuard`, sorted ascending | The actual set of Locations this actor may read. Feeds the fingerprint (§5.8). |
 | `capability_keys` | the customer-permission snapshot, sorted, restricted to keys fact composition actually consults | Which facts may be composed at all. Feeds the fingerprint (§5.8). |
 | `authorization_scope_fingerprint` | derived (§5.8) | **The cache identity.** Non-null in every scope. |
-| `actor_user_id` | the authenticated human | The real human. Never the viewed client. |
+| `audience_user_id` | background/system generation only: the Workspace's canonical owner via `Workspace::owner()` (`owner_user_id`) | **Audience authority, not attribution.** It supplies the authorization set a background generation is computed *for* (§5.9b). Null on every human-initiated request. |
+| `actor_user_id` | the authenticated human, derived server-side from the authenticated principal — **never** from request input (§6.7) | The real human. Never the viewed client. **Null on background/system generation**, which no human requested. |
 | `view_as_session_id` | `CustomerContext` View-As state | Nullable. Non-null means an Agency user is viewing a client (§6.4). |
 | `view_as_target_business_id` | View-As state | Part of the fingerprint, so a View-As read can never reuse an ordinary read's cache entry or vice versa. |
 | `entitlements` | `MenuEntitlements::allows()` snapshot | Same snapshot Home already uses; never re-derived ad hoc. |
@@ -723,7 +726,7 @@ authority*, *which offerable action set*, *which surfaces*.
 | Scope | Facts | AI authority / budget | Offerable actions | Foundation needed |
 |---|---|---|---|---|
 | `Business` | `CooInsightFactsReader`, exactly one Business, actor-capability and Location filtered | the Business's Workspace; `AiCooBasic` against that Business | Business-scoped Opportunity actions | none (`19.A`–`19.G`) |
-| `Agency` | the Agency's **own operational facts only** — client counts and relationship-level aggregates the Agency Workspace genuinely owns, never any client's Business facts | **the Agency Workspace and its sole canonical Business** — `AiCooBasic` decided against that Agency Business, budget drawn from that Workspace's ordinary AI policy | Agency-scoped actions only | none — reuses existing Workspace AI authority (`19.H`) |
+| `Agency` | the Agency's **own operational facts only** — relationship metadata the Agency Workspace genuinely owns (active client counts, relationship status counts, agency-side Outreach and billing state), never any fact derived from a Client Business's operational data (R-16's table) | **the Agency Workspace and its sole canonical Business** — `AiCooBasic` decided against that Agency Business, budget drawn from that Workspace's ordinary AI policy | Agency-scoped actions only | none — reuses existing Workspace AI authority (`19.H`) |
 | `Platform` | platform-operational aggregates only (§30's five-question shape at platform scope) | **no tenant**: `AiScope::Platform`, platform-admin authority, finite platform cap | platform actions only | **`19.H0`** |
 
 **Why Agency needs no new AI authority.** Under the frozen V1 topology
@@ -743,10 +746,25 @@ superseded "one Business per prompt" wording:**
 - **R-15.** An Agency-scope prompt contains the Agency's own operational
   facts only. It never contains any client's Business facts — not one
   client's, and not an anonymised or aggregated blend of several.
-- **R-16.** There is **no cross-client portfolio prompt**, for the Agency
-  Account Home or anywhere else. This prohibition is carried forward
-  unchanged from the superseded wording and is strengthened by being
-  tested (§13.3).
+- **R-16.** **No Agency-scope prompt may aggregate, compare, summarize,
+  rank or otherwise include operational facts FROM multiple Client
+  Businesses.** The line is drawn at the *origin* of the fact, not at the
+  word "portfolio": Agency-owned relationship metadata is an Agency fact
+  and is permitted; anything derived from Client Business operational data
+  is not, in any form.
+
+  | Permitted in an Agency-scope prompt (Agency-owned facts) | Forbidden in an Agency-scope prompt (Client Business operational facts) |
+  |---|---|
+  | Count of active managed Client relationships | Any client's revenue, or revenue aggregated across clients |
+  | Relationship status counts (active / terminated / pending invitation) | Any client's message, lead, booking, SEO, CRM or campaign performance, singly or aggregated |
+  | Relationship lifecycle timing the Agency owns (e.g. how many onboarded this period) | Comparing or ranking one client's Business metrics against another's |
+  | The Agency's own Outreach and agency-operational facts (§29-owned, agency-side) | A client's Attention items, Opportunities, wallet state or automation health |
+  | The Agency Workspace's own billing/wallet/entitlement state | Anonymised, bucketed or "blended" totals that are nonetheless **derived from** Client Business operational data |
+
+  A single Client Business's operational facts are available **only**
+  through View As, which resolves the envelope to `CooScope::Business`
+  (R-17). The distinction is executable, not editorial: §13.3 tests both
+  the permitted and the forbidden side.
 - **R-17.** An Agency actor reaches one managed Client's Business COO
   **only** through View As, which resolves the envelope to
   `CooScope::Business` for that one client, with the real Agency actor
@@ -795,43 +813,112 @@ router, reservation protocol, ledger and settle path.
 discriminator.** A new `App\Library\Ai\Enums\AiScope` with cases
 `Workspace` and `Platform`. `AiRequest::$workspace` becomes `?Workspace`
 and a new promoted property `public AiScope $scope = AiScope::Workspace`
-is **appended after the existing `jsonMode` parameter**, so every one of
-the four existing positional call sites compiles and behaves byte-identically
-with no edit. The constructor asserts the invariant:
+is **appended after the existing `jsonMode` parameter**, i.e. last, with a
+default. The constructor asserts the invariant:
 
 - `AiScope::Workspace` ⟺ `workspace !== null` (business may be null, as
   today);
 - `AiScope::Platform` ⟺ `workspace === null` **and** `business === null`
   **and** `actorUserId !== null`.
 
-**B. Backwards compatibility is structural, not promised.** Named
-constructors `AiRequest::forWorkspace(...)` and `AiRequest::forPlatform(...)`
-are added for clarity; the raw constructor keeps its current parameter
-order. No existing caller changes.
+**B. Backwards compatibility is structural, not promised.** There are
+**three** production `AiRequest` construction sites on the recon basis —
+`app/Library/Coo/Insight/CooInsightGenerator.php:119`,
+`app/Library/Website/WebsiteAiGenerationClient.php:75` and
+`app/Library/AgencyProspecting/OpenAiAgencyProspectingClient.php:43` — and
+**all three use named arguments**, so a new trailing optional parameter is
+source-compatible regardless of position. Appending it last is belt-and-braces:
+it also keeps any future positional caller working. The sub-slice's
+acceptance bar is that **all three sites remain source-unchanged**, asserted
+directly (§12.H0). Named constructors `AiRequest::forWorkspace(...)` and
+`AiRequest::forPlatform(...)` are added for call-site clarity; the raw
+constructor keeps its current parameter order and its named-argument
+contract.
 
-**C. Platform authorization.** A platform request carries no Workspace
-and no Business, so **no customer `EntitlementManager` Business-feature
-decision is fabricated for it**. Authority is a dedicated
-`PlatformAiAuthority` service that resolves `actorUserId` to a freshly
-read `User` and requires `is_admin` — the account-type flag, the same one
-`EnsureUserIsAdministrator` uses and for the reason that middleware's own
-docblock gives: the permission-string path "treats `users.id === 1` as an
-unconditional super-admin bypass regardless of account type". The check is
-performed **inside the gateway, server-side, immediately before the
-reservation and therefore before the provider call** — never inherited
-from an HTTP middleware that already ran, and never trusted from a job
-payload.
+**C. Platform authorization — what `actorUserId` is, and what it is not.**
+A platform request carries no Workspace and no Business, so **no customer
+`EntitlementManager` Business-feature decision is fabricated for it**.
+Authority is a dedicated `PlatformAiAuthority` service that resolves
+`actorUserId` to a **freshly read** `User` row and requires `is_admin` —
+the account-type flag, the same one `EnsureUserIsAdministrator` uses and
+for the reason that middleware's own docblock gives: the permission-string
+path "treats `users.id === 1` as an unconditional super-admin bypass
+regardless of account type".
+
+**Rule R-28 (attribution, not authentication).** `actorUserId` is an
+*integer carried inside trusted server code*. Re-reading the referenced
+`User` row can prove **that user is an admin**; it can never prove **who
+supplied the integer**. The gateway check is therefore a
+*second* boundary, not the authentication boundary, and the contract
+states both halves explicitly:
+
+- **No HTTP request may accept `actor_user_id`, `user_id` or any
+  equivalent as a client-selectable Platform COO authority parameter.**
+  A submitted actor id is ignored — or, if present, refused — never
+  honoured.
+- Platform COO controllers derive the actor **exclusively** from
+  `$request->user()` (the authenticated server principal) and pass that
+  server-derived identity into the platform request constructor.
+- Queued platform work may persist and carry that server-derived actor
+  id. It may **never** carry an authority boolean, an `is_admin` copy, a
+  permission claim, a role snapshot or a signed capability.
+- The gateway re-reads the `User` and rechecks `is_admin` **immediately
+  before the reservation, and therefore before the provider call** — so an
+  admin demoted or deleted between enqueue and execution is refused.
+- An authenticated **non-admin** is refused even if a controller or route
+  was miswired, because the gateway's own recheck is independent of the
+  HTTP layer.
+- `EnsureUserIsAdministrator` remains on the HTTP routes as defense in
+  depth. It is **not** the source of truth inside the gateway (§6.7).
 
 **D. `AiBudgetPolicyResolver` gains a platform policy path.**
 `resolveForPlatform(): AiBudgetPolicy` returns the existing
-`AiBudgetPolicy` shape with a `policyKey` of `platform`, an explicit
-`policyVersion`, the current `periodKey`, and a **finite**
-`workspaceCapMicrousd` read from `config('ai.platform.monthly_cap_microusd')`.
-No customer plan lookup occurs. There is **no unlimited, no default-infinite
-and no missing-config-means-unlimited path**: an absent or non-positive
-configured cap resolves to `0`, which the existing gateway already treats
-as "refuse every call" — the same zero-cap semantics `AiBudgetPolicy`'s
-own docblock already documents.
+`AiBudgetPolicy` value object — **all six constructor arguments, none
+omitted, none defaulted**:
+
+| `AiBudgetPolicy` field | Platform value | Source / precedent |
+|---|---|---|
+| `policyKey` | `'platform'` | a new key alongside `unassigned`/`core`/`growth`/`agency` |
+| `policyVersion` | `(int) config('ai.policy_version')` | **the same canonical AI policy version every Workspace policy already uses** — one version line, not a parallel one |
+| `periodKey` | the current UTC calendar month, via the resolver's existing `currentCalendarMonthKey()` (`Carbon::now('UTC')->format('Y-m')`) | identical to every `calendar_month` policy today |
+| `workspaceCapMicrousd` | `(int) config('ai.platform.monthly_cap_microusd')` | finite, config-derived; **the platform's whole-period hard cap** |
+| `businessCapMicrousd` | `null` | there is no Business at platform scope; `null` is the established "no sub-cap" value already used by `core` and `growth` |
+| `interactiveShareBps` | `(int) config('ai.platform.interactive_share_bps')` | **bounded basis points, 0…10000**, identical semantics to every Workspace policy; **V1 default `3000`**, matching the existing trial/core/growth/agency precedent, since no governing document specifies otherwise |
+
+No customer plan lookup occurs; `EntitlementManager` is not consulted at
+platform scope at all.
+
+**Fail closed on invalid configuration.** There is no unlimited, no
+default-infinite and no missing-config-means-unlimited path in either
+dimension:
+
+- `monthly_cap_microusd` absent, non-numeric or non-positive → the policy
+  resolves `workspaceCapMicrousd = 0`, which the existing gateway already
+  treats as "refuse every call" — the same zero-cap semantics
+  `AiBudgetPolicy`'s own docblock documents and the `unassigned` policy
+  already relies on.
+- `interactive_share_bps` absent, non-numeric or outside `0…10000` → the
+  resolver **raises a configuration failure**. It does **not** clamp
+  silently, and it most certainly does not fall through to an unbounded
+  interactive lane. An operator who wants no interactive platform AI sets
+  `0` explicitly; an operator who misconfigures the value is told.
+
+**Both bounds apply, always.** A platform *interactive*-lane request is
+bounded by the finite platform monthly cap **and** by the configured
+interactive share of that cap, enforced by the existing
+`AiUsageLedgerManager::reserve()` interactive-share check against the
+period row's existing `interactive_reserved_microusd` /
+`interactive_committed_microusd` counters — reused unchanged, not
+reimplemented. Platform *product*-lane (background) calls draw on the same
+overall platform cap and **do not** consume the interactive-share counter,
+exactly as Workspace lanes behave today.
+
+**Rule R-29 (one amounts reader).** `AiBudgetPolicyResolver` is documented
+as "the ONLY reader of `config('ai.budgets')` and `config('ai.policy_version')`",
+enforced by the existing T-BUD-7 architecture test asserting no amount
+literal lives anywhere else. The new `config('ai.platform.*')` keys inherit
+that rule verbatim: **only `AiBudgetPolicyResolver` may read them**, and
+T-BUD-7 is extended to cover them rather than exempted from them.
 
 **E. `ai_usage_periods`.** The unique key `(scope_type, scope_id,
 period_key)` is **already** scope-generic and needs no change. Platform
@@ -871,14 +958,19 @@ second budget mechanism, no provider client outside
 `app/Library/Ai/Providers/**` (the existing architecture test continues
 to enforce that unchanged).
 
-**I. Adversarial tests required (§13.7).** A non-admin cannot create a
-platform request; a forged `actorUserId` is denied **before** any
-reservation or provider call; the finite platform cap is enforced and a
-zero/absent cap refuses; platform and Workspace period rows never collide;
-no platform ledger row contains a fabricated Workspace or Business;
-existing Core/Growth/Agency budget tests remain green and unmodified;
-provider failure releases/settles identically at platform scope;
-idempotency remains globally unique across scopes.
+**I. Adversarial tests required (§13.7).** The four executable authority
+proofs of R-28 (the HTTP endpoint ignores a submitted actor id; an
+authenticated non-admin submitting an admin id is refused before reserve;
+a revoked admin is refused before reserve at queued-execution time; no
+platform job payload carries an authority boolean); both budget bounds
+(finite cap enforced, zero/absent cap refuses, interactive share enforced,
+out-of-range share fails configuration, product lane does not consume the
+interactive counter); platform and Workspace period rows never collide; no
+platform ledger row contains a fabricated Workspace or Business; all three
+existing `AiRequest` call sites remain source-unchanged; existing
+Core/Growth/Agency budget tests remain green and unmodified; provider
+failure releases/settles identically at platform scope; idempotency
+remains globally unique across scopes.
 
 ### 5.8 Cache identity — `authorization_scope_fingerprint`
 
@@ -937,6 +1029,13 @@ containing exactly:
 single-Location view, and is part of the fingerprint input — but it is
 never, by itself, the authorization cache key.
 
+**Whose authorization set?** For a human-initiated request it is the
+actor's own, read live. For **background/system generation there is no
+actor**, so the authorization set must come from a declared audience
+rather than be inferred or left empty — the rule is locked in §5.9b, and
+an empty or fabricated authorization set is never an acceptable input
+(R-30).
+
 ### 5.9 Actor attribution vs. cache reuse — honest by construction
 
 `coo_insights.actor_user_id` is **audit attribution**. It must never be
@@ -944,7 +1043,7 @@ rewritten to make a cached row appear to belong to whoever read it next.
 
 | Origin | `origin` column | `actor_user_id` | Reuse rule |
 |---|---|---|---|
-| Background/system generation (the existing passive "What we notice" path) | `system` | **NULL** | May be displayed to **any** actor whose live `authorization_scope_fingerprint` matches the row's, in the same scope. Nothing is re-attributed, because nothing was attributed. |
+| Background/system generation (the existing passive "What we notice" path), computed for a declared **audience** (§5.9b) | `system` | **NULL** | May be displayed to **any** actor whose independently recomputed live `authorization_scope_fingerprint` is **exactly equal** to the row's, in the same scope. Nothing is re-attributed, because nothing was attributed. |
 | Explicit human request — Ask, Explain, Draft | `on_demand` | **the real actor's id, NOT NULL** | Selectable **only** for that same `actor_user_id`, with a matching fingerprint. Never served to a different actor. |
 
 - **R-25.** `origin` and `actor_user_id` are immutable after insert. No
@@ -985,6 +1084,63 @@ The smallest surface that satisfies §34 without inventing a chat system:
   as they do to any other insight.
 - **Rate-limited and attributed** by `19.G`'s durable per-actor limiter
   (§12.G).
+
+#### 5.9b Background generation has an audience, not an actor
+
+A scheduled, actorless generation still needs an authorization set to
+compute `authorization_scope_fingerprint` from (§5.8). Leaving that to
+implementation inference would produce either a fabricated "all access"
+claim or an empty set that silently matches nobody. The V1 rule is locked
+here.
+
+**Rule R-30 (declared audience).** Background/system generation at
+Business scope resolves the **canonical Workspace owner**
+(`Workspace::owner()` → `owner_user_id`) as the generation's *audience*,
+and computes the envelope — authorized Location set, consulted capability
+keys, and therefore the fingerprint — from **that owner's current
+authorization**. `origin` stays `system`; `actor_user_id` stays **NULL**,
+because the owner neither requested nor performed the generation. The
+owner is an *audience authority input*, carried as `audience_user_id`
+(§5.2); it is never audit attribution and is never presented as one.
+
+**Rule R-31 (exact equality, never a fallback).** A `system` row is
+displayable only to an actor whose independently recomputed live
+fingerprint is **exactly equal** to the row's. Consequently:
+
+- another **All-scope** actor with the exact same consulted capability set
+  reuses it — correctly, because their authorization is identical;
+- **Selected-scope** staff (`LocationAccessScope::Selected`) never see the
+  owner's full-scope row;
+- capability-limited staff never see the richer row;
+- no row is ever broadened, re-scoped, re-attributed or partially matched.
+
+**Rule R-32 (no silent broadening).** A read path that finds no matching
+`system` row **must not** fall back to a broader one, relax any fingerprint
+component, or degrade the comparison to `business_id`. It renders without
+an AI insight. Home stays fully usable, because the deterministic
+`NextBestMove`, the Attention items and every other band are unaffected
+(R-1).
+
+**What V1 therefore does and does not promise, stated honestly.** V1 does
+**not** proactively pre-generate a distinct AI diagnosis for every distinct
+staff authorization subset. Doing so would create an unbounded
+*members × authorization-scopes* generation fan-out with an unbounded
+budget consequence, and **it is not authorized by this contract**. The
+resulting, deliberate product shape:
+
+- §23's *proactive* AI surfacing is guaranteed for the **canonical
+  full-scope Business audience** (the owner audience, and anyone whose
+  authorization is exactly equal to it);
+- every other actor retains the full **deterministic** proactive Home —
+  Attention items, wallet/automation/website/Google risk, and the next best
+  move — plus **on-demand** COO within their own exact scope: Ask, Explain
+  and Draft each create an `on_demand` row attributed to them under their
+  own fingerprint (§5.9, §5.9a).
+
+If a future reading of Blueprint authority is held to require per-staff
+proactive AI generation, that is a scope and budget change: **stop and
+report it**, rather than implementing an unbounded fan-out under this
+contract.
 
 ## 6. Authority / security contract
 
@@ -1032,6 +1188,11 @@ them nor extends itself over them.
   UNIQUE identity, every display selection, and the AI idempotency
   family. Cache reuse across differing authorization scopes is
   structurally impossible, not merely discouraged.
+- Matching is **exact equality on a recomputed fingerprint**. No read path
+  may relax a component, ignore one, or degrade the comparison to
+  `business_id`; and no read path may fall back to a broader `system` row
+  when no exact match exists (R-31, R-32). The absence of an AI insight is
+  a normal, fully-rendered state (§5.9b).
 - Every offered link or action passes `DashboardLinkGate`, which is
   already permission- and entitlement-aware
   (`BusinessHomePresenter.php:792`).
@@ -1122,16 +1283,34 @@ authorization (R-5).
 
 ### 6.7 Platform authority
 
-- Platform scope requires `users.is_admin` on a **freshly read** `User`
-  row for `actor_user_id`, checked inside the gateway immediately before
-  the reservation (§5.7a C).
+Two boundaries, in this order, and neither substitutes for the other:
+
+1. **Authentication happens at the edge.** The actor is the authenticated
+   server principal, `$request->user()`. `actor_user_id` is **never** a
+   client-selectable parameter on any Platform COO route: a submitted
+   actor id is ignored or refused, never honoured (R-28). Platform COO
+   routes additionally sit behind `EnsureUserIsAdministrator` — defense in
+   depth, exactly as that middleware's own docblock describes for admin
+   Business routes.
+2. **Authorization is rechecked in the gateway.** `PlatformAiAuthority`
+   re-reads the `User` row named by the server-derived `actorUserId` and
+   requires `is_admin`, **immediately before the reservation and therefore
+   before any provider call**. This catches a miswired route, a
+   non-admin principal, and an admin demoted or deleted between enqueue
+   and execution.
+
 - The permission-string path is explicitly **not** accepted as platform
   authority, for the reason `EnsureUserIsAdministrator`'s own docblock
   gives: it treats `users.id === 1` as an unconditional super-admin
   bypass regardless of account type.
-- HTTP platform-COO routes additionally sit behind
-  `EnsureUserIsAdministrator` — defense in depth, exactly as that
-  middleware's docblock describes for admin Business routes.
+- **No authority travels in data.** A queued platform job carries the
+  server-derived actor id and nothing else: no `is_admin` copy, no role
+  snapshot, no permission claim, no signed capability. The gateway trusts
+  none of those even if present.
+- Re-reading the `User` proves *that user is an admin*. It does not, and
+  cannot, prove *who supplied the integer* — which is precisely why
+  boundary 1 exists and why the contract does not claim the gateway
+  detects a "forged" id (R-28).
 - A platform request never fabricates a Workspace, a Business, a plan, or
   an entitlement decision (R-19).
 
@@ -1170,9 +1349,11 @@ Columns added: `scope` (string 16, NOT NULL, default `'business'`);
 `authorization_scope_fingerprint` (char 64, NOT NULL, backfilled per
 below); `origin` (string 16, NOT NULL, default `'system'`);
 `actor_user_id` (nullable, no FK — attribution survives user deletion,
-mirroring `ai_usage_ledger.actor_user_id`); `view_as_session_id`
-(nullable); `business_location_id` (nullable pin). `business_id` and
-`workspace_id` become **nullable** to admit platform rows.
+mirroring `ai_usage_ledger.actor_user_id`); `audience_user_id` (nullable,
+no FK — the declared background audience of §5.9b, never attribution);
+`view_as_session_id` (nullable); `business_location_id` (nullable pin).
+`business_id` and `workspace_id` become **nullable** to admit platform
+rows.
 
 Scope invariants, writer-enforced and tested (§13.6):
 
@@ -1218,15 +1399,23 @@ lack). Their definition is stated in the migration with this rationale.
 Display index: `(scope, authorization_scope_fingerprint, origin, kind,
 period_key, generated_at)`.
 
-Backfill: every existing row is `scope = 'business'`, `origin =
-'system'`, `actor_user_id = NULL`, `business_location_id = NULL`, and its
-`authorization_scope_fingerprint` is computed from its own
-`workspace_id`/`business_id` with an empty `location_ids` and an empty
-`capability_keys` — the honest representation of "generated by the
-background path before authorization scope existed". Such a row is
-therefore selectable only by a reader whose live fingerprint matches,
-which for a pre-existing all-scope background insight is the ordinary
-case; anything else regenerates at bounded cost on the next trigger.
+**Backfill — existing rows are retired, not given a fabricated scope.**
+Every pre-existing row was generated before authorization scope existed,
+so no honest fingerprint can be computed for it: it has no recorded
+audience, no recorded Location set and no recorded capability set.
+Inventing one — an empty set, or an assumed all-access set — would be
+exactly the fabricated authorization claim R-30 forbids. Existing rows
+are therefore **retired**: `scope = 'business'`, `origin = 'system'`,
+`actor_user_id = NULL`, `audience_user_id = NULL`,
+`business_location_id = NULL`, `invalidated_at = now()`,
+`invalidation_reason = 'authorization_scope_introduced'`, and
+`authorization_scope_fingerprint` set to the documented sentinel
+`str_repeat('0', 64)`, which **can never equal a computed fingerprint**
+because every live fingerprint is a SHA-256 over a non-empty canonical
+document. `CooInsightDisplayReader` already excludes invalidated rows, so
+a retired row is unreachable by construction and unreachable again by
+fingerprint. The next scheduled generation repopulates at bounded cost;
+Home renders deterministically in the interim (R-32).
 
 **`19.D`** — `paid_effect` on the action registry (source-controlled, not
 a column); `approval_expires_at` and the approval-side cost snapshot
@@ -1253,6 +1442,14 @@ and `scope_id` (NOT NULL), backfilled as `scope_id = workspace_id`;
 `workspace_id` indexes and the global `idempotency_key` UNIQUE are left
 exactly as they are.
 
+**No schema change carries the platform budget.** The platform cap and
+interactive share are configuration (`config('ai.platform.*')`, read only
+by `AiBudgetPolicyResolver` — R-29), not columns. The interactive-share
+accounting platform rows need already exists on `ai_usage_periods` as
+`interactive_reserved_microusd` / `interactive_committed_microusd`; a
+platform period row reuses those columns and the existing reserve-time
+share check unchanged.
+
 **Rule R-13.** No migration in this slice edits a previously merged
 migration file. Every change is a new migration, per this repository's
 existing convention.
@@ -1263,12 +1460,12 @@ existing convention.
   deterministic move still renders identically when no explanation
   exists. `CooInsightDisplayReader::forHome()` keeps its
   read-never-generate contract.
-- Existing cached insights remain displayable across `19.A`'s UNIQUE-key
-  change for readers whose live authorization scope matches the
-  backfilled fingerprint; anything else regenerates on the next trigger
-  at bounded cost. **This is a deliberate, safe-direction behavior
-  change:** the failure mode of the new key is "regenerate", never
-  "serve to the wrong scope".
+- Existing cached insights are **retired** by `19.A`'s backfill rather
+  than carried across, because no honest authorization fingerprint exists
+  for them (§8). They regenerate on the next scheduled trigger at bounded
+  cost, and Home renders deterministically in the interim. **This is a
+  deliberate, safe-direction behavior change:** the failure mode of the
+  new key is "regenerate", never "serve to the wrong scope".
 - `19.D` changes no behavior for the single existing action key beyond
   adding gates that the one existing action already satisfies — with one
   deliberate exception: an approval older than the new expiry window can
@@ -1278,8 +1475,8 @@ existing convention.
   its exact semantics through the `scope_type = 'workspace'`,
   `scope_id = workspace_id` backfill; every existing index survives; no
   existing customer budget, cap, threshold, refusal or admin figure
-  changes. `AiRequest`'s four existing call sites are not edited at all
-  (§5.7a B).
+  changes. All **three** existing `AiRequest` construction sites — which
+  use named arguments — are not edited at all (§5.7a B).
 - The Opportunity engine remains behind `config/opportunity.php`'s
   default-false kill switch; nothing in this slice flips it.
 - Agency Outreach and every other non-COO AI feature are untouched (§3.6).
@@ -1306,6 +1503,15 @@ Every hop is a real column. "Who told the customer to do this, who
 approved it, and what did it cost" is answerable with joins, not
 forensics. Attribution is never rewritten on read (R-25).
 
+**The chain's obligation is scoped to human-approved consequential
+action.** A passive `system` insight that no human requested, approved or
+executed carries `actor_user_id = NULL` by design; it records its
+provenance (audience, authorization fingerprint, prompt/policy version,
+ledger entry) and **never fabricates a human actor** to satisfy a join
+(§5.9, §5.9b). Every human-initiated record — `on_demand` insights,
+drafts, approvals, executions — carries the real acting human, and under
+View As the real actor plus the session.
+
 No new domain events are introduced. Existing
 `CooInsightInvalidator`-triggering events and the Opportunity transition
 vocabulary are extended where needed.
@@ -1317,7 +1523,15 @@ vocabulary are extended where needed.
   Workspace scope by the existing plan-derived policy, and for Platform
   scope by `19.H0`'s finite, versioned, config-derived cap with
   zero-means-refuse semantics (§5.7a D). **No unlimited AI spend path
-  exists in any scope after this slice.**
+  exists in any scope after this slice — in either dimension.** Platform
+  interactive work is bounded by the platform monthly cap **and** by
+  `config('ai.platform.interactive_share_bps')` (0…10000, V1 default
+  `3000`, matching every existing Workspace policy); an out-of-range
+  configured share fails configuration rather than degrading to an
+  unbounded lane. Platform product-lane work draws on the same cap without
+  consuming the interactive-share counter. Both platform config keys are
+  readable only by `AiBudgetPolicyResolver` (R-29), preserving the
+  existing T-BUD-7 no-amount-literals architecture test.
 - Each new COO surface declares an `AiUsageCategory` case and a route in
   `config/ai.php` — never a model literal in domain code, never a call
   without a category (merged contract §10.2 defines a category-less call
@@ -1350,18 +1564,24 @@ the merged COO contract §17 and must not be reused.
   migration per §8 against `coo_insights`; model casts/relations and the
   immutable-field allowlist for `origin`/`actor_user_id`; envelope
   assembly from `CustomerContext` at the one existing COO entry point;
-  correction of `V1-AUTHORITY-TRACEABILITY-MATRIX.md` row 22 to reflect
-  actual `main`.
+  **the background-audience resolver** (`Workspace::owner()` →
+  `audience_user_id` → that owner's authorization set, §5.9b) used by the
+  existing scheduled generation path; correction of
+  `V1-AUTHORITY-TRACEABILITY-MATRIX.md` row 22 to reflect actual `main`.
 - **Explicitly not in scope**: writing any `agency` or `platform` scope
-  row; any new route; any behavior change on Home.
-- **Tenancy/security**: envelope assembly only — R-2, R-9, R-20…R-24.
+  row; any new route; any behavior change on Home; any per-staff proactive
+  pre-generation (§5.9b).
+- **Tenancy/security**: envelope assembly only — R-2, R-9, R-20…R-24,
+  R-30…R-32.
 - **Concurrency**: none (no new write paths).
 - **Tests**: the §13.4 fingerprint battery; the §13.5 attribution
   battery; the §13.6 scope-invariant battery; UNIQUE-key validity proven
   under nullable tenancy columns (two platform-shaped rows differing only
-  in fingerprint do not collide, and two identical ones do); existing
-  insights still display unchanged for a matching reader; the envelope
-  carries the real actor under View As and never the viewed client.
+  in fingerprint do not collide, and two identical ones do); the backfill
+  retires every pre-existing row and the sentinel fingerprint matches no
+  computed fingerprint; background generation records
+  `audience_user_id` with `actor_user_id` still NULL; the envelope carries
+  the real actor under View As and never the viewed client.
 - **Risk**: Medium-High (schema change to a shipped, cached table, plus
   the new cache-identity primitive).
 - **Model**: Opus 5.
@@ -1377,8 +1597,11 @@ the merged COO contract §17 and must not be reused.
 - **Tenancy/security**: R-7 is the acceptance bar — an insight generated
   under one authorization scope must be unreadable under another.
 - **Tests**: §13.3's cross-scope battery; the differing-Location-subset
-  and removed-capability cases from §13.4; query-count budget unchanged
-  (no N+1 introduced into Home's bounded read).
+  and removed-capability cases from §13.4; **the no-silent-fallback
+  proof** — an actor with no exactly-matching `system` row renders Home
+  fully with no AI insight and is never served a broader row (R-32);
+  query-count budget unchanged (no N+1 introduced into Home's bounded
+  read).
 - **Risk**: **High** — this is the data-leak surface of the whole slice.
 - **Model**: Opus 5.
 
@@ -1491,31 +1714,41 @@ the merged COO contract §17 and must not be reused.
 - **Tests**: every new route is classified; the limiter survives a cache
   flush; an unentitled or uncapable actor sees no affordance and gets a
   typed refusal if they post directly; two actors asking the same
-  question under different authorization scopes never share a row; a
-  question cannot restate or widen authorization; Home still renders with
-  the AI provider hard-down.
+  question under different authorization scopes never share a row; **a
+  Selected-scope or capability-limited actor, who by design has no
+  matching `system` insight (§5.9b), can still Ask/Explain/Draft and
+  receives an `on_demand` row attributed to them under their own exact
+  fingerprint**; a question cannot restate or widen authorization; Home
+  still renders with the AI provider hard-down.
 - **Risk**: Medium-High (first user-supplied text into a prompt).
 - **Model**: Opus 5.
 
 ### 19.H0 — Platform AI scope foundation (gateway / budget / ledger)
 
 - **Files/domains**: `AiScope` enum; `AiRequest` nullable Workspace +
-  appended `scope` + invariant + named constructors; `PlatformAiAuthority`;
-  `AiBudgetPolicyResolver::resolveForPlatform`; `AiGateway`'s platform
-  branch (authority recheck before reserve); `AiUsageLedgerManager` scope
-  awareness incl. `idempotencyFamily`; `AiUsageReadModel`/`AiUsagePresenter`
-  platform reporting; `ExpireStaleAiReservations` platform awareness;
-  `config/ai.php` platform cap + canonical platform scope id; the two
-  migrations in §8.
+  trailing `scope` + invariant + named constructors; `PlatformAiAuthority`;
+  `AiBudgetPolicyResolver::resolveForPlatform` returning the **complete
+  six-field** `AiBudgetPolicy` of §5.7a D; `AiGateway`'s platform branch
+  (authority recheck immediately before reserve); `AiUsageLedgerManager`
+  scope awareness incl. `idempotencyFamily` and the existing
+  interactive-share check; `AiUsageReadModel`/`AiUsagePresenter` platform
+  reporting; `ExpireStaleAiReservations` platform awareness;
+  `config/ai.php` platform monthly cap, platform interactive share and the
+  canonical platform scope id; extension of the T-BUD-7 no-amount-literals
+  test to the new keys (R-29); the two migrations in §8. Platform COO HTTP
+  routes derive the actor from `$request->user()` and accept no actor
+  parameter (R-28).
 - **Prerequisites**: none. Independent of every COO sub-slice; may run in
   its own lane.
-- **Tenancy/security**: §6.7 — `users.is_admin` on a freshly read row,
-  checked inside the gateway before reservation; no fabricated
-  Workspace/Business/plan/entitlement (R-19).
+- **Tenancy/security**: §6.7's two boundaries — authentication at the edge
+  (no client-selectable actor id, R-28), authorization rechecked inside
+  the gateway on a freshly read `users.is_admin` before reservation; no
+  authority in job payloads; no fabricated Workspace/Business/plan/
+  entitlement (R-19).
 - **Concurrency**: §7.1–§7.3.
-- **Tests**: the full §13.7 battery, plus proof that the four existing
-  `AiRequest` call sites are unedited and that existing Core/Growth/Agency
-  budget tests are unmodified and green.
+- **Tests**: the full §13.7 battery, plus proof that all **three** existing
+  `AiRequest` construction sites are source-unchanged and that existing
+  Core/Growth/Agency budget tests are unmodified and green.
 - **Risk**: **Critical** (shared AI billing tables and the one gateway).
 - **Model**: Opus 5.
 
@@ -1554,13 +1787,24 @@ Beyond each sub-slice's own list (§12), the slice as a whole requires:
 2. **The stale-approval proof.** Approve, then change authority /
    parameters / price / time, then attempt execution: four separate
    refusals, four typed reasons.
-3. **The cross-scope battery.** An Agency-scope prompt contains zero
-   client Business facts (R-15); no prompt in any scope contains two
-   Businesses' facts (R-14); no cross-client portfolio prompt can be
-   constructed, and the attempt fails loudly rather than silently
-   truncating (R-16); an Agency actor's route to one client is View As
-   resolving to Business scope, attributed (R-17); a View-As Business
-   read never reuses an Agency-scope insight.
+3. **The cross-scope battery**, with R-16's distinction made executable
+   on **both** sides:
+   - *permitted*: an Agency-scope prompt built with active-client count,
+     relationship status counts and the Agency's own billing/Outreach
+     facts composes successfully and is asserted to contain exactly those
+     Agency-owned facts;
+   - *forbidden*: attempting to compose an Agency-scope prompt that
+     includes any Client Business operational fact — one client's or
+     several clients' revenue, message/lead/booking/SEO/CRM performance, a
+     client-vs-client comparison, or an "anonymised" total derived from
+     client operational data — **fails loudly** rather than silently
+     truncating or degrading (R-16);
+   - no prompt in any scope contains two Businesses' facts (R-14);
+   - an Agency-scope prompt contains zero Client Business operational
+     facts (R-15);
+   - an Agency actor's route to one client is View As resolving to
+     Business scope, attributed (R-17);
+   - a View-As Business read never reuses an Agency-scope insight.
 4. **The authorization-fingerprint battery** (§5.8):
    - user A authorized for Locations [1, 2] and user B for [2, 3]:
      neither can read the other's insight, in either direction;
@@ -1572,24 +1816,52 @@ Beyond each sub-slice's own list (§12), the slice as a whole requires:
      still do not collide;
    - an all-Locations owner's insight is never served to a subset staff
      member;
+   - a background `system` row generated for the owner audience **is**
+     served to a second All-scope actor whose consulted capability set is
+     exactly equal, and **is not** served to a Selected-scope actor or a
+     capability-limited actor (R-30, R-31);
+   - an actor with no exactly-matching `system` row is never served a
+     broader one, and no read path relaxes a fingerprint component or
+     degrades the comparison to `business_id` (R-32);
    - the fingerprint contains no secret or session value (asserted over
      its canonical input document).
-5. **The attribution battery** (§5.9): a `system` row has NULL
-   `actor_user_id` and is reusable across matching-scope actors; an
-   `on_demand` row is served only to its own actor; `origin` and
-   `actor_user_id` are never updated by any read path (repository-level
-   immutability test); a second actor's identical question creates a
-   second attributed row rather than re-attributing the first.
+5. **The attribution battery** (§5.9, §5.9b): a `system` row has NULL
+   `actor_user_id` and is reusable across exactly-matching-scope actors;
+   a `system` row records `audience_user_id` (the owner audience) and that
+   value is never read, presented or joined as if it were the acting
+   human; an `on_demand` row is served only to its own actor; `origin`,
+   `actor_user_id` and `audience_user_id` are never updated by any read
+   path (repository-level immutability test); a second actor's identical
+   question creates a second attributed row rather than re-attributing
+   the first.
 6. **The scope-invariant battery** (§8): each of the three scope shapes
    inserts successfully; every mismatched shape (e.g. `platform` with a
    `workspace_id`, `agency` with a NULL `business_id`) is rejected by the
    writer; no row anywhere contains a sentinel/fake tenant id (R-19);
    the generated index-surrogate columns are never read by application
    code.
-7. **The platform-foundation battery** (§5.7a I): non-admin refused;
-   forged `actorUserId` denied before reservation and before the provider
-   call; finite cap enforced; zero/absent configured cap refuses every
-   call; platform and Workspace period rows never collide; no platform
+7. **The platform-foundation battery** (§5.7a I). Authority, as four
+   executable proofs replacing the unimplementable "forged id" test
+   (R-28):
+   - **A.** the Platform COO HTTP endpoint ignores or refuses a submitted
+     `actor_user_id`/`user_id` and uses `$request->user()`;
+   - **B.** an authenticated **non-admin** who submits a real admin's id is
+     refused **before** any reservation and before any provider call;
+   - **C.** an authenticated admin whose persisted `is_admin` is revoked
+     (or whose `User` row is deleted) between enqueue and gateway
+     execution is refused before reserve;
+   - **D.** no platform job payload carries an authority boolean, role
+     snapshot or permission claim — only the server-derived actor id.
+
+   Budget, in both dimensions: finite cap enforced; absent/non-positive
+   configured cap refuses every call; the interactive share is enforced
+   against the period row's existing interactive counters; an
+   `interactive_share_bps` outside `0…10000` **fails configuration**
+   rather than becoming unbounded; a platform **product**-lane call
+   consumes the overall cap but **not** the interactive counter; no amount
+   literal escapes `AiBudgetPolicyResolver` (T-BUD-7 extended, R-29).
+
+   Plus: platform and Workspace period rows never collide; no platform
    ledger row carries a fabricated Workspace or Business; existing
    customer budget tests unmodified and green; provider failure
    releases/settles identically; idempotency globally unique across
@@ -1628,34 +1900,50 @@ AI-gateway and View-As security suites its files touch.
    amount or units, and the basis, before approval — and refuses if the
    live cost exceeds the approved ceiling (R-3).
 6. The COO never references a fact the actor may not read, in any scope
-   or Location, and no cached output is ever reused across differing
-   authorization scopes (R-7, R-20…R-24, §13.4).
-7. Audit attribution is honest: a `system` row is never attributed to a
-   reader, an `on_demand` row is never served to another actor, and
-   neither field is ever rewritten on read (R-25…R-27, §13.5).
-8. Every COO record names the real human actor and, under View As, the
-   session — and approval/execution of consequential actions remains
-   prohibited under View As, with Contract 04's boundaries unchanged
-   (§6.4).
-9. No prompt in any scope contains more than one Client Business's facts,
-   and no cross-client portfolio prompt can be constructed (R-14…R-17,
-   §13.3).
-10. Platform AI runs through the same gateway, router, reservation,
-    provider and settle path, under a finite configured cap, with
-    platform-admin authority rechecked server-side before reservation,
-    and with no fabricated Workspace, Business, plan or entitlement
-    anywhere (§5.7a, R-19, §13.7).
-11. The audit chain from spend → content → approval → execution is
+   or Location; no cached output is ever reused across differing
+   authorization scopes; matching is exact equality on a recomputed
+   fingerprint with **no fallback to a broader row** (R-7, R-20…R-24,
+   R-31, R-32, §13.4).
+7. **Attribution is honest in both directions.** Every *human-initiated*
+   COO record — `on_demand` insights, drafts, approvals, executions —
+   carries the real acting human, and under View As additionally carries
+   the real actor plus the View-As session. Background `system` insights
+   deliberately carry `actor_user_id = NULL`: they record their
+   authorization-scope fingerprint, their declared audience and their
+   provenance, and **never fabricate a human actor**. Neither field is
+   ever rewritten on read (R-25…R-27, R-30, §13.5).
+8. The audit-chain obligation applies to **consequential, human-approved
+   action paths**. A passive system insight that was never requested,
+   approved or executed is not required to invent a human actor to
+   satisfy a join (§10).
+9. Approval/execution of consequential actions remains prohibited under
+   View As, with Contract 04's financial and security boundaries
+   unchanged (§6.4).
+10. No prompt in any scope contains more than one Client Business's
+    facts, and no Agency-scope prompt aggregates, compares, summarizes,
+    ranks or includes operational facts from multiple Client Businesses —
+    while Agency-owned relationship metadata remains permitted
+    (R-14…R-17, §13.3).
+11. Platform AI runs through the same gateway, router, reservation,
+    provider and settle path, bounded in **both** dimensions — a finite
+    configured monthly cap **and** a bounded `0…10000` interactive share,
+    with invalid configuration failing closed rather than becoming
+    unlimited. Platform authority is server-derived at the edge (no
+    client-selectable actor id) and rechecked inside the gateway on a
+    freshly read `is_admin` before reservation, with no authority carried
+    in job payloads and no fabricated Workspace, Business, plan or
+    entitlement anywhere (§5.7a, §6.7, R-19, R-28, R-29, §13.7).
+12. The audit chain from spend → content → approval → execution is
     complete and joinable (§10, §13.9).
-12. No second gateway, insight table, approval lifecycle, audit ledger,
+13. No second gateway, insight table, approval lifecycle, audit ledger,
     entitlement identity, AI budget mechanism or Location ACL exists
     anywhere in the slice (R-0, §17).
-13. Blueprint §23's "one component, three authorization contexts" is
+14. Blueprint §23's "one component, three authorization contexts" is
     structurally true: `CooScope` resolves all four questions in §5.6 and
     all three scopes are live.
-14. AI COO compliance is asserted from AI COO behavior alone and is never
+15. AI COO compliance is asserted from AI COO behavior alone and is never
     conditioned on, nor extended over, another AI feature (R-18, §3.6).
-15. `git diff --check` clean and a clean working tree at the end of each
+16. `git diff --check` clean and a clean working tree at the end of each
     sub-slice's own commit.
 
 ## 15. Non-goals
@@ -1777,12 +2065,25 @@ Two things are load-bearing and must not be simplified:
 2. authorization_scope_fingerprint must be RECOMPUTED from the live
    envelope on every read and compared -- a stored value is never trusted
    as proof of authorization (R-22).
+3. Background generation has an AUDIENCE, not an actor (SS5.9b). Resolve
+   the canonical Workspace owner via Workspace::owner(), store it as
+   audience_user_id, and compute the fingerprint from THAT owner's current
+   authorized Location set and consulted capability keys. Leave
+   actor_user_id NULL: the owner did not request the generation. Never
+   compute a fingerprint from an empty or assumed-all-access set (R-30).
+4. The backfill RETIRES every pre-existing row -- invalidated_at set,
+   invalidation_reason 'authorization_scope_introduced', and
+   authorization_scope_fingerprint set to the 64-zero sentinel that can
+   never equal a computed SHA-256. Do NOT invent a fingerprint for a row
+   whose authorization scope was never recorded.
 
-Also mark origin and actor_user_id immutable after insert, and correct
-V1-AUTHORITY-TRACEABILITY-MATRIX.md row 22, which is stale.
+Also mark origin, actor_user_id and audience_user_id immutable after
+insert, and correct V1-AUTHORITY-TRACEABILITY-MATRIX.md row 22, which is
+stale.
 
-Tests: SS13.4, SS13.5 and SS13.6 in full. Home's rendered output must be
-byte-identical before and after for a reader whose scope matches.
+Tests: SS13.4, SS13.5 and SS13.6 in full. Home must render correctly for
+every actor, with or without a matching insight -- the deterministic bands
+are unaffected either way.
 ```
 
 ### 18.B — Permission- and Location-aware fact composition
@@ -1799,6 +2100,13 @@ Make CooInsightFactsReader and CooInsightDisplayReader envelope-driven.
 Selection is by authorization_scope_fingerprint plus origin (plus actor
 for on_demand rows) -- NOT by business_id/location_id alone. Apply
 LocationAccessGuard for the authorized Location set.
+
+Matching is EXACT EQUALITY on a recomputed fingerprint. When no row
+matches, render without an AI insight: do NOT relax a component, do NOT
+ignore one, do NOT degrade to business_id, and do NOT fall back to a
+broader system row (R-31, R-32). A Selected-scope or capability-limited
+actor legitimately has no system insight -- that is the designed V1 shape
+(SS5.9b), not a bug to paper over.
 
 For every fact source, classify it IN CODE as provably Business-wide-safe
 or excluded, with a comment naming why. Do not include a source "because
@@ -1926,6 +2234,12 @@ ViewAsRouteClassification and ViewAsProhibitedActions in the same commit
 (rule R-8): read/explain/draft/ask permitted under View As with
 attribution; approval and execution prohibited.
 
+This surface is also how a Selected-scope or capability-limited actor gets
+AI at all: by design they have no background system insight (SS5.9b), so
+Ask/Explain/Draft must work for them and must create an on_demand row
+attributed to them under their OWN exact fingerprint -- never a read of
+someone else's broader row.
+
 Replace CooInsightExplainLimiter's cache-only claim with a durable,
 per-actor, per-subject, auditable limit enforced in the generator as well
 as the controller. Set an explicit provider timeout on
@@ -1947,17 +2261,47 @@ both ai_usage_* migrations, and app/Http/Middleware/
 EnsureUserIsAdministrator.php before changing anything.
 
 Non-negotiables:
-- Append the new AiScope parameter AFTER the existing jsonMode parameter
-  so all four existing AiRequest call sites compile and behave identically
-  with NO edit. Prove this in the tests.
-- Platform authority is users.is_admin on a FRESHLY READ User row, checked
-  INSIDE the gateway immediately before the reservation -- never inherited
-  from HTTP middleware, never trusted from a job payload. Do NOT use the
-  permission-string path: EnsureUserIsAdministrator's own docblock
-  explains that it treats users.id === 1 as an unconditional bypass.
-- The platform cap is finite and config-derived. Absent or non-positive
-  config resolves to 0, which the gateway already treats as refuse-all.
-  There is no unlimited path.
+- Append the new AiScope parameter AFTER the existing jsonMode parameter,
+  with a default. There are THREE production AiRequest construction sites
+  (CooInsightGenerator.php:119, WebsiteAiGenerationClient.php:75,
+  OpenAiAgencyProspectingClient.php:43) and all three use NAMED ARGUMENTS,
+  so a trailing optional parameter is source-compatible. Prove in the
+  tests that all three remain source-unchanged.
+- ACTOR ID IS ATTRIBUTION, NOT AUTHENTICATION (R-28). Re-reading the User
+  row proves that user is an admin; it cannot prove who supplied the
+  integer. So BOTH boundaries are required:
+  (a) Platform COO HTTP routes derive the actor ONLY from
+      $request->user(). No route may accept actor_user_id / user_id as a
+      client-selectable authority parameter -- ignore or refuse it.
+  (b) The gateway re-reads the User and rechecks is_admin IMMEDIATELY
+      before the reservation, so a miswired route, a non-admin principal,
+      or an admin demoted/deleted between enqueue and execution is
+      refused before reserve and before the provider call.
+  A queued job carries the server-derived actor id and NOTHING else: no
+  is_admin copy, no role snapshot, no permission claim, no signed
+  capability. Do NOT use the permission-string path -- EnsureUserIsAdministrator's
+  own docblock explains that it treats users.id === 1 as an unconditional
+  bypass. Keep that middleware on the routes as defense in depth, not as
+  the gateway's source of truth.
+- resolveForPlatform() returns the COMPLETE six-field AiBudgetPolicy per
+  SS5.7a D -- policyKey 'platform'; policyVersion from the SAME
+  config('ai.policy_version'); periodKey from the resolver's existing
+  currentCalendarMonthKey(); workspaceCapMicrousd from
+  config('ai.platform.monthly_cap_microusd'); businessCapMicrousd null;
+  interactiveShareBps from config('ai.platform.interactive_share_bps'),
+  bounded 0..10000, V1 default 3000.
+- Fail closed in BOTH dimensions. Absent/non-positive monthly cap resolves
+  to 0, which the gateway already treats as refuse-all. An interactive
+  share outside 0..10000 RAISES A CONFIGURATION FAILURE -- do not clamp it
+  silently and never let it become an unbounded interactive lane.
+- Platform interactive requests are bounded by the monthly cap AND the
+  interactive share, reusing the existing reserve-time share check against
+  ai_usage_periods' existing interactive_reserved_microusd /
+  interactive_committed_microusd columns. Platform product-lane calls draw
+  on the same cap but do NOT consume the interactive counter.
+- AiBudgetPolicyResolver stays the ONLY reader of the new
+  config('ai.platform.*') keys, and T-BUD-7's no-amount-literals test is
+  EXTENDED to cover them -- never exempted (R-29).
 - NEVER encode platform as workspace_id = 0 or any other magic id. Add
   scope_type/scope_id to ai_usage_ledger, backfill existing rows to
   scope_type='workspace' and scope_id=workspace_id, and make workspace_id
@@ -1990,8 +2334,15 @@ The four scope-content rules are absolute and tested (SS13.3):
 - R-15: an Agency-scope prompt contains the Agency's OWN operational facts
   only -- never any client's Business facts, not one client's and not a
   blend.
-- R-16: there is NO cross-client portfolio prompt, for the Agency Account
-  Home or anywhere else. An attempt to build one must fail loudly.
+- R-16: no Agency-scope prompt may aggregate, compare, summarize, rank or
+  otherwise include operational facts FROM MULTIPLE Client Businesses.
+  Agency-OWNED relationship metadata IS allowed -- active managed client
+  counts, relationship status counts, agency-side Outreach and billing
+  facts. Client Business operational data is NOT, in any form: no client
+  revenue, no client message/lead/booking/SEO/CRM performance, no
+  client-vs-client comparison, and no "anonymised" total derived from
+  client operational data. An attempt to build one must fail loudly, not
+  truncate. Test BOTH sides (SS13.3).
 - R-17: an Agency actor reaches one managed Client's Business COO ONLY
   through View As, which resolves the envelope to Business scope with the
   real Agency actor attributed.
