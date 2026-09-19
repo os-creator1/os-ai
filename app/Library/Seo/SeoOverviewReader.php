@@ -33,6 +33,7 @@ final class SeoOverviewReader
 {
     public function __construct(
         private readonly SeoLocationScope $locationScope,
+        private readonly SeoKeywordManager $keywords,
         private readonly SeoPublishedContentReader $publishedContent,
         private readonly SeoReadinessRuleRegistry $readinessRules,
         private readonly GoogleBusinessProfileStatusReader $googleStatus,
@@ -41,11 +42,18 @@ final class SeoOverviewReader
 
     public function read(Workspace $workspace, Business $business, User $actor): SeoOverview
     {
-        $accessibleActiveLocations = $this->locationScope->accessibleActiveLocations((int) $actor->id, $business);
+        // Location access FIRST; everything Location-shaped (readiness counts,
+        // keyword counts) is computed from this already-filtered set.
+        $accessibleLocations = $this->locationScope->accessibleLocations((int) $actor->id, $business);
+        $accessibleActiveLocations = $accessibleLocations->filter(fn ($l) => $l->isActive())->values();
+        $keywordsDefined = $this->keywords->countActiveVisible(
+            $business,
+            $accessibleLocations->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        );
 
         $published = $this->publishedContent->forBusiness($business);
 
-        $facts = SeoReadinessFacts::build($business, $published !== null, $accessibleActiveLocations);
+        $facts = SeoReadinessFacts::build($business, $published !== null, $accessibleActiveLocations, $keywordsDefined);
 
         return new SeoOverview(
             readiness: $this->readinessRules->evaluate($facts),
