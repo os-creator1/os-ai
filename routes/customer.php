@@ -1225,7 +1225,8 @@
         | the §6 chain in this order, each gate independent of the others:
         |
         |   1. Workspace/Business tenancy        (404)
-        |   2. the `packages_products` capability (403)
+        |   2. the `packages_products` capability (401 - this app renders a failed
+        |      authorize() as 401, exactly like CRM and Google Business Profile)
         |   3. the PackagesProducts entitlement   (404)
         |   4. Location-scoped routes only: the Location belongs to THIS
         |      Business, then LocationAccessGuard (404)

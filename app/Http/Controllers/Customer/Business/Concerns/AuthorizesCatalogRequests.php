@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\Auth;
  *                     reach. -> 404
  *   2. CAPABILITY   — `packages_products` (config/customer-permissions.php).
  *                     Reaching the Business without it is refused regardless
- *                     of tenancy. -> 403
+ *                     of tenancy. -> 401 (see below)
  *   3. ENTITLEMENT  — `EntitlementManager` for
  *                     `PlatformFeature::PackagesProducts`, through the
  *                     existing `resolveEntitledBusinessTenancy` seam. While
@@ -67,7 +67,10 @@ trait AuthorizesCatalogRequests
         // Gate 1 — tenancy. Aborts 404 before anything below is consulted.
         $this->resolveBusinessTenancy($workspaceUid, $businessUid);
 
-        // Gate 2 — the customer capability. Aborts 403.
+        // Gate 2 — the customer capability. `authorize()` throws
+        // AuthorizationException, which this application renders as 401
+        // (errors.401) — the same refusal every other capability-gated customer
+        // controller (CRM, Google Business Profile) already gives.
         $this->authorize(self::CATALOG_CAPABILITY);
 
         // Gate 3 — platform entitlement. This re-runs the (request-memoized,

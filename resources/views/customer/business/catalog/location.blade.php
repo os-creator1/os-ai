@@ -5,7 +5,7 @@
 @section('content')
     @php
         // Implementation Contract 16 §5.2, §12.E — presentation only. The
-        // "effective price" column is whatever CatalogItemPricingResolver
+        // "effective price" column is whatever the catalog's pricing resolver
         // answered (via CatalogLocationOfferReader); this view never computes a
         // price or decides whether an item is offered. Every form posts to a
         // route that runs the full §6 chain, including LocationAccessGuard.
@@ -61,7 +61,7 @@
                                         @else
                                             {{ \App\Library\Catalog\CatalogMoney::format($row['price']->priceMinor, $row['price']->currencyCode) }}
                                             @if ($row['hasOverridePrice'])
-                                                <span class="badge badge-light-info">Location price</span>
+                                                <span class="badge badge-light-info" data-role="location-price-badge">Location price</span>
                                             @endif
                                         @endif
                                     </td>
