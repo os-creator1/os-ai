@@ -258,7 +258,11 @@
             }
 
             if ($user->is_admin) {
-                return collect($user->getPermissions());
+                // getPermissions() walks the roles relation, which is just as
+                // cache-sensitive as the customer relation above — so $fresh
+                // has to mean the same thing on this branch or the flag would
+                // be a promise the method only half keeps.
+                return collect(($fresh ? ($user->fresh() ?? $user) : $user)->getPermissions());
             }
 
             return collect();

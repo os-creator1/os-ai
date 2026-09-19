@@ -48,6 +48,16 @@ use App\Repositories\Contracts\AccountRepository;
  *
  * 19.A assembles `CooScope::Business` only. Agency and Platform envelopes are
  * 19.H's, and the writer refuses them until then.
+ *
+ * THE LOCATION SET comes from the canonical bulk primitive,
+ * LocationAccessGuard::accessibleLocationIdsForBusiness() (Slice 18A) — the
+ * one authority's own constant-query set form, proven equivalent to the
+ * per-Location predicate for every actor class by LocationAccessGuardBulkTest.
+ * The COO adds no Location ACL of its own (Contract 19 R-0). That primitive
+ * returns ids in repository order, which is deliberate and harmless here: the
+ * envelope normalises to a sorted, de-duplicated set before fingerprinting
+ * (§5.8), so the cache identity depends on WHICH Locations an actor may read
+ * and never on the order they were listed in.
  */
 final class CooContextEnvelopeFactory
 {
@@ -77,7 +87,7 @@ final class CooContextEnvelopeFactory
             return null;
         }
 
-        $locationIds = $this->locations->authorizedLocationIdsFor((int) $actor->id, $business);
+        $locationIds = $this->locations->accessibleLocationIdsForBusiness((int) $actor->id, $business);
 
         return new CooContextEnvelope(
             scope: CooScope::Business,
@@ -108,7 +118,7 @@ final class CooContextEnvelopeFactory
             return null;
         }
 
-        $locationIds = $this->locations->authorizedLocationIdsFor((int) $owner->id, $business);
+        $locationIds = $this->locations->accessibleLocationIdsForBusiness((int) $owner->id, $business);
 
         return new CooContextEnvelope(
             scope: CooScope::Business,

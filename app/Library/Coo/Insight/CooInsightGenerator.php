@@ -112,7 +112,7 @@ final class CooInsightGenerator
         // whether or not anything is generated below.
         $this->invalidator->invalidateChangedSignals((int) $business->id, $kind, $facts->periodKey, $fingerprint, $promptVersion, $policyVersion);
 
-        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion)) {
+        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion, $envelope)) {
             return CooInsightOutcome::skipped(CooInsightOutcome::CONDITION_NOT_MET);
         }
 
@@ -259,7 +259,7 @@ final class CooInsightGenerator
         return $query->exists();
     }
 
-    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion): bool
+    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion, CooContextEnvelope $envelope): bool
     {
         return match ($trigger) {
             // E-1, and E-2's "E-1 still holds afterwards".
@@ -267,7 +267,18 @@ final class CooInsightGenerator
                 && ! $facts->hasDeterministicExplanation(),
 
             // E-3 — only when the fingerprint differs from the last insight's.
+            //
+            // Contract 19 §5.8 — "the last insight's" has to mean the last one
+            // written for THIS authorization scope. Before 19.A a Business had
+            // at most one scope, so filtering by Business alone was
+            // unambiguous; now several scopes can hold rows for the same
+            // window, and reading another scope's fingerprint here would let
+            // one audience's unchanged signals suppress another audience's
+            // review, or the reverse. The comparison is therefore made inside
+            // the same scope, exactly as the display read is.
             CooInsightTrigger::MonthlyReview => CooInsight::query()
+                ->where('scope', $envelope->scope->value)
+                ->where('authorization_scope_fingerprint', $envelope->authorizationScopeFingerprint)
                 ->where('business_id', (int) $business->id)
                 ->where('kind', CooInsightKind::PerformanceDiagnosis->value)
                 ->where('period_key', $facts->periodKey)
