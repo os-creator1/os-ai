@@ -481,6 +481,22 @@
 
     /*
     |--------------------------------------------------------------------------
+    | SEO entry (Contract 18, Sub-slice 18A)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the read-only Overview lives at
+    | customer.workspaces.businesses.seo.*. Never guesses a Business: zero
+    | accessible show an empty state, exactly one redirects through, several
+    | show a chooser. "Accessible" includes ENTITLEMENT, and
+    | SeoBasicVisibility stays Planned until Sub-slice H, so today nobody is
+    | accessible. The name is customer.seo.index — never customer.keywords.*,
+    | the legacy inbound-SMS keyword namespace. See Business\SeoController.
+    |
+    */
+    Route::get('seo', 'Business\SeoController@entry')->name('seo.index');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
@@ -888,6 +904,25 @@
             Route::post('/unbind', 'Business\GoogleBusinessProfileController@unbind')->name('unbind');
             Route::post('/disconnect', 'Business\GoogleBusinessProfileController@disconnect')->name('disconnect');
             Route::post('/refresh', 'Business\GoogleBusinessProfileController@refresh')->middleware('throttle:10,1')->name('refresh');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | SEO Overview (Contract 18, Sub-slice 18A) — READ-ONLY.
+        |
+        | Every action runs Workspace -> Business -> userCanAccessBusiness()
+        | -> active Business -> SeoBasicVisibility entitlement -> view_seo.
+        | Every tenancy/entitlement failure is 404, never 403. SeoBasicVisibility
+        | is Planned until Sub-slice H, so every route here is 404 today.
+        |
+        | There is no write route in this sub-slice and no implicit route-model
+        | binding. Later sub-slices add their sections beneath this prefix
+        | (keywords, search-console, citations, reviews, site-audit); nothing
+        | here is, or may ever begin with, customer.keywords.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
+            Route::get('/', 'Business\SeoController@overview')->name('index');
         });
 
         /*
