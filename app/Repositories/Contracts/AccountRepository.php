@@ -35,6 +35,15 @@
         public function hasPermission(Authenticatable $user, $name): bool;
 
         /**
+         * The durable permission set hasPermission() decides from, read without
+         * the session copy — see the implementation for why that distinction
+         * matters to Implementation Contract 19 §5.8.
+         *
+         * @return \Illuminate\Support\Collection<int, string>
+         */
+        public function durablePermissions(Authenticatable $user, bool $fresh = false): \Illuminate\Support\Collection;
+
+        /**
          * @param array $input
          *
          * @return mixed

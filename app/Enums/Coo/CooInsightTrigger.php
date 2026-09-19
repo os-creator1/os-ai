@@ -38,4 +38,18 @@ enum CooInsightTrigger: string
     {
         return $this !== self::ExplainThisChange;
     }
+
+    /**
+     * Implementation Contract 19 §5.9 — who caused the row, and therefore who
+     * may read it back.
+     *
+     * E-4 is a human asking, so the row is `on_demand` and is attributed to,
+     * and readable only by, that actor. E-1…E-3 are schedules: nobody asked,
+     * so the row is `system`, carries no actor, and is computed for the
+     * declared audience of §5.9b.
+     */
+    public function origin(): CooInsightOrigin
+    {
+        return $this === self::ExplainThisChange ? CooInsightOrigin::OnDemand : CooInsightOrigin::System;
+    }
 }

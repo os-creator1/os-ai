@@ -166,11 +166,14 @@ class BusinessHomeWhatWeNoticeTest extends TestCase
         config(['ai.budgets.growth' => null]);
         $this->authenticateAs($customer);
 
+        $fresh = $business->fresh();
+
         try {
-            app(CooInsightDisplayReader::class)->forHome($business->fresh(), $this->thisMonth($business));
+            app(CooInsightDisplayReader::class)->forHome($fresh, $this->thisMonth($business), $this->actorEnvelope($fresh, $customer->user));
             $this->fail('The reader was expected to throw in this fixture.');
         } catch (\Throwable $e) {
             $this->assertNotInstanceOf(\PHPUnit\Framework\AssertionFailedError::class, $e);
+            $this->assertNotInstanceOf(\ArgumentCountError::class, $e, 'The reader must throw for the reason this fixture sets up, not because it was called wrongly.');
         }
 
         $html = $this->home()->assertOk()->getContent();

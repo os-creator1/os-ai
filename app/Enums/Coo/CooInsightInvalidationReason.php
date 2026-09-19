@@ -16,4 +16,14 @@ enum CooInsightInvalidationReason: string
 
     /** The Business's context moved: website published, Google connection, profile. */
     case ContextChanged = 'context_changed';
+
+    /**
+     * Implementation Contract 19 §8 — written once, by 19.A's migration, to
+     * every row generated before authorization scope existed. Such a row has
+     * no recorded audience, Location set or capability set, so no honest
+     * `authorization_scope_fingerprint` can be computed for it and none is
+     * invented (R-30). It is retired instead, and the next scheduled
+     * generation repopulates.
+     */
+    case AuthorizationScopeIntroduced = 'authorization_scope_introduced';
 }
