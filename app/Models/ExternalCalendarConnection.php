@@ -25,7 +25,7 @@ use Illuminate\Support\Str;
  * own model states the same rationale: defence in depth, so that an
  * accidental toArray()/toJson() cannot leak them either.
  *
- * `active_user_id` is a STORED GENERATED column written by MySQL, never by
+ * `active_user_id` is a VIRTUAL GENERATED column written by MySQL, never by
  * this application — it is therefore neither fillable nor guarded here, and
  * any attempt to write it would be rejected by the database. It carries no
  * information of its own, only the conditional uniqueness of §5.5.
