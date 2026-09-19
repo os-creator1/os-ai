@@ -944,6 +944,19 @@
             Route::post('/keywords/{keywordUid}/update', 'Business\SeoKeywordsController@update')->middleware('throttle:30,1')->name('keywords.update');
             Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
             Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
+
+            // Sub-slice 18F — Reviews: workflow tracking only (a manual review
+            // link per Location and a request ledger with a cooldown). SEO
+            // sends nothing and stores no review content. Reads need view_seo,
+            // writes manage_seo; both need the SeoModule entitlement (Planned
+            // until Sub-slice H, so 404 today). Every record is addressed by uid
+            // and resolved through the Business; no redirect or click-tracking.
+            Route::get('/reviews', 'Business\SeoReviewsController@reviews')->name('reviews.index');
+            Route::put('/reviews/locations/{locationUid}/link', 'Business\SeoReviewsController@saveLink')->middleware('throttle:30,1')->name('reviews.link.save');
+            Route::post('/reviews/locations/{locationUid}/link/clear', 'Business\SeoReviewsController@clearLink')->middleware('throttle:30,1')->name('reviews.link.clear');
+            Route::post('/reviews/locations/{locationUid}/requests', 'Business\SeoReviewsController@recordRequest')->middleware('throttle:30,1')->name('reviews.requests.store');
+            Route::post('/reviews/requests/{requestUid}/reviewed', 'Business\SeoReviewsController@markReviewed')->middleware('throttle:30,1')->name('reviews.requests.reviewed');
+            Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
         /*
