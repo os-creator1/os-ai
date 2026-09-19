@@ -153,7 +153,7 @@ class SeoOverviewTest extends TestCase
         // and look at what is actually rendered.
         $rendered = preg_replace('/\{\{--.*?--\}\}/s', '', $blade);
 
-        foreach (['score', 'grade', 'chart', 'percent', '%', 'Keywords', 'Search Console', 'Citations', 'Reviews', 'disabled', 'Coming soon'] as $forbidden) {
+        foreach (['score', 'grade', 'chart', 'percent', '%', 'Search Console', 'Citations', 'Reviews', 'disabled', 'Coming soon'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $rendered, "The Overview must not render [{$forbidden}].");
         }
 

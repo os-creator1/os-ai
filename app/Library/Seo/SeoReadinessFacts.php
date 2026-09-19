@@ -24,13 +24,15 @@ final class SeoReadinessFacts
         public readonly bool $gbpUrlPresent,
         public readonly int $locationsTotal,
         public readonly int $locationsReady,
+        public readonly int $keywordsDefined,
     ) {
     }
 
     /**
      * @param  Collection<int, BusinessLocation>  $accessibleActiveLocations  already ACL-filtered
+     * @param  int  $keywordsDefined  ACTIVE SEO keywords visible to the actor (already ACL-filtered)
      */
-    public static function build(Business $business, bool $websitePublished, Collection $accessibleActiveLocations): self
+    public static function build(Business $business, bool $websitePublished, Collection $accessibleActiveLocations, int $keywordsDefined): self
     {
         return new self(
             websiteUrlSet: self::filled($business->website_url),
@@ -39,6 +41,7 @@ final class SeoReadinessFacts
             gbpUrlPresent: self::filled($business->google_business_profile_url),
             locationsTotal: $accessibleActiveLocations->count(),
             locationsReady: $accessibleActiveLocations->filter(fn (BusinessLocation $l) => self::locationIsReady($l))->count(),
+            keywordsDefined: $keywordsDefined,
         );
     }
 

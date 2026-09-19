@@ -122,7 +122,12 @@ class ViewAsRouteBoundaryTest extends TestCase
     public function test_every_route_in_a_prohibited_capability_family_is_prohibited(): void
     {
         $prohibited = app(ViewAsProhibitedActions::class);
-        $family = '/(usage-billing\.(payer|billing-contact|spend-cap|feature-limits|payment-method|top-up|auto-recharge)|workspaces\.members\.|ownership\.transfer|additional-business-slots\.|locations\.allocations\.|businesses\.store$|businesses\.reassign$|workspaces\.(store|rename|deactivate|reactivate)$|\.channels\.|^customer\.channels\.|gbp\.(connect|disconnect|refresh|bind|unbind)$|gbp\.oauth\.|numbers\.|senderid\.|keywords\.|subscriptions\.|sub_accounts\.|top_up\.|\.payment\.|callback\.|registers\.|view-as\.start$|context\.business\.switch$|switch_view$|login_as$|developer\.(generate|server|webhook)$|\.destroy$|\.delete$|\.batch_action$|\.release$|delete-contact-field$|account\.delete$|account\.top_up$|account\.pay$)/';
+        // The legacy inbound-SMS keyword family is the `customer.keywords.*`
+        // NAMESPACE (ViewAsProhibitedActions::PREFIXES), so it is anchored:
+        // an unanchored `keywords\.` would also sweep in the SEO keyword routes
+        // (`...seo.keywords.*`), which are ordinary customer edits, not
+        // provider credentials or purchases (Contract 18 §10.6).
+        $family = '/(usage-billing\.(payer|billing-contact|spend-cap|feature-limits|payment-method|top-up|auto-recharge)|workspaces\.members\.|ownership\.transfer|additional-business-slots\.|locations\.allocations\.|businesses\.store$|businesses\.reassign$|workspaces\.(store|rename|deactivate|reactivate)$|\.channels\.|^customer\.channels\.|gbp\.(connect|disconnect|refresh|bind|unbind)$|gbp\.oauth\.|numbers\.|senderid\.|^customer\.keywords\.|subscriptions\.|sub_accounts\.|top_up\.|\.payment\.|callback\.|registers\.|view-as\.start$|context\.business\.switch$|switch_view$|login_as$|developer\.(generate|server|webhook)$|\.destroy$|\.delete$|\.batch_action$|\.release$|delete-contact-field$|account\.delete$|account\.top_up$|account\.pay$)/';
         $missed = [];
 
         foreach (ViewAsRouteClassification::universe() as $route) {

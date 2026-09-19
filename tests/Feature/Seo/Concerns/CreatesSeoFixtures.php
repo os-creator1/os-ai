@@ -9,6 +9,7 @@ use App\Enums\Website\WebsiteStatus;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Http\Controllers\Customer\Business\SeoController;
+use App\Http\Controllers\Customer\Business\SeoKeywordsController;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessGoogleLocation;
@@ -22,6 +23,7 @@ use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\GoogleBusinessProfile\Concerns\CreatesGoogleBusinessProfileFixtures;
 use Tests\Support\Seo\EntitlementBypassSeoController;
+use Tests\Support\Seo\EntitlementBypassSeoKeywordsController;
 
 /**
  * Contract 18 Sub-slice 18A — shared SEO fixtures.
@@ -54,6 +56,7 @@ trait CreatesSeoFixtures
     protected function bypassSeoEntitlementForTest(): void
     {
         $this->app->bind(SeoController::class, EntitlementBypassSeoController::class);
+        $this->app->bind(SeoKeywordsController::class, EntitlementBypassSeoKeywordsController::class);
     }
 
     protected function seoUrl(Workspace $workspace, Business $business): string
