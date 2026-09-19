@@ -32,7 +32,7 @@ class InstallBlueprintOnBusinessCreated
         try {
             InstallNicheBlueprintForBusiness::dispatch($event->businessId);
         } catch (Throwable $e) {
-            Log::warning('Niche Blueprint installation could not be dispatched for a new Business.', [
+            Log::error('Niche Blueprint installation could not be dispatched for a new Business.', [
                 'business_id' => $event->businessId,
                 'exception' => class_basename($e),
             ]);

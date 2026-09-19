@@ -4,8 +4,7 @@ namespace App\Listeners\NicheBlueprint;
 
 use App\Events\Entitlement\WorkspacePlanAssigned;
 use App\Jobs\NicheBlueprint\InstallNicheBlueprintForBusiness;
-use App\Models\Workspace;
-use App\Repositories\Contracts\WorkspaceRepository;
+use App\Models\Business;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -31,28 +30,37 @@ use Throwable;
  */
 class InstallBlueprintOnFirstPlanAssigned
 {
-    public function __construct(private readonly WorkspaceRepository $workspaces)
-    {
-    }
-
     public function handle(WorkspacePlanAssigned $event): void
     {
         try {
-            $workspace = Workspace::query()->whereKey($event->workspaceId)->first();
+            // A DIRECT, AUTHORITATIVE READ, deliberately not the repository's
+            // request-memoized businessesForWorkspace(). This listener is the
+            // ONLY automatic recovery for the "Business created before its
+            // plan" ordering, and a memo populated earlier in the same request
+            // — while the Workspace still held zero Businesses — would make it
+            // silently return here, leaving the account with no Blueprint and
+            // no remaining automatic retry. `limit(2)` is enough to tell
+            // "exactly one" from "more than one" without loading a fleet.
+            $businessIds = Business::query()
+                ->where('workspace_id', $event->workspaceId)
+                ->orderBy('id')
+                ->limit(2)
+                ->pluck('id');
 
-            if ($workspace === null) {
+            // Zero (the Business has not been created yet — `BusinessCreated`
+            // will handle it) or more than one (an integrity contradiction to
+            // fail closed on, never to resolve by picking one).
+            if ($businessIds->count() !== 1) {
                 return;
             }
 
-            $businesses = $this->workspaces->businessesForWorkspace($workspace);
-
-            if ($businesses->count() !== 1) {
-                return;
-            }
-
-            InstallNicheBlueprintForBusiness::dispatch((int) $businesses->first()->id);
+            InstallNicheBlueprintForBusiness::dispatch((int) $businessIds->first());
         } catch (Throwable $e) {
-            Log::warning('Niche Blueprint installation could not be dispatched for a first plan assignment.', [
+            // Logged at error, not warning: §9.1 requires this failure never
+            // to propagate into the request that assigned the plan, but a
+            // systemic dispatch outage here silently denies every new account
+            // its Blueprint, so it must be alertable rather than merely noted.
+            Log::error('Niche Blueprint installation could not be dispatched for a first plan assignment.', [
                 'workspace_id' => $event->workspaceId,
                 'exception' => class_basename($e),
             ]);

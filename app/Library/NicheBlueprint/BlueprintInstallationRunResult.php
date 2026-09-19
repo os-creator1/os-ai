@@ -37,6 +37,21 @@ final readonly class BlueprintInstallationRunResult
     /** The Blueprint exists but has never been published. Nothing to decide about. */
     public const ABORT_NO_PUBLISHED_VERSION = 'no_published_version';
 
+    /**
+     * This Business's own installation records name more than one Blueprint,
+     * or name a Blueprint that no longer exists. Its provisioning identity is
+     * ambiguous, so the run fails closed rather than guessing which Blueprint
+     * it belongs to.
+     */
+    public const ABORT_BLUEPRINT_IDENTITY_AMBIGUOUS = 'blueprint_identity_ambiguous';
+
+    /**
+     * The Business is pinned to a version that is no longer present. Fail
+     * closed: installing from a DIFFERENT version than the one it was
+     * provisioned from is exactly the silent drift §8.1 forbids.
+     */
+    public const ABORT_PROVISIONED_VERSION_MISSING = 'provisioned_version_missing';
+
     public function __construct(
         public ?string $abortReason = null,
         public ?int $blueprintId = null,
@@ -46,6 +61,16 @@ final readonly class BlueprintInstallationRunResult
         public int $skippedUnavailable = 0,
         public int $failed = 0,
         public int $alreadyDecided = 0,
+        /**
+         * Components whose entitlement decision could not be MADE (the
+         * decision call itself failed). Deliberately distinct from `failed`:
+         * an unmade decision is never persisted, for the same reason §9.1
+         * gives for the no-plan precondition — a durable record here would
+         * either freeze the component as a skip or hand a later run a
+         * retryable row whose retry re-decides at a moment the owner never
+         * chose.
+         */
+        public int $undecided = 0,
     ) {
     }
 

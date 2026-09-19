@@ -63,6 +63,24 @@ class NicheBlueprintInstaller
     /** `business_blueprint_component_installations.error_code` is string(64). */
     private const MAX_ERROR_CODE = 64;
 
+    /**
+     * What one component's processing did. Deliberately richer than the four
+     * persisted states, because two outcomes are precisely the ones that
+     * persist NOTHING: a component another run already decided, and a
+     * component whose entitlement decision could not be made at all.
+     */
+    private const OUTCOME_INSTALLED = 'installed';
+
+    private const OUTCOME_SKIPPED_UNENTITLED = 'skipped_unentitled';
+
+    private const OUTCOME_SKIPPED_UNAVAILABLE = 'skipped_unavailable';
+
+    private const OUTCOME_FAILED = 'failed';
+
+    private const OUTCOME_ALREADY_DECIDED = 'already_decided';
+
+    private const OUTCOME_UNDECIDED = 'undecided';
+
     public function __construct(
         private readonly EntitlementManager $entitlements,
         private readonly BlueprintComponentAdapterRegistry $adapters,
@@ -104,22 +122,115 @@ class NicheBlueprintInstaller
             return BlueprintInstallationRunResult::aborted(BlueprintInstallationRunResult::ABORT_WORKSPACE_PLAN_UNASSIGNED);
         }
 
-        $resolution = $this->resolveBlueprint($business);
+        // §8.1/§13.4 — A BUSINESS IS PINNED TO WHAT IT WAS PROVISIONED WITH.
+        //
+        // Resolution (§7.1) answers "which Blueprint does a NEW Business
+        // belong to", and it reads live, mutable Business state. Re-asking it
+        // for an already-provisioned Business would be a silent-install
+        // engine in two distinct ways, both of which fire on the ordinary
+        // recovery re-run §9.2 tells operators to perform:
+        //
+        //  - a LATER PUBLISHED VERSION adds a component this Business has
+        //    never seen; it has no record, so nothing would short-circuit it
+        //    and the platform's own publish would install into a live
+        //    Business (§13.4 requires it to be SURFACED, not installed);
+        //  - RESOLUTION DRIFTS (a knowledge profile gains a `vertical_key`
+        //    after the broad-industry fallback already provisioned it), and a
+        //    whole second Blueprint, having no records of its own, installs
+        //    wholesale.
+        //
+        // So an already-provisioned Business is served entirely from its own
+        // recorded identity: the Blueprint it holds records for, at the
+        // version those records cite. That is what makes a re-run a genuine
+        // RESUME of the installation it already has rather than an upgrade to
+        // whatever the platform published since — "COPY, NEVER LINK" applied
+        // to the run itself.
+        $prior = $this->priorProvisioningOf($business);
 
-        if ($resolution instanceof BlueprintInstallationRunResult) {
-            return $resolution;
+        if ($prior === null) {
+            $resolution = $this->resolveBlueprint($business);
+
+            if ($resolution instanceof BlueprintInstallationRunResult) {
+                return $resolution;
+            }
+
+            $version = $this->publishedVersionOf($resolution);
+
+            if ($version === null) {
+                return BlueprintInstallationRunResult::aborted(
+                    BlueprintInstallationRunResult::ABORT_NO_PUBLISHED_VERSION,
+                    (int) $resolution->id,
+                );
+            }
+
+            return $this->runComponents($business, $workspace, $ownerUserId, $resolution, $version);
         }
 
-        $version = $this->publishedVersionOf($resolution);
+        ['blueprintId' => $pinnedBlueprintId, 'versionNumber' => $pinnedVersionNumber, 'ambiguous' => $ambiguous] = $prior;
 
-        if ($version === null) {
+        if ($ambiguous) {
             return BlueprintInstallationRunResult::aborted(
-                BlueprintInstallationRunResult::ABORT_NO_PUBLISHED_VERSION,
-                (int) $resolution->id,
+                BlueprintInstallationRunResult::ABORT_BLUEPRINT_IDENTITY_AMBIGUOUS,
+                $pinnedBlueprintId,
             );
         }
 
-        return $this->runComponents($business, $workspace, $ownerUserId, $resolution, $version);
+        $blueprint = NicheBlueprint::query()->whereKey($pinnedBlueprintId)->first();
+
+        if ($blueprint === null) {
+            return BlueprintInstallationRunResult::aborted(
+                BlueprintInstallationRunResult::ABORT_BLUEPRINT_IDENTITY_AMBIGUOUS,
+                $pinnedBlueprintId,
+            );
+        }
+
+        // Deliberately NOT filtered by `is_active`: deactivating a Blueprint
+        // stops it resolving for NEW Businesses (§7.1), and must not strand an
+        // already-provisioned Business's `failed` component (§7.4) with no
+        // recovery path.
+        $version = NicheBlueprintVersion::query()
+            ->where('blueprint_id', $pinnedBlueprintId)
+            ->where('version_number', $pinnedVersionNumber)
+            ->first();
+
+        if ($version === null) {
+            return BlueprintInstallationRunResult::aborted(
+                BlueprintInstallationRunResult::ABORT_PROVISIONED_VERSION_MISSING,
+                $pinnedBlueprintId,
+            );
+        }
+
+        return $this->runComponents($business, $workspace, $ownerUserId, $blueprint, $version);
+    }
+
+    /**
+     * The Blueprint identity and version this Business was already
+     * provisioned with, or null when it has never been provisioned at all.
+     *
+     * A Business holding records for more than one Blueprint has an ambiguous
+     * identity — impossible to produce through this class, but possible in
+     * legacy or hand-edited data — and is reported as such so the run fails
+     * closed rather than picking one.
+     *
+     * @return array{blueprintId: int, versionNumber: int, ambiguous: bool}|null
+     */
+    private function priorProvisioningOf(Business $business): ?array
+    {
+        $records = BusinessBlueprintComponentInstallation::query()
+            ->where('business_id', $business->id)
+            ->get(['blueprint_id', 'installed_from_version']);
+
+        if ($records->isEmpty()) {
+            return null;
+        }
+
+        $blueprintIds = $records->pluck('blueprint_id')->map(static fn ($id): int => (int) $id)->unique()->sort()->values();
+
+        return [
+            'blueprintId' => (int) $blueprintIds->first(),
+            'versionNumber' => (int) $records->max('installed_from_version'),
+            'ambiguous' => $blueprintIds->count() > 1,
+        ];
     }
 
     /**
@@ -198,33 +309,31 @@ class NicheBlueprintInstaller
         NicheBlueprint $blueprint,
         NicheBlueprintVersion $version,
     ): BlueprintInstallationRunResult {
-        $installed = 0;
-        $skippedUnentitled = 0;
-        $skippedUnavailable = 0;
-        $failed = 0;
-        $alreadyDecided = 0;
+        $counts = [
+            self::OUTCOME_INSTALLED => 0,
+            self::OUTCOME_SKIPPED_UNENTITLED => 0,
+            self::OUTCOME_SKIPPED_UNAVAILABLE => 0,
+            self::OUTCOME_FAILED => 0,
+            self::OUTCOME_ALREADY_DECIDED => 0,
+            self::OUTCOME_UNDECIDED => 0,
+        ];
 
         // Ordered by `position` then `id` on the relation itself (§5.3).
         foreach ($version->components as $component) {
             $outcome = $this->processComponent($business, $workspace, $ownerUserId, $blueprint, $version, $component);
 
-            match ($outcome) {
-                BlueprintComponentInstallationState::Installed => $installed++,
-                BlueprintComponentInstallationState::SkippedUnentitled => $skippedUnentitled++,
-                BlueprintComponentInstallationState::SkippedUnavailable => $skippedUnavailable++,
-                BlueprintComponentInstallationState::Failed => $failed++,
-                default => $alreadyDecided++,
-            };
+            $counts[$outcome]++;
         }
 
         return new BlueprintInstallationRunResult(
             blueprintId: (int) $blueprint->id,
             versionNumber: (int) $version->version_number,
-            installed: $installed,
-            skippedUnentitled: $skippedUnentitled,
-            skippedUnavailable: $skippedUnavailable,
-            failed: $failed,
-            alreadyDecided: $alreadyDecided,
+            installed: $counts[self::OUTCOME_INSTALLED],
+            skippedUnentitled: $counts[self::OUTCOME_SKIPPED_UNENTITLED],
+            skippedUnavailable: $counts[self::OUTCOME_SKIPPED_UNAVAILABLE],
+            failed: $counts[self::OUTCOME_FAILED],
+            alreadyDecided: $counts[self::OUTCOME_ALREADY_DECIDED],
+            undecided: $counts[self::OUTCOME_UNDECIDED],
         );
     }
 
@@ -238,8 +347,7 @@ class NicheBlueprintInstaller
      * uses, the installation record is re-read INSIDE that lock, and only an
      * absent record or a `failed` one proceeds.
      *
-     * @return BlueprintComponentInstallationState|null the outcome, or null when a
-     *                                                  prior decision already existed
+     * @return string one of the OUTCOME_* constants
      */
     private function processComponent(
         Business $business,
@@ -248,7 +356,7 @@ class NicheBlueprintInstaller
         NicheBlueprint $blueprint,
         NicheBlueprintVersion $version,
         NicheBlueprintComponent $component,
-    ): ?BlueprintComponentInstallationState {
+    ): string {
         // Step 1 — durable identities, resolved once, before any lock.
         $businessId = (int) $business->id;
         $blueprintId = (int) $blueprint->id;
@@ -270,10 +378,20 @@ class NicheBlueprintInstaller
                 $featureKey,
                 $versionNumber,
                 $payload,
-            ): ?BlueprintComponentInstallationState {
+            ): string {
                 // Step 2 — the exact line applyPipelines() uses, serialising
                 // two concurrent runs for one Business against each other.
-                Business::query()->whereKey($businessId)->lockForUpdate()->first();
+                //
+                // The result is CHECKED, not discarded: a primary-key read
+                // that matches no row takes no record lock at all, so if the
+                // Business has been deleted since the job loaded it, two
+                // concurrent runs would both sail past this line unserialised
+                // and both reach an adapter. An absent Business is a hard stop.
+                $locked = Business::query()->whereKey($businessId)->lockForUpdate()->first();
+
+                if ($locked === null) {
+                    return self::OUTCOME_UNDECIDED;
+                }
 
                 // Step 3 — re-read INSIDE the lock. A run that lost the race
                 // sees the winner's committed record here and stops.
@@ -283,12 +401,34 @@ class NicheBlueprintInstaller
                     // `installed`, `skipped_unentitled` and `skipped_unavailable`
                     // all stop an AUTOMATED run: reversing a skip is the
                     // owner's explicit action alone (§7.3), never this path's.
-                    return null;
+                    return self::OUTCOME_ALREADY_DECIDED;
                 }
 
                 // Step 4 — the one entitlement authority, asked for every
                 // component without exception (§6.3).
-                $decision = $this->entitlements->decide($workspace, $business, $featureKey, $ownerUserId);
+                //
+                // A THROW HERE IS NOT A COMPONENT FAILURE. If the decision
+                // could not be MADE (a lock-wait timeout, a transient database
+                // error), nothing is recorded: persisting it as `failed` would
+                // hand a later run a retryable row whose retry re-decides
+                // entitlement at a moment the owner never chose — so a plan
+                // upgrade plus an ordinary recovery re-run would install into
+                // an established Business. Persisting it as a skip would be
+                // worse still, freezing it permanently. This is exactly §9.1's
+                // own reasoning for the no-plan precondition: an unmade
+                // decision is not a decision, and is not recorded as one.
+                try {
+                    $decision = $this->entitlements->decide($workspace, $business, $featureKey, $ownerUserId);
+                } catch (Throwable $e) {
+                    Log::warning('Niche Blueprint entitlement decision could not be made; nothing recorded.', [
+                        'business_id' => $businessId,
+                        'blueprint_id' => $blueprintId,
+                        'component_key' => $componentKey,
+                        'exception' => class_basename($e),
+                    ]);
+
+                    return self::OUTCOME_UNDECIDED;
+                }
 
                 if (! $decision->allowed) {
                     $state = $decision->reason === 'platform_feature_unavailable'
@@ -307,7 +447,9 @@ class NicheBlueprintInstaller
                         decisionReason: $decision->reason,
                     );
 
-                    return $state;
+                    return $state === BlueprintComponentInstallationState::SkippedUnavailable
+                        ? self::OUTCOME_SKIPPED_UNAVAILABLE
+                        : self::OUTCOME_SKIPPED_UNENTITLED;
                 }
 
                 // Step 5 — the adapter runs only for an ALLOWED decision, with
@@ -332,25 +474,27 @@ class NicheBlueprintInstaller
                     installedRecordId: $reference->recordId,
                 );
 
-                return BlueprintComponentInstallationState::Installed;
+                return self::OUTCOME_INSTALLED;
             });
-        } catch (UniqueConstraintViolationException) {
+        } catch (UniqueConstraintViolationException $e) {
             // Defense in depth, not the mechanism: the Business row lock above
             // already serialises concurrent runs, so a losing run sees the
-            // committed record at step 3 and never reaches the write. If the
-            // UNIQUE key ever fires anyway, another runner decided this
-            // component — which is the same outcome step 3 would have
-            // produced, so it is treated identically rather than surfaced as a
-            // failure or recorded as one (recording it would itself violate
-            // the same key).
-            return null;
-        } catch (Throwable $e) {
-            // §7.4 — the adapter's own transaction has already rolled back, so
-            // nothing it partially wrote survives. The failure is then made
-            // durable in a SEPARATE transaction, and the run continues to the
-            // next component: one broken component never blocks the other
-            // nine.
-            $this->recordFailure(
+            // committed record at step 3 and never reaches the write.
+            //
+            // THE SWALLOW IS SCOPED TO THE FACT IT CLAIMS. Laravel maps EVERY
+            // MySQL 1062 to this exception with no table discrimination, and
+            // the adapter's own Business-owned writes happen inside this try —
+            // so treating any duplicate key as "another runner decided this"
+            // would silently erase a genuine adapter failure, leaving no
+            // `failed` row, no `error_code`, and a component that no re-run
+            // ever retries. So the claim is verified: only if a record now
+            // genuinely exists was this someone else's decision. Otherwise it
+            // is an adapter failure and takes the ordinary §7.4 path below.
+            if ($this->findRecord($businessId, $blueprintId, $componentKey) !== null) {
+                return self::OUTCOME_ALREADY_DECIDED;
+            }
+
+            return $this->recordFailure(
                 businessId: $businessId,
                 blueprintId: $blueprintId,
                 componentKey: $componentKey,
@@ -359,8 +503,21 @@ class NicheBlueprintInstaller
                 versionNumber: $versionNumber,
                 throwable: $e,
             );
-
-            return BlueprintComponentInstallationState::Failed;
+        } catch (Throwable $e) {
+            // §7.4 — the adapter's own transaction has already rolled back, so
+            // nothing it partially wrote survives. The failure is then made
+            // durable in a SEPARATE transaction, and the run continues to the
+            // next component: one broken component never blocks the other
+            // nine.
+            return $this->recordFailure(
+                businessId: $businessId,
+                blueprintId: $blueprintId,
+                componentKey: $componentKey,
+                componentType: $componentType,
+                featureKey: $featureKey,
+                versionNumber: $versionNumber,
+                throwable: $e,
+            );
         }
     }
 
@@ -435,6 +592,14 @@ class NicheBlueprintInstaller
      * one's adapter was throwing: a failure must never clobber another run's
      * `installed` row. Its own failure is swallowed and logged — being unable
      * to record a failure must not abort the remaining components.
+     *
+     * RETURNS WHAT IT ACTUALLY WROTE, rather than letting the caller assume.
+     * When it declines (another run already decided the component) or cannot
+     * write at all, reporting `failed` would tell an operator to investigate a
+     * `failed` row that does not exist — and would make the recovery command
+     * exit non-zero with nothing to show for it.
+     *
+     * @return string one of the OUTCOME_* constants
      */
     private function recordFailure(
         int $businessId,
@@ -444,9 +609,9 @@ class NicheBlueprintInstaller
         string $featureKey,
         int $versionNumber,
         Throwable $throwable,
-    ): void {
+    ): string {
         try {
-            DB::transaction(function () use (
+            return DB::transaction(function () use (
                 $businessId,
                 $blueprintId,
                 $componentKey,
@@ -454,13 +619,17 @@ class NicheBlueprintInstaller
                 $featureKey,
                 $versionNumber,
                 $throwable,
-            ): void {
-                Business::query()->whereKey($businessId)->lockForUpdate()->first();
+            ): string {
+                $locked = Business::query()->whereKey($businessId)->lockForUpdate()->first();
+
+                if ($locked === null) {
+                    return self::OUTCOME_UNDECIDED;
+                }
 
                 $record = $this->findRecord($businessId, $blueprintId, $componentKey);
 
                 if ($record !== null && $record->state !== BlueprintComponentInstallationState::Failed) {
-                    return;
+                    return self::OUTCOME_ALREADY_DECIDED;
                 }
 
                 $this->writeRecord(
@@ -474,6 +643,8 @@ class NicheBlueprintInstaller
                     state: BlueprintComponentInstallationState::Failed,
                     errorCode: $this->errorCodeFor($throwable),
                 );
+
+                return self::OUTCOME_FAILED;
             });
         } catch (Throwable $recordingFailure) {
             Log::warning('Niche Blueprint component failure could not be recorded.', [
@@ -482,17 +653,30 @@ class NicheBlueprintInstaller
                 'component_key' => $componentKey,
                 'exception' => class_basename($recordingFailure),
             ]);
+
+            return self::OUTCOME_UNDECIDED;
         }
     }
 
     /**
      * Bounded, non-sensitive provenance: the exception's class name alone,
-     * never its message, which can carry SQL, paths or customer data. The
-     * column is string(64), so a longer class name is truncated rather than
-     * failing the write that records the failure.
+     * never its message, which can carry SQL, paths or customer data.
+     *
+     * SANITISED, NOT MERELY TRUNCATED. PHP names an anonymous class
+     * `RuntimeException@anonymous\0/abs/path/To/File.php:41$0`, and
+     * `class_basename()` on that yields `File.php:41$0` — a source path
+     * fragment, plus an embedded NUL byte, written straight into a provenance
+     * column that must never carry a path. So anything that is not a bare PHP
+     * class-name shape collapses to one fixed, safe constant.
      */
     private function errorCodeFor(Throwable $throwable): string
     {
-        return mb_substr(class_basename($throwable), 0, self::MAX_ERROR_CODE);
+        $code = class_basename($throwable);
+
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $code) !== 1) {
+            return 'UnnamedThrowable';
+        }
+
+        return mb_substr($code, 0, self::MAX_ERROR_CODE);
     }
 }

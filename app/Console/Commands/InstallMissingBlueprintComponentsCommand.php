@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Library\NicheBlueprint\BlueprintInstallationRunResult;
 use App\Library\NicheBlueprint\NicheBlueprintInstaller;
+use App\Library\Support\RequestScopedCache;
 use App\Models\Business;
 use Illuminate\Console\Command;
 
@@ -38,7 +39,7 @@ class InstallMissingBlueprintComponentsCommand extends Command
 
     protected $description = 'Install any never-attempted or failed niche Blueprint components for existing Businesses (Contract 20 §9.2)';
 
-    public function handle(NicheBlueprintInstaller $installer): int
+    public function handle(NicheBlueprintInstaller $installer, RequestScopedCache $requestCache): int
     {
         $businesses = $this->targets();
 
@@ -54,6 +55,15 @@ class InstallMissingBlueprintComponentsCommand extends Command
         $aborted = 0;
 
         foreach ($businesses as $business) {
+            // EACH BUSINESS IS ITS OWN UNIT OF WORK, mirroring the queue's own
+            // per-job boundary (ResetRequestScopedCacheAtJobBoundary). A console
+            // process holds ONE synthetic Request for its whole lifetime and
+            // raises no job events, so without this the entitlement inputs
+            // memoized for the first Business — plan assignment, overrides,
+            // toggles — would accumulate for the entire fleet sweep and could
+            // serve a stale answer to a later Business's decision.
+            $requestCache->flush();
+
             $result = $installer->installForBusiness($business);
             $processed++;
 
