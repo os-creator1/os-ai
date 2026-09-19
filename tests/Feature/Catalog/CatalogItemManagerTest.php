@@ -217,6 +217,23 @@ class CatalogItemManagerTest extends TestCase
         ]);
     }
 
+    public function test_create_refuses_the_first_integer_beyond_php_int_max(): void
+    {
+        $business = $this->business();
+
+        // The equal-length boundary matters: comparing two digit strings with
+        // PHP's numeric `>` can coerce them to a floating-point value once
+        // the candidate is beyond PHP_INT_MAX. The domain validator must make
+        // this decision lexically after the length check instead.
+        $this->expectException(CatalogRuleException::class);
+        $this->manager()->create($business, [
+            'type' => 'product',
+            'name' => 'X',
+            'price_minor' => '9223372036854775808',
+            'currency_code' => 'USD',
+        ]);
+    }
+
     public function test_create_accepts_a_valid_zero_price(): void
     {
         $business = $this->business();
