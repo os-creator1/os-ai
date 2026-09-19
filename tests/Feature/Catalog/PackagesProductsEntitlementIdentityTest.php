@@ -89,11 +89,15 @@ class PackagesProductsEntitlementIdentityTest extends TestCase
         }
     }
 
-    public function test_no_catalog_controller_class_exists_yet(): void
+    public function test_no_catalog_controller_or_later_sub_slice_class_exists_yet(): void
     {
+        // Corrected for Sub-slice B (§12.B): CatalogItemManager is exactly
+        // that sub-slice's own deliverable — a domain service with no
+        // customer HTTP surface of its own — so its existence is now
+        // expected. Everything Sub-slices C/D/E still own remains absent.
+        $this->assertTrue(class_exists('App\\Library\\Catalog\\CatalogItemManager'));
         $this->assertFalse(class_exists('App\\Http\\Controllers\\Customer\\Business\\CatalogController'));
         $this->assertFalse(class_exists('App\\Http\\Controllers\\Customer\\Business\\CatalogItemController'));
-        $this->assertFalse(class_exists('App\\Library\\Catalog\\CatalogItemManager'));
         $this->assertFalse(class_exists('App\\Library\\Catalog\\CatalogItemLocationOverrideManager'));
         $this->assertFalse(class_exists('App\\Library\\Catalog\\CatalogItemPricingResolver'));
         $this->assertFalse(class_exists('App\\Library\\Catalog\\PackageSnapshotService'));
