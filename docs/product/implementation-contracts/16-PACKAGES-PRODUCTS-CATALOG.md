@@ -601,25 +601,33 @@ long B/C were merged ahead of E.
   entitlement gate.
 - **Prerequisites**: A (hard).
 - **Schema**: none new — consumes A's tables.
-- **Tenancy/security**: §6's ordinary Business-wide tenancy check
-  (active `WorkspaceMembership` or Workspace owner) is exercised by this
-  sub-slice's own tests as a service-level precondition; the
-  `packages_products` capability check and `EntitlementManager`
-  enforcement are HTTP-layer concerns that do not exist until Sub-slice E
-  wires a controller in front of this manager.
+- **Tenancy/security**: **corrected** — this manager takes no actor
+  parameter and performs no authentication-derived authorization at all.
+  Its own, narrower duty is domain integrity: every method re-derives the
+  `CatalogItem` fresh from persistence, under lock, and proves it belongs
+  to the given `Business`, never trusting a caller-supplied model. §6's
+  ordinary Business-wide tenancy check (active `WorkspaceMembership`,
+  Workspace owner), the `packages_products` capability check, and
+  `EntitlementManager` enforcement are all Sub-slice E controller
+  responsibilities — none of the three exists at this layer, and this
+  sub-slice's own tests exercise the domain-integrity re-derivation
+  described above, not authenticated tenancy.
 - **Concurrency**: §7's reorder algorithm and the catalog-item
   serialization lock, implemented and tested here for every mutation this
   manager exposes.
-- **Tests**: manager-level CRUD × role (owner/admin/staff, all should
-  succeed — role-blind per §6) × cross-Workspace boundary (a member of a
-  different Workspace must never reach or mutate another Business's
-  catalog through this manager); reorder correctness under a submitted
-  full ordered list, including the "list must contain every active item
-  exactly once" validation (mirroring `CrmPipelineService`'s own
-  validation); archive/reactivate round-trip; the co-nullable
-  price/currency invariant rejected when violated; a concurrent
-  edit-vs-edit test proving the `lockForUpdate()` serialization actually
-  blocks/serializes rather than racing.
+- **Tests**: manager-level CRUD correctness; the domain-integrity
+  refusal — a `CatalogItem` that does not belong to the given `Business`
+  (however it was obtained) must never be read, mutated, or trusted on
+  any field except its id (**corrected**: this is a re-derivation-from-
+  persistence test, not an authenticated-actor/role test — no actor
+  parameter exists at this layer, per the Tenancy/security correction
+  above); reorder correctness under a submitted full ordered list,
+  including the "list must contain every active item exactly once"
+  validation (mirroring `CrmPipelineService`'s own validation);
+  archive/reactivate round-trip; the co-nullable price/currency invariant
+  rejected when violated; a concurrent edit-vs-edit test proving the
+  `lockForUpdate()` serialization actually blocks/serializes rather than
+  racing.
 - **Risk**: Low.
 - **Model**: Sonnet 5 sufficient.
 
@@ -635,22 +643,30 @@ long B/C were merged ahead of E.
 - **Prerequisites**: A, B (hard — needs catalog items to exist before
   they can be overridden per Location).
 - **Schema**: none new — consumes A's `catalog_item_location_overrides`.
-- **Tenancy/security**: this sub-slice's own tests exercise §6's
-  Location-scoped chain directly — ordinary Business-wide tenancy to the
-  catalog item's Business, `LocationAccessGuard::
-  assertUserCanAccessLocation()` for the target Location, and the
-  FK-domain-integrity check that the Location belongs to the same
-  Business as the catalog item, checked in that order. The
-  `packages_products` capability and `EntitlementManager` gates are again
-  HTTP-layer concerns Sub-slice E adds.
+- **Tenancy/security**: **corrected** — like Sub-slice B's manager, this
+  manager takes no actor parameter and calls `LocationAccessGuard` at no
+  point; it does not exercise §6's Location-scoped chain itself. Its own
+  duty is domain integrity only: re-derive the `CatalogItem` fresh under
+  lock and prove it belongs to the given `Business`, then re-derive the
+  `BusinessLocation` fresh and prove IT belongs to that SAME Business (the
+  FK-domain-integrity check) — never trusting either object a caller
+  supplies. `LocationAccessGuard::assertUserCanAccessLocation()` is
+  mandatory at the Sub-slice E HTTP boundary for every customer-reachable
+  Location override route once one exists (§6 is unchanged and is not
+  weakened by this correction); the `packages_products` capability and
+  `EntitlementManager` gates are likewise Sub-slice E boundary
+  responsibilities, not this manager's.
 - **Concurrency**: §7's catalog-item lock, taken by every override
   mutation before it touches the override row; the `unique(catalog_
   item_id, business_location_id)` constraint remains the mechanism for
   two concurrent writes to the same override pair.
-- **Tests**: override CRUD × Location-ACL boundary (granted vs
-  ungranted Location → refused, matching the existing convention); cross-
-  Business override attempt refused by the FK-domain-integrity check
-  before `LocationAccessGuard` is even consulted; `CatalogItemPricingResolver`
+- **Tests**: override CRUD correctness; the domain-integrity refusals —
+  a foreign `CatalogItem` and a `BusinessLocation` belonging to a
+  different Business than the catalog item (**corrected**: exercised as
+  re-derivation-from-persistence tests against this manager directly, not
+  as a `LocationAccessGuard`/actor-ACL test — that guard is exercised by
+  Sub-slice E's own controller tests instead, once those controllers
+  exist); `CatalogItemPricingResolver`
   correctness across all three resolution cases (no override row →
   Business default; override row with `is_enabled=false` → not offered;
   override row with a `price_minor_override` → that price) **and** its
