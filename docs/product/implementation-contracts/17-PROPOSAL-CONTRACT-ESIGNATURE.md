@@ -538,7 +538,7 @@ structure than V1 needs; a clean additive migration later.)*
 ```
 id
 uid                        uuid, unique
-business_document_id        FK -> business_documents, cascadeOnDelete, NOT NULL
+business_document_id        FK -> business_documents, restrictOnDelete, NOT NULL
 version_number               unsignedInteger
 state                         string(16): draft | issued | superseded
 content                        json            -- rendered body/terms, denormalized
@@ -562,6 +562,12 @@ The `draft_guard` generated column is the `automation_workflow_versions`
 technique (§3.5): MySQL has no partial unique index, so "at most one draft
 per document" is enforced by a stored generated column plus a plain unique
 key, not by application discipline alone.
+
+MySQL forbids CASCADE or SET NULL on a base column used by a STORED generated
+column, so this FK uses RESTRICT. This matches the existing
+`automation_workflow_versions` precedent. Documents move through lifecycle
+states, including void, instead of parent-row cascade deletion. A future
+physical purge must explicitly delete dependencies in safe order.
 
 #### 5.3.1 What is immutable, stated mechanically honestly
 

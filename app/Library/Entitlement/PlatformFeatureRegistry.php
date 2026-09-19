@@ -86,6 +86,14 @@ final class PlatformFeatureRegistry
         // no customer HTTP surface); only Sub-slice E, once A-D are merged
         // and verified end-to-end, performs the Planned -> Available flip.
         PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Planned,
+        // Implementation Contract 17, Sub-slice A: schema and inert entitlement
+        // identity only — no controller, route, view, provider call or public
+        // link exists yet. Stays Planned through Sub-slices B-F; only Sub-slice
+        // G, once A-F are merged and the end-to-end path is verified, performs
+        // the Planned -> Available flip (§6.4). While Planned, every
+        // authenticated route and every public request fails closed at
+        // EntitlementManager.
+        PlatformFeature::PaymentsContracts->value => PlatformFeatureAvailability::Planned,
     ];
 
     /**
