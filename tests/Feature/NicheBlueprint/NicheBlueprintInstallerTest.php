@@ -791,4 +791,69 @@ class NicheBlueprintInstallerTest extends TestCase
         $this->assertSame(1, $this->businessOwnedRowCount($business));
         $this->assertSame($records, $this->rawInstallationRows($business));
     }
+
+    /**
+     * §13.6 / §8.1 — a `skipped_unavailable` record is NEVER reversed by an
+     * automated path once its PlatformFeature becomes Available and the plan
+     * entitles it. Only the owner's explicit add (§7.3, Sub-slice E) may.
+     *
+     * Availability lives in `PlatformFeatureRegistry`'s compile-time constant,
+     * so a test cannot flip a feature at runtime. It can do something exactly
+     * equivalent and arguably stricter: persist the record a Planned-era run
+     * would have written, for a feature that IS now Available and entitled,
+     * and then prove `decide()` genuinely ALLOWS it while the automated run
+     * still refuses to touch it. That isolates the property under test — the
+     * terminality of a skip — from the reason the skip was first recorded.
+     */
+    public function test_a_skip_recorded_while_a_feature_was_planned_is_never_reversed_once_it_is_available(): void
+    {
+        [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $blueprint = $this->publishBlueprint([
+            ['key' => 'was_planned', 'feature' => self::FEATURE_INSTALLS_EVERYWHERE],
+        ]);
+
+        // Exactly the row a run made while the feature was still Planned would
+        // have left behind: state and reason written by that era's decision.
+        DB::table('business_blueprint_component_installations')->insert([
+            'business_id' => $business->id,
+            'blueprint_id' => $blueprint->id,
+            'component_key' => 'was_planned',
+            'component_type' => TestInstallingComponentAdapter::TYPE,
+            'installed_from_version' => 1,
+            'state' => BlueprintComponentInstallationState::SkippedUnavailable->value,
+            'required_feature_key' => self::FEATURE_INSTALLS_EVERYWHERE,
+            'decision_reason' => 'platform_feature_unavailable',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // The Planned -> Available transition, proven at the authority itself:
+        // this feature is now Available AND entitled by this plan, so the only
+        // thing that can keep the component uninstalled is the terminality of
+        // the skip record.
+        $decision = app(EntitlementManager::class)->decide(
+            $workspace->fresh(),
+            $business->fresh(),
+            self::FEATURE_INSTALLS_EVERYWHERE,
+            (int) $workspace->owner_user_id,
+        );
+
+        $this->assertTrue($decision->allowed, 'The feature must genuinely be installable now, or this test proves nothing.');
+
+        $before = $this->rawInstallationRows($business);
+
+        $this->travel(5)->seconds();
+
+        $result = $this->installer()->installForBusiness($business);
+
+        $this->assertSame(0, $result->installed);
+        $this->assertSame(1, $result->alreadyDecided);
+        $this->assertSame(
+            BlueprintComponentInstallationState::SkippedUnavailable,
+            $this->installationRecords($business)['was_planned']->state
+        );
+        $this->assertSame($before, $this->rawInstallationRows($business), 'The skip record must not be rewritten, not even its updated_at.');
+        $this->assertSame(0, $this->businessOwnedRowCount($business), 'No Business-owned state may appear from an automated path.');
+    }
 }
