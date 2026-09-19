@@ -51,6 +51,35 @@
             'category'     => 'Google Business Profile',
             'default'      => false,
         ],
+        // SEO (Contract 18 §10.2). Three independent capabilities, none of
+        // which reuses view_keywords (the legacy inbound-SMS keyword
+        // product), view_reports, website or any Google Business Profile
+        // key. A capability answers "may this actor use this FEATURE at
+        // all"; tenancy and entitlement are checked separately.
+        //
+        // view_seo / manage_seo default TRUE, like `website` and
+        // `automations`: reading the SEO overview and editing the
+        // customer's own keywords/citations/review records are ordinary
+        // day-to-day work. manage_search_console defaults FALSE, like
+        // manage_google_business_profile: it will govern connecting a Google
+        // account, which is credential-class. It is declared now so the
+        // identity exists; nothing consumes it until the Search Console
+        // sub-slice.
+        'view_seo'              => [
+            'display_name' => 'view_seo',
+            'category'     => 'SEO',
+            'default'      => true,
+        ],
+        'manage_seo'            => [
+            'display_name' => 'manage_seo',
+            'category'     => 'SEO',
+            'default'      => true,
+        ],
+        'manage_search_console' => [
+            'display_name' => 'manage_search_console',
+            'category'     => 'SEO',
+            'default'      => false,
+        ],
         /*
          * Customer Experience Slice 3 §4.7 — advanced / BYO provider settings.
          *
