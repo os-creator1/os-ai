@@ -99,6 +99,11 @@ final class CustomerMenuBuilder
         'google_business_profile_module',
         'conversations',
         'crm',
+        // Packages & Products (Contract 16 §12.E). Omitting this line would
+        // not merely fall back to a slower query: entitled() answers from the
+        // bulk snapshot, which fails closed on any key not listed here, so an
+        // unlisted key would silently hide the entry for every account forever.
+        'packages_products',
         // Not a menu entry: AI-3's Business Home "What we notice" line reads
         // this answer from the same one bulk snapshot, so checking it costs
         // the page no entitlement query of its own (§16).
@@ -196,6 +201,15 @@ final class CustomerMenuBuilder
         ]));
         $items[] = $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Get found', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
             'customer.workspaces.businesses.gbp.', 'customer.gbp.',
+        ]));
+        // Packages & Products — the Business-wide catalog (Contract 16 §12.E).
+        // Offered exactly when the catalog boundary would let the actor in on
+        // the first two gates: the `packages_products` capability (item()) and
+        // the entitlement (entitled()). Visibility is NEVER authorization —
+        // every catalog route re-runs the full §6 chain itself, so hiding or
+        // showing this entry changes nothing about what a request can do.
+        $items[] = $this->entitled('packages_products', $this->item($user, 'packages_products', 'Packages & Products', 'package', ['packages_products'], 'customer.workspaces.businesses.catalog.index', $scoped, $current, [
+            'customer.workspaces.businesses.catalog.',
         ]));
         $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',

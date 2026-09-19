@@ -1217,6 +1217,49 @@
 
         /*
         |----------------------------------------------------------------
+        | Packages & Products catalog (Contract 16, Sub-slice E)
+        |----------------------------------------------------------------
+        |
+        | ONE Business-wide catalog, plus sparse per-Location deviations from
+        | it (never a per-Location copy — Addendum §14). Every action runs
+        | the §6 chain in this order, each gate independent of the others:
+        |
+        |   1. Workspace/Business tenancy        (404)
+        |   2. the `packages_products` capability (403)
+        |   3. the PackagesProducts entitlement   (404)
+        |   4. Location-scoped routes only: the Location belongs to THIS
+        |      Business, then LocationAccessGuard (404)
+        |
+        | Both controllers are thin: every write is CatalogItemManager or
+        | CatalogItemLocationOverrideManager, every price is
+        | CatalogItemPricingResolver. `{businessUid}` in every path is what
+        | classifies these routes as Business-scoped for View As.
+        |
+        | While PlatformFeature::PackagesProducts is Planned, gate 3 refuses
+        | every one of these with 404, including for an owner.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/catalog')->name('businesses.catalog.')->group(function () {
+            Route::get('/', 'Business\CatalogItemsController@index')->name('index');
+            Route::get('/new', 'Business\CatalogItemsController@create')->name('create');
+            Route::post('/', 'Business\CatalogItemsController@store')->name('store');
+            Route::post('/order', 'Business\CatalogItemsController@reorder')->name('reorder');
+
+            // Location-scoped. Declared BEFORE the `{catalogItemUid}` routes so
+            // the literal `locations` segment is never captured as an item uid.
+            Route::get('/locations', 'Business\CatalogLocationOffersController@index')->name('locations.index');
+            Route::get('/locations/{locationUid}', 'Business\CatalogLocationOffersController@show')->name('locations.show');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/enabled', 'Business\CatalogLocationOffersController@setEnabled')->name('locations.enabled');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/price', 'Business\CatalogLocationOffersController@setPrice')->name('locations.price');
+
+            Route::get('/{catalogItemUid}', 'Business\CatalogItemsController@edit')->name('edit');
+            Route::post('/{catalogItemUid}', 'Business\CatalogItemsController@update')->name('update');
+            Route::post('/{catalogItemUid}/archive', 'Business\CatalogItemsController@archive')->name('archive');
+            Route::post('/{catalogItemUid}/reactivate', 'Business\CatalogItemsController@reactivate')->name('reactivate');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)
         |----------------------------------------------------------------
         |
