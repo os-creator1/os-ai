@@ -304,7 +304,7 @@ owner's real user id and receives an actor-independent answer — it does
 | Key + version family with immutable versions | `question_packs`: `unique(['key','version'])`, `is_active`, *"a new question or changed wording ships as a new `version` row under the same `key`, never an in-place edit"* | §5.2's `unique(blueprint_id, version_number)` |
 | Post-creation provisioning via event + idempotent listener | `BusinessCreated` (`implements ShouldDispatchAfterCommit`, carries `businessId`, `customerId`) → `InitializeBusinessUsageProfile` (`app/Providers/EventServiceProvider.php:49-50`). Its docblock: the row *"is already committed by the time this listener runs, so an initialization failure here can never roll back that already-created Business, and this listener does not pretend otherwise"*; failure is caught, logged non-sensitively, and corrected by *"the same idempotent backfill command used for pre-existing Businesses"* | §7's installation trigger, §9's backfill command — the same event, the same failure posture, the same recovery story |
 | Business-row lock serialising concurrent applications | `BusinessTemplateApplier::applyPipelines()` — `Business::query()->whereKey($business->id)->lockForUpdate()->first()` | §7's per-component lock, taken from the same line |
-| Single customer capability key per feature | `config/customer-permissions.php` — flat map of `['display_name','category','default']`; `automations`/`website` default `true`, `manage_google_business_profile` default **`false`** with the reasoning *"there is no existing administrator/owner precedent... so the conservative default stands"* | §6.5 adds exactly one key, defaulting `false`, citing that precedent |
+| Owner-restricted customer write | `EntitlementManager`'s own owner-authority checks for writes the Workspace owner alone may make (as distinct from its separate owner-or-active-admin checks) | §6.5 — the explicit Blueprint add is **owner-only**, reproducing that shape in this domain. **`config/customer-permissions.php` is deliberately NOT touched**: Blueprint §22 names the owner specifically, and a capability key would grant a wider authority than the governing sentence allows |
 | Null actor for a system-initiated write | `ReconcileSlotAgreementAllocation` calls its allocation *"with both administratorActorUserId and reason left null — no system-actor or fake-administrator id of any kind"* | §6.4 / §5.4's `installed_by_user_id` NULL on system install |
 
 ## 4. Delta from current state to target
@@ -433,7 +433,7 @@ blueprint_version_id  bigint FK -> niche_blueprint_versions(id) cascadeOnDelete
 blueprint_id          bigint                          -- denormalised; see composite FK below
 component_key         string(64)                      -- STABLE ACROSS VERSIONS. The installation identity.
 component_type        string(40)                      -- adapter discriminator, e.g. 'crm_pipeline'
-required_feature_key  string(64) NULL                 -- a PlatformFeature value, or NULL for ungated
+required_feature_key  string(64) NOT NULL             -- a known, Business-scoped PlatformFeature value. NEVER nullable.
 payload               json                            -- adapter-specific descriptor
 position              unsignedSmallInteger default 0
 created_at / updated_at
@@ -443,6 +443,21 @@ FOREIGN KEY (blueprint_version_id, blueprint_id)
         REFERENCES niche_blueprint_versions(id, blueprint_id)  restrictOnDelete
 ```
 
+- **`required_feature_key` is `NOT NULL`, and there is no such thing as an
+  ungated Blueprint component in V1.** Addendum §16's second sentence —
+  *"Each component declares its required entitlement"* — is a universal
+  statement, not a default, so a nullable column would put a
+  Blueprint-shaped hole straight through the invariant this slice exists
+  to enforce: any component published with a `NULL` key would install into
+  every Business on every plan without the entitlement authority ever
+  being consulted. The column is therefore non-nullable at the database
+  layer, and §6.2 rejects any draft component whose key is absent, unknown
+  or Workspace-scoped.
+  **If a future component has no appropriate `PlatformFeature` identity,
+  it cannot be published at all** until the relevant product authority
+  defines one — that is the correct outcome, not an obstacle to work
+  around, and §15 records it as a deliberate non-goal rather than an
+  oversight.
 - **`component_key` is the durable identity and the single most important
   column in this schema.** It is what an installation record points at
   (§5.4), so "the Business already has this component" survives every
@@ -483,7 +498,7 @@ component_key               string(64)
 component_type              string(40)
 installed_from_version      unsignedInteger              -- the version_number this decision was made from
 state                       string(24)                   -- installed | skipped_unentitled | skipped_unavailable | failed
-required_feature_key        string(64) NULL              -- copied at decision time; provenance, never re-read as authority
+required_feature_key        string(64) NOT NULL          -- copied at decision time; provenance, never re-read as authority
 decision_reason             string(48) NULL              -- the EntitlementDecision reason, verbatim (§3.6)
 installed_record_type       string(64) NULL              -- e.g. 'crm_pipeline'; NULL unless state = installed
 installed_record_id         unsignedBigInteger NULL      -- plain scalar, NO FK: points across bounded contexts
@@ -501,11 +516,21 @@ INDEX  (business_id, state)                              -- the upgrade-surfacin
   `failed`. A row in state `installed` is never re-run — that is what makes
   "never silently update or reactivate" true by construction rather than
   by the installer behaving.
-- **`skipped_unentitled` and `skipped_unavailable` are distinct states and
-  the distinction matters.** `skipped_unentitled` is surfaced on upgrade
-  (§8); `skipped_unavailable` is **never** surfaced, because the target
-  module does not exist and offering it would be offering a feature that
-  cannot execute (§6.3).
+- **Skip states are provenance, never authority.** `skipped_unentitled`
+  and `skipped_unavailable` each record *why a past run declined to
+  install*, and nothing more. **Neither state grants, withholds or
+  suppresses visibility on any later render**, and no skip row is ever
+  consulted to decide whether a component may be added. `installed` is
+  the **only** state that permanently removes a component from §8.1's
+  addable query; every other row — and every absent row — is re-decided by
+  `EntitlementManager::decide()` on every single render.
+  The practical consequence, which §8.1 states in full and §13.6 proves:
+  a component recorded `skipped_unavailable` while its `PlatformFeature`
+  was `Planned` is **not** surfaced while that remains true (because
+  `decide()` returns `platform_feature_unavailable`), and **is** surfaced
+  the moment that feature is flipped `Available` and the plan entitles it
+  — with no record rewrite, migration or backfill. A stale skip row can
+  never durably cut a Business off from part of its own Blueprint.
 - `installed_record_id` is a plain `unsignedBigInteger` with **no foreign
   key**, deliberately: it points at a row in whichever bounded context the
   adapter wrote to (`crm_pipelines` today, others later), and a polymorphic
@@ -606,16 +631,19 @@ if **any** component of the draft fails any of:
 1. `component_type` has **no registered adapter**. This is the rule that
    makes adapters genuinely additive (§11): you cannot publish a version
    naming a component whose installer does not exist.
-2. `required_feature_key` is non-NULL and `PlatformFeatureRegistry::isKnown()`
-   is false → the `platform_feature_unknown` case, caught here so it can
-   never reach an install.
-3. `required_feature_key` is non-NULL and `PlatformFeatureRegistry::isBusinessScoped()`
-   is false → the `wrong_feature_scope` case. A Workspace-scoped feature
-   (today only `ProspectOutreach`) can never gate a Business-installed
-   component.
-4. The adapter's own `validateDescriptor($payload)` throws — the
+2. `required_feature_key` is **absent, empty or NULL**. Every component
+   must declare an entitlement (§5.3); a component that does not is
+   unpublishable, and no default, fallback or implicit feature is ever
+   substituted for a missing one.
+3. `PlatformFeatureRegistry::isKnown($key)` is false → the
+   `platform_feature_unknown` case, caught here so it can never reach an
+   install.
+4. `PlatformFeatureRegistry::isBusinessScoped($key)` is false → the
+   `wrong_feature_scope` case. A Workspace-scoped feature (today only
+   `ProspectOutreach`) can never gate a Business-installed component.
+5. The adapter's own `validateDescriptor($payload)` throws — the
    `PipelineBlueprint` "fails where it is defined" rule (§5.3).
-5. `component_key` is not unique within the version (also a DB constraint).
+6. `component_key` is not unique within the version (also a DB constraint).
 
 Note carefully what is **not** checked at publish: `isAvailable()`. A
 component whose feature is still `Planned` is a **legitimate, publishable**
@@ -629,12 +657,19 @@ each time one ships.
 For each component of the published version, in `position` order:
 
 ```
-if (required_feature_key === null)                      -> INSTALL
 decision = EntitlementManager::decide($workspace, $business, $key, $ownerUserId)
 if (decision.allowed)                                   -> INSTALL
 if (decision.reason === 'platform_feature_unavailable') -> record skipped_unavailable
 otherwise                                               -> record skipped_unentitled
 ```
+
+**There is no bypass branch, because there is no ungated component.**
+`required_feature_key` is `NOT NULL` (§5.3) and was validated as known and
+Business-scoped at publish (§6.2), so `decide()` is consulted for **every
+component of every installation, without exception** — no component can
+reach an adapter without an allowed entitlement decision naming it. This
+is the mechanical form of Addendum §16's "only components the current plan
+permits are installed".
 
 Every denial reason is recorded verbatim in `decision_reason`. The
 installer **never** calls `PlatformFeatureRegistry` itself and **never**
@@ -670,28 +705,43 @@ take.
 
 ### 6.5 Customer side — the explicit "add" action
 
-Blueprint §22 says "for the owner to explicitly add"; Addendum §16 says
-"explicit user action". The established way this repository expresses
-"the owner, plus staff the owner trusts" is a single capability key
-layered **on top of** ordinary Business tenancy — the Acceptance Matrix
-phrases the same boundary elsewhere as "Owner + staff per feature
-permission".
+**This action is OWNER-ONLY, and no new customer capability key is
+created.**
+
+Blueprint §22 is specific about the actor: *"an upgrade only **surfaces**
+newly entitled components for the **owner** to explicitly add"*. That is
+the authority, and this contract implements it literally rather than
+broadening it. A capability key would hand the decision to any staff
+member the owner granted it to, which is a **wider** authority than the
+governing sentence describes — and inventing a permission surface no
+document asks for is exactly the kind of scope creep this contract's own
+§15 forbids elsewhere.
+
+The distinction is deliberate and worth stating plainly: **deciding which
+Blueprint components a Business has is an ownership decision; using what
+those components produced is a staff decision.** Staff continue to use
+every installed module exactly as that module's own feature permissions
+already allow — installing a pipeline does not change who may work deals
+in it — but staff do not change the set of installed components.
 
 Three independent gates, none substituting for another, in this order:
 
 1. **Tenancy** — `ResolvesBusinessTenancy`, the same trait every
    `Customer\Business\*` controller already uses. Answers "may this actor
-   reach this specific Business".
-2. **Capability** — one new `config/customer-permissions.php` key,
-   `manage_niche_blueprint`, `'default' => false`. The conservative
-   default follows `manage_google_business_profile`'s own recorded
-   reasoning: no existing owner/administrator precedent in this repository
-   requires granting a management capability by default. Answers "may this
-   actor use this feature at all".
+   reach this specific Business at all".
+2. **Ownership** — the actor must be the owner of the Workspace that owns
+   this Business. Reproduced in this domain from the owner-check shape
+   `EntitlementManager` already uses for owner-restricted writes; it is
+   **not** satisfied by Workspace Admin status, by staff membership, by
+   any `config/customer-permissions.php` key, or by platform-administrator
+   status (a platform admin manages the Blueprint *catalog* per §6.1, and
+   is never a customer's consent authority — Blueprint §30).
 3. **Entitlement of the component being added** — `decide()` is re-asked
    at the moment of the add, inside the same transaction and under the same
    lock as the write (§7.3). A stale "addable" list can never install an
    unentitled component.
+
+**`config/customer-permissions.php` is not modified by this slice.**
 
 There is **no** customer-reachable path that creates, edits, publishes or
 deprecates a Blueprint or a version — the customer surface is strictly
@@ -743,8 +793,8 @@ committed record at step 2 and skips.
 
 ### 7.3 The explicit add (§8) — same boundary, one component
 
-§7.2's inner loop for exactly one `component_key`, plus the §6.5
-capability check **before** the transaction and the §6.5 entitlement
+§7.2's inner loop for exactly one `component_key`, plus the §6.5 tenancy
+and **owner** checks **before** the transaction and the §6.5 entitlement
 re-check **inside** it — with **one deliberate difference from §7.2, and
 it is the point of this whole path**:
 
@@ -868,14 +918,50 @@ is correctly **not** re-offered.
 
 ## 9. Installation trigger, backfill, and the existing lazy path
 
-### 9.1 Trigger
+### 9.1 Triggers — two events, one idempotent entry point
 
-`BusinessCreated` (already `ShouldDispatchAfterCommit`, already carries
-`businessId` and `customerId`) gains a second listener, registered in
-`EventServiceProvider` alongside `InitializeBusinessUsageProfile`, which
-dispatches `InstallNicheBlueprintForBusiness` (a queued job).
+**Initial installation needs a Business *and* a plan assignment, and on
+`main` today those two facts do not reliably arrive in one order.** The
+canonical signup flow (Blueprint §6) assigns the plan first, but Agency
+client provisioning (Contract 07) can create the Workspace and its
+Business *before* that new Workspace has any plan assignment at all. A
+single `BusinessCreated` trigger would therefore abort (correctly, per the
+precondition below) and leave a legitimate, fully-entitled new account
+permanently without its Blueprint until an operator noticed and ran a
+command — which is not an acceptable ordinary path for a valid account.
 
-The listener is deliberately modelled on `InitializeBusinessUsageProfile`'s
+So there are **two** triggers into **one** idempotent entry point:
+
+| Event | Already on `main` | What the listener does |
+|---|---|---|
+| `App\Events\Business\BusinessCreated` (`businessId`, `customerId`) | Yes — `ShouldDispatchAfterCommit`, already has a listener registered in `EventServiceProvider` | Install for that Business. **No plan assignment → abort, zero records** (the precondition below). |
+| `App\Events\Entitlement\WorkspacePlanAssigned` (`workspaceId`, `workspacePlanCatalogId`, `actorUserId`) | Yes — `ShouldDispatchAfterCommit`, dispatched by `EntitlementManager::assignFirstPlan()` and `createLegacyOnboardingCompatibilityAssignment()` | Resolve that Workspace's canonical sole Business (Addendum §1). **No Business → no-op.** Otherwise install for it. |
+
+Both dispatch the same queued `InstallNicheBlueprintForBusiness` job, and
+**duplicate invocation is harmless by construction** — §7.2's
+`UNIQUE (business_id, blueprint_id, component_key)` plus the
+re-read-under-lock already make a second run a no-op, so the two triggers
+need no coordination, no de-duplication flag and no ordering guarantee
+between them. In organic onboarding both may fire; exactly one installs
+and the other finds every record already written.
+
+This closes the race in both directions:
+
+- **plan first, then Business** (canonical signup) → `BusinessCreated`
+  installs; the earlier `WorkspacePlanAssigned` was a no-op because no
+  Business existed yet;
+- **Business first, then plan** (Agency client provisioning) →
+  `BusinessCreated` aborts with zero records; the later
+  `WorkspacePlanAssigned` performs the initial installation
+  **automatically**, with no operator action.
+
+**`WorkspacePlanChanged` is deliberately NOT a trigger.** It is a separate
+event on `main`, and wiring it here would silently install newly entitled
+components into an established Business on every upgrade — the single
+thing Addendum §16 forbids outright. Upgrade stays pure-read surfacing
+(§8.1); downgrade stays inert (§8.2). §13.5 proves both.
+
+Each listener is deliberately modelled on `InitializeBusinessUsageProfile`'s
 documented posture, for the same reasons it states:
 
 - the Business row is already committed, so a failure here can never roll
@@ -893,7 +979,8 @@ load-bearing:
 > **Before the per-component loop begins**, the run checks that the
 > Workspace has a plan assignment at all. If it does not, the run
 > **aborts immediately, writing no installation records of any kind**, and
-> is retried later by §9.2's command.
+> is retried automatically by the `WorkspacePlanAssigned` trigger the
+> moment that first assignment arrives.
 
 It deliberately does **not** record every component as
 `skipped_unentitled` with reason `workspace_plan_unassigned`. That would
@@ -918,13 +1005,18 @@ One artisan command, `blueprint:install-missing`, idempotent, safe to run
 repeatedly, operating over a single Business or all Businesses, bounded by
 exactly the same §7.2 rules.
 
-It is the recovery path for precisely four situations, all of which share
-the property that **no entitlement decision was ever recorded**:
+It is a **recovery** path, not the ordinary mechanism for any valid
+account. A legitimate first plan assignment is handled automatically by
+§9.1's `WorkspacePlanAssigned` trigger and never needs this command.
 
-1. the listener failed or was never dispatched (no records at all);
-2. the run aborted on the §9.1 precondition (no records at all);
+It exists for precisely four situations, all of which share the property
+that **no entitlement decision was ever recorded**:
+
+1. a listener failed, was never dispatched, or its queued job was lost;
+2. a Business that predates this slice, or predates its Blueprint being
+   published (no records at all);
 3. individual components recorded `failed` (§7.4);
-4. a Business that existed before its Blueprint was published (no records).
+4. any other operator-diagnosed gap where records are absent.
 
 It is **not** a path for anything previously recorded as
 `skipped_unentitled` or `skipped_unavailable`. Those are decisions, and
@@ -1042,6 +1134,7 @@ existing Business silently changed.**
 | `business_verticals` / `BusinessVertical` | Exists | FK target — hard |
 | `businesses.industry`, `business_knowledge_profiles.vertical_key` | Exists | Read — hard |
 | `BusinessCreated` + `EventServiceProvider` | Exists | One additive listener line — hard |
+| `WorkspacePlanAssigned` (`App\Events\Entitlement`) | Exists — `ShouldDispatchAfterCommit`, dispatched by `EntitlementManager::assignFirstPlan()` and `createLegacyOnboardingCompatibilityAssignment()` | Subscribed to, **event unmodified**; one additive listener line (§9.1) — hard |
 | `BusinessTemplateApplier` (§12.D only) | Exists | Called, unmodified — hard for D, not for A–C |
 | Contracts 01/02/04/07 (Agency + Location ACL) | Merged (`AgencyClientWorkspaceRelationship`, `WorkspaceMembershipLocation`, `ViewAsSession` all present) | Reused implicitly via tenancy; no new requirement |
 
@@ -1110,8 +1203,9 @@ the two surfaces.
 
 - **Files/domains**: `NicheBlueprintInstaller` — §7.1 resolution, §6.3
   filter, §7.2 per-component transaction loop, §7.4 failure handling;
-  `InstallNicheBlueprintForBusiness` job; the `BusinessCreated` listener +
-  its `EventServiceProvider` line; `blueprint:install-missing` command.
+  `InstallNicheBlueprintForBusiness` job; **both** §9.1 listeners —
+  `BusinessCreated` and `WorkspacePlanAssigned` — and their two additive
+  `EventServiceProvider` lines; `blueprint:install-missing` command.
 - **Prerequisites**: A, B.
 - **Schema**: none.
 - **Tenancy/security**: no customer surface. `decide()` is the only
@@ -1122,10 +1216,10 @@ the two surfaces.
   throwing one), since no real adapter exists until D. Full §13 list
   applies here for everything not adapter-specific: skip-unentitled,
   skip-unavailable, idempotent re-run, partial failure keeps earlier
-  successes, concurrent runs install once, **a Workspace with no plan
-  assignment aborts the run and writes zero records** (§9.1) with a later
-  re-run then installing normally, resolution miss writes nothing,
-  ambiguous broad-industry match installs nothing.
+  successes, concurrent runs install once, resolution miss writes nothing,
+  ambiguous broad-industry match installs nothing — plus **the whole of
+  §13.5's five-case trigger matrix (A–E)**, which is this sub-slice's
+  highest-value test set and must not be deferred to D or E.
 - **Risk**: High — this is the slice where a mistake silently mutates a
   live Business. **Model**: Opus-class required.
 
@@ -1154,15 +1248,17 @@ the two surfaces.
 ### Sub-slice E — Customer surface (list installed / list addable / explicit add)
 
 - **Files/domains**: `Customer\Business\NicheBlueprintController` (index +
-  add), its routes, its Blade views, the `manage_niche_blueprint` key in
-  `config/customer-permissions.php`, and the §8.1 query as a read service.
+  add), its routes, its Blade views, and the §8.1 query as a read service.
+  **No change to `config/customer-permissions.php` — this slice adds no
+  capability key (§6.5).**
 - **Prerequisites**: A, B, C, D (E must not front domain code that is not
   merged).
 - **Schema**: none.
 - **Tenancy/security**: exactly §6.5's three gates, in order, none
   substituting for another.
 - **Concurrency**: exactly §7.3.
-- **Tests**: the §13 adversarial authorization matrix in full; the add
+- **Tests**: the §13 adversarial authorization matrix in full, including
+  **non-owner staff and Workspace Admin both refused** the add; the add
   action re-checks entitlement under the lock and refuses a component that
   became unentitled between render and submit; adding an already-installed
   component is a no-op success; a `skipped_unavailable` component is not
@@ -1211,9 +1307,24 @@ Acceptance Matrix:
    are byte-identical, and that the new component is surfaced, not
    installed (Acceptance Matrix: *"A new Blueprint version is published
    without touching any live Business until it opts in"*).
-5. **New account receives everything entitled** — a brand-new Business on a
-   fully-entitled plan ends with every `Available`-and-entitled component
-   `installed` in one run (Addendum §16 sentence 4).
+5. **New account receives everything entitled, whichever order the
+   Business and the plan arrive in** (Addendum §16 sentence 4; §9.1). All
+   five cases are required, and all belong to Sub-slice C:
+   - **A.** plan assignment exists *before* `BusinessCreated` → installs
+     exactly once, every `Available`-and-entitled component `installed`.
+   - **B.** Business created with **no** plan assignment → the run aborts
+     and **zero** installation records exist (not even skips).
+   - **C.** the first `WorkspacePlanAssigned` then fires for that
+     Workspace → the initial installation happens **automatically**, with
+     no command and no operator action.
+   - **D.** **both** triggers fire for the same account → still exactly
+     one installation record per component and exactly one business-owned
+     row per component; the second invocation is a proven no-op.
+   - **E.** `WorkspacePlanChanged` (an upgrade on an established account)
+     → **zero** automatic installs, zero new installation records, zero
+     business-owned rows; the newly entitled components appear only in
+     §8.1's addable query. `WorkspacePlanAssigned` for a Workspace with no
+     Business is likewise a no-op.
 6. **Unavailable feature is never installed, and a skip is never durable**
    — a component whose `required_feature_key` is `Planned` is recorded
    `skipped_unavailable`, creates nothing, and is **not** surfaced as
@@ -1234,10 +1345,15 @@ Acceptance Matrix:
    component.
 10. **Downgrade is inert** — downgrade after install writes nothing,
     deletes nothing, and leaves every installation record unchanged (§8.2).
-11. **Adversarial authorization matrix** (Sub-slice E): capability without
-    tenancy; tenancy without capability; both present but component
-    unentitled; guessed foreign Business uid; guessed foreign
-    `component_key`; non-admin against every Sub-slice F route.
+11. **Adversarial authorization matrix** (Sub-slice E), proving the add is
+    **owner-only** (§6.5): owner of a *different* Workspace; **an active
+    staff member of the correct Business — refused**; **an active
+    Workspace Admin of the correct Workspace — refused**; a platform
+    administrator who is not the owner — refused; the correct owner but a
+    component that is unentitled — refused; guessed foreign Business uid;
+    guessed foreign `component_key`; and non-admin against every Sub-slice
+    F route. The two staff/Admin refusals are the load-bearing cases: they
+    are what prove no capability-shaped back door was introduced.
 12. **Publish never touches a Business** — the source-boundary/observation
     test named in §12.B.
 13. **Existing behaviour unchanged** — `CrmBusinessTemplateTest`,
@@ -1252,10 +1368,12 @@ Per `CLAUDE.md`, every one of these must report a **positive test count**;
 1. Exactly one `niche_blueprints` row exists per niche, and at most one per
    `business_verticals.key` — enforced by the UNIQUE index, not by
    convention (§5.1).
-2. Every component declares its own `required_feature_key`, and the
-   entitlement decision for it comes **only** from
-   `EntitlementManager::decide()` — no second authority anywhere in the
-   slice (§6.3, proven by §13.2).
+2. `niche_blueprint_components.required_feature_key` is **`NOT NULL` at
+   the database layer**, every published component names a known,
+   Business-scoped `PlatformFeature`, and there is **no code path — none —
+   that installs a component without an allowed
+   `EntitlementManager::decide()` result naming it**. No second authority
+   anywhere in the slice (§5.3, §6.2, §6.3, proven by §13.2).
 3. Installing produces **rows the Business owns**, with no live link back
    to any `niche_blueprint_*` row: nothing in the codebase reads a
    Blueprint table to determine a Business's current configuration
@@ -1267,22 +1385,35 @@ Per `CLAUDE.md`, every one of these must report a **positive test count**;
    claimed at exactly that strength, not stronger**.
 5. A platform-side publish writes to **zero** business-owned tables
    (§13.12).
-6. A plan upgrade installs and activates **nothing**; the only write path
-   into a Business is an explicit, capability-gated, entitlement-rechecked
-   user action or a genuinely new Business's initial install (§8.1, §13.3).
+6. A plan upgrade installs and activates **nothing**. `WorkspacePlanChanged`
+   is not wired to any installation path; the only write paths into a
+   Business are (a) an **owner-initiated**, entitlement-rechecked explicit
+   add and (b) a genuinely new account's initial install, triggered by
+   `BusinessCreated` or the **first** `WorkspacePlanAssigned` (§8.1, §9.1,
+   §13.3, §13.5.E).
 7. A plan downgrade removes, archives and deactivates **nothing** (§8.2,
    §13.10).
 8. A component whose `PlatformFeature` is `Planned` is never installed and
-   never surfaced (§6.3, §13.6).
-9. A published version can never name a `component_type` with no registered
-   adapter (§6.2, §12.B tests).
-10. Re-running installation is idempotent, and a partial failure never
+   not surfaced **while it remains `Planned`** — and becomes surfaceable,
+   with no record rewrite, once it is `Available` and entitled, because a
+   skip row is provenance and never authority (§5.4, §6.3, §8.1, §13.6).
+9. The explicit add is **owner-only**: no staff member, Workspace Admin,
+   platform administrator or capability key can change which Blueprint
+   components a Business has, and `config/customer-permissions.php` is not
+   modified by this slice (§6.5, §13.11).
+10. The initial install is not lost when a Business is created before its
+    Workspace's first plan assignment; the `WorkspacePlanAssigned` trigger
+    completes it automatically, and firing both triggers still yields
+    exactly one installed row per component (§9.1, §13.5.B–D).
+11. A published version can never name a `component_type` with no
+    registered adapter (§6.2, §12.B tests).
+12. Re-running installation is idempotent, and a partial failure never
     rolls back a successful component (§7.4, §13.7–8).
-11. `installed_by_user_id` is NULL for a system-initiated install — no
+13. `installed_by_user_id` is NULL for a system-initiated install — no
     fabricated system actor anywhere in the slice (§6.4).
-12. No file under `app/Library/Crm/`, `app/Library/Entitlement/`, or
+14. No file under `app/Library/Crm/`, `app/Library/Entitlement/`, or
     `app/Library/Workspace/` is modified by any sub-slice (§4, §17).
-13. `git diff --check` clean and a clean working tree at the end of each
+15. `git diff --check` clean and a clean working tree at the end of each
     sub-slice's own commit.
 
 ## 15. Non-goals
@@ -1298,8 +1429,24 @@ Per `CLAUDE.md`, every one of these must report a **positive test count**;
   branding, never Blueprint content. **No per-Agency Blueprint table.**
 - **Per-plan Blueprint variants** — forbidden outright by Addendum §16
   sentence 1.
+- **Ungated Blueprint components.** `required_feature_key` is `NOT NULL`
+  (§5.3) and there is no default, fallback or implicit feature. A
+  component whose product area has no `PlatformFeature` identity is
+  **unpublishable until the relevant product authority defines one** —
+  deliberately, because the alternative is a Blueprint-shaped bypass of
+  the entitlement invariant Addendum §16 locks. Defining a new
+  `PlatformFeature` case for a future component is that future slice's
+  work, under RFC-004's own rules, not this one's.
+- **A customer capability key for Blueprint management** (§6.5) — Blueprint
+  §22 names the **owner**, and a capability key would grant staff a wider
+  authority than that sentence allows. `config/customer-permissions.php`
+  is untouched.
 - **Uninstall / auto-uninstall on downgrade** (§8.2) — the rows are the
   Business's.
+- **Installing on plan upgrade.** `WorkspacePlanChanged` is deliberately
+  not wired to any installation path (§9.1); only the *first*
+  `WorkspacePlanAssigned` for an account can install, and only because
+  that account has no Blueprint yet.
 - **A `*_transitions` audit table for installation state** (§5.4) — no
   document asks for install history, and `CLAUDE.md` forbids a table
   without a purpose. Recorded here so a later slice may add one knowingly.
@@ -1346,8 +1493,9 @@ having no contract in the original 14-priority factory scope.
 | Slice 15 (Calendar), 16 (Packages), 17 (Proposals), 18 (SEO) | none today — each is a target module this slice does not build. Each becomes a **future adapter** author (§11), conflicting only on the adapter-registry line | Parallel-safe; sequencing is §11's rule, not a file conflict |
 | `app/Providers/AppServiceProvider.php` | one additive singleton binding beside line 381 | Low risk — the same shape every prior slice's binding used |
 | `app/Providers/EventServiceProvider.php` | one additive listener under the existing `BusinessCreated` key (lines 49-50) | Low risk |
-| `config/customer-permissions.php` | one additive key, `manage_niche_blueprint` (§12.E) | Low risk — same shape as `packages_products` in Contract 16 and `manage_google_business_profile` on `main` |
-| Contract 16 (Packages) — `config/customer-permissions.php` | both add one key to the same flat map | Trivial textual merge; no semantic overlap |
+| `config/customer-permissions.php` | **not modified** — this slice adds no capability key (§6.5) | No conflict at all, including with Contract 16's own `packages_products` key |
+| `app/Events/Entitlement/WorkspacePlanAssigned.php` | **read/subscribed, not modified** (§9.1) | No conflict by construction |
+| Contract 03 / any future lifecycle work dispatching `WorkspacePlanAssigned` | this slice adds a listener to that event | Low risk — a new subscriber is additive; but any future slice that starts dispatching `WorkspacePlanAssigned` for something **other** than a genuine first assignment would newly reach this installer, so that slice must re-read §9.1 before doing so |
 | CRM domain (`app/Library/Crm/*`) | **read and called, never modified** (§4, §12.D) | No conflict by construction |
 | `EntitlementManager` | **called, never modified** | No conflict by construction |
 | Contract 03 (account lifecycle) | `decide()`'s `plan_suspended`/`plan_inactive` reasons are consumed as `skipped_unentitled` (§3.6); no shared file | Parallel-safe |
@@ -1373,7 +1521,10 @@ which you should read first), the `UNIQUE (id, blueprint_id)` that the
 components table's composite FK requires, and the deliberately FK-less
 `installed_record_id`, `installed_by_user_id` and `published_by_user_id`
 columns (the `workspace_entitlement_transitions` convention — read that
-migration's docblock). Add the four Eloquent models with casts and
+migration's docblock). **`niche_blueprint_components.required_feature_key`
+is `NOT NULL`** — there is no ungated Blueprint component in V1 (§5.3), so
+do not make it nullable "for flexibility"; a migration test must assert the
+non-nullability explicitly. Add the four Eloquent models with casts and
 relations only, the two enums, the adapter interface, the
 `InstalledComponentReference` value object, the empty adapter registry, and
 its singleton binding beside the existing `BusinessTemplateRegistry`
@@ -1392,9 +1543,11 @@ asserts platform-administrator authority in the shape
 call into `EntitlementManager` for it. **`publishVersion()` is the
 fail-closed gate and is the highest-correctness code in this slice:**
 refuse the publish, atomically, if any component has an unregistered
-`component_type`, a `required_feature_key` that is not a known
-`PlatformFeature`, a `required_feature_key` that is Workspace-scoped, a
-payload its adapter rejects, or a duplicate `component_key`. **Do NOT
+`component_type`, a **missing/empty** `required_feature_key`, a
+`required_feature_key` that is not a known `PlatformFeature`, a
+`required_feature_key` that is Workspace-scoped, a payload its adapter
+rejects, or a duplicate `component_key`. Never substitute a default or
+fallback feature for a missing one. **Do NOT
 check `isAvailable()` at publish** — §6.2 explains why a `Planned` feature
 is legitimately publishable. Write the §12.B tests, including the one
 proving a publish writes to zero business-owned tables. **No HTTP surface.**
@@ -1402,8 +1555,20 @@ proving a publish writes to zero business-owned tables. **No HTTP surface.**
 ### 18.C — Installation engine
 
 Implement Contract 20 §6.3, §6.4, §7 and §9. Build the installer, the
-queued job, the `BusinessCreated` listener and the
+queued job, **both** §9.1 listeners — `BusinessCreated` **and**
+`App\Events\Entitlement\WorkspacePlanAssigned` — and the
 `blueprint:install-missing` command.
+
+**Both triggers are required, and `WorkspacePlanChanged` is not one of
+them.** `WorkspacePlanAssigned` already exists on `main`
+(`ShouldDispatchAfterCommit`, carrying `workspaceId`,
+`workspacePlanCatalogId`, `actorUserId`; dispatched by
+`EntitlementManager::assignFirstPlan()` and
+`createLegacyOnboardingCompatibilityAssignment()`) — subscribe to it,
+never modify it. Its listener resolves the Workspace's canonical sole
+Business and no-ops when there is none. Wiring `WorkspacePlanChanged`
+would silently install into established Businesses on every upgrade, which
+Addendum §16 forbids outright; §13.5.E is the test that proves you did not.
 
 **Critical, get this exactly right.** The per-component transaction
 boundary in §7.2 is the whole slice: lock the Business row with the same
@@ -1419,9 +1584,13 @@ availability floor, and a second check is precisely the driftable duplicate
 authority this codebase's own docblocks warn against. `installed_by_user_id`
 is **NULL** for a system install; pass the Workspace owner's real user id
 to `decide()` (§3.6 proves that argument is decision-neutral) and do not
-invent a system-actor id. Model the listener on
+invent a system-actor id. There is **no** "no feature key → install"
+branch: `required_feature_key` is `NOT NULL`, so `decide()` is consulted
+for every component without exception. Model both listeners on
 `InitializeBusinessUsageProfile` — read it first — for its failure posture.
-Test with test-only adapters; no real adapter exists yet.
+Test with test-only adapters; no real adapter exists yet. **§13.5's
+five-case trigger matrix (A–E) belongs to this sub-slice** and is its
+highest-value test set.
 
 ### 18.D — CRM pipeline adapter + Photo Booth Blueprint v1
 
@@ -1440,14 +1609,20 @@ the legacy path is untouched.
 ### 18.E — Customer surface
 
 Implement Contract 20 §6.5, §7.3 and §8.1. Build the Business-scoped
-controller (list installed, list addable, add one), its routes and views,
-and add exactly one key to `config/customer-permissions.php`:
-`manage_niche_blueprint`, `'default' => false` (follow
-`manage_google_business_profile`'s recorded reasoning for the conservative
-default). Three gates, in order, none substituting for another: tenancy via
-the existing `ResolvesBusinessTenancy` trait, then the capability, then
-`decide()` re-asked **inside the transaction and under the Business lock**
-at the moment of the add. The addable query is §8.1's, and every candidate
+controller (list installed, list addable, add one), its routes and views.
+
+**Do NOT add a capability key, and do NOT modify
+`config/customer-permissions.php`.** The add is **owner-only** (§6.5):
+Blueprint §22 names the owner, and a capability key would let the owner
+delegate to staff an authority that sentence does not grant. Three gates,
+in order, none substituting for another: tenancy via the existing
+`ResolvesBusinessTenancy` trait, then **the actor is the owner of the
+Workspace owning this Business** — not satisfied by Workspace Admin, by
+staff membership, or by `is_admin` — then `decide()` re-asked **inside the
+transaction and under the Business lock** at the moment of the add. The
+adversarial tests that matter most here are the ones proving an active
+staff member and an active Workspace Admin are both **refused**
+(§13.11). The addable query is §8.1's, and every candidate
 row it returns is passed through `decide()` before display. Adding an
 already-installed component is a no-op success, not an error. Pay close
 attention to §8.1's implementer note about `skipped_unavailable` rows
