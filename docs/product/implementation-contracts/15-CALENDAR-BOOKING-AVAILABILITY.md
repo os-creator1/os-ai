@@ -305,9 +305,13 @@ self-booking → external Google/Outlook integration.
 
 ## 5. Canonical domain model
 
-All new tables use `restrictOnDelete` foreign keys to `business_locations`
-(never cascade — Location attribution is audit-relevant, per the
-`contacts`/`chat_boxes` precedent), all use the existing `HasUid` trait
+Operational and audit-relevant Location-owned records use `restrictOnDelete`
+foreign keys to `business_locations` — Location attribution is audit-
+relevant, per the `contacts`/`chat_boxes` precedent. Purely technical
+lock/cache rows with no independent audit value may use `cascadeOnDelete`
+where this contract explicitly says so (`booking_contact_identity_locks`,
+§5.8.3, is the one such table — disposable serialization infrastructure, not
+an operational or audit record). All new tables use the existing `HasUid` trait
 convention for any row an external URL or API response references, and all
 store date/times as UTC timestamps with timezone-aware math done at read
 time via `business.timezone` (§3.3), never a stored offset.
@@ -387,7 +391,7 @@ round-robin pool):
 ```
 id
 booking_type_id              FK -> booking_types, cascadeOnDelete
-staff_user_id                FK -> users, restrictOnDelete
+staff_user_id                FK -> users, cascadeOnDelete
 timestamps
 
 unique (booking_type_id, staff_user_id)
@@ -398,6 +402,18 @@ index (staff_user_id)
 this pivot's only meaning is "this Booking Type currently offers this
 staff member" — it has no independent audit value once the Booking Type
 itself is gone, unlike the Location FKs elsewhere in this schema.
+
+**`cascadeOnDelete` on `staff_user_id` too, corrected from an earlier
+`restrictOnDelete` draft.** This row is explicitly configuration intent
+with no independent audit value (stated two paragraphs below) — a deleted
+staff User must not remain attached to a Booking Type, and must not block
+a legitimate User deletion merely because that configuration intent once
+existed. This repository hard-deletes Users (§7.2's own evidence — no
+`SoftDeletes` on `users`); a lock/pivot row that carries no history of its
+own is never the reason a User becomes undeletable. This is unlike
+`appointments.staff_user_id`/`staff_availability_rules.staff_user_id`/
+`staff_time_off.staff_user_id`, which remain `restrictOnDelete` because
+those rows *are* historically meaningful (§7.2).
 
 **`booking_type_staff` is configuration intent, never authorization.** A
 row here means only "an authorized configurer nominated this staff member
@@ -580,7 +596,7 @@ Sub-slice C is not gated on this and must not stop to ask.
 ```
 id
 uid                            uuid, unique
-user_id                        FK -> users, restrictOnDelete, NOT NULL
+user_id                        FK -> users, cascadeOnDelete, NOT NULL
 provider                       string(16): google | outlook
 state                          string(16), NOT NULL, default 'pending': pending | active | disconnected | revoked
 external_account_email          string(191), nullable
@@ -636,6 +652,23 @@ This slice follows the real precedent:
   lock_version = ?`, set `lock_version + 1`, and raise a concurrency
   exception when the affected-row count is not exactly 1.
 
+**`user_id` is `cascadeOnDelete`, corrected from an earlier `restrictOnDelete`
+draft.** This row holds operational OAuth credentials (an encrypted refresh
+token) and a technical connection slot, not an independently audit-relevant
+record — the same posture `business_google_connections` already takes with
+its own owning entity. `restrictOnDelete` here would make a User
+undeletable for the sole reason that they once connected a calendar, and
+this repository hard-deletes Users (§7.2's own evidence: no `SoftDeletes` on
+`users`, ten distinct hard-delete paths in `app/`). Deleting a User
+therefore removes their `external_calendar_connections` row; its
+`external_calendar_busy_blocks` rows cascade through the connection (§5.6)
+so no encrypted credential or synced cache is ever orphaned; and the
+technical one-connection slot is released automatically as a consequence of
+the row being gone, not as a separate step. **Connection history does not
+survive deletion of the User** — every `external_calendar_connections` row,
+live or terminal, is retained only for as long as that User exists; this
+corrects any earlier statement implying otherwise.
+
 **If a provider mechanically requires different persistent credentials**,
 Sub-slice F may add provider-specific storage only after verifying that
 requirement against the provider's current documentation, and must report it
@@ -671,10 +704,14 @@ active connection of either.
 Enforced by the same **stored generated column + unique index** pattern
 Contract 01 already proved in this repository for conditional uniqueness
 (`agency_client_workspace_relationships.active_client_workspace_id`):
-`active_user_id` is `user_id` only while the row is live and NULL once
-`disconnected_at` or `revoked_at` is set, and MySQL's unique index ignores
-NULLs — so at most one live connection per User is a database guarantee,
-while every historical, disconnected connection row is retained
+`active_user_id` is `user_id` only while the row's own `state` is `pending`
+or `active`, and NULL once `state` transitions to `disconnected` or
+`revoked` — **`state` is the uniqueness authority; `disconnected_at` and
+`revoked_at` are audit metadata that accompany that transition, never the
+mechanism that drives it.** The generated column's own definition (above)
+keys on `state`, not on either timestamp column being set. MySQL's unique
+index ignores NULLs — so at most one live connection per User is a database
+guarantee, while every historical, disconnected connection row is retained
 unlimited-ly for audit.
 
 **Pending-connection lifecycle — an abandoned OAuth attempt must never
@@ -700,12 +737,14 @@ permanently consume the slot.** Because a `pending` row occupies
    (`:229-238`).
 4. **An expired, failed or abandoned attempt is released, not stranded.**
    When a User initiates a connection and their existing row is `pending`
-   with `oauth_state_expires_at <= now()`, that row is first transitioned to
-   the terminal `disconnected` state — `disconnected_at = now()`, nonce and
-   expiry cleared, no credential to clear — which NULLs `active_user_id` and
-   frees the unique index, and only then is the new `pending` row inserted.
-   Both steps happen in one transaction under `lock_version`, so two
-   concurrent initiations cannot both reclaim.
+   with `oauth_state_expires_at <= now()`, that row's `state` is first
+   atomically transitioned `pending → disconnected` (nonce and expiry
+   cleared, no credential to clear, `disconnected_at = now()` written as
+   the accompanying audit timestamp) — **it is this state transition, not
+   the timestamp write, that NULLs `active_user_id`** and frees the unique
+   index — and only then is the new `pending` row inserted. Both steps
+   happen in one transaction under `lock_version`, so two concurrent
+   initiations cannot both reclaim.
 5. **Reconnect and provider switch then proceed normally** (below), and
    **every terminal row is retained forever** as durable audit: the history
    of when a connection existed is never overwritten or deleted.
@@ -722,11 +761,18 @@ connections still cannot coexist.
 transaction holding that User's `staff_booking_locks` row (§7.5, so a
 booking can never read a half-switched cache):
 
-1. Mark the current live connection `disconnected_at = now()` (or
-   `revoked_at` when the provider reported revocation), clear
-   `access_token`/`refresh_token`/`sync_cursor`, and leave every other
-   column as durable audit. The generated column becomes NULL, freeing the
-   unique index.
+1. Atomically transition the current live connection's `state` to
+   `disconnected` (or `revoked` when the provider reported revocation),
+   writing `disconnected_at = now()` (or `revoked_at = now()`) as the
+   accompanying audit timestamp. Clear `refresh_token_encrypted`,
+   `granted_scopes`, `sync_cursor`, and `oauth_state_nonce`/
+   `oauth_state_expires_at` if either is still set, leaving every other
+   column (including the now-terminal `disconnected_at`/`revoked_at`) as
+   durable audit. There is no `access_token` column anywhere in this
+   schema (§5.5 above) — nothing of that name is ever cleared, because
+   nothing of that name is ever stored. **It is the `state` transition
+   itself that NULLs the generated `active_user_id` column and frees the
+   unique index — the timestamps are audit metadata, not the mechanism.**
 2. **Delete every `external_calendar_busy_blocks` row for that
    connection** in the same transaction (§5.6) — a disconnected provider's
    cached busy intervals must never keep blocking bookings.
@@ -981,9 +1027,20 @@ Inside the booking transaction, after §7.4's locks are held:
    Location. Absent → create it (§5.8.5) with `location_id` set explicitly
    to the booked Location.
 
-The lock is released with the booking transaction, so a refused booking
-leaves no Contact behind — but note the lock **row** persists, which is
-correct and harmless: it is a reusable identity, not a claim.
+The lock is released with the booking transaction either way, so a refused
+booking leaves no Contact behind. What happens to the lock **row** itself
+depends on which state it was in, and this is stated precisely rather than
+generalized: an already-existing lock row (found at step 1, or inserted by
+an earlier, successfully committed attempt) simply remains — it was never
+part of the transaction that rolled back. A **first-use** lock row —
+`insertOrIgnore`d at step 2 of *this same* transaction — rolls back with it
+if the booking is later refused, exactly like any other row this
+transaction wrote. That is correct and harmless, not a bug to guard
+against: the row is a reusable identity, not a claim, and the next attempt
+recreates it idempotently through the identical ensure-then-lock sequence
+(steps 1–2 above) — `insertOrIgnore` succeeds whether the row is genuinely
+absent or was rolled back a moment ago. Either way, no Contact ever survives
+a refused or rolled-back booking.
 
 **Several existing Contacts may legitimately match at step 4** (§3.6.1), so
 `orderBy('id')->first()` is specified rather than left open: Calendar takes
@@ -1369,15 +1426,27 @@ The closest existing analogue — `business_home_visits`, a per-(user,
 business) marker row — uses `cascadeOnDelete()` on both parents
 (`database/migrations/2026_09_16_100001_create_business_home_visits_table.php:31-32`).
 
-**The other user FKs in this schema keep their stricter posture, and that is
-a deliberate, stated consequence.** `appointments.staff_user_id`,
-`staff_availability_rules.staff_user_id`, `staff_time_off.staff_user_id`,
-`booking_type_staff.staff_user_id` and `external_calendar_connections.user_id`
-remain `restrictOnDelete`, because those rows *are* historically meaningful —
-which does mean a staff member who has ever been booked cannot be hard-deleted
+**Some other user FKs in this schema keep a stricter posture, and that is a
+deliberate, stated consequence.** `appointments.staff_user_id`,
+`staff_availability_rules.staff_user_id` and `staff_time_off.staff_user_id`
+remain `restrictOnDelete`, because those rows *are* historically
+meaningful — which does mean a staff member who has ever been booked, or who
+has an availability rule or time-off record on file, cannot be hard-deleted
 until those rows are dealt with. That is the correct trade for operational
-history and it is recorded here rather than discovered later; only the lock
-row, which protects nothing, is exempted.
+history and it is recorded here rather than discovered later.
+
+**`booking_type_staff.staff_user_id` (§5.1) and
+`external_calendar_connections.user_id` (§5.5) are `cascadeOnDelete`, not
+`restrictOnDelete` — corrected from an earlier draft that grouped them with
+the historically-meaningful FKs above.** Neither carries independent audit
+value the way a completed Appointment or a recorded availability rule does:
+`booking_type_staff` is configuration intent only (a nomination, re-derived
+from canonical persistence at booking time, never itself authorization —
+see below), and `external_calendar_connections` holds operational OAuth
+state, not a transactional record. Both are exempted from the
+historical-meaningfulness trade above for the same reason the lock row is:
+none of the three protects anything that would be lost by letting a User
+deletion remove it.
 
 1. **Ensure, outside the transaction** (a single autocommitted statement,
    before `DB::beginTransaction()`), for **every** staff member the
@@ -2308,13 +2377,26 @@ IDENTIFIERS -- get this right or Sub-slice E cannot be built:
   (app/Library/Traits/HasUid.php:27-30), which is guessable -- 20 existing
   models already override it for this reason.
 
-FK POSTURE -- two of these are deliberately NOT restrictOnDelete:
+FK POSTURE -- four of these are deliberately NOT restrictOnDelete:
 - staff_booking_locks.staff_user_id is cascadeOnDelete (SS7.2). It is pure
   serialization infrastructure and must never make a User undeletable; this
   repository hard-deletes Users and has no SoftDeletes on the users table.
 - booking_contact_identity_locks.business_location_id is cascadeOnDelete
-  (SS5.8.3), same reasoning.
-- Everything else keeps the posture SS5 states. Do not "harmonize" them. Follow this repository's existing conventions
+  (SS5.8.3), same reasoning -- purely technical lock infrastructure, not an
+  audit-relevant Location record.
+- booking_type_staff.staff_user_id is cascadeOnDelete (SS5.1). It is
+  configuration intent only, never authorization, and carries no
+  independent audit value once the staff member is gone.
+- external_calendar_connections.user_id is cascadeOnDelete (SS5.5). It holds
+  operational OAuth state (an encrypted refresh token), not an
+  independently audit-relevant record; deleting a User cascades its
+  connection, and that connection's external_calendar_busy_blocks rows
+  cascade through it in turn (SS5.6) -- no credential or synced cache is
+  ever orphaned.
+- Everything else keeps the posture SS5 states -- including
+  appointments.staff_user_id, staff_availability_rules.staff_user_id and
+  staff_time_off.staff_user_id, which remain restrictOnDelete because those
+  rows ARE historically meaningful. Do not "harmonize" them. Follow this repository's existing conventions
 precisely: HasUid trait where noted, restrictOnDelete vs cascadeOnDelete
 exactly as SS5 specifies (never the other way, even if it seems
 equivalent -- the contract's own reasoning for each choice is in SS5/SS7),
