@@ -5,6 +5,7 @@ namespace App\Library\Workspace;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Exceptions\Workspace\LocationAccessDeniedException;
+use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
@@ -154,5 +155,95 @@ class LocationAccessGuard
         if (! $this->userCanAccessLocation($userId, $location)) {
             throw new LocationAccessDeniedException($userId, $location->id);
         }
+    }
+
+    /**
+     * Implementation Contract 19 §5.2/§5.8 — the SET of this Business's
+     * Locations the actor may read, ascending.
+     *
+     * WHY IT LIVES HERE. Contract 19 R-0 forbids a second Location ACL, and
+     * the COO's authorization-scope fingerprint needs the actor's authorized
+     * set, not a per-Location question. Asking userCanAccessLocation() once
+     * per Location would answer it, but re-derives the Business, Workspace and
+     * membership on every call; so this method walks the SAME authority table
+     * once, in the SAME branch order, and returns the set. It is the one
+     * authority's set-shaped reader, not a parallel algorithm — and
+     * LocationAccessSetConsistencyTest asserts it agrees with
+     * userCanAccessLocation() for every Location, so it cannot drift.
+     *
+     * Same fail-closed shape as its sibling: re-derive every fact fresh from
+     * its repository, never trust the passed-in model, default to an empty set
+     * at every branch.
+     *
+     * @return array<int, int>
+     */
+    public function authorizedLocationIdsFor(int $userId, Business $business): array
+    {
+        $currentBusiness = $this->businessRepository->findById((int) $business->id);
+
+        if ($currentBusiness === null || $currentBusiness->workspace_id === null) {
+            return [];
+        }
+
+        $workspace = $this->workspaceRepository->findById($currentBusiness->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return [];
+        }
+
+        $locationIds = $this->locationRepository->forBusiness($currentBusiness)
+            ->map(static fn (BusinessLocation $location): int => (int) $location->id)
+            ->all();
+
+        if ($locationIds === []) {
+            return [];
+        }
+
+        sort($locationIds, SORT_NUMERIC);
+
+        // Contract 04 — while a cross-Workspace Agency View As is active it is
+        // the whole answer, in both directions: the viewed Business's
+        // Locations are reachable and every other Business's are refused,
+        // including ones this actor ordinarily owns outright.
+        $viewedBusinessId = $this->businessRouteAccess->viewedBusinessIdFor($userId);
+
+        if ($viewedBusinessId !== null) {
+            return $viewedBusinessId === (int) $currentBusiness->id ? $locationIds : [];
+        }
+
+        if ((int) $currentBusiness->customer_id === $userId) {
+            return $locationIds;
+        }
+
+        if ((int) $workspace->owner_user_id === $userId) {
+            return $locationIds;
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
+
+        if ($membership === null || ! $membership->is_active) {
+            return [];
+        }
+
+        $canReachBusiness = $membership->business_access_scope === WorkspaceBusinessAccessScope::All
+            || $this->membershipBusinessRepository->isAssigned($membership, $currentBusiness->id);
+
+        if (! $canReachBusiness) {
+            return [];
+        }
+
+        if ($membership->location_access_scope === LocationAccessScope::All) {
+            return $locationIds;
+        }
+
+        if ($membership->location_access_scope === LocationAccessScope::Selected) {
+            $assigned = $this->membershipLocationRepository->assignedLocationIds($membership)
+                ->map(static fn (mixed $id): int => (int) $id)
+                ->all();
+
+            return array_values(array_intersect($locationIds, $assigned));
+        }
+
+        return [];
     }
 }

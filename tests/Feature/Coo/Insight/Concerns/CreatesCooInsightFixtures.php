@@ -3,12 +3,18 @@
 namespace Tests\Feature\Coo\Insight\Concerns;
 
 use App\Enums\Coo\CooInsightKind;
+use App\Enums\Coo\CooInsightOrigin;
+use App\Enums\Coo\CooScope;
 use App\Library\Ai\AiCompletionResult;
 use App\Library\Ai\Providers\FakeAiCompletionClient;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
+use App\Library\Coo\Context\CooContextEnvelope;
+use App\Library\Coo\Context\CooContextEnvelopeFactory;
+use App\Library\ViewAs\ViewAsContext;
 use App\Models\Business;
 use App\Models\CooInsight;
+use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
@@ -61,12 +67,49 @@ trait CreatesCooInsightFixtures
         ]]), 'fixture-model-2026', 400, 120);
     }
 
+    /**
+     * Contract 19 §5.9b — a background generation's envelope, computed for the
+     * declared audience (the canonical Workspace owner). This is what the
+     * scheduled triggers produce, and what any actor whose live authorization
+     * scope is exactly equal may read back.
+     */
+    protected function backgroundEnvelope(Business $business): CooContextEnvelope
+    {
+        $envelope = app(CooContextEnvelopeFactory::class)->forBackgroundAudience($business);
+
+        $this->assertNotNull($envelope, 'the fixture Business must have a resolvable background audience.');
+
+        return $envelope;
+    }
+
+    /** Contract 19 §5.2 — a human-initiated envelope for one real actor. */
+    protected function actorEnvelope(Business $business, User $actor, ?ViewAsContext $viewAs = null): CooContextEnvelope
+    {
+        $envelope = app(CooContextEnvelopeFactory::class)->forActor($business, $actor, $viewAs);
+
+        $this->assertNotNull($envelope, 'the fixture actor must have a resolvable authorization scope.');
+
+        return $envelope;
+    }
+
     /** @param array<string, mixed> $overrides */
     protected function cachedInsight(Business $business, array $overrides = []): CooInsight
     {
         $now = Carbon::now();
 
+        // A cached row only exists inside an authorization scope. Unless a
+        // test says otherwise it is the background one — what the scheduled
+        // triggers actually write.
+        $envelope = array_key_exists('authorization_scope_fingerprint', $overrides)
+            ? null
+            : $this->backgroundEnvelope($business);
+
         return CooInsight::query()->create(array_merge([
+            'scope' => CooScope::Business->value,
+            'origin' => CooInsightOrigin::System->value,
+            'authorization_scope_fingerprint' => $envelope?->authorizationScopeFingerprint,
+            'actor_user_id' => null,
+            'audience_user_id' => $envelope?->audienceUserId,
             'business_id' => $business->id,
             'workspace_id' => $business->workspace_id,
             'kind' => CooInsightKind::PerformanceDiagnosis->value,

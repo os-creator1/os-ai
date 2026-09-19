@@ -34,6 +34,7 @@
     use Illuminate\Contracts\Auth\Authenticatable;
     use Illuminate\Http\JsonResponse;
     use Illuminate\Support\Arr;
+    use Illuminate\Support\Collection;
     use Illuminate\Support\Facades\Auth;
     use Illuminate\Support\Facades\Session;
     use Log;
@@ -211,12 +212,8 @@
 
             $permissions = Session::get('permissions');
 
-            if ($permissions == null && $user->is_customer) {
-                $permissions = collect(json_decode($user->customer->permissions, true));
-            }
-
-            if ($permissions == null && $user->is_admin) {
-                $permissions = $user->getPermissions();
+            if ($permissions == null) {
+                $permissions = $this->durablePermissions($user);
             }
 
             if ($permissions->isEmpty()) {
@@ -224,6 +221,47 @@
             }
 
             return $permissions->contains($name);
+        }
+
+        /**
+         * The same permission set hasPermission() decides from, read from its
+         * DURABLE source only — never from the session copy.
+         *
+         * WHY IT IS SEPARATE. hasPermission() prefers Session::get('permissions'),
+         * which is correct for an ordinary web request and useless anywhere
+         * else: a queued job has no session, so the same user resolves a
+         * different permission set inside a job than inside a request. That is
+         * invisible for a boolean check, but Implementation Contract 19 §5.8
+         * folds the consulted capability keys into a cache identity that a job
+         * writes and a request reads back. Those two must agree, and R-21
+         * forbids anything session-derived from entering that identity at all.
+         *
+         * This is not a second permission mechanism (Contract 19 R-0): it is
+         * the durable half of the one mechanism, extracted so hasPermission()
+         * itself now calls it and the session remains a pure optimisation over
+         * the same data.
+         *
+         * @return \Illuminate\Support\Collection<int, string>
+         */
+        public function durablePermissions(Authenticatable $user, bool $fresh = false): Collection
+        {
+            /** @var User $user */
+            if ($user->is_customer) {
+                // $fresh forces exactly one read from the database rather than
+                // a possibly-cached relation. A caller that folds this set into
+                // a cache identity needs the same answer AND the same cost on
+                // every call, whatever an already-hydrated model happens to be
+                // carrying. hasPermission() keeps the cheap cached path.
+                $customer = $fresh ? $user->customer()->first() : $user->customer;
+
+                return $customer === null ? collect() : collect(json_decode($customer->permissions, true) ?: []);
+            }
+
+            if ($user->is_admin) {
+                return collect($user->getPermissions());
+            }
+
+            return collect();
         }
 
         /**
