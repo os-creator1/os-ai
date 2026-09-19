@@ -218,6 +218,78 @@ than restating an assumption:
    listener; and the two queued listeners that exist run with `$tries = 1`.
    See §5.4, §10, §12.C, §15.
 
+### 3.6 Third recon pass — the executability seams
+
+A final targeted pass resolved six mechanical questions that the corrected
+architecture raised but did not yet answer. Each is load-bearing for a
+correction below:
+
+1. **`contacts` still has no unique index of any kind, and one cannot be
+   added.** The complete constraint inventory is a primary key plus five
+   indexes and four foreign keys, across the four migrations that touch the
+   table; there is no unique index on `uid`, on `phone`, or on any
+   composite. More importantly, a unique index **cannot retroactively be
+   added** on `(location_id, phone)`: group cloning
+   (`ContactsController.php:583-589`, `ReplicateContacts.php:64-70`,
+   `batchContactCopy()` at `EloquentContactsRepository.php:518-535`), CSV
+   import (`ContactGroups.php:857`), paste import
+   (`ContactsController.php:1174-1177`) and inbound keyword opt-in across
+   several groups (`DLRController.php:1219-1236`) all produce duplicate
+   `(location_id, phone)` rows as their **ordinary, intended behaviour** on
+   any single-active-Location Business, and the Location backfill converts
+   historical cross-group duplicates into colliding non-NULL pairs. The
+   codebase asserts this is legitimate in five tests and five code comments
+   (e.g. `MessageReceivedTriggerSource.php:33-36`: "Phone is unique per
+   group, not per Business, so one number can be several contacts";
+   `ChatBoxBusinessBackfillV1Test.php:96-107`,
+   `test_several_contacts_inside_one_business_are_duplicates_not_ambiguity`).
+   See §5.8.
+2. **There is no canonical phone normalizer for `contacts`.** True E.164
+   normalizers exist (`E164Normalizer`, `AgencyProspectPhoneNormalizer`) but
+   **none is on the Contacts write path**. What `contacts.phone` actually
+   stores is `str_replace(['+', '-', '(', ')', ' '], '', $raw)`, plus
+   `trim()` at the one canonical site (`EloquentContactsRepository.php:695`,
+   `:709`); the column is `string` (VARCHAR) and the model casts it to
+   `integer` on read only. See §5.8.
+3. **The canonical ensure-then-lock precedent is
+   `AiUsageLedgerManager::lockOrCreatePeriod()`**
+   (`app/Library/Ai/AiUsageLedgerManager.php:441-474`) over
+   `ai_usage_periods`, whose migration calls it "the lock-and-counter row"
+   and whose docblock explains the gap-lock deadlock that makes the
+   unlocked probe mandatory. All three `insertOrIgnore` call sites in
+   `app/` are backed by a real unique key — that is what makes INSERT
+   IGNORE idempotent, and nothing else does. See §5.8, §7.2.
+4. **Genuinely random public identifiers have an exact precedent.**
+   `HasUid`'s default generator is `uniqid()`
+   (`app/Library/Traits/HasUid.php:27-30`); 20 models override
+   `generateUid()` with `(string) Str::uuid()`. The public Website
+   identifier is a **separate column** — `$table->uuid('public_id')->unique();`
+   (`2026_09_07_130001_create_websites_table.php:22`) — filled by its own
+   `booted()` creating hook (`app/Models/Website.php:60-67`), deliberately
+   independent of `HasUid::boot()`. See §5.1, §6.
+5. **A `Planned` feature already fails closed at the decision layer.**
+   `EntitlementManager::snapshotBusinessFeatureDecisions()` returns
+   `new EntitlementDecision(false, 'platform_feature_unavailable')` before
+   any database read (`EntitlementManager.php:201-205`), and `decide()` is
+   a thin wrapper over it. Route gating is done **in-controller** — there is
+   no feature middleware anywhere — canonically via
+   `ResolvesBusinessTenancy::resolveEntitledBusinessTenancy()`
+   (`app/Http/Controllers/Customer/Business/Concerns/ResolvesBusinessTenancy.php:82-99`),
+   which `abort(404)`s on refusal. Nav hiding is confirmed **purely
+   cosmetic**. See §6, §12.B/D/E.
+6. **OAuth: no access token is persisted, and Users are hard-deletable.**
+   `business_google_connections` has `refresh_token_encrypted` (text,
+   nullable, `encrypted` cast, `$hidden`) and **no access-token column at
+   all**, by explicit design; the access token is derived per unit of work
+   and discarded (`GoogleBusinessProfileConnectionManager::accessTokenFor()`,
+   `:266-291`). Separately, `users` has **no SoftDeletes** and ten hard-delete
+   paths exist in `app/`; the repository's canonical stated rule is that an
+   infrastructure table "must never block a legitimate user-deletion feature
+   elsewhere in the system"
+   (`2026_07_31_120001_create_workspace_transitions_table.php:15-19`), which
+   explicitly exempts Users from RFC-003 §17's no-hard-delete rule. See
+   §5.5, §7.2.
+
 ## 4. Delta from current state to target
 
 Pure additive build — no retrofit, no migration-off-a-legacy-model (there
@@ -245,6 +317,7 @@ time via `business.timezone` (§3.3), never a stored offset.
 ```
 id
 uid                          uuid, unique
+public_booking_uuid          uuid, NOT NULL, unique
 business_location_id         FK -> business_locations, restrictOnDelete, NOT NULL
 name                         string(120)
 description                  text, nullable
@@ -256,6 +329,57 @@ timestamps
 
 index (business_location_id, is_active)
 ```
+
+**`public_booking_uuid` is the public scheduler's only address, and it is
+not `uid`.** §6 requires that no public surface resolve a Business or
+Location by a `HasUid` value, because `HasUid::generateUid()` is
+`$this->uid = uniqid();` (`app/Library/Traits/HasUid.php:27-30`) — guessable,
+not random — and this repository already rejected that shape for public
+addressing in writing (`routes/public.php:210-215`). An earlier draft stated
+that rule but created no replacement identifier, leaving Sub-slice E with
+nothing to route on. This column is that identifier.
+
+It follows the `websites.public_id` precedent exactly, which exists for the
+identical reason:
+
+- **Column**: `$table->uuid('public_booking_uuid')->unique();` — the same
+  shape as `$table->uuid('public_id')->unique();`
+  (`database/migrations/2026_09_07_130001_create_websites_table.php:22`).
+  NOT NULL: every Booking Type has one from creation, there is no legacy
+  backfill state.
+- **Generation**: a genuinely random v4 UUID via `(string) Str::uuid()`,
+  assigned in the model's own `booted()` creating hook, exactly as
+  `app/Models/Website.php:60-67` does it. That hook is deliberately
+  **separate** from `HasUid`'s own `creating()` hook, which only ever
+  touches `uid`; `Model::bootIfNotBooted()` runs `boot()` and `booted()` as
+  two independent steps, so both fire (Website's own docblock, `:52-59`,
+  records this).
+- **Routing**: the public scheduler route binds this column and constrains
+  it with `->whereUuid(...)`, mirroring
+  `->whereUuid('website')` at `routes/public.php:230-237`, so a malformed
+  identifier is rejected before any query runs.
+- **Resolution direction**: the route resolves the **Booking Type**, and the
+  Location is derived from that persisted row's own
+  `business_location_id` — never from a Location identifier in the URL, and
+  never from anything the request supplies.
+
+**This identifier is discovery-resistant addressing only. It is not
+authorization.** Holding a valid `public_booking_uuid` proves nothing except
+that the row exists; every one of §6's six public checks still runs, on both
+the page render and the booking write. It never substitutes for the account,
+entitlement, Location-active, Booking-Type-active or staff-eligibility
+checks, and a leaked URL therefore grants nothing that a locked, unentitled
+or archived target would otherwise refuse.
+
+Sub-slice A owns the column and its generation; Sub-slice E consumes it
+(§12.A, §12.E).
+
+**Every Schema A model that uses `HasUid` must override `generateUid()`.**
+`HasUid`'s default is `uniqid()`, so a model that merely `use`s the trait
+gets a guessable `uid` despite the `uuid` column type — the exact defect
+`app/Models/Website.php:18-20` names about `Business.uid`. Each new model
+overrides it as the 20 existing models do:
+`public function generateUid() { $this->uid = (string) Str::uuid(); }`.
 
 `booking_type_staff` (pivot — which staff offer this Booking Type, the
 round-robin pool):
@@ -429,19 +553,27 @@ stated plainly:
   `start_at`/`end_at`/`staff_user_id` of each reschedule. A reschedule
   overwrites them, and the event carrying the old values is transient.
 
-That gap is named here rather than hidden. Contract 01 §10 records this
-codebase's own criterion for when a row suffices instead of a transitions
-table — two possible transitions total, both fully captured on the one row
-— and an Appointment does not meet it, because reschedule is a *repeating*
-transition. No authority (Blueprint §32, RFC-002 §41, RFC-003 §19, the
-Acceptance Matrix) names Appointments as requiring durable history, so this
-contract does not add `appointment_transitions` on its own initiative; it
-records the decision as **open for the human before Sub-slice C ships**
-(§12.C, §15), with the criterion and the precedent shape already
-identified — `app/Repositories/Contracts/WorkspaceTransitionRepository.php`
-(`create()` plus `for*()` readers, deliberately no `update()`), written in
-the same transaction as the state change — so the decision is cheap either
-way.
+That gap is named here rather than hidden, and it is **decided, not
+deferred**. No governing Slice 15 authority — Blueprint §12, Blueprint §32
+(which enumerates ownership transfer, Agency relationship termination and
+payer changes), RFC-002 §41, RFC-003 §19, the Acceptance Matrix, Addendum
+§5 — requires durable Appointment history. **V1 therefore ships no
+`appointment_transitions` table** (§15), and nothing in this slice blocks
+on that question:
+
+- the `appointments` row stores current state plus `reschedule_count`;
+- the five domain events of §10 are **transient integration/automation
+  events only** — their consumers are Automations §13, not an auditor;
+- the previous interval and previous staff member of a reschedule are
+  **not durably queryable** once the event has been delivered, and this
+  contract says so rather than implying otherwise;
+- adding durable Appointment history later is separate product scope, and
+  the shape it would take is already known if it is ever authorized —
+  `app/Repositories/Contracts/WorkspaceTransitionRepository.php` (`create()`
+  plus `for*()` readers, deliberately no `update()`), written in the same
+  transaction as the state change.
+
+Sub-slice C is not gated on this and must not stop to ask.
 
 ### 5.5 `external_calendar_connections` (per-User, per-provider)
 
@@ -450,29 +582,74 @@ id
 uid                            uuid, unique
 user_id                        FK -> users, restrictOnDelete, NOT NULL
 provider                       string(16): google | outlook
-external_account_email          string(255)
-access_token                   text, encrypted cast
-refresh_token                  text, encrypted cast
-token_expires_at                timestamp, nullable
-granted_scopes                  json
+state                          string(16), NOT NULL, default 'pending': pending | active | disconnected | revoked
+external_account_email          string(191), nullable
+refresh_token_encrypted         text, nullable, `encrypted` cast, in $hidden
+granted_scopes                  string(512), nullable
 sync_cursor                     string(255), nullable (provider's own delta/sync token)
 last_synced_at                  timestamp, nullable
 last_sync_failure_at            timestamp, nullable
 sync_failure_count               unsignedInteger, default 0
 failure_classification           string(64), nullable
-oauth_state_nonce                string(64), nullable
+oauth_state_nonce                string(64), nullable, unique
 oauth_state_expires_at           timestamp, nullable
 connected_at                    timestamp, nullable
 disconnected_at                 timestamp, nullable
 revoked_at                       timestamp, nullable
+last_refreshed_at                timestamp, nullable
 lock_version                    unsignedInteger, default 0
 
 active_user_id                  bigint unsigned, STORED generated column:
-                                `case when disconnected_at is null and revoked_at is null then user_id end`
+                                `case when state in ('pending', 'active') then user_id end`
 
 unique (active_user_id)
 index  (user_id, provider)
 ```
+
+**No access token is ever persisted.** An earlier draft listed both an
+`access_token` and a `refresh_token` column and claimed to mirror
+`business_google_connections` "field-for-field". It did not: that table has
+**no access-token column at all**, deliberately, and its migration says so
+verbatim — "There is deliberately NO access-token column: an access token is
+derived from the refresh token per unit of work and never persisted (§9.7)"
+(`database/migrations/2026_09_09_120001_create_business_google_connections_table.php:17-21`,
+repeated on the model at `app/Models/BusinessGoogleConnection.php:20-21`).
+This slice follows the real precedent:
+
+- `refresh_token_encrypted` is the only stored credential — `text`,
+  nullable, Laravel's built-in `encrypted` cast, and listed in the model's
+  `$hidden`, exactly as `BusinessGoogleConnection` does it.
+- An access token is obtained **in memory, per provider operation**, from
+  the encrypted refresh token, used, and discarded — the shape of
+  `GoogleBusinessProfileConnectionManager::accessTokenFor()`
+  (`app/Library/GoogleBusinessProfile/GoogleBusinessProfileConnectionManager.php:266-291`),
+  whose only database write is the bookkeeping columns
+  `last_refreshed_at`/`failure_classification`. It is never written back,
+  never logged and never serialized.
+- Nullable on purpose: a row in `pending` has no refresh token yet.
+- Disconnect and revoke clear `refresh_token_encrypted`, `granted_scopes`,
+  `sync_cursor`, `oauth_state_nonce` and `oauth_state_expires_at`, keeping
+  every timestamp as durable audit — the same column set
+  `GoogleBusinessProfileConnectionManager::disconnect()` clears (`:331-340`).
+- `lock_version` is the optimistic-lock guard on every state transition,
+  mirroring that manager's `transition()` (`:411-446`): update `WHERE
+  lock_version = ?`, set `lock_version + 1`, and raise a concurrency
+  exception when the affected-row count is not exactly 1.
+
+**If a provider mechanically requires different persistent credentials**,
+Sub-slice F may add provider-specific storage only after verifying that
+requirement against the provider's current documentation, and must report it
+(§18.F). Persisting an access token is **not** pre-authorized by this
+contract, and a plaintext credential column is never authorized.
+
+**`state` drives the one-connection slot, not the timestamps.** The
+generated column keys on `state in ('pending', 'active')`, which is the
+exact idiom `business_messaging_identities` already uses for
+pending-or-active slot semantics —
+`CASE WHEN status IN ('pending','active') THEN business_id ELSE NULL END`
+(`database/migrations/2026_09_12_100001_create_business_messaging_identities_table.php:49-60`).
+An in-flight connect therefore holds the User's one slot, which is
+deliberate: it is what refuses a second simultaneous initiation.
 
 Mirrors `business_google_connections` field-for-field (§3.3), keyed to
 `user_id` instead of `business_id` per Blueprint §12's explicit "globally
@@ -499,6 +676,47 @@ Contract 01 already proved in this repository for conditional uniqueness
 NULLs — so at most one live connection per User is a database guarantee,
 while every historical, disconnected connection row is retained
 unlimited-ly for audit.
+
+**Pending-connection lifecycle — an abandoned OAuth attempt must never
+permanently consume the slot.** Because a `pending` row occupies
+`active_user_id`, the failure paths have to be specified, not assumed:
+
+1. **Initiation** creates (or re-uses, per 4 below) exactly one row in
+   `pending` for that User, writing `oauth_state_nonce` and
+   `oauth_state_expires_at`. The nonce is single-use and its TTL is bounded,
+   following `GoogleOAuthStateSigner` (`issue()` at `:41-44`, `consume()`'s
+   conditional update at `:111-124`, default TTL 600s clamped to
+   [60, 3600]).
+2. **A second simultaneous initiation for that User is refused** while a
+   live (non-expired) `pending` row exists, and while an `active` row
+   exists. The unique index on the generated column is the hard backstop;
+   the application refuses first, with a clear message, so the user sees a
+   refusal rather than a constraint violation.
+3. **A successful callback** transitions `pending → active` under
+   `lock_version`, writing `refresh_token_encrypted`, `granted_scopes`,
+   `connected_at`, `last_refreshed_at`, and clearing the nonce and its
+   expiry. A callback that yields no refresh token **fails closed and leaves
+   the row `pending`** — the same rule `completeConnect()` applies
+   (`:229-238`).
+4. **An expired, failed or abandoned attempt is released, not stranded.**
+   When a User initiates a connection and their existing row is `pending`
+   with `oauth_state_expires_at <= now()`, that row is first transitioned to
+   the terminal `disconnected` state — `disconnected_at = now()`, nonce and
+   expiry cleared, no credential to clear — which NULLs `active_user_id` and
+   frees the unique index, and only then is the new `pending` row inserted.
+   Both steps happen in one transaction under `lock_version`, so two
+   concurrent initiations cannot both reclaim.
+5. **Reconnect and provider switch then proceed normally** (below), and
+   **every terminal row is retained forever** as durable audit: the history
+   of when a connection existed is never overwritten or deleted.
+
+No scheduled sweep is specified, and none is needed: the only operation the
+slot blocks is that same User's own next initiation, and step 4 releases it
+at exactly that moment. A stranded `pending` row therefore inconveniences
+nobody — it is not a global lock, and it never blocks another User. §12.F
+and §13 require a test proving an abandoned or expired attempt does not
+block the User forever, and a second test proving two live/pending
+connections still cannot coexist.
 
 **Provider switch / reconnect semantics** (Sub-slice F), all inside one
 transaction holding that User's `staff_booking_locks` row (§7.5, so a
@@ -652,21 +870,206 @@ with, all verified on `main`, none of which Sub-slice E may assume away:**
    email survives only as a `contacts_custom_field` row tagged `EMAIL`.
    Booking identity is therefore **phone within the booked Location**, and
    the draft's "phone/email" phrasing is withdrawn.
-4. **`contacts` carries no unique index of any kind** — uniqueness is
-   validation-only. Two simultaneous public bookings from the same phone
-   can both pass a `SELECT`-then-`INSERT` check. Where Sub-slice E needs a
-   hard guarantee it uses §7.2's own `insertOrIgnore`-then-re-read shape
-   rather than trusting the database to break the tie, and it creates the
-   Contact inside the booking transaction so a refused booking never leaves
-   an orphan.
+4. **`contacts` carries no unique index of any kind**, and one cannot be
+   added retroactively (§3.6.1). Uniqueness is validation-only and
+   group-scoped, so two simultaneous public bookings from the same phone
+   can both pass a `SELECT`-then-`INSERT` check.
 
-No Location-scoped Contact resolver exists today to reuse: the closest
-thing on `main` is `private` and Business-scoped
+**An earlier draft said Sub-slice E could get a hard guarantee from
+`insertOrIgnore`. That was wrong and is withdrawn.** `INSERT IGNORE`
+suppresses a duplicate-key error; with no unique key to violate it
+suppresses nothing and prevents no duplicate. Every one of the three
+`insertOrIgnore` call sites in `app/` is backed by a real unique constraint
+— `ai_usage_periods` (`2026_09_16_100002:41`), `business_home_visits`
+(`2026_09_16_100001:45`), `opportunity_producer_dispatches`
+(`2026_09_16_100001:59`) — and `opportunity_producer_dispatches`' own
+migration comment says exactly why: "the uniqueness that makes the
+insert-then-conditional-update claim safe under concurrency" is "the unique
+key … not a check-then-insert". §7.2's use of the idiom is sound precisely
+because `staff_booking_locks.staff_user_id` **is** the primary key.
+`contacts` has no such key, so the idiom does not transfer.
+
+#### 5.8.1 Why a unique index on `contacts` is not the answer either
+
+Adding `unique (location_id, phone)` (or `(business_id, location_id,
+phone)`) to the existing table is mechanically unsafe and is rejected
+(§15). It would fail at migration time on real data, because duplicate
+`(location_id, phone)` rows are produced today by ordinary, intended
+behaviour on any single-active-Location Business: group cloning
+(`ContactsController.php:583-589`, `ReplicateContacts.php:64-70`),
+`batchContactCopy()` (`EloquentContactsRepository.php:518-535`), CSV import
+(`ContactGroups.php:857`), paste import (`ContactsController.php:1174-1177`)
+and multi-group inbound keyword opt-in (`DLRController.php:1219-1236`) —
+each of which de-duplicates by `group_id` only. The Location backfill then
+stamps one Location id across those rows, converting historical
+cross-group duplicates into colliding non-NULL pairs. Five existing tests
+and five code comments assert that this duplication is legitimate
+(§3.6.1). The index would also constrain nothing where it matters most:
+MySQL's unique index ignores NULLs, and `location_id` is NULL for every
+Contact of a multi-Location Business today.
+
+#### 5.8.2 The normalized phone this slice keys on
+
+Calendar's identity key is the **stored form**, because it has to match
+rows that already exist:
+
+```
+normalizedPhone = trim(str_replace(['+', '-', '(', ')', ' '], '', $raw))
+```
+
+That is exactly what `EloquentContactsRepository.php:695` computes and
+`:709` stores, and it is `StringHelper::removeExtraCharacters()`
+(`app/Library/StringHelper.php:194-197`) plus a `trim()`. **Sub-slice E must
+not use `E164Normalizer` or `AgencyProspectPhoneNormalizer`**: both exist
+and both are genuinely better normalizers, but their output (a leading `+`,
+or region-inferred digits) does not match what `contacts.phone` holds, so
+using either would silently fail to find existing Contacts and create
+duplicates instead. Two honest limits of inheriting this form: it does not
+strip tabs, dots, slashes or non-ASCII digits, and the model's
+`'phone' => 'integer'` cast means reads come back as integers. Both are
+pre-existing properties of the whole codebase, which this slice inherits
+rather than fixes (§15).
+
+#### 5.8.3 `booking_contact_identity_locks` — the serialization row
+
+One new table, whose only purpose is to serialize Location-local Contact
+resolution. It is the narrow dedicated lock the concurrency requirement
+needs, and it locks nothing that another domain uses:
+
+```
+booking_contact_identity_locks
+  id
+  business_location_id   FK -> business_locations, cascadeOnDelete, NOT NULL
+  normalized_phone       string(32), NOT NULL
+  timestamps
+
+  unique (business_location_id, normalized_phone)
+```
+
+It carries **no `contact_id` and no other data**: a second pointer to the
+resolved Contact would be a second source of truth that can drift from
+`contacts`. `cascadeOnDelete` because the row is pure infrastructure with
+no audit value — an archived Location's lock rows are meaningless. The
+unique key is not decoration: it is what makes the `insertOrIgnore` below
+idempotent, per §5.8's own argument above.
+
+#### 5.8.4 Resolution algorithm
+
+Modelled on `AiUsageLedgerManager::lockOrCreatePeriod()`
+(`app/Library/Ai/AiUsageLedgerManager.php:441-474`), this repository's
+canonical ensure-then-lock for a composite key, **including its ordering**,
+which exists for a documented reason: InnoDB answers `SELECT ... FOR UPDATE`
+for a missing row with a shared gap lock, and the insert each waiter then
+needs takes a conflicting insert-intention lock in that same gap, so
+concurrent callers deadlock. The unlocked probe first is what avoids it.
+
+Inside the booking transaction, after §7.4's locks are held:
+
+1. **Probe, unlocked** — an ordinary MVCC read for the
+   `(business_location_id, normalized_phone)` row. Takes no locks at all.
+2. **If absent, `insertOrIgnore`** that pair. Whoever loses the race simply
+   finds the winner's row at step 3; no exception either way.
+3. **Lock** — `->where('business_location_id', ...)->where('normalized_phone',
+   ...)->lockForUpdate()->firstOrFail()`. From here, exactly one request at
+   a time holds this identity.
+4. **Resolve under the lock** —
+   `Contacts::query()->where('location_id', $locationId)
+   ->where('phone', $normalizedPhone)->orderBy('id')->first()`.
+5. **Reuse or create.** Found → return it unchanged: never rewrite an
+   existing Contact's `group_id`, `business_id` or `location_id`, and never
+   attach a Contact whose `location_id` is anything other than the booked
+   Location. Absent → create it (§5.8.5) with `location_id` set explicitly
+   to the booked Location.
+
+The lock is released with the booking transaction, so a refused booking
+leaves no Contact behind — but note the lock **row** persists, which is
+correct and harmless: it is a reusable identity, not a claim.
+
+**Several existing Contacts may legitimately match at step 4** (§3.6.1), so
+`orderBy('id')->first()` is specified rather than left open: Calendar takes
+the **oldest deterministically**. This differs on purpose from
+Conversations and the automation trigger, which refuse to choose among
+same-number Contacts because displaying one of two people's names would be
+a guess (`ChatBox.php:151-154`,
+`MessageReceivedTriggerSource.php:33-36`). The consequence differs too: for
+a booking, refusing would mean a real customer cannot book because of a
+legacy import artifact they know nothing about, which is worse than
+attaching the appointment to the older of two rows. Calendar never merges,
+rewrites or deletes the other duplicates.
+
+#### 5.8.5 The Contacts seam
+
+**`createContactFromRequest()` cannot be reused unchanged**, for four
+mechanical reasons, each verified: (a) its match is
+`$contactGroups->subscribers()->firstOrNew(['phone' => trim($phone)])`
+(`:708-710`) — `group_id`-scoped, not Location-scoped; (b) it sets
+`location_id` only for a new subscriber and only via
+`Contacts::singleActiveLocationIdFor()` (`:729-735`), which returns NULL for
+every multi-Location Business; (c) its `Rule::unique` is evaluated against
+the **raw** submitted string while `firstOrNew` matches the **stripped**
+one (`:697-703` vs `:709`), so the two disagree; and (d) it sends the
+group's welcome/signup SMS (`:761-805`) through a `$phoneUtil->parse()` that
+can throw an uncaught `NumberParseException` — a public booking must not
+spend money on an SMS nobody asked for, nor fail because one could not be
+sent.
+
+So Sub-slice E adds **one narrow method on the existing
+`EloquentContactsRepository`** — not a new parallel Contacts service, and
+never a raw write from the controller:
+
+```
+findOrCreateForBooking(
+    BusinessLocation $location,
+    ContactGroups $contactGroups,
+    string $rawPhone,
+    array $input = [],
+): Contacts
+```
+
+It reuses, rather than reimplements, every existing behaviour that still
+applies:
+
+- **Blacklist**: `Contacts::isListedInBlacklist()`
+  (`app/Models/Contacts.php:176-179`), the same suppression check
+  `createContactFromRequest()` makes. A blacklisted number is refused, which
+  means it cannot self-book — the same outcome the existing public opt-in
+  page already produces for such a number, and stated here so it is a known
+  product consequence rather than a surprise.
+- **Custom fields**: `Contacts::updateFields($input)`
+  (`app/Models/Contacts.php:291-325`) — never a hand-rolled
+  `contacts_custom_field` write. Note this method re-writes `phone` when a
+  `PHONE` tag is present (`:319-322`), so the seam passes the normalized
+  value or omits the tag.
+- **Row shape on create**: `group_id`, `customer_id` and `business_id` from
+  the group, `status = 'subscribe'` — identical to
+  `createContactFromRequest()` (`:724-727`) — and **`location_id` set
+  explicitly to `$location->id`**, which is the one deliberate divergence.
+- **Automation dispatch**: the same `AutomationJob::forContactCreated()` /
+  `EnrollWorkflowContact::forContactCreated()` `afterCommit()` dispatches
+  guarded by `wasRecentlyCreated && business_id !== null` (`:746-757`), with
+  an existing `ContactCreationSource` case. No new enum case is added unless
+  Sub-slice E first confirms it does not collide with the automation
+  builder's negative-vocabulary guardrail
+  (`NoUnsupportedVocabularyTest.php:78,92,160`, §3.2).
+- **Not reused**: the welcome/signup SMS, deliberately (reason (d) above).
+
+**Which `ContactGroups`.** `contact_groups` has `business_id` but **no
+`location_id`** — it is a Business-level container with no Location axis, so
+the group is never the identity key; `location_id` is. Sub-slice E resolves
+the Business's group deterministically (oldest by id) and, when the Business
+has none, creates one through the existing seam
+`EloquentContactsRepository::store()` — the same path
+`ContactDirectoryController::createFirstList()` uses for its idempotent
+first list named `Contacts`
+(`app/Http/Controllers/Customer/Business/ContactDirectoryController.php:97-114`).
+It never invents a per-Location group concept.
+
+No Location-scoped Contact resolver exists today to reuse: the closest thing
+on `main` is `private` and Business-scoped
 (`MessageReceivedTriggerSource::theOneSubscribedContact()`,
 `app/Library/Automation/Workflow/Triggers/MessageReceivedTriggerSource.php:173-188`).
-Sub-slice E's resolver is written against this subsection's rule and is the
-first of its kind; it is identity resolution only, it is not a second ACL,
-and it never decides authorization.
+The seam above is the first of its kind; it is identity resolution only, it
+is not a second ACL, and it never decides authorization.
 
 ## 6. Authority / security contract
 
@@ -690,14 +1093,47 @@ Staff, `WorkspaceMembershipRole` has no separate "Owner" case; ownership is
 `Workspace.owner_user_id`/`Business.customer_id`, checked before
 membership per the guard's own precedence) who is authorized for a
 Location may manage that Location's Booking Types and see/manage every
-appointment at it. The one genuine new distinction Blueprint §12 itself
-draws ("staff availability is set **per staff member**") is: a Staff/Admin
-member may create/edit `staff_availability_rules`/`staff_time_off` rows
-only for **themselves**; an Owner/Admin acting on another staff member's
-availability (e.g. onboarding) is a deliberate escalation this slice does
-not authorize without further explicit product direction — flagged as an
-open question for the human before Sub-slice B ships, not silently
-resolved either way.
+appointment at it.
+
+**Availability authority is settled for V1** — it is not left as an
+implementation-time question, and Sub-slice B does not stop to ask. The one
+genuine new distinction Blueprint §12 itself draws is that "staff
+availability is set **per staff member**"; who may set it for whom is:
+
+| Actor | May manage availability for |
+|---|---|
+| **Workspace or Business Owner** — `Workspace.owner_user_id` or `Business.customer_id`, the two branches the guard already checks before membership | **any staff member currently eligible for the target Location** |
+| **Admin** (`WorkspaceMembershipRole::Admin`) | **themselves only**, in V1 |
+| **Staff** (`WorkspaceMembershipRole::Staff`) | **themselves only** |
+
+The Owner row is not an escalation this contract invents: governing
+architecture already gives the Business Workspace Owner full authority over
+that Business, including its staff, and `LocationAccessGuard` already
+grants owners unconditional Location access ahead of any membership check
+(`app/Library/Workspace/LocationAccessGuard.php:115-121`). Onboarding a
+staff member's opening hours is exactly that authority.
+
+The Admin row is deliberately the narrower of the two readings: no
+authoritative document grants Admins team-availability management, and the
+Acceptance Matrix's permission boundary is "Owner + staff per Location
+ACL". If a later authoritative source explicitly grants Admins
+team-availability management, widening this row is a one-line change to
+this table — but it is not assumed here.
+
+Three conditions bind **every** row of that table, without exception:
+
+1. the actor must pass the ordinary Location authorization for the path
+   they are using (`LocationAccessGuard`, §6's opening rule) — owner
+   authority over staff is not authority over a Location they cannot
+   reach;
+2. the **target** staff member's eligibility for that Location is
+   re-derived at write time through the same guard (§6's eligibility rule),
+   so availability can never be written for someone who is not currently
+   eligible there; and
+3. `staff_time_off` is User-global (§5.3), so an Owner writing time off for
+   a staff member removes them from **every** Location they are granted,
+   not only the one the Owner reached them through — the write surface must
+   say so plainly to the actor.
 
 **Staff eligibility is re-derived, never inherited from the pivot.**
 `booking_type_staff` (§5.1) records configuration intent only. A staff
@@ -812,6 +1248,62 @@ not be able to tell "this Location exists but its account is locked" from
 (§7.4), because a page rendered a minute ago proves nothing about the
 account's state at the moment of the write.
 
+**Every authenticated Calendar route is entitlement-gated from the moment it
+exists — hiding the nav item is not a gate.** Sub-slices B and D add
+authenticated customer routes while `PlatformFeature::Calendar` is still
+`Planned` (§11), and a Planned feature must not become executable because
+someone guessed or kept a URL. Nav hiding does not achieve that: recon
+confirmed `CustomerMenuBuilder::entitled()` only omits a `MenuItem` from the
+array the view renders, touches nothing in the routing layer, and leaves
+every route registered and reachable
+(`app/Library/Navigation/CustomerMenuBuilder.php:537-551`). The repository
+states the same rule in a test docblock: "a forged direct request is refused
+SERVER-SIDE. Navigation is irrelevant: the request never renders a link"
+(`tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileEntitlementTest.php:176-179`).
+
+Every Calendar HTTP route and action created before Sub-slice E therefore
+independently requires all three of:
+
+1. **Ordinary Workspace/Business tenancy** for the actor;
+2. **`LocationAccessGuard`** for the exact Location, wherever the action is
+   Location-scoped (§6's opening rule); and
+3. **An `EntitlementManager` decision for `PlatformFeature::Calendar`.**
+
+The mechanism is the existing one, not a new one. There is **no feature
+middleware anywhere in this repository** — every gated surface does it
+in-controller — and the canonical seam is
+`ResolvesBusinessTenancy::resolveEntitledBusinessTenancy($workspaceUid,
+$businessUid, PlatformFeature::Calendar->value)`
+(`app/Http/Controllers/Customer/Business/Concerns/ResolvesBusinessTenancy.php:82-99`),
+the same trait Website generation, GBP, Automations and CRM already use. It
+`abort(404)`s on refusal — never 403, never a redirect, never a flash — and
+this slice matches that exactly. Note the argument is a **raw string** key,
+so pass `PlatformFeature::Calendar->value`.
+
+**While Calendar is `Planned`, those routes fail closed automatically, with
+no extra code.** `EntitlementManager::snapshotBusinessFeatureDecisions()`
+returns `new EntitlementDecision(false, 'platform_feature_unavailable')`
+before any database read (`app/Library/Entitlement/EntitlementManager.php:201-205`),
+and `decide()` is a thin wrapper over it. A platform admin cannot even
+override it: an Allow override for an unavailable feature is refused at write
+time (`:1933`). So the gate is real from Sub-slice B onward, and **Sub-slice
+E's final `Planned → Available` flip (§11) is precisely what makes the
+already-built authenticated surfaces executable.** The flip does not move
+earlier for any reason.
+
+`'calendar'` is also added to
+`CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES`
+(`app/Library/Navigation/CustomerMenuBuilder.php:96-106`) in Sub-slice D, so
+the nav entry appears only when entitled — a cosmetic complement to the
+server-side gate above, never a substitute for it.
+
+§13 requires the pair of tests that prove this, and they are genuinely
+novel: recon found **no existing test anywhere in `tests/`** that proves a
+Planned feature's authenticated route is refused, because no Planned feature
+has a route today. The nearest analogue to copy is
+`GoogleBusinessProfileEntitlementTest.php:145-190`, which proves the same
+shape for an *unentitled-by-plan* feature.
+
 External calendar connections (§5.5) are strictly per-User and never
 exposed across Workspaces — a User's Google/Outlook tokens are never
 readable or actionable by any Workspace admin, only by the connecting User
@@ -856,9 +1348,36 @@ specified exactly, not left to the implementer:
 
 ```
 staff_booking_locks
-  staff_user_id   FK -> users, restrictOnDelete, PRIMARY KEY (one row per staff member)
+  staff_user_id   FK -> users, cascadeOnDelete, PRIMARY KEY (one row per staff member)
   timestamps
 ```
+
+**`cascadeOnDelete`, deliberately unlike every other user FK in this
+schema.** This row is pure serialization infrastructure: it holds no data,
+carries no audit value, and means nothing once the staff member is gone.
+`restrictOnDelete` here would make a User undeletable for the sole reason
+that someone once booked them — and this repository hard-deletes Users. It
+has **no SoftDeletes** on `users` (`app/Models/User.php:52-54`, no
+`deleted_at` column anywhere) and ten distinct hard-delete paths in `app/`,
+including admin customer delete and sub-account delete. Its own canonical
+rule is explicit that Users are exempt from the no-hard-delete policy that
+covers Workspaces and Businesses: an infrastructure table "must never block
+a legitimate user-deletion feature elsewhere in the system"
+(`database/migrations/2026_07_31_120001_create_workspace_transitions_table.php:15-19`;
+RFC-003 §17 names only `Workspace`, `WorkspaceMembership` and `Business`).
+The closest existing analogue — `business_home_visits`, a per-(user,
+business) marker row — uses `cascadeOnDelete()` on both parents
+(`database/migrations/2026_09_16_100001_create_business_home_visits_table.php:31-32`).
+
+**The other user FKs in this schema keep their stricter posture, and that is
+a deliberate, stated consequence.** `appointments.staff_user_id`,
+`staff_availability_rules.staff_user_id`, `staff_time_off.staff_user_id`,
+`booking_type_staff.staff_user_id` and `external_calendar_connections.user_id`
+remain `restrictOnDelete`, because those rows *are* historically meaningful —
+which does mean a staff member who has ever been booked cannot be hard-deleted
+until those rows are dealt with. That is the correct trade for operational
+history and it is recorded here rather than discovered later; only the lock
+row, which protects nothing, is exempted.
 
 1. **Ensure, outside the transaction** (a single autocommitted statement,
    before `DB::beginTransaction()`), for **every** staff member the
@@ -1079,10 +1598,21 @@ Automations §13 consumption, per the Blueprint's own "each firing the
 corresponding automation event" line):
 
 - `AppointmentScheduled` — `appointmentId, businessLocationId, bookingTypeId, staffUserId, contactId, crmOpportunityId (nullable), startAt, endAt, createdByUserId (nullable)`
-- `AppointmentRescheduled` — `appointmentId, staffUserId, previousStartAt, previousEndAt, newStartAt, newEndAt, rescheduledByUserId (nullable)`
+- `AppointmentRescheduled` — `appointmentId, previousStaffUserId, newStaffUserId, previousStartAt, previousEndAt, newStartAt, newEndAt, rescheduledByUserId (nullable)`
 - `AppointmentCancelled` — `appointmentId, staffUserId, cancelledByUserId (nullable), reason (nullable)`
 - `AppointmentCompleted` — `appointmentId, staffUserId, completedByUserId (nullable)`
 - `AppointmentNoShow` — `appointmentId, staffUserId, markedByUserId (nullable)`
+
+**`AppointmentRescheduled` carries both staff ids, always.** §7.4 lists
+"Reschedule (moving staff)" as a supported mutation and locks **old and
+new** staff rows for it, so a single `staffUserId` field would be
+ambiguous exactly when it matters most — a consumer could not tell whether
+the appointment moved in time, moved between staff, or both. The two
+fields are therefore mandatory and always populated: on a same-staff
+reschedule they are equal, and a consumer detects a staff move by
+comparing them rather than by inspecting which optional field was set. No
+consumer is required to infer the previous staff member from anything
+else, because nothing else records it (§5.4).
 
 All numeric ids only (no PII in the payload), matching this codebase's
 existing event-payload convention (e.g. `LocationAccessDeniedException`,
@@ -1105,12 +1635,13 @@ because `workspace_transitions` holds them, not because the event was
 dispatched.
 
 Consequently, an `AppointmentRescheduled` listener is the only way anything
-learns the previous time, and **this slice persists no appointment
-history** (§5.4). Whether to add an `appointment_transitions` table is
-recorded as an open decision for the human before Sub-slice C ships (§5.4,
-§12.C, §15) — neither silently adopted nor silently dismissed here. What is
-not permitted, in this document or in any implementation of it, is
-describing these events as the audit trail.
+learns the previous interval or previous staff member, and **this slice
+persists no appointment history** (§5.4). That is a settled V1 decision,
+not an open question: no governing authority requires durable Appointment
+history, so `appointment_transitions` is a stated non-goal (§15) and
+Sub-slice C proceeds without it. What is not permitted, in this document or
+in any implementation of it, is describing these transient events as the
+audit trail.
 
 **Dispatch discipline, once per committed mutation**: each event implements
 `ShouldDispatchAfterCommit` (the convention every `App\Events\Workspace\*`
@@ -1198,15 +1729,43 @@ prerequisite is named — independently reviewable.
 
 ### Sub-slice A — Schema/domain foundation
 
-- **Files/domains**: new migrations for all six tables in §5; Eloquent
-  models (`BookingType`, `StaffAvailabilityRule`, `StaffTimeOff`,
-  `Appointment`, `ExternalCalendarConnection`, `ExternalCalendarBusyBlock`,
-  `StaffBookingLock`) with casts/relations only — no services, no
-  controllers, no routes.
+- **Files/domains**: new migrations for **all ten tables** in the roster
+  below; Eloquent models (`BookingType`, `BookingTypeRoundRobinState`,
+  `StaffAvailabilityRule`, `StaffTimeOff`, `Appointment`,
+  `ExternalCalendarConnection`, `ExternalCalendarBusyBlock`,
+  `StaffBookingLock`, `BookingContactIdentityLock`) with casts/relations
+  only — no services, no controllers, no routes. `booking_type_staff` is an
+  ordinary pivot and needs no dedicated model if a `belongsToMany` relation
+  covers it; the **table** is still mandatory.
 - **Prerequisites**: none beyond Contracts 1–14 (already merged).
-- **Schema**: exactly §5.1–§5.6, plus `staff_booking_locks`
-  (`staff_user_id` PK/unique, no other columns needed beyond timestamps)
-  for §7's lock target.
+- **Schema — the complete Sub-slice A roster, enumerated so none can be
+  missed**:
+
+  | # | Table | Defined in |
+  |---|---|---|
+  | 1 | `booking_types` (including `public_booking_uuid`, §5.1) | §5.1 |
+  | 2 | `booking_type_staff` (pivot) | §5.1 |
+  | 3 | `booking_type_round_robin_state` | §5.1.1 |
+  | 4 | `staff_availability_rules` | §5.2 |
+  | 5 | `staff_time_off` | §5.3 |
+  | 6 | `appointments` | §5.4 |
+  | 7 | `external_calendar_connections` | §5.5 |
+  | 8 | `external_calendar_busy_blocks` | §5.6 |
+  | 9 | `staff_booking_locks` | §7.2 |
+  | 10 | `booking_contact_identity_locks` | §5.8.3 |
+
+  Earlier drafts of this contract said "six tables", which predated
+  `booking_type_round_robin_state` (§5.1.1) and
+  `booking_contact_identity_locks` (§5.8.3), and never counted the pivot or
+  the lock table. **Ten is the number.** An implementation that ships nine of
+  these is incomplete; `booking_type_round_robin_state` and
+  `booking_contact_identity_locks` are the two most likely to be missed.
+
+- **Identifier generation (§5.1)**: `booking_types.public_booking_uuid` is a
+  `Str::uuid()` value assigned in `BookingType::booted()`'s creating hook,
+  independent of `HasUid` — and **every** model here that uses `HasUid`
+  overrides `generateUid()` with `(string) Str::uuid()`, because the trait's
+  default is `uniqid()`.
 - **Tenancy/security**: N/A at this layer (no read/write paths exposed
   yet) — but every FK/index from §5/§6 must be present so later sub-slices
   never need a schema-altering migration for an ACL reason.
@@ -1238,12 +1797,23 @@ prerequisite is named — independently reviewable.
   Business Knowledge Profile content with no scheduling consumer anywhere
   in `app/`, and staff availability is this slice's sole booking
   authority.
+  **Every route added here is entitlement-gated** through
+  `ResolvesBusinessTenancy::resolveEntitledBusinessTenancy(...,
+  PlatformFeature::Calendar->value)` (§6), which `abort(404)`s. Because
+  Calendar is still `Planned`, these routes are therefore inert until
+  Sub-slice E's flip — that is intended, and it is what makes building them
+  now safe.
 - **Concurrency**: none beyond ordinary single-row CRUD (no
   double-booking surface yet — that's C).
 - **Tests**: feature tests per CRUD action × role (owner/admin/staff) ×
   Location-ACL boundary (granted vs ungranted Location → 404, matching
-  the existing `LocationAccessDeniedException`/404 convention), plus the
-  "staff cannot edit another staff member's availability" boundary.
+  the existing `LocationAccessDeniedException`/404 convention); the
+  availability-authority table of §6 proven row by row (Owner may write a
+  currently-eligible staff member's availability; Admin and Staff may write
+  only their own; every actor still needs Location authorization; a target
+  who is not currently eligible for the Location is refused); and the
+  **entitlement gate proven while Planned** — a fully authorized owner with
+  a valid Location receives 404 on every route added here (§13 proof 8).
 - **Risk**: Low — ordinary Location-scoped CRUD, fully precedented by
   Contract 08B's consumer-wiring pattern (even though 08B itself declined
   Calendar, its wiring pattern for other controllers is the template).
@@ -1278,16 +1848,19 @@ prerequisite is named — independently reviewable.
   mirroring `WorkspaceOwnershipTransferTest`'s own concurrency-test style
   (transaction-boundary, row-lock-order assertions) from the already-merged
   Contract series.
-- **Open decision to settle before this sub-slice merges**: whether an
-  `appointment_transitions` table is added (§5.4, §10, §15). Implementing
-  the lifecycle without one is permitted and is this contract's stated
-  scope; what is **not** permitted is implementing it while describing the
-  five events as the audit trail.
-- **Tests**: concurrent-write tests (parallel processes/threads
-  attempting overlapping bookings), round-robin distribution correctness,
-  reschedule atomicity (interval check runs against the *new* interval
-  only, original untouched on failure), event-payload correctness for
-  all five lifecycle events.
+- **Appointment history is settled, and does not gate this sub-slice**: V1
+  ships no `appointment_transitions` table (§5.4, §10, §15). The lifecycle
+  is implemented without one; what is **not** permitted is implementing it
+  while describing the five transient events as the audit trail.
+- **Tests**: concurrent-write tests (parallel processes/threads attempting
+  overlapping bookings), round-robin distribution correctness, reschedule
+  atomicity (interval check runs against the *new* interval only, original
+  untouched on failure), **reschedule with a staff move** (old and new
+  staff both locked per §7.4, the new staff member's own cross-Location
+  overlap re-checked, and `AppointmentRescheduled` carrying
+  `previousStaffUserId` ≠ `newStaffUserId`), the same-staff reschedule
+  carrying the two ids equal, and event-payload correctness for all five
+  lifecycle events.
 - **Risk**: **High** — the one hard concurrency invariant in this
   contract; a subtle bug here is a real double-booking in production,
   not a cosmetic defect.
@@ -1315,15 +1888,23 @@ prerequisite is named — independently reviewable.
 - **Tenancy/security**: every view/action re-checks
   `LocationAccessGuard` per §6; the calendar view itself must never
   render an appointment from a Location the viewer isn't authorized for,
-  even if linked to directly by id (Addendum §4).
+  even if linked to directly by id (Addendum §4). **Every route also carries
+  the `PlatformFeature::Calendar` entitlement gate** of §6, so the whole
+  authenticated calendar stays inert while the feature is `Planned` and
+  becomes executable only at Sub-slice E's flip. Adding `'calendar'` to
+  `ENTITLEMENT_GATED_FEATURES` hides the nav entry; it is **not** the gate,
+  and neither is it optional — omitting it hides the item forever once
+  entitled.
 - **Concurrency**: none new — consumes C's already-safe service; UI-level
   optimistic-locking/stale-view handling (e.g., a reschedule attempted
   against a slot another request just filled) surfaces C's own refusal
   as a user-facing error, never retried silently in a way that could
   bypass C's checks.
-- **Tests**: feature/HTTP tests per view and action × Location-ACL
-  boundary; a browser-level smoke pass per this repository's own
-  UI-verification convention.
+- **Tests**: feature/HTTP tests per view and action × Location-ACL boundary;
+  the **entitlement gate proven while Planned** (authorized owner + valid
+  Location + Calendar `Planned` → 404 on every calendar route, §13 proof 8);
+  and a browser-level smoke pass per this repository's own UI-verification
+  convention.
 - **Risk**: Medium — UI complexity and the new Location-picker pattern
   are the main novelty; the underlying engine is already proven by C.
 - **Model**: Sonnet 5 sufficient.
@@ -1332,12 +1913,17 @@ prerequisite is named — independently reviewable.
 
 - **Files/domains**: unauthenticated public controller/routes (a scheduler
   page reachable from the website (§14) and Conversations links (§11), per
-  Blueprint §12), resolved by a **dedicated public identifier that is not a
-  `HasUid` `uniqid()` value** (§6, step 1); Contact find-or-create for the
-  booking customer per §5.8's Location-local rule, through the canonical
-  `EloquentContactsRepository::createContactFromRequest()` seam and never
-  by writing `contacts` directly; and the `PlatformFeature::Calendar`
-  `Available` flip (§11) as this sub-slice's last step.
+  Blueprint §12), routed on `booking_types.public_booking_uuid` with a
+  `->whereUuid(...)` constraint and **never** on a `HasUid` `uniqid()` value
+  (§5.1, §6 step 1), with the Location derived from the resolved Booking
+  Type's own `business_location_id`; Contact find-or-create per §5.8's
+  Location-local rule, through the one new narrow seam
+  `EloquentContactsRepository::findOrCreateForBooking()` (§5.8.5) — never a
+  raw `contacts` write from the controller, and never
+  `createContactFromRequest()` unchanged, which cannot satisfy the rule
+  (§5.8.5 (a)–(d)); and the `PlatformFeature::Calendar` `Available` flip
+  (§11) as this sub-slice's last step, which is what finally makes
+  Sub-slices B and D's authenticated surfaces executable (§6).
 - **Prerequisites**: A, B, C, **D — all hard**. D is a hard prerequisite,
   not a recommendation: this flow's own acceptance statement is "a customer
   books a slot and **both parties see it**," and until the authenticated
@@ -1374,12 +1960,16 @@ prerequisite is named — independently reviewable.
   of scope (§15) — not because abuse does not matter, but because no
   authoritative document specifies one and the mechanism above already
   exists and is precedented.
-- **Concurrency**: consumes C's service as-is; no new concurrency surface —
-  a public booking takes the exact same locks in the same order as an
-  authenticated one (§7.4). The Contact find-or-create of §5.8 runs inside
-  the booking transaction, and where it needs a hard uniqueness guarantee
-  it uses §7.2's `insertOrIgnore`-then-re-read shape, because `contacts`
-  has no unique index to rely on.
+- **Concurrency**: consumes C's service as-is for the booking itself — a
+  public booking takes the exact same locks in the same order as an
+  authenticated one (§7.4). The **one new concurrency surface** is Contact
+  identity: `contacts` has no unique index and none can be added (§5.8.1), so
+  §5.8.3's `booking_contact_identity_locks` row is ensured-then-locked on
+  `(business_location_id, normalized_phone)` following
+  `AiUsageLedgerManager::lockOrCreatePeriod()`'s exact probe → `insertOrIgnore`
+  → `lockForUpdate()` ordering (§5.8.4), inside the booking transaction, so
+  two simultaneous bookings from the same phone at the same Location resolve
+  to one Contact and a refused booking leaves no orphan.
 - **Tests**: end-to-end public-booking tests (slot shown → booked → both
   Business and customer see it, matching the Acceptance Matrix's own
   acceptance statement verbatim); §6's authority stack proven refusal by
@@ -1387,10 +1977,16 @@ prerequisite is named — independently reviewable.
   locked/inactive/suspended account, Agency-caused lock, unentitled plan,
   Booking Type belonging to another Location, ineligible staff — each a
   404, none distinguishable from another); Location-local Contact dedup per
-  §5.8, including the two-Locations-one-person case producing two rows and
-  the several-active-Locations case writing the booked `location_id`
-  rather than NULL; the throttle middleware present on the write route;
-  entitlement-flip verification (`PlatformFeatureRegistryTest`-style).
+  §5.8, including the two-Locations-one-person case producing two rows, the
+  several-active-Locations case writing the booked `location_id` rather than
+  NULL, and **two concurrent bookings from the same phone at the same
+  Location producing exactly one Contact** (§5.8.4); a blacklisted number
+  refused (§5.8.5); the throttle middleware present on the write route; a
+  malformed `public_booking_uuid` rejected by the route constraint before any
+  query; and entitlement-flip verification
+  (`PlatformFeatureRegistryTest`-style) **paired with proof that the
+  previously-404 authenticated routes of B and D now succeed for an
+  authorized actor** (§13 proof 8).
 - **Risk**: Medium — public/unauthenticated surface raises the stakes of
   any Location-boundary bug beyond what an authenticated UI would.
 - **Model**: Sonnet 5 sufficient.
@@ -1398,10 +1994,14 @@ prerequisite is named — independently reviewable.
 ### Sub-slice F — External Google/Outlook calendar integration
 
 - **Files/domains**: OAuth connect/disconnect flow (mirroring
-  `business_google_connections`' controller pattern, §3.3/§5.5), full +
-  incremental sync job (`app/Console/Commands/`, matching this
-  codebase's existing command conventions), webhook ingestion endpoints
-  for both providers, wiring `external_calendar_busy_blocks` into C's
+  `business_google_connections`' controller and manager pattern, §3.3/§5.5)
+  including §5.5's pending-connection lifecycle — **no persisted access
+  token, ever**; `refresh_token_encrypted` only, with the access token
+  derived per operation and discarded, exactly as
+  `GoogleBusinessProfileConnectionManager::accessTokenFor()` does it. Plus:
+  full + incremental sync job (`app/Console/Commands/`, matching this
+  codebase's existing command conventions), webhook ingestion endpoints for
+  both providers, and wiring `external_calendar_busy_blocks` into C's
   overlap query as the second "busy source" (§7's extensibility point —
   should require no change to C's transaction structure itself).
 - **Prerequisites**: A, C (hard — needs the extensible busy-source union
@@ -1410,9 +2010,13 @@ prerequisite is named — independently reviewable.
   A → B → C → D → E chain.
 - **Schema**: none new (uses A's `external_calendar_connections`/
   `external_calendar_busy_blocks`).
-- **Tenancy/security**: connections are strictly per-User (§6); the
-  connect flow must verify the connecting User's own identity, never a
-  Workspace-level actor.
+- **Tenancy/security**: connections are strictly per-User (§6); the connect
+  flow must verify the connecting User's own identity, never a
+  Workspace-level actor, and the callback must confirm the attempt belongs
+  to the acting User before consuming the nonce — the ordering
+  `GoogleBusinessProfileController::callback()` already uses. Credentials:
+  `refresh_token_encrypted` with Laravel's `encrypted` cast and the
+  attribute in `$hidden`; no access-token column exists to leak (§5.5).
 - **Concurrency**: sync writes are idempotent upserts **plus** §5.6's
   deletion and reconciliation rules — safe under concurrent polling and
   webhook delivery for the same connection. The earlier claim of "no
@@ -1422,9 +2026,13 @@ prerequisite is named — independently reviewable.
   booking check takes — so a booking can never read a half-applied sync.
   All provider HTTP happens **outside** the transaction and outside the
   lock; only the resulting local write set is applied under it.
-- **Tests**: OAuth flow tests (token storage/encryption, state-nonce
-  single-use); the one-active-connection-per-User database guarantee
-  (§5.5), including provider switch and reconnect; sync idempotency (same
+- **Tests**: OAuth flow tests (refresh-token storage/encryption, state-nonce
+  single-use, and an assertion that **no access token is persisted
+  anywhere**); the pending-connection lifecycle of §5.5 — an abandoned or
+  expired attempt does not block the User forever, and two live/pending
+  connections still cannot coexist; the one-active-connection-per-User
+  database guarantee (§5.5), including provider switch and reconnect; sync
+  idempotency (same
   delta/webhook applied twice → no duplicate rows); **deletion handling**
   (a provider tombstone removes the busy block; a full sync reconciles away
   a vanished event; a failed or partial sync leaves the prior cache intact;
@@ -1488,6 +2096,23 @@ sub-slice can assume another one covered them:
 7. **External sync deletions and authenticity** (§5.6, §11): tombstone and
    reconciliation removal, no cache wipe on failure, and fail-closed
    webhook verification with no side effect on an unverified request.
+8. **A `Planned` feature's authenticated routes are refused server-side**
+   (§6): a fully authorized owner, with a valid Location and an entitled
+   plan, receives **404** on every Calendar route while
+   `PlatformFeature::Calendar` is `Planned` — and the **same** request
+   succeeds after Sub-slice E's `Available` flip. This test does not exist
+   anywhere in the repository today (no Planned feature currently has a
+   route), so it is written fresh, copying the shape of
+   `GoogleBusinessProfileEntitlementTest.php:145-190`.
+9. **Concurrent Contact identity** (§5.8.3, §5.8.4): two simultaneous public
+   bookings from the same phone at the same Location produce exactly **one**
+   Contact, with no duplicate-key error and no unserialized second write —
+   the same shape as proof 1, against the identity lock rather than the
+   staff lock.
+10. **The availability-authority table holds** (§6): Owner may write a
+    currently-eligible staff member's availability; Admin and Staff may
+    write only their own; every actor still needs Location authorization;
+    and a target who is not currently eligible for the Location is refused.
 
 ## 14. Acceptance criteria
 
@@ -1520,19 +2145,37 @@ sub-slice can assume another one covered them:
    the Business and the customer see the resulting appointment (Acceptance
    Matrix, verbatim) — which is why D precedes E (§12.E).
 7. A booking's Contact is identified within the booked Location, never
-   across the Business (§5.8, Addendum §5).
-8. `PlatformFeature::Calendar` is flipped to `Available` only after that
-   full flow is true end-to-end (§11).
-9. External calendar sync never blocks or breaks internal booking when the
-   provider API is unavailable (§11's fail-safe-stale behavior, verified by
-   a test that simulates a provider outage), applies deletions and
-   reconciliation (§5.6), and rejects unverified webhooks with no side
-   effect (§11).
-10. No text in this slice — contract, code comment or commit message —
-    describes a transient domain event as an audit trail (§10), and
-    whatever is decided about `appointment_transitions` (§5.4) is decided
-    explicitly.
-11. `git diff --check` clean and a clean working tree at the end of each
+   across the Business (§5.8, Addendum §5), and two simultaneous bookings
+   from one phone at one Location create exactly one Contact (§5.8.4) —
+   serialized by a dedicated identity lock, never by an `insertOrIgnore`
+   against a unique key that `contacts` does not have (§5.8.1).
+8. Every authenticated Calendar route is refused server-side with a 404
+   while `PlatformFeature::Calendar` is `Planned`, for an otherwise fully
+   authorized actor, and succeeds after the flip (§6, §13 proof 8) — nav
+   hiding is never the gate.
+9. The public scheduler is addressed only by
+   `booking_types.public_booking_uuid`, a `Str::uuid()` value, never by any
+   `HasUid` `uniqid()` identifier (§5.1, §6), and holding that identifier
+   authorizes nothing.
+10. No access token is persisted anywhere by this slice; only
+    `refresh_token_encrypted` is stored, encrypted at rest (§5.5), and an
+    abandoned OAuth attempt never permanently consumes the User's one
+    connection slot (§5.5).
+11. `PlatformFeature::Calendar` is flipped to `Available` only after that
+    full flow is true end-to-end (§11).
+12. External calendar sync never blocks or breaks internal booking when the
+    provider API is unavailable (§11's fail-safe-stale behavior, verified by
+    a test that simulates a provider outage), applies deletions and
+    reconciliation (§5.6), and rejects unverified webhooks with no side
+    effect (§11).
+13. No text in this slice — contract, code comment or commit message —
+    describes a transient domain event as an audit trail (§10), and no
+    `appointment_transitions` table is created (§5.4, §15): the previous
+    interval and previous staff member of a reschedule are knowingly not
+    durably queryable in V1.
+14. `staff_booking_locks` never blocks a User deletion (§7.2), and the
+    availability-authority table of §6 is enforced exactly as written.
+15. `git diff --check` clean and a clean working tree at the end of each
     sub-slice's own commit.
 
 ## 15. Non-goals
@@ -1568,13 +2211,29 @@ sub-slice can assume another one covered them:
   mutating authenticated action (§3.5.3, §12.E). What is excluded is a new
   named limiter, a new config surface, and any human-verification
   challenge.
-- **An `appointment_transitions` history table** — not built by this
-  contract on its own initiative, because no authority names Appointments
-  as requiring durable history (§5.4, §10). This is a recorded open
-  decision for the human before Sub-slice C ships, not a settled "never":
-  the consequence of leaving it out — the previous times of each reschedule
-  are recoverable from nothing this slice persists — is stated outright in
-  §5.4 rather than obscured.
+- **An `appointment_transitions` history table, or any durable Appointment
+  history** — **settled as a V1 non-goal**, because no governing Slice 15
+  authority requires it (§5.4, §10). The `appointments` row carries current
+  state plus `reschedule_count`; the five domain events are transient
+  integration/automation events only; the previous interval and previous
+  staff member of a reschedule are knowingly not durably queryable after
+  the event is gone. Adding durable Appointment history later is separate
+  product scope. This does not gate Sub-slice C.
+- **A unique index on `contacts`, in any column combination** — mechanically
+  unsafe to add retroactively (§5.8.1): existing, intended behaviour already
+  produces duplicate `(location_id, phone)` rows, five tests assert that
+  duplication is legitimate, and MySQL's NULL semantics would exempt exactly
+  the multi-Location rows that matter. Location-local identity is enforced by
+  §5.8.3's serialization row instead.
+- **Fixing the codebase's phone normalization** — Calendar deliberately keys
+  on the *existing* stored form (§5.8.2) so it matches existing rows.
+  Introducing E.164 normalization for `contacts` would be a repo-wide data
+  migration touching six writers and several read paths; it is not in scope,
+  and Calendar must not half-introduce it.
+- **Merging, rewriting or deleting duplicate Contacts** — §5.8.4 picks the
+  oldest deterministically and leaves every other row untouched.
+- **Persisting an OAuth access token** — never authorized here (§5.5); only
+  `refresh_token_encrypted` is stored.
 - **Reopening or modifying the Workspace/Agency tenancy migration**
   (Contracts 1–14) in any way.
 
@@ -1617,9 +2276,45 @@ Before writing code:
 3. Create a fresh worktree/branch for this sub-slice only (e.g.
    agent/v1-slice15a-calendar-schema).
 
-Implement exactly the six tables in SS5.1-SS5.6 plus staff_booking_locks
-(SS12.A), as migrations, plus their Eloquent models with casts/relations
-only (no business logic). Follow this repository's existing conventions
+Implement exactly TEN tables as migrations. Count them before you start and
+count them again before you commit -- an earlier draft of this contract said
+"six", and that number is wrong:
+
+   1. booking_types            (SS5.1) -- INCLUDING public_booking_uuid
+   2. booking_type_staff       (SS5.1, pivot)
+   3. booking_type_round_robin_state (SS5.1.1) -- often missed
+   4. staff_availability_rules (SS5.2)
+   5. staff_time_off           (SS5.3)
+   6. appointments             (SS5.4)
+   7. external_calendar_connections (SS5.5)
+   8. external_calendar_busy_blocks (SS5.6)
+   9. staff_booking_locks      (SS7.2)
+  10. booking_contact_identity_locks (SS5.8.3) -- often missed
+
+Plus their Eloquent models with casts/relations only (no business logic):
+BookingType, BookingTypeRoundRobinState, StaffAvailabilityRule,
+StaffTimeOff, Appointment, ExternalCalendarConnection,
+ExternalCalendarBusyBlock, StaffBookingLock, BookingContactIdentityLock.
+booking_type_staff needs no dedicated model if a belongsToMany relation
+covers it, but the TABLE is mandatory.
+
+IDENTIFIERS -- get this right or Sub-slice E cannot be built:
+- booking_types.public_booking_uuid is uuid, NOT NULL, UNIQUE, generated as
+  (string) Str::uuid() in BookingType::booted()'s creating hook -- copy
+  app/Models/Website.php:60-67 exactly. It is a SEPARATE column from uid and
+  must NOT come from HasUid.
+- EVERY model here that uses HasUid must override generateUid() with
+  `$this->uid = (string) Str::uuid();`. HasUid's default is uniqid()
+  (app/Library/Traits/HasUid.php:27-30), which is guessable -- 20 existing
+  models already override it for this reason.
+
+FK POSTURE -- two of these are deliberately NOT restrictOnDelete:
+- staff_booking_locks.staff_user_id is cascadeOnDelete (SS7.2). It is pure
+  serialization infrastructure and must never make a User undeletable; this
+  repository hard-deletes Users and has no SoftDeletes on the users table.
+- booking_contact_identity_locks.business_location_id is cascadeOnDelete
+  (SS5.8.3), same reasoning.
+- Everything else keeps the posture SS5 states. Do not "harmonize" them. Follow this repository's existing conventions
 precisely: HasUid trait where noted, restrictOnDelete vs cascadeOnDelete
 exactly as SS5 specifies (never the other way, even if it seems
 equivalent -- the contract's own reasoning for each choice is in SS5/SS7),
@@ -1659,13 +2354,38 @@ member's eligibility through LocationAccessGuard::userCanAccessLocation()
 (SS6) -- a booking_type_staff row records configuration intent, never
 authorization.
 
-Implement Booking Type CRUD and availability-rule/time-off CRUD, each
-action authorizing via LocationAccessGuard::assertUserCanAccessLocation()
-(SS6) -- never a new ACL algorithm. Enforce SS6's "staff may edit only
-their own availability" rule exactly.
+Implement Booking Type CRUD and availability-rule/time-off CRUD, each action
+authorizing via LocationAccessGuard::assertUserCanAccessLocation() (SS6) --
+never a new ACL algorithm.
 
-Tests per SS12.B: CRUD x role (owner/admin/staff) x Location-ACL boundary
-(granted vs ungranted -> 404), plus the own-availability-only boundary.
+EVERY route you add must ALSO carry the Calendar entitlement gate (SS6):
+resolveEntitledBusinessTenancy($workspaceUid, $businessUid,
+PlatformFeature::Calendar->value) from
+app/Http/Controllers/Customer/Business/Concerns/ResolvesBusinessTenancy.php
+-- the same trait Website generation, GBP, Automations and CRM already use.
+It abort(404)s. Note the argument is a RAW STRING, so pass ->value. There is
+no feature middleware in this repository; do not invent one.
+
+Because PlatformFeature::Calendar is still Planned, EVERY route you build
+here will correctly return 404 until Sub-slice E flips it. That is the
+intended end state of this sub-slice, NOT a bug -- do not "fix" it, and do
+NOT flip the availability flag early.
+
+Availability authority is SETTLED (SS6) -- implement the table exactly, and
+do not stop to ask: the Workspace/Business Owner may manage availability for
+ANY staff member currently eligible for the target Location; an Admin may
+edit only their OWN availability in V1; Staff may edit only their own. Every
+actor still needs Location authorization for their path, and the TARGET staff
+member's eligibility is re-derived through LocationAccessGuard at write time.
+staff_time_off is User-global, so the write surface must tell the actor that
+it removes that person from every Location, not just this one.
+
+Tests per SS12.B and SS13: CRUD x role (owner/admin/staff) x Location-ACL
+boundary (granted vs ungranted -> 404); the availability-authority table
+proven row by row; and the entitlement gate proven while Planned -- a fully
+authorized owner with a valid Location gets 404 on every route you added
+(SS13 proof 8). No such test exists in the repository today; copy the shape
+of tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileEntitlementTest.php:145-190.
 
 After implementing: run tests, git diff --check, commit, push to a fresh
 branch off A's merged state. Do NOT create a PR. Do NOT merge. Return:
@@ -1711,13 +2431,14 @@ Implement exactly what it specifies, not a simplification of it:
   commit.
 
 Dispatch the five events in SS10 with exactly the payloads listed, after
-commit. Do NOT describe or document these events as an audit trail -- SS10
-and SS5.4 are explicit that they are not one, and that the previous
-start_at/end_at of a reschedule is recoverable from nothing this slice
-persists. Whether an appointment_transitions table is added is an open
-decision for the human (SS5.4, SS15): if you believe the lifecycle cannot
-be shipped honestly without one, STOP and report that, rather than adding
-the table on your own initiative or papering over the gap.
+commit -- including AppointmentRescheduled's previousStaffUserId and
+newStaffUserId, which are REQUIRED because SS7.4 supports reschedule with
+a staff move. Do NOT describe or document these events as an audit trail:
+SS10 and SS5.4 are explicit that they are not one, and that the previous
+interval and previous staff member of a reschedule are recoverable from
+nothing this slice persists. Do NOT add an appointment_transitions table --
+V1 ships without one by decision (SS5.4, SS15), and this question does not
+gate your work. Do not stop to ask about it.
 
 This sub-slice is service-level only -- no controller/UI required to
 exercise it; write direct service tests.
@@ -1761,6 +2482,22 @@ for multi-Location Businesses; fall back to the existing
 singleActiveLocationIdFor()-style auto-default for the single-Location
 case. Every view/action re-checks LocationAccessGuard per SS6.
 
+Adding 'calendar' to ENTITLEMENT_GATED_FEATURES hides the NAV ENTRY. It is
+NOT a gate: recon confirmed nav hiding is purely cosmetic and leaves every
+route registered and reachable by direct URL. So every route and action you
+add here must ALSO carry the Calendar entitlement gate of SS6
+(resolveEntitledBusinessTenancy(..., PlatformFeature::Calendar->value),
+abort(404)). Calendar is still Planned, so your whole calendar will correctly
+404 until Sub-slice E flips it -- that is the intended end state, and you must
+NOT flip the availability flag early to make your own browser check pass.
+Verify the UI by temporarily entitling in a TEST, never by changing the
+registry.
+
+The AppointmentRescheduled event carries previousStaffUserId AND
+newStaffUserId (SS10); if your UI supports moving an appointment to another
+staff member, it goes through Sub-slice C's service unchanged and both ids
+differ.
+
 Tests per SS12.D. Verify in a real browser preview per this session's own
 UI-verification workflow before reporting complete.
 
@@ -1779,20 +2516,56 @@ recommended (SS12.E): this sub-slice's acceptance statement is "both
 parties see it," and without the authenticated calendar there is no
 Business-side surface on which that can be true.
 
+Route the scheduler on booking_types.public_booking_uuid with a
+->whereUuid(...) route constraint (SS5.1), and derive the Location from the
+resolved Booking Type's own business_location_id. NEVER route on Business.uid
+or BusinessLocation.uid -- HasUid generates those with uniqid(), and this
+repository already rejected that shape for public addressing
+(routes/public.php:210-215). Holding the uuid authorizes NOTHING; every check
+below still runs.
+
 Contact identity is SETTLED and Location-local (SS5.8, Addendum SS5) -- do
-not re-derive it, and do not use the earlier draft's "phone/email within
-the Business" phrasing. Identify the Contact by phone WITHIN THE BOOKED
-LOCATION. The same person booking at two Locations of one Business is two
-Contact rows, and that is correct. Reuse the canonical seam
-EloquentContactsRepository::createContactFromRequest(), whose existing
-public opt-in caller is the closest precedent in the repository; never
-write the contacts table directly. Write the Location actually being booked
-into contacts.location_id -- do NOT call
-Contacts::singleActiveLocationIdFor(), which returns NULL for any Business
-with more than one active Location. There is no email column on contacts,
-so there is no email dedup. contacts has no unique index at all, so where
-you need a hard guarantee use SS7.2's insertOrIgnore-then-re-read shape,
-inside the booking transaction.
+not re-derive it, and do not use the earlier draft's "phone/email within the
+Business" phrasing. Identify the Contact by normalized phone WITHIN THE
+BOOKED LOCATION. The same person booking at two Locations of one Business is
+two Contact rows, and that is correct. Specifics you must not improvise:
+
+- NORMALIZATION (SS5.8.2): use trim(str_replace(['+','-','(',')',' '], '',
+  $raw)) -- the form contacts.phone actually stores. Do NOT use
+  E164Normalizer or AgencyProspectPhoneNormalizer: they are better
+  normalizers, but their output does not match the stored column, so they
+  would silently create duplicates.
+- CONCURRENCY (SS5.8.3, SS5.8.4): contacts has NO unique index and one CANNOT
+  be added (SS5.8.1), so insertOrIgnore on contacts guarantees NOTHING.
+  Serialize on the new booking_contact_identity_locks row keyed
+  (business_location_id, normalized_phone), following
+  AiUsageLedgerManager::lockOrCreatePeriod()
+  (app/Library/Ai/AiUsageLedgerManager.php:441-474) EXACTLY, including its
+  ordering: unlocked existence probe, then insertOrIgnore, then
+  lockForUpdate(). The probe-first order is not stylistic -- that docblock
+  explains the InnoDB gap-lock deadlock it avoids.
+- RESOLUTION (SS5.8.4): under the lock, query contacts by location_id +
+  normalized phone, orderBy('id')->first(). Several legitimate matches can
+  exist; take the OLDEST deterministically. Do not merge, rewrite or delete
+  the others, and never attach a Contact from a sibling Location.
+- SEAM (SS5.8.5): createContactFromRequest() CANNOT be reused unchanged --
+  its match is group-scoped, it sets location_id only via
+  singleActiveLocationIdFor() (NULL for any multi-Location Business), its
+  Rule::unique checks the raw string while firstOrNew matches the stripped
+  one, and it sends the group's welcome SMS through a parse that can throw
+  uncaught. Add ONE narrow method on the existing EloquentContactsRepository,
+  findOrCreateForBooking(...), reusing the existing blacklist check
+  (Contacts::isListedInBlacklist()), the existing custom-field writer
+  (Contacts::updateFields()) and the existing contact-created automation
+  dispatches. Do NOT send the welcome/signup SMS. Do NOT write the contacts
+  table from the controller. Write contacts.location_id explicitly to the
+  booked Location.
+- GROUP: contact_groups has business_id but NO location_id, so the group is
+  never the identity key. Resolve the Business's group deterministically
+  (oldest by id) and, if it has none, create one through the existing
+  EloquentContactsRepository::store() seam -- the same path
+  ContactDirectoryController::createFirstList() uses.
+- There is no email column on contacts, so there is no email dedup.
 
 Build the unauthenticated public scheduler flow (page + booking action),
 reusing Sub-slice C's service unchanged. It inherits NO gate: routes/
@@ -1855,9 +2628,30 @@ uniqueness pattern Contract 01 already proved in this repository. Blueprint
 SS12 ("Each staff member connects their own Google OR Outlook calendar
 once, globally to their User identity") is the only authoritative statement
 on this, and nothing anywhere authorizes two concurrent providers.
-Implement the three-step provider switch/reconnect sequence of SS5.5
-exactly, including deleting that connection's busy blocks in the same
-transaction.
+Implement the three-step provider switch/reconnect sequence of SS5.5 exactly,
+including deleting that connection's busy blocks in the same transaction.
+
+CREDENTIAL STORAGE IS ALSO CLOSED (SS5.5). Store refresh_token_encrypted
+ONLY -- text, nullable, Laravel's `encrypted` cast, attribute in $hidden.
+There is NO access_token column and you must not add one: derive an access
+token in memory per provider operation from the refresh token, use it,
+discard it. Copy GoogleBusinessProfileConnectionManager::accessTokenFor()
+(app/Library/GoogleBusinessProfile/GoogleBusinessProfileConnectionManager.php:266-291),
+whose only DB write is last_refreshed_at/failure_classification. An earlier
+draft of this contract listed an access_token column; it was wrong and is
+withdrawn. If a provider MECHANICALLY requires different persistent
+credentials, verify that against the provider's current documentation and
+REPORT it -- do not assume it, and never store a plaintext credential.
+
+Implement SS5.5's pending-connection lifecycle exactly: initiation creates
+one pending row holding the User's single slot; a second simultaneous
+initiation is refused; a successful callback transitions pending -> active
+under lock_version; a callback with no refresh token fails closed and leaves
+the row pending; and an EXPIRED pending row is transitioned to a terminal
+disconnected state (clearing the nonce, releasing active_user_id) before the
+new attempt is inserted, in one transaction. Test that an abandoned/expired
+attempt does not block the User forever, and that two live/pending
+connections still cannot coexist.
 
 Implement full + incremental sync (a console command, matching this repo's
 existing command conventions) and webhook ingestion for both providers,
