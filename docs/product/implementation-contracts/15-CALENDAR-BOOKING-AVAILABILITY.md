@@ -615,12 +615,14 @@ revoked_at                       timestamp, nullable
 last_refreshed_at                timestamp, nullable
 lock_version                    unsignedInteger, default 0
 
-active_user_id                  bigint unsigned, STORED generated column:
+active_user_id                  bigint unsigned, VIRTUAL generated column:
                                 `case when state in ('pending', 'active') then user_id end`
 
 unique (active_user_id)
 index  (user_id, provider)
 ```
+
+**Generated-column materialization.** `active_user_id` is **VIRTUAL**, not STORED. On the MySQL version used by this application, a STORED generated column that depends on `user_id` cannot coexist with the required `ON DELETE CASCADE` foreign key on `user_id` (the FK is rejected with errno 1215). A VIRTUAL generated column preserves the actual invariant this column exists for — MySQL-computed conditional value plus a UNIQUE secondary index, so at most one `pending|active` row exists per User while terminal rows yield NULL — and keeps the deliberate User-delete cascade. The implementation is required to test the generated expression and the uniqueness behavior rather than relying on materialization type.
 
 **No access token is ever persisted.** An earlier draft listed both an
 `access_token` and a `refresh_token` column and claimed to mirror
