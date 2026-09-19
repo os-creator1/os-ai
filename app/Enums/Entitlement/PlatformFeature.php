@@ -66,4 +66,17 @@ enum PlatformFeature: string
      * being seeded/flipped separately.
      */
     case PackagesProducts = 'packages_products';
+
+    /**
+     * Implementation Contract 17 (Payments & Contracts: Proposal / Contract /
+     * e-signature / Invoice), Sub-slice A. Starts `Planned` in
+     * PlatformFeatureRegistry — inert identity only: no controller, route,
+     * view, provider call or customer-reachable surface exists yet. Packaged
+     * for Core, Growth and Agency (Blueprint §21) by this sub-slice's
+     * plan-packaging migration, independently of the availability flip, which
+     * is Sub-slice G's last step once A-F are merged and verified end to end
+     * (§6.4, §12.G). Money lane B only (Addendum §12) — never a lane A/C/D
+     * feature.
+     */
+    case PaymentsContracts = 'payments_contracts';
 }

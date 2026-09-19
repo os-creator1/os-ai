@@ -52,6 +52,29 @@
             'default'      => false,
         ],
         /*
+         * Implementation Contract 17 §6.1 — Payments & Contracts (Proposal /
+         * Contract / e-signature / Invoice). ONE capability for the whole
+         * module, the simple single-key shape `website`/`automations` use —
+         * deliberately not a CRUD matrix of per-operation keys (Contract 16
+         * §15's precedent).
+         *
+         * Default true: it follows the `website` precedent, and the backfill
+         * migration grants it to existing customers so the persisted
+         * per-customer permission list does not refuse a surface their plan
+         * entitles them to. It is necessary but never sufficient — the
+         * canonical gate chain (§6.1) is tenancy, THIS capability, the
+         * EntitlementManager check for the exact PlatformFeature, then
+         * LocationAccessGuard for the document's Location. While the
+         * PlatformFeature is Planned (until Sub-slice G) this key opens
+         * nothing: every authenticated route fails closed at the entitlement
+         * gate.
+         */
+        'payments_contracts'             => [
+            'display_name' => 'payments_contracts',
+            'category'     => 'Payments & Contracts',
+            'default'      => true,
+        ],
+        /*
          * Customer Experience Slice 3 §4.7 — advanced / BYO provider settings.
          *
          * Conservative default of false, following the
