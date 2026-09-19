@@ -7,7 +7,6 @@ use App\Enums\NicheBlueprint\NicheBlueprintVersionState;
 use App\Exceptions\NicheBlueprint\BlueprintVersionMismatchException;
 use App\Exceptions\NicheBlueprint\DraftVersionAlreadyExistsException;
 use App\Exceptions\NicheBlueprint\DuplicateComponentKeyException;
-use App\Exceptions\NicheBlueprint\EmptyDraftVersionException;
 use App\Exceptions\NicheBlueprint\InvalidComponentDescriptorException;
 use App\Exceptions\NicheBlueprint\MissingRequiredFeatureKeyException;
 use App\Exceptions\NicheBlueprint\NotADraftVersionException;
@@ -457,13 +456,54 @@ class NicheBlueprintPublisherTest extends TestCase
         $this->assertSame(NicheBlueprintVersionState::Draft, $draftOfA->refresh()->state);
     }
 
-    public function test_publish_refuses_an_empty_draft(): void
+    /**
+     * §6.2 defines six gates, each a statement about a component that EXISTS,
+     * and states no minimum component count. An empty draft therefore
+     * satisfies every gate vacuously and publishes normally.
+     *
+     * This test exists to keep that honest: an earlier revision refused an
+     * empty draft on reasoning borrowed from `PipelineBlueprint` rather than
+     * from Contract 20, which is product authority the contract does not
+     * grant. It asserts what the contract actually says, not what seems
+     * sensible.
+     */
+    public function test_an_empty_draft_publishes_normally(): void
     {
         $blueprint = $this->blueprint();
         $draft = $this->publisher->createDraftVersion($this->adminId, $blueprint);
 
-        $this->expectException(EmptyDraftVersionException::class);
-        $this->publisher->publishVersion($this->adminId, $draft);
+        $published = $this->publisher->publishVersion($this->adminId, $draft);
+
+        $this->assertSame(NicheBlueprintVersionState::Published, $published->state);
+        $this->assertSame($this->adminId, $published->published_by_user_id);
+        $this->assertNotNull($published->published_at);
+        $this->assertSame(0, $published->components()->count());
+
+        $this->assertSame(1, NicheBlueprintVersion::where('blueprint_id', $blueprint->id)
+            ->where('state', NicheBlueprintVersionState::Published->value)->count());
+    }
+
+    /**
+     * An empty draft is not a special case of the lifecycle either: it
+     * supersedes an incumbent exactly like any other publish.
+     */
+    public function test_an_empty_draft_supersedes_an_incumbent_like_any_other_publish(): void
+    {
+        $blueprint = $this->blueprint();
+
+        $v1 = $this->draftWithComponent($blueprint);
+        $this->publisher->publishVersion($this->adminId, $v1);
+
+        $v2 = $this->publisher->createDraftVersion($this->adminId, $blueprint);
+        $this->publisher->publishVersion($this->adminId, $v2);
+
+        $this->assertSame(NicheBlueprintVersionState::Superseded, $v1->refresh()->state);
+        $this->assertSame(NicheBlueprintVersionState::Published, $v2->refresh()->state);
+        $this->assertSame(1, NicheBlueprintVersion::where('blueprint_id', $blueprint->id)
+            ->where('state', NicheBlueprintVersionState::Published->value)->count());
+
+        // v1's components survive untouched, as with any supersede.
+        $this->assertSame(1, $v1->components()->count());
     }
 
     /** A refusal must leave the draft exactly as it was — no partial publish. */
@@ -565,21 +605,98 @@ class NicheBlueprintPublisherTest extends TestCase
             ->where('state', NicheBlueprintVersionState::Published->value)->count());
     }
 
-    public function test_supersede_retires_the_published_version_without_a_replacement(): void
+    /**
+     * THE SUPERSEDE INVARIANT, PINNED FIELD BY FIELD.
+     *
+     * `published -> superseded` is the ONE authorized lifecycle-metadata
+     * transition on an issued version. It must move `state` and nothing else:
+     * every authoring field, every provenance field, and every component row
+     * must come out value-identical. This is what "immutable" actually means
+     * for an issued version — immutable authoring content and component
+     * snapshot, not that the row can never receive any UPDATE at all.
+     */
+    public function test_supersede_changes_state_and_nothing_else(): void
     {
         $blueprint = $this->blueprint();
-        $draft = $this->draftWithComponent($blueprint);
+        $draft = $this->publisher->createDraftVersion($this->adminId, $blueprint, 'the original release note');
+        $this->publisher->addDraftComponent($this->adminId, $draft, 'first_component', self::TYPE, 'crm', ['a' => 1]);
+        $this->publisher->addDraftComponent($this->adminId, $draft, 'second_component', self::TYPE, 'calendar', ['b' => 2]);
         $published = $this->publisher->publishVersion($this->adminId, $draft);
+
+        $before = (array) DB::table('niche_blueprint_versions')->where('id', $published->id)->first();
+        $componentsBefore = DB::table('niche_blueprint_components')
+            ->where('blueprint_version_id', $published->id)->orderBy('id')->get()->toArray();
+
+        $this->assertCount(2, $componentsBefore);
 
         $retired = $this->publisher->supersede($this->adminId, $published);
 
+        $after = (array) DB::table('niche_blueprint_versions')->where('id', $published->id)->first();
+        $componentsAfter = DB::table('niche_blueprint_components')
+            ->where('blueprint_version_id', $published->id)->orderBy('id')->get()->toArray();
+
         $this->assertSame(NicheBlueprintVersionState::Superseded, $retired->state);
+        $this->assertSame('superseded', $after['state']);
+
+        // Every field except `state` is value-identical. Three columns are
+        // excluded explicitly rather than silently, because each MUST move:
+        //   - `updated_at` moves with any row write and is not authoring content;
+        //   - `draft_guard` / `published_guard` are STORED columns generated
+        //     FROM `state`, so freeing the published slot is exactly what they
+        //     are for. They are asserted separately below.
+        foreach ($before as $column => $value) {
+            if (in_array($column, ['state', 'updated_at', 'draft_guard', 'published_guard'], true)) {
+                continue;
+            }
+
+            $this->assertSame(
+                $value,
+                $after[$column],
+                "supersede() must not change [{$column}] on an issued version."
+            );
+        }
+
+        // Named explicitly, because these are the ones a reader will care about.
+        foreach (['notes', 'version_number', 'blueprint_id', 'published_at', 'published_by_user_id', 'uid'] as $column) {
+            $this->assertSame($before[$column], $after[$column], "[{$column}] must survive supersede().");
+        }
+
+        // The derived guards: the published slot is genuinely freed, and the
+        // draft slot is never occupied by an issued version.
+        $this->assertSame((int) $blueprint->id, (int) $before['published_guard']);
+        $this->assertNull($after['published_guard'], 'Superseding must free the published_guard slot.');
+        $this->assertNull($before['draft_guard']);
+        $this->assertNull($after['draft_guard']);
+
+        $this->assertEquals(
+            $componentsBefore,
+            $componentsAfter,
+            'Every component row of a superseded version must be value-identical.'
+        );
+
+        // And the guards agree: no published version remains.
         $this->assertSame(0, NicheBlueprintVersion::where('blueprint_id', $blueprint->id)
             ->where('state', NicheBlueprintVersionState::Published->value)->count());
+    }
 
-        // Provenance survives retirement.
-        $this->assertNotNull($retired->published_at);
-        $this->assertSame($this->adminId, $retired->published_by_user_id);
+    /** A superseded version is terminal: no authoring method may touch it. */
+    public function test_a_superseded_version_accepts_no_further_authoring(): void
+    {
+        $blueprint = $this->blueprint();
+        $draft = $this->draftWithComponent($blueprint);
+        $component = $draft->components()->first();
+        $published = $this->publisher->publishVersion($this->adminId, $draft);
+        $retired = $this->publisher->supersede($this->adminId, $published);
+
+        $this->assertRefusedAsNonDraft([
+            'updateDraftNotes' => fn () => $this->publisher->updateDraftNotes($this->adminId, $retired, 'edited'),
+            'deleteDraftVersion' => fn () => $this->publisher->deleteDraftVersion($this->adminId, $retired),
+            'addDraftComponent' => fn () => $this->publisher->addDraftComponent($this->adminId, $retired, 'sneaked', self::TYPE, 'crm', []),
+            'updateDraftComponent' => fn () => $this->publisher->updateDraftComponent($this->adminId, $component, ['payload' => ['tampered' => true]]),
+            'removeDraftComponent' => fn () => $this->publisher->removeDraftComponent($this->adminId, $component),
+            'publishVersion' => fn () => $this->publisher->publishVersion($this->adminId, $retired),
+            'supersede' => fn () => $this->publisher->supersede($this->adminId, $retired),
+        ]);
     }
 
     public function test_supersede_refuses_a_draft_and_refuses_twice(): void

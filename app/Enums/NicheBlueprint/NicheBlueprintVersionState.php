@@ -11,9 +11,16 @@ namespace App\Enums\NicheBlueprint;
  * (2026_09_24_100002_create_niche_blueprint_versions_table.php). Any number of
  * `superseded` versions coexist, because each yields NULL in both guards.
  *
- * A version becomes immutable the moment it leaves `draft`: neither it nor its
- * component rows are ever written again, so an installation made from it keeps
- * citing exactly what was published.
+ * A version's CONTENT becomes immutable the moment it leaves `draft`: its
+ * authoring fields (`notes`, `version_number`, `blueprint_id`,
+ * `published_at`, `published_by_user_id`) and every one of its component rows
+ * are never written again, so an installation made from it keeps citing
+ * exactly what was published.
+ *
+ * That is deliberately NOT the same as "the row never receives an UPDATE".
+ * Exactly one transition remains authorized — `Published -> Superseded` — and
+ * it changes `state` alone. A version never returns to `Draft`, and a
+ * `Superseded` version never changes again.
  *
  * `superseded` IS the archived/deprecated state. There is no fourth case and
  * no separate archive table — a version is retired by being superseded, and is
@@ -42,8 +49,14 @@ enum NicheBlueprintVersionState: string
     }
 
     /**
-     * Whether this version and its components must never be written again.
-     * Asserted by the immutability tests and respected by the publisher.
+     * Whether this version's AUTHORING CONTENT and component snapshot are
+     * frozen — true for `Published` and `Superseded`.
+     *
+     * It does not mean the row can never receive an UPDATE: a `Published`
+     * version may still make the single authorized lifecycle move to
+     * `Superseded` (see the class docblock). Every authoring method in
+     * NicheBlueprintPublisher refuses when this returns true; `supersede()`
+     * is the one method that acts on a state where it does.
      */
     public function isImmutable(): bool
     {

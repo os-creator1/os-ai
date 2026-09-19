@@ -7,7 +7,6 @@ use App\Enums\NicheBlueprint\NicheBlueprintVersionState;
 use App\Exceptions\NicheBlueprint\BlueprintVersionMismatchException;
 use App\Exceptions\NicheBlueprint\DraftVersionAlreadyExistsException;
 use App\Exceptions\NicheBlueprint\DuplicateComponentKeyException;
-use App\Exceptions\NicheBlueprint\EmptyDraftVersionException;
 use App\Exceptions\NicheBlueprint\InvalidComponentDescriptorException;
 use App\Exceptions\NicheBlueprint\MissingRequiredFeatureKeyException;
 use App\Exceptions\NicheBlueprint\NotADraftVersionException;
@@ -524,14 +523,21 @@ class NicheBlueprintPublisher
     // =====================================================================
 
     /**
+     * §6.2 defines exactly six gates, and every one is a statement about a
+     * component that EXISTS. There is deliberately NO minimum component count:
+     * an empty draft satisfies all six vacuously and publishes normally.
+     *
+     * An earlier revision refused an empty draft. That rule was not in the
+     * contract — it was inferred from `PipelineBlueprint`'s own
+     * "no stages" refusal — and inventing product authority the contract does
+     * not grant is exactly what this domain must not do. Whether operators
+     * SHOULD publish an empty version is a product question; it is not this
+     * gate's to decide.
+     *
      * @param  \Illuminate\Support\Collection<int, NicheBlueprintComponent>  $components
      */
     private function assertPublishable(NicheBlueprintVersion $version, $components): void
     {
-        if ($components->isEmpty()) {
-            throw new EmptyDraftVersionException((int) $version->id);
-        }
-
         $seenKeys = [];
 
         foreach ($components as $component) {

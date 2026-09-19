@@ -159,6 +159,29 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
         $this->assertSame(0, DB::table('crm_pipelines')->where('business_id', $business->id)->count());
     }
 
+    /**
+     * §6.2 states no minimum component count, so an empty draft publishes
+     * normally — and must still touch nothing a Business owns.
+     */
+    public function test_publishing_an_empty_draft_writes_to_no_business_owned_table(): void
+    {
+        $business = $this->createBusinessWithWorkspace($this->createCustomer(), $this->businessAttributes());
+        $blueprint = $this->publisher->createBlueprint($this->adminId, 'photo_booth', 'Photo Booth');
+        $emptyDraft = $this->publisher->createDraftVersion($this->adminId, $blueprint);
+
+        $written = $this->tablesWrittenBy(fn () => $this->publisher->publishVersion($this->adminId, $emptyDraft));
+
+        $this->assertSame(
+            [],
+            $written,
+            "Publishing an empty draft must write to no Business-owned table:\n" . implode("\n", $written)
+        );
+
+        $this->assertSame('published', DB::table('niche_blueprint_versions')->where('id', $emptyDraft->id)->value('state'));
+        $this->assertSame(0, DB::table('business_blueprint_component_installations')
+            ->where('business_id', $business->id)->count());
+    }
+
     public function test_publishing_a_second_version_writes_to_no_business_owned_table(): void
     {
         $business = $this->createBusinessWithWorkspace($this->createCustomer(), $this->businessAttributes());
@@ -226,12 +249,44 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
     }
 
     /**
-     * The publisher is the sole production write seam for the three Blueprint
-     * tables. Nothing else in app/ may write to them — otherwise the draft-only
-     * rule and the admin gate both become advisory.
+     * THE STRUCTURAL TRIPWIRE. The publisher is the sole production write seam
+     * for the three Blueprint authoring tables; if anything else can write
+     * them, the draft-only rule and the platform-administrator gate both
+     * quietly become advisory.
+     *
+     * A previous revision only scanned for `DB::table('niche_blueprint_*')`,
+     * which did NOT prove the claimed boundary: a second service could write
+     * `NicheBlueprintVersion::create(...)` or `$component->save()` through
+     * Eloquent and never contain the string `DB::table` at all. This scans for
+     * BOTH shapes.
+     *
+     * This is a structural tripwire, not a static analyzer, and it is scoped
+     * to match the enforcement strength the contract actually claims: it fires
+     * when a new production class reaches for a Blueprint authoring write, so
+     * that adding one is a deliberate, visible decision rather than an
+     * accident. Reads, relations, casts, the model definitions themselves and
+     * the authorized publisher are all exempt.
      */
-    public function test_the_publisher_is_the_only_production_writer_of_blueprint_tables(): void
+    public function test_the_publisher_is_the_only_production_writer_of_blueprint_authoring_state(): void
     {
+        $tables = ['niche_blueprints', 'niche_blueprint_versions', 'niche_blueprint_components'];
+        $models = ['NicheBlueprint', 'NicheBlueprintVersion', 'NicheBlueprintComponent'];
+
+        // Write verbs that actually persist. `query()`, `where()`, `find()`,
+        // `first()`, `get()` and relation accessors are reads and are absent
+        // here on purpose.
+        $writeVerbs = 'create|forceCreate|insert|insertGetId|updateOrCreate|firstOrCreate|update|save|forceFill|delete|forceDelete|truncate|upsert|increment|decrement|push';
+
+        $exemptPathFragments = [
+            // The authorized writer.
+            '/Library/NicheBlueprint/NicheBlueprintPublisher.php',
+            // The model definitions themselves: `$fillable`, `$casts`,
+            // relations and scopes are declarations, not writes.
+            '/Models/NicheBlueprint.php',
+            '/Models/NicheBlueprintVersion.php',
+            '/Models/NicheBlueprintComponent.php',
+        ];
+
         $offenders = [];
 
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(app_path()));
@@ -243,21 +298,150 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
 
             $path = str_replace('\\', '/', $file->getPathname());
 
-            // The publisher itself, and the models/migrations that define the
-            // tables, are the authorized places.
-            if (str_contains($path, '/Library/NicheBlueprint/NicheBlueprintPublisher.php')) {
-                continue;
+            foreach ($exemptPathFragments as $exempt) {
+                if (str_contains($path, $exempt)) {
+                    continue 2;
+                }
             }
 
             $contents = (string) file_get_contents($file->getPathname());
+            $relative = 'app' . explode('/app', $path, 2)[1];
 
-            foreach (['niche_blueprints', 'niche_blueprint_versions', 'niche_blueprint_components'] as $table) {
-                if (preg_match('/DB::table\([\'"]' . $table . '[\'"]\)/', $contents)) {
-                    $offenders[] = $path . ' writes ' . $table . ' through the query builder';
+            // (a) Raw query-builder writes against the tables.
+            foreach ($tables as $table) {
+                if (preg_match('/DB::table\(\s*[\'"]' . $table . '[\'"]\s*\)((?!;).)*->\s*(' . $writeVerbs . ')\s*\(/s', $contents)) {
+                    $offenders[] = $relative . ' — query-builder write to ' . $table;
+                }
+            }
+
+            // (b) Eloquent writes against the three authoring models, in both
+            //     the static (`Model::create(...)`) and instance
+            //     (`$version->save()`) shapes.
+            foreach ($models as $model) {
+                if (preg_match('/\b' . $model . '::\s*(' . $writeVerbs . ')\s*\(/', $contents)) {
+                    $offenders[] = $relative . ' — static Eloquent write via ' . $model . '::';
+                }
+
+                // `new NicheBlueprintVersion()` followed anywhere in the file
+                // by a persisting call is the instance shape.
+                if (
+                    preg_match('/new\s+' . $model . '\s*\(/', $contents)
+                    && preg_match('/->\s*(save|forceFill|update|delete|forceDelete|push)\s*\(/', $contents)
+                ) {
+                    $offenders[] = $relative . ' — instantiates ' . $model . ' and persists it';
                 }
             }
         }
 
-        $this->assertSame([], $offenders, implode("\n", $offenders));
+        $this->assertSame(
+            [],
+            $offenders,
+            "Only NicheBlueprintPublisher may write Blueprint authoring state:\n" . implode("\n", $offenders)
+        );
+    }
+
+    /**
+     * Proves the tripwire above actually trips. A boundary test that cannot
+     * fail is worse than no boundary test, because it reads as protection
+     * while providing none — so this writes two realistic bypass files into a
+     * temporary tree, scans it with the same logic, and asserts both are
+     * caught.
+     */
+    public function test_the_sole_writer_tripwire_catches_both_bypass_shapes(): void
+    {
+        $dir = sys_get_temp_dir() . '/blueprint_tripwire_' . uniqid();
+        mkdir($dir, 0o777, true);
+
+        file_put_contents($dir . '/RawQueryBypass.php', <<<'PHP'
+        <?php
+        class RawQueryBypass {
+            public function go(): void {
+                DB::table('niche_blueprint_versions')->where('id', 1)->update(['state' => 'published']);
+            }
+        }
+        PHP);
+
+        file_put_contents($dir . '/EloquentBypass.php', <<<'PHP'
+        <?php
+        class EloquentBypass {
+            public function go(): void {
+                NicheBlueprintComponent::create(['component_key' => 'sneaked']);
+            }
+        }
+        PHP);
+
+        file_put_contents($dir . '/InstanceBypass.php', <<<'PHP'
+        <?php
+        class InstanceBypass {
+            public function go(): void {
+                $v = new NicheBlueprintVersion();
+                $v->forceFill(['state' => 'published'])->save();
+            }
+        }
+        PHP);
+
+        // A read-only file must NOT be flagged.
+        file_put_contents($dir . '/InnocentReader.php', <<<'PHP'
+        <?php
+        class InnocentReader {
+            public function go(): array {
+                return NicheBlueprintVersion::query()->where('state', 'published')->get()->all();
+            }
+        }
+        PHP);
+
+        $caught = $this->scanDirectoryForBlueprintWrites($dir);
+
+        array_map('unlink', glob($dir . '/*.php'));
+        rmdir($dir);
+
+        $this->assertContains('RawQueryBypass.php — query-builder write to niche_blueprint_versions', $caught);
+        $this->assertContains('EloquentBypass.php — static Eloquent write via NicheBlueprintComponent::', $caught);
+        $this->assertContains('InstanceBypass.php — instantiates NicheBlueprintVersion and persists it', $caught);
+
+        foreach ($caught as $entry) {
+            $this->assertStringNotContainsString('InnocentReader', $entry, 'A read-only file must never be flagged.');
+        }
+    }
+
+    /**
+     * The same detection logic as the production scan above, factored so the
+     * self-test can exercise it against a controlled fixture tree.
+     *
+     * @return list<string>
+     */
+    private function scanDirectoryForBlueprintWrites(string $directory): array
+    {
+        $tables = ['niche_blueprints', 'niche_blueprint_versions', 'niche_blueprint_components'];
+        $models = ['NicheBlueprint', 'NicheBlueprintVersion', 'NicheBlueprintComponent'];
+        $writeVerbs = 'create|forceCreate|insert|insertGetId|updateOrCreate|firstOrCreate|update|save|forceFill|delete|forceDelete|truncate|upsert|increment|decrement|push';
+
+        $found = [];
+
+        foreach (glob($directory . '/*.php') ?: [] as $file) {
+            $contents = (string) file_get_contents($file);
+            $name = basename($file);
+
+            foreach ($tables as $table) {
+                if (preg_match('/DB::table\(\s*[\'"]' . $table . '[\'"]\s*\)((?!;).)*->\s*(' . $writeVerbs . ')\s*\(/s', $contents)) {
+                    $found[] = $name . ' — query-builder write to ' . $table;
+                }
+            }
+
+            foreach ($models as $model) {
+                if (preg_match('/\b' . $model . '::\s*(' . $writeVerbs . ')\s*\(/', $contents)) {
+                    $found[] = $name . ' — static Eloquent write via ' . $model . '::';
+                }
+
+                if (
+                    preg_match('/new\s+' . $model . '\s*\(/', $contents)
+                    && preg_match('/->\s*(save|forceFill|update|delete|forceDelete|push)\s*\(/', $contents)
+                ) {
+                    $found[] = $name . ' — instantiates ' . $model . ' and persists it';
+                }
+            }
+        }
+
+        return $found;
     }
 }
