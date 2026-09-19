@@ -17,6 +17,23 @@ final readonly class CooInsightOutcome
 
     public const BUSINESS_UNAVAILABLE = 'business_unavailable';
 
+    /**
+     * Contract 19 §5.2/§5.9 — the context envelope did not describe the work
+     * being asked for: a different Business or Workspace, a human-initiated
+     * trigger with no acting human, or a background trigger carrying one.
+     * Fail closed and write nothing rather than guess whose authorization the
+     * answer belongs to.
+     */
+    public const CONTEXT_MISMATCH = 'context_mismatch';
+
+    /**
+     * Contract 19 §5.9b — a background generation has no actor, so it needs a
+     * declared audience. None could be resolved (no Workspace, no owner, or an
+     * owner with no authorized Location), so nothing is generated rather than
+     * an all-access authorization claim being invented (R-30).
+     */
+    public const AUDIENCE_UNAVAILABLE = 'audience_unavailable';
+
     public const AI_DISABLED = 'ai_disabled';
 
     public const NOT_ENTITLED = 'not_entitled';

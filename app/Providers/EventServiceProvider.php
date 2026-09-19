@@ -8,6 +8,7 @@ use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
 use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Conversation\InboundMessageReceived;
+use App\Events\Entitlement\WorkspacePlanAssigned;
 use App\Events\Crm\CrmOpportunityCreated;
 use App\Events\Crm\CrmOpportunityLost;
 use App\Events\Crm\CrmOpportunityStageChanged;
@@ -24,6 +25,8 @@ use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
+use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessCreated;
+use App\Listeners\NicheBlueprint\InstallBlueprintOnFirstPlanAssigned;
 use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
 use App\Listeners\Opportunity\TriggerBusinessAdvisorProducer;
 use App\Listeners\Support\ResetRequestScopedCacheAtJobBoundary;
@@ -48,6 +51,19 @@ class EventServiceProvider extends ServiceProvider
         ],
         BusinessCreated::class => [
             InitializeBusinessUsageProfile::class.'@handleBusinessCreated',
+            // Contract 20 §9.1 — trigger one of exactly two into the niche
+            // Blueprint installation engine. Its partner below is
+            // WorkspacePlanAssigned; WorkspacePlanChanged is deliberately NOT
+            // wired, because installing on an upgrade is the one thing
+            // Addendum §16 forbids outright.
+            InstallBlueprintOnBusinessCreated::class,
+        ],
+        // Contract 20 §9.1 — trigger two of two, covering the ordering where a
+        // Business exists before its Workspace has any plan assignment (Agency
+        // client provisioning). This is the FIRST-plan event only; it is never
+        // dispatched by an upgrade or downgrade.
+        WorkspacePlanAssigned::class => [
+            InstallBlueprintOnFirstPlanAssigned::class,
         ],
         BusinessAssignedToWorkspace::class => [
             InitializeBusinessUsageProfile::class.'@handleBusinessAssignedToWorkspace',

@@ -252,13 +252,12 @@ class BlueprintComponentAdapterSeamTest extends TestCase
      */
     public function test_no_publisher_installer_or_http_surface_exists_yet(): void
     {
-        // NicheBlueprintPublisher was on this list until Sub-slice B, which is
-        // the sub-slice that introduces it; it moved to the assertion below.
-        // Everything still listed belongs to C, D, E or F, and must not appear
-        // before the gates that protect it do.
+        // NicheBlueprintPublisher was on this list until Sub-slice B, and
+        // NicheBlueprintInstaller with its queued job until Sub-slice C —
+        // each moved to the assertion below when the sub-slice that owns it
+        // landed. Everything still listed belongs to D, E or F, and must not
+        // appear before the gates that protect it do.
         foreach ([
-            'App\\Library\\NicheBlueprint\\NicheBlueprintInstaller',
-            'App\\Jobs\\NicheBlueprint\\InstallNicheBlueprintForBusiness',
             'App\\Http\\Controllers\\Customer\\Business\\NicheBlueprintController',
             'App\\Http\\Controllers\\Admin\\NicheBlueprintController',
             'App\\Library\\NicheBlueprint\\Adapters\\CrmPipelineComponentAdapter',
@@ -266,9 +265,13 @@ class BlueprintComponentAdapterSeamTest extends TestCase
             $this->assertFalse(class_exists($class), $class . ' belongs to a later sub-slice.');
         }
 
-        // Sub-slice B's own deliverable: present, and the only Blueprint
-        // service that may exist at this point.
+        // Sub-slice B's and C's own deliverables: present, and still the only
+        // Blueprint services that may exist at this point. Both are domain
+        // code with no customer HTTP surface of their own — the controllers
+        // above remain absent, which is what keeps the feature unreachable.
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintPublisher'));
+        $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintInstaller'));
+        $this->assertTrue(class_exists('App\\Jobs\\NicheBlueprint\\InstallNicheBlueprintForBusiness'));
     }
 
     public function test_no_niche_blueprint_route_is_registered(): void

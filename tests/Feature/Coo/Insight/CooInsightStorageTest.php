@@ -70,7 +70,8 @@ class CooInsightStorageTest extends TestCase
     {
         [, $business] = $this->tenant(WorkspacePlanTier::Growth);
         $this->materialPeriod($business);
-        app(\App\Library\Coo\Insight\CooInsightGenerator::class)->generate($business->fresh(), \App\Enums\Coo\CooInsightTrigger::MultiSignalChange, $this->thisMonth($business));
+        $fresh = $business->fresh();
+        app(\App\Library\Coo\Insight\CooInsightGenerator::class)->generate($fresh, \App\Enums\Coo\CooInsightTrigger::MultiSignalChange, $this->thisMonth($business), $this->backgroundEnvelope($fresh));
 
         $insight = CooInsight::query()->sole();
         $this->assertNotNull($insight->ai_usage_ledger_entry_id);
