@@ -105,7 +105,7 @@ final class CooInsightGenerator
         $promptVersion = (int) config('coo.insight.prompt_version');
         $policyVersion = (int) config('coo.insight.policy_version');
 
-        $facts = $this->factsReader->read($business, $range);
+        $facts = $this->factsReader->read($business, $range, $envelope);
         $fingerprint = $facts->fingerprint($promptVersion, $policyVersion);
 
         // §9.3 — the next signal read is what invalidates. Free, and done
