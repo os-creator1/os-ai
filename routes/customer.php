@@ -1177,6 +1177,46 @@
 
         /*
         |----------------------------------------------------------------
+        | Calendar — Booking Types + Staff Availability (Contract 15, 15B)
+        |----------------------------------------------------------------
+        |
+        | Location-bound by construction: every path carries the Location's
+        | uid, because Booking Types and availability rules belong to one
+        | Location (§5.1/§5.2, Addendum §5). Time off is the deliberate
+        | exception — it is User-global (§5.3) and writes no Location — but
+        | it is still REACHED through a Location, because that is how §6
+        | establishes the actor's authority over the staff member.
+        |
+        | Each action runs three gates in order: the canonical
+        | Workspace/Business tenancy chain, the Calendar entitlement
+        | decision, then LocationAccessGuard for the exact Location. While
+        | PlatformFeature::Calendar is Planned (§11) the entitlement gate
+        | refuses every one of these routes with 404, including for an
+        | account owner — intended, and the reason building them now is
+        | safe. Sub-slice E's flip is what makes them executable.
+        |
+        | No booking engine, no appointment lifecycle, no calendar grid and
+        | no public scheduler: Sub-slices C, D and E own those.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/calendar/locations/{locationUid}')->name('businesses.calendar.')->group(function () {
+            Route::get('/booking-types', 'Business\BookingTypesController@index')->name('booking-types.index');
+            Route::get('/booking-types/new', 'Business\BookingTypesController@create')->name('booking-types.create');
+            Route::post('/booking-types', 'Business\BookingTypesController@store')->name('booking-types.store');
+            Route::get('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@edit')->name('booking-types.edit');
+            Route::post('/booking-types/{bookingTypeUid}', 'Business\BookingTypesController@update')->name('booking-types.update');
+            Route::post('/booking-types/{bookingTypeUid}/active', 'Business\BookingTypesController@toggleActive')->name('booking-types.active');
+            Route::post('/booking-types/{bookingTypeUid}/staff', 'Business\BookingTypesController@syncStaff')->name('booking-types.staff');
+
+            Route::get('/availability', 'Business\StaffAvailabilityController@index')->name('availability.index');
+            Route::post('/availability/rules', 'Business\StaffAvailabilityController@storeRule')->name('availability.rules.store');
+            Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
+            Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
+            Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)
         |----------------------------------------------------------------
         |
