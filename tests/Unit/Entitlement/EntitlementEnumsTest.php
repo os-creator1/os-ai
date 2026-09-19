@@ -74,7 +74,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertSame($expected, $actual);
     }
 
-    public function test_platform_feature_has_exactly_seventeen_cases_matching_rfc_004_slice_a_and_slice_3(): void
+    public function test_platform_feature_has_exactly_eighteen_cases_matching_rfc_004_slice_a_and_slice_3(): void
     {
         $expected = [
             'crm',
@@ -99,11 +99,16 @@ class EntitlementEnumsTest extends TestCase
             // is_metered = 0 and active_rate_id = NULL, asserted by
             // T-MSG-36 in MessagingTransportMeasurementLayeringTest.
             'messaging_transport',
+            // Implementation Contract 16 (Packages & Products catalog),
+            // Sub-slice A — schema and inert entitlement identity only.
+            // Starts Planned in PlatformFeatureRegistry; no controller,
+            // route, or view exists yet.
+            'packages_products',
         ];
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(17, PlatformFeature::cases());
+        $this->assertCount(18, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 
