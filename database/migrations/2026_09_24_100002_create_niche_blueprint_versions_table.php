@@ -27,12 +27,24 @@ use Illuminate\Support\Facades\Schema;
  * because installation records cite a retired version's `version_number` as
  * provenance forever (§5.4).
  *
- * IMMUTABLE ONCE IT LEAVES DRAFT. This row and its component rows are never
- * written again after publish. That invariant is enforced the way
- * `WebsiteRevision` and `AutomationWorkflowVersion` enforce theirs — the
- * publishing service (Sub-slice B) is the only writer, proven by a
- * source-boundary test — and this migration deliberately claims no stronger
- * database-level guarantee than those precedents actually provide.
+ * IMMUTABLE ONCE ISSUED — AND THAT MEANS THE CONTENT, NOT THE ROW. After
+ * publish, the version's authoring content and its component snapshot never
+ * change: `notes`, `version_number`, `blueprint_id`, `published_at`,
+ * `published_by_user_id`, and every `niche_blueprint_components` row
+ * (`component_key`, `component_type`, `required_feature_key`, `payload`,
+ * `position`).
+ *
+ * Exactly one field may still move, and only one way: `state`, from
+ * `published` to `superseded`. A version never returns to `draft`, and a
+ * superseded version never changes again. The two guard columns below are
+ * generated FROM `state`, so freeing the published slot is part of that same
+ * transition rather than a separate write.
+ *
+ * That invariant is enforced the way `WebsiteRevision` and
+ * `AutomationWorkflowVersion` enforce theirs — the publishing service
+ * (Sub-slice B) is the only writer, proven by a source-boundary test — and
+ * this migration deliberately claims no stronger database-level guarantee
+ * than those precedents actually provide.
  *
  * `published_by_user_id` is a plain nullable scalar with NO foreign key, per
  * §5.2 and the `workspace_entitlement_transitions` convention: an actor-
