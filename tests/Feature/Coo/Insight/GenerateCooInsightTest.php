@@ -17,6 +17,7 @@ use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiUsageCategory;
 use App\Library\Ai\Providers\FakeAiCompletionClient;
+use App\Library\Coo\Context\CooContextEnvelopeFactory;
 use App\Library\Coo\Insight\CooInsightGenerator;
 use App\Library\Coo\Insight\CooInsightOutcome;
 use App\Library\Entitlement\EntitlementManager;
@@ -24,6 +25,7 @@ use App\Library\Support\RequestScopedCache;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\Business;
 use App\Models\CooInsight;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\WorkerOptions;
 use Illuminate\Support\Carbon;
@@ -373,9 +375,9 @@ class GenerateCooInsightTest extends TestCase
         [, $business] = $this->tenant(WorkspacePlanTier::Growth);
         $this->materialPeriod($business);
 
-        (new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']))->handle(app(CooInsightGenerator::class));
-        (new GenerateCooInsight((int) $business->id, 'not-a-trigger'))->handle(app(CooInsightGenerator::class));
-        (new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value))->handle(app(CooInsightGenerator::class));
+        (new GenerateCooInsight((int) $business->id, CooInsightTrigger::MultiSignalChange->value, ['range' => 'this_month']))->handle(app(CooInsightGenerator::class), app(CooContextEnvelopeFactory::class));
+        (new GenerateCooInsight((int) $business->id, 'not-a-trigger'))->handle(app(CooInsightGenerator::class), app(CooContextEnvelopeFactory::class));
+        (new GenerateCooInsight(999999, CooInsightTrigger::MultiSignalChange->value))->handle(app(CooInsightGenerator::class), app(CooContextEnvelopeFactory::class));
 
         $this->assertSame(1, CooInsight::query()->count());
         $this->assertSame(1, $this->fakeAi->callCount());
@@ -448,9 +450,22 @@ class GenerateCooInsightTest extends TestCase
 
     // -----------------------------------------------------------------
 
+    /**
+     * Contract 19 §5.2 — the generator is now told whose authorization the
+     * answer belongs to. A scheduled trigger carries the declared background
+     * audience; a customer's own ask carries the real acting human.
+     */
     private function generate(Business $business, CooInsightTrigger $trigger, ?int $actorUserId = null): CooInsightOutcome
     {
-        return app(CooInsightGenerator::class)->generate($business->fresh(), $trigger, $this->thisMonth($business), $actorUserId);
+        $fresh = $business->fresh();
+
+        // A human-initiated trigger needs a real acting human; when a test
+        // does not name one, the Business's own owner is the obvious actor.
+        $envelope = $trigger->origin()->requiresActor()
+            ? $this->actorEnvelope($fresh, User::query()->findOrFail($actorUserId ?? (int) $fresh->customer->user_id))
+            : $this->backgroundEnvelope($fresh);
+
+        return app(CooInsightGenerator::class)->generate($fresh, $trigger, $this->thisMonth($business), $envelope);
     }
 
     private function pushInsightJob(Business $business): void

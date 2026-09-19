@@ -13,6 +13,7 @@ use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Enums\Coo\SignalDirection;
+use App\Library\Coo\Context\CooContextEnvelopeFactory;
 use App\Library\Coo\Insight\CooInsightDisplayReader;
 use App\Library\Coo\Insight\CooInsightExplainLimiter;
 use App\Library\Coo\NextBestMove;
@@ -92,6 +93,7 @@ final class BusinessHomePresenter
         private readonly NextBestMoveSelector $nextBestMoveSelector,
         private readonly WhyThis $whyThis,
         private readonly CooInsightDisplayReader $insights,
+        private readonly CooContextEnvelopeFactory $envelopes,
         private readonly CooInsightExplainLimiter $explainLimiter,
     ) {
     }
@@ -710,7 +712,7 @@ final class BusinessHomePresenter
         );
 
         $rangeParameters = $currentRange->queryParameters();
-        $insight = $this->insight($business, $entitlements, $currentRange);
+        $insight = $this->insight($business, $context, $user, $entitlements, $currentRange);
 
         return [
             'items' => $items,
@@ -743,14 +745,25 @@ final class BusinessHomePresenter
      *
      * @return array<string, mixed>|null
      */
-    private function insight(Business $business, MenuEntitlements $entitlements, AnalyticsDateRange $range): ?array
+    private function insight(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, AnalyticsDateRange $range): ?array
     {
         if (! $entitlements->allows('ai_coo_basic')) {
             return null;
         }
 
         try {
-            return $this->insights->forHome($business, $range);
+            // Contract 19 §5.8 R-22 — the authorization scope is recomputed
+            // from live state on every read and compared exactly. A cached
+            // answer produced for one authorization set is never shown to
+            // another, and when nothing matches Home simply renders without
+            // an AI line (R-32): every deterministic band is unaffected.
+            $envelope = $this->envelopes->forActor($business, $user, $context->viewAs);
+
+            if ($envelope === null) {
+                return null;
+            }
+
+            return $this->insights->forHome($business, $range, $envelope);
         } catch (Throwable $e) {
             report($e);
 
