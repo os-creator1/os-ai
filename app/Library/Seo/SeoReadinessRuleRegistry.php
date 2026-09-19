@@ -11,11 +11,9 @@ use App\Enums\Seo\SeoReadinessState;
  * The set of items and every word of their copy is fixed here; nothing
  * customer-supplied is ever echoed, and there is no score, grade or
  * percentage — only facts and, where one exists, the existing screen that
- * fixes it. At most eight items (§5.2); five are defined in Sub-slice 18A.
- *
- * NOT here yet, deliberately: "target keywords defined". Keywords do not
- * exist until the Keywords sub-slice, so that item is added there rather
- * than approximated now.
+ * fixes it. At most eight items (§5.2); six are defined so far. The
+ * "search keywords" item counts only the ACTIVE SEO keywords the actor may
+ * see (already Location-filtered by the caller).
  */
 final class SeoReadinessRuleRegistry
 {
@@ -46,6 +44,13 @@ final class SeoReadinessRuleRegistry
                 $facts->websitePublished,
                 'Publish your website so there is a live version to be found.',
                 SeoReadinessItem::FIX_WEBSITE,
+            ),
+            $this->item(
+                'keywords_defined',
+                'You have search keywords',
+                $facts->keywordsDefined > 0,
+                'Add the phrases you want customers to find you with.',
+                SeoReadinessItem::FIX_SEO_KEYWORDS,
             ),
             $this->item(
                 'gbp_url_present',

@@ -28,10 +28,10 @@ class SeoReadinessTest extends TestCase
     {
         $a = array_merge([
             'websiteUrlSet' => true, 'phoneSet' => true, 'websitePublished' => true,
-            'gbpUrlPresent' => true, 'locationsTotal' => 2, 'locationsReady' => 2,
+            'gbpUrlPresent' => true, 'locationsTotal' => 2, 'locationsReady' => 2, 'keywordsDefined' => 3,
         ], $overrides);
 
-        return new SeoReadinessFacts($a['websiteUrlSet'], $a['phoneSet'], $a['websitePublished'], $a['gbpUrlPresent'], $a['locationsTotal'], $a['locationsReady']);
+        return new SeoReadinessFacts($a['websiteUrlSet'], $a['phoneSet'], $a['websitePublished'], $a['gbpUrlPresent'], $a['locationsTotal'], $a['locationsReady'], $a['keywordsDefined']);
     }
 
     /** @return array<string, SeoReadinessItem> */
@@ -56,17 +56,23 @@ class SeoReadinessTest extends TestCase
         $items = $this->registry()->evaluate($this->facts());
 
         $this->assertSame(
-            ['website_url_set', 'business_phone_set', 'locations_have_address_or_service_area', 'website_published', 'gbp_url_present'],
+            ['website_url_set', 'business_phone_set', 'locations_have_address_or_service_area', 'website_published', 'keywords_defined', 'gbp_url_present'],
             array_map(fn (SeoReadinessItem $i) => $i->key, $items),
         );
         $this->assertLessThanOrEqual(8, count($items), 'Contract 18 §5.2 allows at most eight items.');
     }
 
-    public function test_the_target_keywords_item_is_not_defined_until_the_keywords_sub_slice(): void
+    public function test_the_keywords_item_is_met_with_any_visible_active_keyword_and_links_to_keywords_when_not(): void
     {
-        $keys = array_map(fn (SeoReadinessItem $i) => $i->key, $this->registry()->evaluate($this->facts()));
+        $met = $this->byKey($this->facts(['keywordsDefined' => 1]))['keywords_defined'];
+        $this->assertSame(SeoReadinessState::Met, $met->state);
+        $this->assertNull($met->detail);
+        $this->assertNull($met->fix);
 
-        $this->assertNotContains('keywords_defined', $keys);
+        $notMet = $this->byKey($this->facts(['keywordsDefined' => 0]))['keywords_defined'];
+        $this->assertSame(SeoReadinessState::NotMet, $notMet->state);
+        $this->assertSame('Add the phrases you want customers to find you with.', $notMet->detail);
+        $this->assertSame(SeoReadinessItem::FIX_SEO_KEYWORDS, $notMet->fix);
     }
 
     public function test_a_fully_ready_business_has_no_open_items_and_no_fix_links(): void
@@ -185,7 +191,7 @@ class SeoReadinessTest extends TestCase
         $ready = $this->location(['address_line_1' => '1 Main St', 'city' => 'Tampa']);
         $notReady = $this->location([]);
 
-        $facts = SeoReadinessFacts::build($business, true, new Collection([$ready, $notReady]));
+        $facts = SeoReadinessFacts::build($business, true, new Collection([$ready, $notReady]), 4);
 
         $this->assertTrue($facts->websiteUrlSet);
         $this->assertFalse($facts->phoneSet, 'Whitespace is not a phone number.');
@@ -193,10 +199,11 @@ class SeoReadinessTest extends TestCase
         $this->assertTrue($facts->websitePublished);
         $this->assertSame(2, $facts->locationsTotal);
         $this->assertSame(1, $facts->locationsReady);
+        $this->assertSame(4, $facts->keywordsDefined);
 
         // A caller that already dropped an inaccessible Location simply
         // never passes it: the facts cannot see, and so cannot count, it.
-        $filtered = SeoReadinessFacts::build($business, true, new Collection([$ready]));
+        $filtered = SeoReadinessFacts::build($business, true, new Collection([$ready]), 0);
         $this->assertSame(1, $filtered->locationsTotal);
         $this->assertSame(1, $filtered->locationsReady);
     }
