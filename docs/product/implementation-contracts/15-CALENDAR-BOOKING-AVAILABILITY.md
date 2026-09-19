@@ -1552,7 +1552,13 @@ follows the identical shape:
 
 1. **Re-read `status` from persistence under the tier-3 lock** — never
    trust a status read before the lock, a route-bound model, or a value
-   carried in the request.
+   carried in the request. The same re-read also confirms the appointment's
+   `staff_user_id` is still the staff member whose tier-2 lock was taken
+   (which had to be chosen from the caller's model, before any lock). If a
+   competing reschedule moved it, the mutation fails closed with
+   `AppointmentStaffChangedException`, writing and dispatching nothing; it
+   never locks the newly discovered staff member, because tier 2 after
+   tier 3 would break the canonical order. The caller re-reads and retries.
 2. **Validate the allowed source state.** Every transition above requires
    `scheduled`; `cancelled`, `completed` and `no_show` are terminal, with
    no transition out of them. A mutation whose source state no longer

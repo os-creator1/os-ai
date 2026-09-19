@@ -9,6 +9,7 @@ use App\Events\Calendar\AppointmentNoShow;
 use App\Events\Calendar\AppointmentRescheduled;
 use App\Events\Calendar\AppointmentScheduled;
 use App\Exceptions\Calendar\AppointmentSlotUnavailableException;
+use App\Exceptions\Calendar\AppointmentStaffChangedException;
 use App\Exceptions\Calendar\InvalidAppointmentTransitionException;
 use App\Exceptions\Calendar\NoEligibleStaffAvailableException;
 use App\Exceptions\Calendar\StaffNotAvailableException;
@@ -19,6 +20,7 @@ use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Feature\Calendar\Concerns\CreatesBookingEngineFixtures;
 use Tests\TestCase;
 
@@ -528,6 +530,120 @@ class AppointmentLifecycleTest extends TestCase
 
         $this->expectException(InvalidAppointmentTransitionException::class);
         $this->engine()->markNoShow($appointment);
+    }
+
+    // --- stale caller models (§7.4: tier 2 must be the appointment's OWN staff) ---
+
+    /** @return array<string, array{string}> */
+    public static function terminalTransitions(): array
+    {
+        return [
+            'cancel' => ['cancel'],
+            'complete' => ['complete'],
+            'no-show' => ['markNoShow'],
+        ];
+    }
+
+    /**
+     * cancel, complete and no-show all run through resolveTerminal(), which
+     * derives its tier-2 staff lock from the caller's model BEFORE any lock.
+     * When that model is stale — the appointment was moved to another staff
+     * member since the caller loaded it — the lock held is the WRONG staff
+     * timeline, so the transition must be refused, write nothing at all and
+     * dispatch nothing.
+     */
+    #[DataProvider('terminalTransitions')]
+    public function test_a_stale_model_cannot_terminally_transition_an_appointment_that_moved_staff(string $transition): void
+    {
+        Event::fake([AppointmentCancelled::class, AppointmentCompleted::class, AppointmentNoShow::class]);
+
+        $staffA = $this->bookableStaff();
+        $staffB = $this->bookableStaff();
+
+        $appointment = $this->engine()->book($this->bookingType(), (int) $staffA->id, $this->contactId(), $this->slotStart('10:00:00'));
+
+        // The caller's copy, loaded while the appointment is still on staff A.
+        $stale = Appointment::query()->findOrFail($appointment->id);
+
+        // A competing reschedule moves it to staff B.
+        $this->engine()->reschedule(Appointment::query()->findOrFail($appointment->id), $this->slotStart('10:00:00'), (int) $staffB->id);
+
+        $this->assertSame((int) $staffA->id, (int) $stale->staff_user_id, 'Test premise: the caller still holds staff A.');
+
+        $before = DB::table('appointments')->where('id', $appointment->id)->first();
+        $this->assertSame((int) $staffB->id, (int) $before->staff_user_id, 'Test premise: the persisted row is on staff B.');
+
+        try {
+            $this->engine()->{$transition}($stale, (int) $this->owner->user_id);
+            $this->fail('Expected AppointmentStaffChangedException.');
+        } catch (AppointmentStaffChangedException $refusal) {
+            $this->assertStringContainsString("[{$staffB->id}]", $refusal->getMessage());
+        }
+
+        $after = DB::table('appointments')->where('id', $appointment->id)->first();
+
+        $this->assertEquals($before, $after, 'A refused stale transition must leave every column identical.');
+        $this->assertSame(AppointmentStatus::Scheduled->value, $after->status);
+        $this->assertSame((int) $staffB->id, (int) $after->staff_user_id, 'Staff B\'s assignment is unchanged.');
+        $this->assertNull($after->resolved_at);
+        $this->assertNull($after->resolved_by_user_id);
+        $this->assertNull($after->cancellation_reason);
+
+        Event::assertNotDispatched(AppointmentCancelled::class);
+        Event::assertNotDispatched(AppointmentCompleted::class);
+        Event::assertNotDispatched(AppointmentNoShow::class);
+    }
+
+    /** The refusal is recoverable: re-reading the appointment gives a model that transitions normally. */
+    public function test_a_stale_terminal_refusal_is_recoverable_by_rereading_the_appointment(): void
+    {
+        Event::fake([AppointmentCancelled::class]);
+
+        $staffA = $this->bookableStaff();
+        $staffB = $this->bookableStaff();
+
+        $appointment = $this->engine()->book($this->bookingType(), (int) $staffA->id, $this->contactId(), $this->slotStart('10:00:00'));
+        $stale = Appointment::query()->findOrFail($appointment->id);
+        $this->engine()->reschedule(Appointment::query()->findOrFail($appointment->id), $this->slotStart('10:00:00'), (int) $staffB->id);
+
+        try {
+            $this->engine()->cancel($stale);
+            $this->fail('Expected AppointmentStaffChangedException.');
+        } catch (AppointmentStaffChangedException) {
+            // expected
+        }
+
+        $cancelled = $this->engine()->cancel(Appointment::query()->findOrFail($appointment->id));
+
+        $this->assertSame(AppointmentStatus::Cancelled, $cancelled->status);
+        Event::assertDispatchedTimes(AppointmentCancelled::class, 1);
+        Event::assertDispatched(AppointmentCancelled::class, fn (AppointmentCancelled $e): bool => $e->staffUserId === (int) $staffB->id);
+    }
+
+    /** The same guard protects reschedule, which shares the helper. */
+    public function test_a_stale_model_cannot_reschedule_an_appointment_that_moved_staff(): void
+    {
+        $staffA = $this->bookableStaff();
+        $staffB = $this->bookableStaff();
+
+        $appointment = $this->engine()->book($this->bookingType(), (int) $staffA->id, $this->contactId(), $this->slotStart('10:00:00'));
+        $stale = Appointment::query()->findOrFail($appointment->id);
+        $this->engine()->reschedule(Appointment::query()->findOrFail($appointment->id), $this->slotStart('10:00:00'), (int) $staffB->id);
+
+        // Faked only now, so the setup reschedule above is not counted.
+        Event::fake([AppointmentRescheduled::class]);
+
+        $before = DB::table('appointments')->where('id', $appointment->id)->first();
+
+        try {
+            $this->engine()->reschedule($stale, $this->slotStart('14:00:00'));
+            $this->fail('Expected AppointmentStaffChangedException.');
+        } catch (AppointmentStaffChangedException) {
+            // expected
+        }
+
+        $this->assertEquals($before, DB::table('appointments')->where('id', $appointment->id)->first());
+        Event::assertNotDispatched(AppointmentRescheduled::class);
     }
 
     /** §5.4/§10/§15 — no appointment history table, by decision. */

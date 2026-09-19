@@ -466,6 +466,41 @@ class AppointmentBookingConcurrencyTest extends TestCase
     }
 
     /**
+     * The terminal-transition twin of the test above, in a real second process:
+     * a cancel that waited on staff A's tier-2 lock while a competing
+     * reschedule moved the appointment to staff B must not cancel it under
+     * A's lock. It refuses and leaves the row exactly as the winner left it.
+     */
+    public function test_cancel_refuses_when_the_appointment_changed_staff_while_it_waited(): void
+    {
+        [$bookingTypeId, $firstStaffId, $locationId, $secondStaffId] = $this->scenario(withSecondStaff: true);
+        $contactId = $this->insertContact($locationId);
+
+        $appointmentId = $this->insertAppointment($bookingTypeId, $firstStaffId, $locationId, $contactId, $this->slot('10:00:00'));
+        $this->insertStaffLockRow($firstStaffId);
+        $this->insertStaffLockRow($secondStaffId);
+
+        $child = $this->raceAgainstHeldLock(
+            ['cancel', (string) $appointmentId],
+            fn () => DB::table('staff_booking_locks')->where('staff_user_id', $firstStaffId)->lockForUpdate()->first(),
+            fn () => DB::table('appointments')->where('id', $appointmentId)->update([
+                'staff_user_id' => $secondStaffId,
+                'reschedule_count' => 1,
+            ])
+        );
+
+        $this->assertSame(4, $child['exitCode'], 'The stale cancel must be refused by the domain rule: ' . $child['stdout']);
+        $this->assertStringContainsString('AppointmentStaffChangedException', $child['stdout']);
+
+        $row = DB::table('appointments')->where('id', $appointmentId)->first();
+
+        $this->assertSame(AppointmentStatus::Scheduled->value, $row->status);
+        $this->assertSame($secondStaffId, (int) $row->staff_user_id);
+        $this->assertNull($row->resolved_at);
+        $this->assertNull($row->cancellation_reason);
+    }
+
+    /**
      * The event describes the transition THIS transaction committed. A write
      * that lands between the commit and any later re-read must not leak into
      * the payload. The interleaving is forced deterministically: a listener on

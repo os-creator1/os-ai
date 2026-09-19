@@ -261,19 +261,9 @@ class AppointmentBookingService
 
             $locked = $this->lockAppointment($appointmentId);
 
-            $this->assertScheduled($locked, 'rescheduled');
+            $this->assertHeldStaffOwnsAppointment($locked, $currentStaffUserId);
 
-            // The staff member was read from the caller's model BEFORE the
-            // locks were granted. If a competing reschedule moved the row
-            // while this one waited, the timeline just locked is not the one
-            // the appointment is on; refuse before writing anything.
-            if ((int) $locked->staff_user_id !== $currentStaffUserId) {
-                throw AppointmentStaffChangedException::forAppointment(
-                    $appointmentId,
-                    $currentStaffUserId,
-                    (int) $locked->staff_user_id
-                );
-            }
+            $this->assertScheduled($locked, 'rescheduled');
 
             $previousStaffUserId = (int) $locked->staff_user_id;
             $previousStartAt = Carbon::parse($locked->start_at);
@@ -327,7 +317,7 @@ class AppointmentBookingService
         return Appointment::query()->findOrFail($appointmentId);
     }
 
-    /** @throws InvalidAppointmentTransitionException */
+    /** @throws InvalidAppointmentTransitionException|AppointmentStaffChangedException */
     public function cancel(Appointment $appointment, ?int $cancelledByUserId = null, ?string $reason = null): Appointment
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::Cancelled, 'cancelled', $cancelledByUserId, $reason);
@@ -337,7 +327,7 @@ class AppointmentBookingService
         return $fresh;
     }
 
-    /** @throws InvalidAppointmentTransitionException */
+    /** @throws InvalidAppointmentTransitionException|AppointmentStaffChangedException */
     public function complete(Appointment $appointment, ?int $completedByUserId = null): Appointment
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::Completed, 'completed', $completedByUserId, null);
@@ -347,7 +337,7 @@ class AppointmentBookingService
         return $fresh;
     }
 
-    /** @throws InvalidAppointmentTransitionException */
+    /** @throws InvalidAppointmentTransitionException|AppointmentStaffChangedException */
     public function markNoShow(Appointment $appointment, ?int $markedByUserId = null): Appointment
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::NoShow, 'marked no-show', $markedByUserId, null);
@@ -359,10 +349,20 @@ class AppointmentBookingService
 
     /**
      * Cancel, complete and no-show are one transition shape: tier 2 then tier
-     * 3, re-read status under the lock, require `scheduled`, write one terminal
-     * state. Sharing the implementation is what guarantees they cannot drift
-     * apart — "complete and no-show cannot both succeed" is true because both
-     * run this same guard (§7.4).
+     * 3, re-read the staff assignment and status under the lock, require the
+     * lock held to be the appointment's own staff timeline and the status to
+     * be `scheduled`, write one terminal state. Sharing the implementation is
+     * what guarantees they cannot drift apart — "complete and no-show cannot
+     * both succeed" is true because both run this same guard (§7.4).
+     *
+     * The staff id used for tier 2 comes from the caller's model, i.e. from
+     * BEFORE any lock. If the appointment was moved to another staff member in
+     * the meantime this fails closed with AppointmentStaffChangedException,
+     * writing nothing and dispatching nothing: the newly discovered staff
+     * member's tier-2 lock is deliberately NOT taken here, since acquiring
+     * tier 2 after tier 3 would break the canonical lock order.
+     *
+     * @throws InvalidAppointmentTransitionException|AppointmentStaffChangedException
      */
     private function resolveTerminal(
         Appointment $appointment,
@@ -383,6 +383,8 @@ class AppointmentBookingService
             $this->locks->lockAscending([$staffUserId]);
 
             $locked = $this->lockAppointment($appointmentId);
+
+            $this->assertHeldStaffOwnsAppointment($locked, $staffUserId);
 
             $this->assertScheduled($locked, $attempted);
 
@@ -449,6 +451,28 @@ class AppointmentBookingService
 
         if ($status !== AppointmentStatus::Scheduled) {
             throw InvalidAppointmentTransitionException::from((int) $lockedRow->id, $status, $attempted);
+        }
+    }
+
+    /**
+     * §7.4 — the staff member whose tier-2 lock this transaction holds was
+     * chosen from the caller's model BEFORE the locks were granted. Re-read
+     * from the tier-3-locked row, the appointment must still be on that same
+     * staff timeline; otherwise a mutation would run under the wrong staff
+     * lock (or under none for the staff member it actually belongs to).
+     * Refused before any write, so the transaction rolls back and no event
+     * is dispatched.
+     *
+     * @throws AppointmentStaffChangedException
+     */
+    private function assertHeldStaffOwnsAppointment(object $lockedRow, int $heldStaffUserId): void
+    {
+        if ((int) $lockedRow->staff_user_id !== $heldStaffUserId) {
+            throw AppointmentStaffChangedException::forAppointment(
+                (int) $lockedRow->id,
+                $heldStaffUserId,
+                (int) $lockedRow->staff_user_id
+            );
         }
     }
 
