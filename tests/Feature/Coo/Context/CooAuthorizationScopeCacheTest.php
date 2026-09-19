@@ -263,6 +263,58 @@ class CooAuthorizationScopeCacheTest extends TestCase
     }
 
     // =================================================================
+    // Sub-slice 19.B — the remaining §13.3 selection proofs
+    // =================================================================
+
+    /**
+     * Restoring a capability does not "un-strand" the old row: selection
+     * follows the CURRENT exact fingerprint and nothing else, so the row
+     * written while the capability was held becomes readable again only
+     * because the live fingerprint is once more exactly equal to it — never
+     * because the reader remembered anything.
+     */
+    public function test_selection_follows_only_the_current_exact_fingerprint_when_a_capability_is_restored(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->locations($business, 2);
+        $business = $business->fresh();
+
+        $this->grant($customer, ['view_reports']);
+        $this->cachedInsight($business, $this->scopeOf($business, $customer->user->fresh()));
+
+        $this->assertNotNull($this->read($business, $customer->user->fresh()), 'Readable while the capability is held.');
+
+        $this->grant($customer, []);
+        $this->assertNull($this->read($business, $customer->user->fresh()), 'Stranded the moment it is removed.');
+
+        $this->grant($customer, ['view_reports']);
+        $this->assertNotNull($this->read($business, $customer->user->fresh()), 'Readable again only because the live fingerprint matches exactly once more.');
+    }
+
+    /** A foreign Business's insight is unreadable, however well the actor is authorized in their own. */
+    public function test_an_insight_belonging_to_another_business_is_never_readable(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->locations($business, 1);
+        $business = $business->fresh();
+
+        [$foreignOwner, $foreign] = $this->tenant(WorkspacePlanTier::Growth, 'Foreign Venue', 'Foreign Account');
+        $this->locations($foreign, 1);
+        $foreign = $foreign->fresh();
+        $this->cachedInsight($foreign);
+
+        $this->assertNotNull($this->read($foreign, $foreignOwner->user), 'Control: its own owner can read it.');
+        $this->assertNull($this->read($business, $customer->user), 'A different Business has no insight of its own.');
+
+        // And the foreign row is not reachable by asking about it with this
+        // actor's own envelope either.
+        $this->assertNull(
+            app(CooInsightDisplayReader::class)->forHome($foreign, $this->thisMonth($foreign), $this->actorEnvelope($business, $customer->user)),
+            'An envelope for one Business can never select another Business\'s row.',
+        );
+    }
+
+    // =================================================================
     // Helpers
     // =================================================================
 
