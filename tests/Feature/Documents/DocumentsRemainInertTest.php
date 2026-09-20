@@ -295,7 +295,7 @@ class DocumentsRemainInertTest extends TestCase
      * table is asserted directly. Covers BOTH the authenticated surface and
      * the public link/webhook surface Sub-slices B-E will add.
      */
-    public function test_no_slice_17_route_is_registered_yet(): void
+    public function test_only_authenticated_authoring_routes_are_registered(): void
     {
         $needles = [
             'document', 'proposal', 'contract', 'payments-contracts', 'payments_contracts',
@@ -309,13 +309,14 @@ class DocumentsRemainInertTest extends TestCase
             $name = strtolower((string) $route->getName());
 
             foreach ($needles as $needle) {
-                if (str_contains($uri, $needle) || str_contains($name, $needle)) {
+                if ((str_contains($uri, $needle) || str_contains($name, $needle))
+                    && ! str_contains($name, 'businesses.documents.')) {
                     $offending[] = ($name !== '' ? $name : $uri) . " [{$needle}]";
                 }
             }
         }
 
-        $this->assertSame([], array_values(array_unique($offending)), 'Sub-slice A must register no Slice 17 routes.');
+        $this->assertSame([], array_values(array_unique($offending)), 'Only Sub-slice B authoring routes may exist.');
     }
 
     public function test_no_public_document_link_or_business_payments_webhook_route_exists(): void
@@ -344,7 +345,6 @@ class DocumentsRemainInertTest extends TestCase
     public function test_no_manager_gateway_job_or_command_exists_yet(): void
     {
         foreach ([
-            'App\\Library\\Documents\\DocumentManager',                          // Sub-slice B
             'App\\Library\\Payments\\StripeConnectGateway',                      // Sub-slice D
             'App\\Library\\Payments\\PaymentManager',                            // Sub-slices E/F
             'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',          // Sub-slice E
