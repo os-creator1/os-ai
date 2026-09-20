@@ -98,6 +98,42 @@
          * nothing: every authenticated route fails closed at the entitlement
          * gate.
          */
+        /*
+         * Implementation Contract 19 §5.4(2)/§12.19.D — the AI COO /
+         * Business Advisor approve-then-execute surface.
+         *
+         * ONE key for the whole module, the single-key shape `website` /
+         * `automations` / `payments_contracts` use. Named for the engine's
+         * own canonical identity (OpportunityWorkerKey::BusinessAdvisor =
+         * 'business_advisor'), not invented here.
+         *
+         * WHY A NEW KEY AT ALL. §5.4(2) puts "capability (the actor's
+         * feature permission for the action's domain)" third in the guard
+         * chain, and a grep of this file finds no opportunity / advisor /
+         * COO / approve / execute key: the surface is gated today only by
+         * the blanket `access_backend`, which every customer holds and which
+         * therefore gates nothing. `view_reports` was considered and
+         * rejected — it is a READ capability, and gating a Business-mutating
+         * approval on permission to view reports is a category error.
+         *
+         * Default true: it follows the `payments_contracts` / `manage_seo`
+         * precedent. Approving a recommendation about your own Business
+         * profile is ordinary day-to-day work, and the accompanying backfill
+         * migration grants it to existing customers so a surface they can
+         * use today does not silently disappear.
+         *
+         * Necessary but never sufficient. It is one link in the §5.4(2)
+         * chain — kill switch, tenancy, THIS capability, Location,
+         * entitlement (PlatformFeature::AiCooBasic), action hash, approval
+         * freshness, paid-effect guards, idempotency claim — and it is
+         * re-evaluated from the DURABLE permission set at execution time,
+         * never inherited from the approval.
+         */
+        'business_advisor'               => [
+            'display_name' => 'business_advisor',
+            'category'     => 'AI COO',
+            'default'      => true,
+        ],
         'payments_contracts'             => [
             'display_name' => 'payments_contracts',
             'category'     => 'Payments & Contracts',

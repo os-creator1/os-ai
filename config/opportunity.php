@@ -23,6 +23,19 @@ return [
     //   run before the daily sweep nudges it.
     // sweep_limit / sweep_page: the daily sweep's bounds — Businesses per
     //   invocation, and candidates read per keyset page.
+    // Implementation Contract 19 §5.4(3). How long a requested approval
+    // stays usable. The clock starts when the approval is REQUESTED (the
+    // Opportunity enters awaiting_approval), because that is the moment the
+    // customer was shown what they were agreeing to; §5.4(3) requires the
+    // window to live here and never as a literal, so both the confirmation
+    // check and the execution-time re-check read this one key.
+    //
+    // 60 minutes: long enough that a customer who steps away mid-task does
+    // not lose their approval, short enough that an approval cannot sit
+    // unexecuted across a plan change, a permission revocation or a staff
+    // departure — which is the exact staleness §5.4(2) exists to defeat.
+    'approval_window_minutes' => env('OPPORTUNITY_APPROVAL_WINDOW_MINUTES', 60),
+
     'trigger_debounce_minutes' => env('OPPORTUNITY_TRIGGER_DEBOUNCE_MINUTES', 15),
     'sweep_stale_hours' => env('OPPORTUNITY_SWEEP_STALE_HOURS', 24),
     'sweep_limit' => env('OPPORTUNITY_SWEEP_LIMIT', 500),
