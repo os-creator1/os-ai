@@ -99,6 +99,11 @@ final class CustomerMenuBuilder
         'google_business_profile_module',
         'conversations',
         'crm',
+        // Calendar (Contract 15 §3.3/§12.D). This list is NAV gating only and is
+        // never the security gate: every Calendar route independently carries
+        // the entitlement decision (§6). Omitting the key here would hide the
+        // entry forever once the feature is entitled.
+        'calendar',
         // Packages & Products (Contract 16 §12.E). Omitting this line would
         // not merely fall back to a slower query: entitled() answers from the
         // bulk snapshot, which fails closed on any key not listed here, so an
@@ -191,6 +196,14 @@ final class CustomerMenuBuilder
         // in — the `crm` entitlement and the board's own read permission.
         $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
             'customer.workspaces.businesses.crm.',
+        ]));
+
+        // Calendar — the authenticated day/week schedule (Contract 15 §12.D). Offered
+        // only when the Business is entitled to it; while PlatformFeature::Calendar is
+        // Planned that answer is always no, so the entry is absent. The route behind it
+        // is separately gated and would 404 regardless of what the menu shows.
+        $items[] = $this->entitled('calendar', $this->item($user, 'calendar', 'Calendar', 'calendar', ['access_backend'], 'customer.workspaces.businesses.calendar.index', $scoped, $current, [
+            'customer.workspaces.businesses.calendar.',
         ]));
 
         $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [

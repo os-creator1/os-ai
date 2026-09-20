@@ -124,7 +124,7 @@ class CalendarRemainsPlannedTest extends TestCase
      * exclusion: it is a manual suppression marker on a prospecting record,
      * explicitly not this slice's "Booked".
      */
-    public function test_only_sub_slice_b_calendar_routes_are_registered(): void
+    public function test_only_sub_slice_b_and_d_calendar_routes_are_registered(): void
     {
         $allowed = [
             'customer.workspaces.businesses.calendar.booking-types.index',
@@ -139,6 +139,18 @@ class CalendarRemainsPlannedTest extends TestCase
             'customer.workspaces.businesses.calendar.availability.rules.destroy',
             'customer.workspaces.businesses.calendar.availability.time-off.store',
             'customer.workspaces.businesses.calendar.availability.time-off.destroy',
+            // Sub-slice D (§12.D) — the authenticated day/week schedule and the
+            // five appointment actions. Still every one entitlement-gated, so
+            // still 404 while Planned (CalendarUiEntitlementGateTest).
+            'customer.workspaces.businesses.calendar.index',
+            'customer.workspaces.businesses.calendar.schedule',
+            'customer.workspaces.businesses.calendar.appointments.create',
+            'customer.workspaces.businesses.calendar.appointments.store',
+            'customer.workspaces.businesses.calendar.appointments.show',
+            'customer.workspaces.businesses.calendar.appointments.reschedule',
+            'customer.workspaces.businesses.calendar.appointments.cancel',
+            'customer.workspaces.businesses.calendar.appointments.complete',
+            'customer.workspaces.businesses.calendar.appointments.no-show',
         ];
 
         $offending = [];
@@ -162,19 +174,18 @@ class CalendarRemainsPlannedTest extends TestCase
             }
         }
 
-        $this->assertSame([], $offending, 'Only Sub-slice B\'s contracted Calendar routes may exist.');
+        $this->assertSame([], $offending, 'Only Sub-slices B and D\'s contracted Calendar routes may exist.');
     }
 
     /**
      * The surfaces Sub-slices C, D and E own must NOT exist yet: no public
      * scheduler, no appointment lifecycle action, no calendar grid.
      */
-    public function test_no_public_or_appointment_calendar_routes_exist_yet(): void
+    public function test_no_public_calendar_routes_exist_yet(): void
     {
         foreach (Route::getRoutes() as $route) {
             $name = (string) $route->getName();
 
-            $this->assertStringNotContainsString('calendar.appointments', $name);
             $this->assertStringNotContainsString('public.booking', $name);
             $this->assertStringNotContainsString('public.scheduler', $name);
         }
@@ -185,12 +196,12 @@ class CalendarRemainsPlannedTest extends TestCase
      * sub-slice — and that list is nav gating only, never the security
      * gate (§6).
      */
-    public function test_calendar_is_not_yet_a_nav_gated_feature(): void
+    public function test_calendar_is_a_nav_gated_feature_since_sub_slice_d(): void
     {
-        $this->assertNotContains(
+        $this->assertContains(
             PlatformFeature::Calendar->value,
             CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES,
-            "'calendar' joins ENTITLEMENT_GATED_FEATURES in Sub-slice D, with the nav entry it gates."
+            "Sub-slice D adds 'calendar' to ENTITLEMENT_GATED_FEATURES with the nav entry it gates."
         );
     }
 

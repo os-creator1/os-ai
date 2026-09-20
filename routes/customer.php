@@ -1212,7 +1212,7 @@
 
         /*
         |----------------------------------------------------------------
-        | Calendar — Booking Types + Staff Availability (Contract 15, 15B)
+        | Calendar — configuration and authenticated schedule (Contract 15, 15B/15D)
         |----------------------------------------------------------------
         |
         | Location-bound by construction: every path carries the Location's
@@ -1230,8 +1230,9 @@
         | account owner — intended, and the reason building them now is
         | safe. Sub-slice E's flip is what makes them executable.
         |
-        | No booking engine, no appointment lifecycle, no calendar grid and
-        | no public scheduler: Sub-slices C, D and E own those.
+        | The booking engine lives in Sub-slice C. Sub-slice D adds the
+        | authenticated schedule and lifecycle actions below. Public
+        | self-booking remains Sub-slice E's work.
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/calendar/locations/{locationUid}')->name('businesses.calendar.')->group(function () {
@@ -1248,7 +1249,25 @@
             Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
             Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
             Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');
+
+            // 15D — the day/week schedule and the five appointment actions.
+            // Every write is one call to AppointmentBookingService (Sub-slice
+            // C); nothing here changes appointment state itself. `/new` is
+            // registered before `{appointmentUid}` so it is not swallowed.
+            Route::get('/schedule', 'Business\CalendarController@show')->name('schedule');
+            Route::get('/appointments/new', 'Business\CalendarController@create')->name('appointments.create');
+            Route::post('/appointments', 'Business\CalendarController@store')->name('appointments.store');
+            Route::get('/appointments/{appointmentUid}', 'Business\CalendarController@showAppointment')->name('appointments.show');
+            Route::post('/appointments/{appointmentUid}/reschedule', 'Business\CalendarController@reschedule')->name('appointments.reschedule');
+            Route::post('/appointments/{appointmentUid}/cancel', 'Business\CalendarController@cancel')->name('appointments.cancel');
+            Route::post('/appointments/{appointmentUid}/complete', 'Business\CalendarController@complete')->name('appointments.complete');
+            Route::post('/appointments/{appointmentUid}/no-show', 'Business\CalendarController@noShow')->name('appointments.no-show');
         });
+
+        // 15D — the Calendar's entry point and Location picker. Business-level
+        // (no Location in the path): it lists ONLY the Locations the actor may
+        // reach and, when that is exactly one, redirects straight to it.
+        Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
 
         /*
         |----------------------------------------------------------------
