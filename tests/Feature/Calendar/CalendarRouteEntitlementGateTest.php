@@ -254,13 +254,14 @@ class CalendarRouteEntitlementGateTest extends TestCase
     }
 
     /**
-     * Sub-slice D owns the nav entry; B adds routes only. `'calendar'` is
-     * deliberately still absent from ENTITLEMENT_GATED_FEATURES, which is
-     * nav gating and never the security gate.
+     * UPDATED BY SUB-SLICE D, which owns the nav entry (§12.D): `'calendar'`
+     * joined ENTITLEMENT_GATED_FEATURES there. That list is nav gating and
+     * never the security gate — every route in this file is STILL refused while
+     * Calendar is Planned, which the tests above prove unchanged.
      */
-    public function test_calendar_is_still_not_a_nav_gated_feature(): void
+    public function test_calendar_is_a_nav_gated_feature_since_sub_slice_d(): void
     {
-        $this->assertNotContains(
+        $this->assertContains(
             PlatformFeature::Calendar->value,
             \App\Library\Navigation\CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES
         );
