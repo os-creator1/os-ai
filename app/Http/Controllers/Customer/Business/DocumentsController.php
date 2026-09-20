@@ -36,17 +36,18 @@ class DocumentsController extends CustomerBaseController
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
             'locations' => BusinessLocation::where('business_id', $business->id)->whereIn('id', $ids)->where('lifecycle_state', 'active')->get(),
             'contacts' => Contacts::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
+            'opportunities' => CrmOpportunity::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
         ]);
     }
 
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $business = $this->business($workspaceUid, $businessUid);
-        $data = $request->validate(['location_uid' => 'required|uuid', 'contact_uid' => 'required|uuid', 'opportunity_uid' => 'nullable|uuid', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200']);
-        $location = BusinessLocation::where('business_id', $business->id)->where('uid', $data['location_uid'])->firstOrFail();
+        $data = $request->validate(['location_uid' => 'required|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200']);
+        $location = BusinessLocation::where('business_id', $business->id)->where('uid', $data['location_uid'])->first() ?? abort(404);
         $this->location($location);
-        $contact = Contacts::where('uid', $data['contact_uid'])->firstOrFail();
-        $opportunity = isset($data['opportunity_uid']) ? CrmOpportunity::where('uid', $data['opportunity_uid'])->firstOrFail() : null;
+        $contact = Contacts::where('uid', $data['contact_uid'])->first() ?? abort(404);
+        $opportunity = isset($data['opportunity_uid']) ? (CrmOpportunity::where('uid', $data['opportunity_uid'])->first() ?? abort(404)) : null;
         $document = $this->manager->create($business, $location, $contact, $opportunity, $data['kind'], $data['title'], Auth::user());
         return redirect()->route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]);
     }
@@ -73,8 +74,8 @@ class DocumentsController extends CustomerBaseController
     public function catalogLine(Request $request, string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
     {
         $document = $this->document($workspaceUid, $businessUid, $documentUid);
-        $data = $request->validate(['catalog_item_uid' => 'required|uuid', 'quantity' => 'required|integer|min:1', 'explicit_price_minor' => 'nullable|integer|min:0']);
-        $item = CatalogItem::where('business_id', $document->business_id)->where('uid', $data['catalog_item_uid'])->firstOrFail();
+        $data = $request->validate(['catalog_item_uid' => 'required|string|max:64', 'quantity' => 'required|integer|min:1', 'explicit_price_minor' => 'nullable|integer|min:0']);
+        $item = CatalogItem::where('business_id', $document->business_id)->where('uid', $data['catalog_item_uid'])->first() ?? abort(404);
         $this->manager->addCatalogLine($document, $item, (int) $data['quantity'], Auth::user(), isset($data['explicit_price_minor']) ? (int) $data['explicit_price_minor'] : null);
         return back();
     }
@@ -90,7 +91,7 @@ class DocumentsController extends CustomerBaseController
     public function removeLine(string $workspaceUid, string $businessUid, string $documentUid, string $lineUid): RedirectResponse
     {
         $document = $this->document($workspaceUid, $businessUid, $documentUid);
-        $line = BusinessDocumentLineItem::where('uid', $lineUid)->firstOrFail();
+        $line = BusinessDocumentLineItem::where('uid', $lineUid)->first() ?? abort(404);
         $this->manager->removeLine($document, $line);
         return back();
     }
@@ -124,8 +125,8 @@ class DocumentsController extends CustomerBaseController
     private function document(string $workspaceUid, string $businessUid, string $documentUid): BusinessDocument
     {
         $business = $this->business($workspaceUid, $businessUid);
-        $document = BusinessDocument::where('business_id', $business->id)->where('uid', $documentUid)->firstOrFail();
-        $location = BusinessLocation::where('business_id', $business->id)->findOrFail($document->business_location_id);
+        $document = BusinessDocument::where('business_id', $business->id)->where('uid', $documentUid)->first() ?? abort(404);
+        $location = BusinessLocation::where('business_id', $business->id)->find($document->business_location_id) ?? abort(404);
         $this->location($location);
         return $document;
     }

@@ -55,8 +55,8 @@ final class DocumentManager
     {
         return DB::transaction(function () use ($document, $attributes) {
             [$document, $version] = $this->draft($document);
-            $this->require($document->status === DocumentStatus::Draft, 'Only an open draft can be edited.');
             if (array_key_exists('title', $attributes)) {
+                $this->require($document->status === DocumentStatus::Draft, 'The title is frozen after send.');
                 $title = trim((string) $attributes['title']);
                 $this->require($title !== '' && mb_strlen($title) <= 200, 'Invalid document title.');
                 $document->title = $title;
@@ -158,11 +158,16 @@ final class DocumentManager
             $version = $document->current_version_id
                 ? BusinessDocumentVersion::whereKey($document->current_version_id)->lockForUpdate()->first()
                 : BusinessDocumentVersion::where('business_document_id', $document->id)->where('state', 'draft')->lockForUpdate()->first();
+            $this->require($version === null || (int) $version->business_document_id === (int) $document->id, 'Invalid current version.');
             $schedule = $version ? $version->paymentScheduleItems()->orderBy('id')->lockForUpdate()->get() : collect();
             $payments = $document->payments()->orderBy('id')->lockForUpdate()->get();
+            $refunds = $payments->isEmpty() ? collect() : DB::table('business_document_refunds')
+                ->whereIn('business_document_payment_id', $payments->pluck('id'))
+                ->orderBy('id')->lockForUpdate()->get();
             foreach ($payments as $payment) {
                 if ($payment->status === BusinessDocumentPaymentStatus::Succeeded) {
-                    $refunded = DB::table('business_document_refunds')->where('business_document_payment_id', $payment->id)->where('status', 'succeeded')->sum('amount_minor');
+                    $refunded = $refunds->filter(fn ($refund) => (int) $refund->business_document_payment_id === (int) $payment->id
+                        && $refund->status === 'succeeded')->sum('amount_minor');
                     $this->require($refunded >= $payment->amount_minor, 'Captured payment must be refunded before void.');
                 }
             }
@@ -186,7 +191,7 @@ final class DocumentManager
     private function draft(BusinessDocument $document): array
     {
         $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
-        $this->require($document->status === DocumentStatus::Draft, 'Only an open draft can be authored.');
+        $this->require(in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Sent], true), 'Only an open draft can be authored.');
         $version = BusinessDocumentVersion::where('business_document_id', $document->id)->where('state', DocumentVersionState::Draft->value)->lockForUpdate()->first();
         $this->require($version !== null, 'No open draft version.');
         return [$document, $version];

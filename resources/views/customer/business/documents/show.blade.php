@@ -4,7 +4,7 @@
 <a href="{{ route('customer.workspaces.businesses.documents.index', [$workspaceUid, $businessUid]) }}">Documents</a>
 <h4>{{ $document->title }} <small>{{ $document->status->value }}</small></h4>
 <x-flash-alert />
-@if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+@if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
 @if($version)
 @php($base = [$workspaceUid, $businessUid, $document->uid])
 <div class="card p-2 mb-2">
@@ -12,14 +12,25 @@
     <form method="post" action="{{ route('customer.workspaces.businesses.documents.update', $base) }}">
         @csrf @method('PATCH')
         <label>Title <input name="title" value="{{ $document->title }}" required maxlength="200"></label>
+        <label>Body and terms <textarea name="content[body]">{{ $version->content['body'] ?? '' }}</textarea></label>
         <button class="btn btn-primary" type="submit">Save</button>
     </form>
 </div>
 <div class="card p-2 mb-2">
     <h5>Lines</h5>
-    @foreach($version->lineItems->sortBy('position') as $line)
+    @php($orderedLines = $version->lineItems->sortBy('position')->values())
+    @foreach($orderedLines as $index => $line)
         <div>{{ $line->name }} — {{ $line->quantity }} × {{ $line->unit_price_minor }} = {{ $line->line_total_minor }} {{ $line->currency_code }}
             <form method="post" action="{{ route('customer.workspaces.businesses.documents.lines.destroy', [...$base, $line->uid]) }}">@csrf @method('DELETE')<button type="submit">Remove</button></form>
+            @if($index > 0)
+            <form method="post" action="{{ route('customer.workspaces.businesses.documents.lines.order', $base) }}">
+                @csrf @method('PUT')
+                @foreach($orderedLines as $orderIndex => $orderedLine)
+                    <input type="hidden" name="line_uids[]" value="{{ $orderedLines[$orderIndex === $index - 1 ? $index : ($orderIndex === $index ? $index - 1 : $orderIndex)]->uid }}">
+                @endforeach
+                <button type="submit">Move up</button>
+            </form>
+            @endif
         </div>
     @endforeach
     <strong>Total: {{ $version->total_minor }} {{ $version->currency_code }} (minor units)</strong>
