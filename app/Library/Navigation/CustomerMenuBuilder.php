@@ -190,13 +190,17 @@ final class CustomerMenuBuilder
         ]);
 
         // Opportunities — the CRM sales board of the selected Business
-        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
+        // (App\Library\Crm), separate from the AI COO Advisor.
         // Business frame only: an Agency reaches it after choosing a client
         // Business. Offered exactly when the CRM boundary would let the actor
         // in — the `crm` entitlement and the board's own read permission.
         $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
             'customer.workspaces.businesses.crm.',
         ]));
+
+        if (config('opportunity.enabled', false)) {
+            $items[] = $this->entitled('ai_coo_basic', $this->item($user, 'advisor', 'Advisor', 'compass', ['business_advisor'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']));
+        }
 
         // Calendar — the authenticated day/week schedule (Contract 15 §12.D). Offered
         // only when the Business is entitled to it; while PlatformFeature::Calendar is
@@ -256,14 +260,6 @@ final class CustomerMenuBuilder
         $items = [];
 
         $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
-
-        if (config('opportunity.enabled', false) && $this->hasAnyAccessibleBusiness($context)) {
-            // The Advisor queue is a customer-level surface that resolves its
-            // own Business; it stays reachable from both frames, but only
-            // once the actor has a Business at all — with none there is
-            // nothing for the Advisor to recommend on.
-            $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
-        }
 
         $workspace = $context->selectedWorkspace;
 
@@ -575,21 +571,6 @@ final class CustomerMenuBuilder
         }
 
         return $this->entitlements->allows($featureKey) ? $item : null;
-    }
-
-    /**
-     * Any Business the actor can reach, active or not (a draft Business is
-     * still theirs to work on).
-     */
-    private function hasAnyAccessibleBusiness(CustomerContext $context): bool
-    {
-        foreach ($context->workspaces as $workspace) {
-            if ($workspace->accessibleBusinesses() !== []) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

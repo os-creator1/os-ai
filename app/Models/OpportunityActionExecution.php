@@ -23,6 +23,12 @@ class OpportunityActionExecution extends Model
         'status',
         'initiated_by_user_id',
         'initiated_by_type',
+        'confirmed_by_user_id',
+        'confirmed_by_type',
+        'approval_expires_at',
+        'estimated_cost_microusd',
+        'estimated_cost_currency',
+        'cost_estimated_at',
         'completion_policy',
         'safe_result_summary',
         'safe_error_summary',
@@ -34,6 +40,8 @@ class OpportunityActionExecution extends Model
         'status' => OpportunityActionExecutionStatus::class,
         'completion_policy' => OpportunityCompletionPolicy::class,
         'started_at' => 'datetime',
+        'approval_expires_at' => 'datetime',
+        'cost_estimated_at' => 'datetime',
         'completed_at' => 'datetime',
     ];
 

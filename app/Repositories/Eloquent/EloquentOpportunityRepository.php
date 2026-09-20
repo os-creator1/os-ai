@@ -40,6 +40,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
         'recommended_action_hash',
         'action_schema_version',
         'occurrence_number',
+        'approval_expires_at',
+        'approval_initiated_by_type',
         'last_confirmed_run_id',
         'last_confirmed_at',
         'snoozed_until',

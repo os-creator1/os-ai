@@ -16,10 +16,12 @@ use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
 use App\Library\Opportunity\OpportunityManager;
+use App\Library\Opportunity\OpportunityActionRegistry;
+use App\Library\Navigation\CustomerContext;
+use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
 use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Contracts\View\View;
@@ -59,7 +61,6 @@ class OpportunityController extends Controller
     public function __construct(
         private readonly OpportunityRepository $opportunityRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
-        private readonly BusinessRepository $businessRepository,
         private readonly OpportunityManager $opportunityManager,
     ) {
     }
@@ -68,7 +69,7 @@ class OpportunityController extends Controller
     {
         $this->ensureOpportunityEngineEnabled();
 
-        $business = $this->businessRepository->findPrimaryByCustomer($this->customer()->user_id);
+        $business = $this->selectedBusiness();
 
         if ($business === null) {
             return redirect()->route('customer.onboarding.show');
@@ -100,7 +101,7 @@ class OpportunityController extends Controller
     {
         $this->ensureOpportunityEngineEnabled();
 
-        $business = $this->businessRepository->findPrimaryByCustomer($this->customer()->user_id);
+        $business = $this->selectedBusiness();
 
         if ($business === null) {
             return redirect()->route('customer.onboarding.show');
@@ -137,7 +138,7 @@ class OpportunityController extends Controller
     {
         $this->ensureOpportunityEngineEnabled();
 
-        $business = $this->businessRepository->findPrimaryByCustomer($this->customer()->user_id);
+        $business = $this->selectedBusiness();
 
         if ($business === null) {
             abort(404);
@@ -352,7 +353,7 @@ class OpportunityController extends Controller
     private function resolveMutationTarget(int $opportunityId): array
     {
         $customer = $this->customer();
-        $business = $this->businessRepository->findPrimaryByCustomer($customer->user_id);
+        $business = $this->selectedBusiness();
 
         if ($business === null) {
             return [null, null, redirect()->route('customer.onboarding.show')];
@@ -388,6 +389,20 @@ class OpportunityController extends Controller
     private function customer(): Customer
     {
         return Auth::user()->customer;
+    }
+
+    private function selectedBusiness(): ?Business
+    {
+        $context = request()->attributes->get('customerContext');
+
+        if (! $context instanceof CustomerContext || ! $context->isBusinessFrame()) {
+            return null;
+        }
+
+        return Business::query()
+            ->whereKey($context->selectedBusiness->id)
+            ->where('workspace_id', $context->frameWorkspace()?->id)
+            ->first();
     }
 
     private function normalizeStatus(?string $status): ?string
@@ -526,7 +541,7 @@ class OpportunityController extends Controller
         $recommendedAction = $opportunity->recommended_action;
         $actionKey = is_array($recommendedAction) ? ($recommendedAction['action_key'] ?? null) : null;
 
-        if (! is_string($actionKey) || $actionKey === '') {
+        if (! is_string($actionKey) || $actionKey === '' || ! OpportunityActionRegistry::mayRetryUnderOriginalApproval($actionKey)) {
             return false;
         }
 

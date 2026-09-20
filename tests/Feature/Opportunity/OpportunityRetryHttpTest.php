@@ -81,57 +81,13 @@ class OpportunityRetryHttpTest extends TestCase
     // Valid retry
     // -----------------------------------------------------------------
 
-    public function test_valid_retry_creates_a_new_pending_execution_and_queues_one_job(): void
+    public function test_failed_mutating_action_requires_fresh_approval_and_has_no_effect(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
-        [$opportunity, $failedExecution] = $this->openOpportunityWithFailedExecution($business);
-        Queue::fake();
+        [$opportunity] = $this->openOpportunityWithFailedExecution($business);
 
-        $response = $this->post(route('customer.opportunities.retry', $opportunity->id));
-
-        $response->assertRedirect(route('customer.opportunities.show', $opportunity->id));
-        $this->assertSame('success', session('status'));
-        $this->assertSame('Retry started.', session('message'));
-
-        $fresh = $opportunity->fresh();
-        $this->assertSame(OpportunityStatus::InProgress, $fresh->status);
-
-        $newExecution = OpportunityActionExecution::where('opportunity_id', $opportunity->id)
-            ->where('status', OpportunityActionExecutionStatus::Pending->value)
-            ->first();
-
-        $this->assertNotNull($newExecution);
-        $this->assertSame(2, $newExecution->attempt_number);
-
-        $expectedKey = hash(
-            'sha256',
-            $fresh->id . ':' . $fresh->occurrence_number . ':' . $fresh->recommended_action_hash . ':2'
-        );
-        $this->assertSame($expectedKey, $newExecution->idempotency_key);
-        $this->assertSame('add_phone', $newExecution->action_key);
-        $this->assertSame($fresh->recommended_action_hash, $newExecution->recommended_action_hash);
-        $this->assertSame($fresh->action_schema_version, $newExecution->action_schema_version);
-        $this->assertSame($fresh->occurrence_number, $newExecution->occurrence_number);
-        $this->assertSame('customer', $newExecution->initiated_by_type);
-        $this->assertSame($business->customer->user_id, $newExecution->initiated_by_user_id);
-        $this->assertSame(OpportunityCompletionPolicy::SystemVerified, $newExecution->completion_policy);
-
-        $freshFailed = $failedExecution->fresh();
-        $this->assertSame(OpportunityActionExecutionStatus::Failed, $freshFailed->status);
-        $this->assertSame(1, $freshFailed->attempt_number);
-        $this->assertSame($failedExecution->recommended_action_hash, $freshFailed->recommended_action_hash);
-
-        $this->assertSame(2, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
-
-        $transitions = OpportunityTransition::where('opportunity_id', $opportunity->id)->get();
-        $this->assertCount(1, $transitions);
-        $this->assertSame('customer_retried_execution', $transitions->first()->reason_code);
-        $this->assertSame($newExecution->id, $transitions->first()->action_execution_id);
-
-        Queue::assertPushed(ExecuteOpportunityAction::class, 1);
-        Queue::assertPushed(ExecuteOpportunityAction::class, function (ExecuteOpportunityAction $job) use ($newExecution) {
-            return $job->executionId === $newExecution->id;
-        });
+        $this->assertRetryRejectsSafely($opportunity, $business);
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
     }
 
     public function test_posted_metadata_has_no_effect_on_the_retry(): void
@@ -152,66 +108,36 @@ class OpportunityRetryHttpTest extends TestCase
             'status' => 'completed',
         ]);
 
-        $fresh = $opportunity->fresh();
-        $newExecution = OpportunityActionExecution::where('opportunity_id', $opportunity->id)
-            ->where('status', OpportunityActionExecutionStatus::Pending->value)
-            ->first();
-
-        $this->assertNotNull($newExecution);
-        $this->assertSame('add_phone', $newExecution->action_key);
-        $this->assertSame(2, $newExecution->attempt_number);
-        $this->assertSame($fresh->recommended_action_hash, $newExecution->recommended_action_hash);
-        $this->assertSame(1, $newExecution->occurrence_number);
-        $this->assertSame($business->id, $fresh->business_id);
+        $this->assertSame(1, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
+        $this->assertSame($business->id, $opportunity->fresh()->business_id);
+        Queue::assertNothingPushed();
     }
 
     // -----------------------------------------------------------------
     // Duplicate submissions
     // -----------------------------------------------------------------
 
-    public function test_duplicate_retry_while_pending_is_idempotent(): void
+    public function test_repeated_retry_of_failed_mutation_remains_refused(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         [$opportunity] = $this->openOpportunityWithFailedExecution($business);
         Queue::fake();
 
-        $this->post(route('customer.opportunities.retry', $opportunity->id));
-
-        $response = $this->post(route('customer.opportunities.retry', $opportunity->id));
-
-        $response->assertRedirect(route('customer.opportunities.show', $opportunity->id));
-        $this->assertSame('success', session('status'));
-        $this->assertSame('Retry started.', session('message'));
-        $this->assertSame(2, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
-        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)
-            ->where('reason_code', 'customer_retried_execution')
-            ->count());
-        Queue::assertPushed(ExecuteOpportunityAction::class, 1);
+        $this->assertRetryRejectsSafely($opportunity, $business);
+        $this->assertRetryRejectsSafely($opportunity, $business);
     }
 
-    public function test_duplicate_retry_while_running_is_idempotent(): void
+    public function test_running_execution_is_not_retryable(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         [$opportunity] = $this->openOpportunityWithFailedExecution($business);
         Queue::fake();
 
-        $this->post(route('customer.opportunities.retry', $opportunity->id));
+        OpportunityActionExecution::where('opportunity_id', $opportunity->id)
+            ->update(['status' => OpportunityActionExecutionStatus::Running->value]);
 
-        $pending = OpportunityActionExecution::where('opportunity_id', $opportunity->id)
-            ->where('status', OpportunityActionExecutionStatus::Pending->value)
-            ->first();
-        $pending->status = OpportunityActionExecutionStatus::Running->value;
-        $pending->save();
-
-        $response = $this->post(route('customer.opportunities.retry', $opportunity->id));
-
-        $response->assertRedirect(route('customer.opportunities.show', $opportunity->id));
-        $this->assertSame('success', session('status'));
-        $this->assertSame(2, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
-        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)
-            ->where('reason_code', 'customer_retried_execution')
-            ->count());
-        Queue::assertPushed(ExecuteOpportunityAction::class, 1);
+        $this->assertRetryRejectsSafely($opportunity, $business);
     }
 
     // -----------------------------------------------------------------
@@ -319,16 +245,16 @@ class OpportunityRetryHttpTest extends TestCase
     // Stale behavior
     // -----------------------------------------------------------------
 
-    public function test_stale_open_opportunity_remains_retryable(): void
+    public function test_stale_open_opportunity_still_requires_fresh_approval_for_mutation(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         [$opportunity] = $this->openOpportunityWithFailedExecution($business, ['freshness' => 'stale']);
         Queue::fake();
 
-        $this->post(route('customer.opportunities.retry', $opportunity->id));
+        $this->assertRetryRejectsSafely($opportunity, $business);
 
         $fresh = $opportunity->fresh();
-        $this->assertSame(OpportunityStatus::InProgress, $fresh->status);
+        $this->assertSame(OpportunityStatus::Open, $fresh->status);
         $this->assertSame('stale', $fresh->freshness->value);
     }
 
@@ -336,15 +262,14 @@ class OpportunityRetryHttpTest extends TestCase
     // Form visibility
     // -----------------------------------------------------------------
 
-    public function test_retry_form_visible_with_a_single_matching_failed_execution(): void
+    public function test_retry_form_absent_for_mutating_failed_execution(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         [$opportunity] = $this->openOpportunityWithFailedExecution($business);
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee(route('customer.opportunities.retry', $opportunity->id), false);
-        $response->assertSee('Retry');
+        $response->assertDontSee(route('customer.opportunities.retry', $opportunity->id), false);
     }
 
     /**
@@ -353,14 +278,14 @@ class OpportunityRetryHttpTest extends TestCase
      * retry form must still appear, proving eligibility is computed via
      * findLatestFailedMatching() and not via the latest execution overall.
      */
-    public function test_retry_form_visible_when_a_matching_failed_execution_exists_but_is_not_latest_overall(): void
+    public function test_retry_form_absent_for_mutating_failed_execution_even_when_matching_is_not_latest(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         [$opportunity] = $this->openOpportunityWithOlderMatchingAndNewerMismatchedFailedExecutions($business);
 
         $response = $this->get(route('customer.opportunities.show', $opportunity->id));
 
-        $response->assertSee(route('customer.opportunities.retry', $opportunity->id), false);
+        $response->assertDontSee(route('customer.opportunities.retry', $opportunity->id), false);
     }
 
     public function test_retry_form_absent_with_no_execution(): void

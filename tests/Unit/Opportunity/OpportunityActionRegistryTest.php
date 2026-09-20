@@ -104,6 +104,25 @@ class OpportunityActionRegistryTest extends TestCase
         $this->assertSame('business.phone_matches_parameter', $addPhone['verifier_identifier']);
     }
 
+    public function test_19d_keeps_only_add_phone_executable_and_preserves_both_hash_guards(): void
+    {
+        $executable = array_keys(array_filter(
+            OpportunityActionRegistry::all(),
+            static fn (array $definition): bool => isset($definition['handler_identifier']),
+        ));
+        $this->assertSame(['add_phone'], $executable);
+        $this->assertFalse(OpportunityActionRegistry::hasPaidEffect('add_phone'));
+        $this->assertFalse(OpportunityActionRegistry::isLocationBound('add_phone'));
+        $this->assertFalse(OpportunityActionRegistry::mayRetryUnderOriginalApproval('add_phone'));
+
+        $executor = file_get_contents(app_path('Library/Opportunity/OpportunityActionExecutor.php'));
+        $manager = file_get_contents(app_path('Library/Opportunity/OpportunityManager.php'));
+        $this->assertStringNotContainsString('SUPPORTED_ACTION_KEY', $executor);
+        $this->assertStringContainsString('OpportunityActionRegistry::get', $manager);
+        $this->assertStringContainsString('$recomputedHash !== $opportunity->recommended_action_hash', $executor);
+        $this->assertStringContainsString('$execution->recommended_action_hash !== $opportunity->recommended_action_hash', $executor);
+    }
+
     /**
      * `add_phone` alone accepts a customer-configured parameter (RFC-002
      * Phase 4B.2A) — its parameter_rules declares the exact trusted `value`

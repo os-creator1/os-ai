@@ -10,6 +10,9 @@ use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityTransitionActorType;
 use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Business\BusinessStatus;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Opportunity\OpportunityCandidateData;
 use App\Models\Business;
 use App\Models\Opportunity;
@@ -18,6 +21,9 @@ use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
 use App\Models\OpportunityTransition;
 use App\Models\User;
+use App\Repositories\Contracts\BusinessRepository;
+use Illuminate\Support\Facades\Queue;
+use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 
 trait CreatesOpportunityTestData
@@ -27,8 +33,32 @@ trait CreatesOpportunityTestData
     protected function createBusinessForOpportunities(): Business
     {
         $customer = $this->createCustomer();
+        $customer->update(['permissions' => json_encode(['business_advisor'])]);
 
-        return $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $admin = User::create([
+            'first_name' => 'Platform',
+            'last_name' => 'Admin',
+            'email' => 'platform-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+        app(EntitlementManager::class)->assignFirstPlan(
+            $business->workspace,
+            WorkspacePlanTier::Growth,
+            (int) $admin->id,
+            'Opportunity fixture entitlement.',
+            true,
+            0,
+        );
+        $business = app(BusinessRepository::class)->updateStatus($business, BusinessStatus::Active);
+        // Plan assignment schedules unrelated niche provisioning. Keep the
+        // Opportunity job assertions scoped to work after fixture creation.
+        Queue::fake([ExecuteOpportunityAction::class]);
+
+        return $business;
     }
 
     protected function createUser(): User
@@ -102,6 +132,11 @@ trait CreatesOpportunityTestData
 
     protected function createOpportunity(Business $business, array $overrides = []): Opportunity
     {
+        if (($overrides['status'] ?? null) === OpportunityStatus::AwaitingApproval->value
+            && ! array_key_exists('approval_expires_at', $overrides)) {
+            $overrides['approval_expires_at'] = now()->addMinutes((int) config('opportunity.approval_window_minutes'));
+        }
+
         return Opportunity::create($this->opportunityAttributes($business, $overrides));
     }
 
@@ -202,6 +237,9 @@ trait CreatesOpportunityTestData
             'status' => OpportunityActionExecutionStatus::Pending->value,
             'initiated_by_user_id' => $user->id,
             'initiated_by_type' => 'customer',
+            'confirmed_by_user_id' => $user->id,
+            'confirmed_by_type' => 'customer',
+            'approval_expires_at' => now()->addMinutes((int) config('opportunity.approval_window_minutes')),
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             'safe_result_summary' => null,
             'safe_error_summary' => null,

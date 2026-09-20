@@ -9,6 +9,7 @@ use App\Enums\Opportunity\OpportunityStatus;
 use App\Library\Business\BusinessManager;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionVerificationException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
 
@@ -24,13 +25,13 @@ use App\Models\OpportunityActionExecution;
  */
 final class OpportunityActionExecutor
 {
-    private const SUPPORTED_ACTION_KEY = 'add_phone';
+    private const HANDLERS = [
+        'business.update_phone' => 'executePhone',
+    ];
 
-    private const SUPPORTED_HANDLER_IDENTIFIER = 'business.update_phone';
-
-    private const SUPPORTED_VERIFIER_IDENTIFIER = 'business.phone_matches_parameter';
-
-    private const SUPPORTED_COMPLETION_POLICY = 'system_verified';
+    private const VERIFIERS = [
+        'business.phone_matches_parameter' => true,
+    ];
 
     private const SUCCESS_SUMMARY = 'Business phone updated and verified.';
 
@@ -60,16 +61,34 @@ final class OpportunityActionExecutor
      */
     public function supports(string $actionKey, array $actionDefinition): bool
     {
-        return $actionKey === self::SUPPORTED_ACTION_KEY
-            && ($actionDefinition['handler_identifier'] ?? null) === self::SUPPORTED_HANDLER_IDENTIFIER
-            && ($actionDefinition['verifier_identifier'] ?? null) === self::SUPPORTED_VERIFIER_IDENTIFIER
+        $registered = $this->registry::get($actionKey);
+
+        return $registered !== null
+            && isset(self::HANDLERS[$registered['handler_identifier'] ?? ''])
+            && isset(self::VERIFIERS[$registered['verifier_identifier'] ?? ''])
+            && ($actionDefinition['handler_identifier'] ?? null) === ($registered['handler_identifier'] ?? null)
+            && ($actionDefinition['verifier_identifier'] ?? null) === ($registered['verifier_identifier'] ?? null)
             && isset($actionDefinition['completion_policy'])
-            && $actionDefinition['completion_policy']->value === self::SUPPORTED_COMPLETION_POLICY;
+            && $actionDefinition['completion_policy'] === $registered['completion_policy'];
     }
 
     public function execute(Opportunity $opportunity, OpportunityActionExecution $execution): string
     {
         $value = $this->assertExecutable($opportunity, $execution);
+
+        if (OpportunityActionRegistry::hasPaidEffect($execution->action_key)
+            && $execution->estimated_cost_microusd === null) {
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $opportunity->id, $execution->action_key);
+        }
+
+        $definition = $this->registry::get($execution->action_key);
+        $handler = self::HANDLERS[$definition['handler_identifier']];
+
+        return $this->{$handler}($opportunity, $value);
+    }
+
+    private function executePhone(Opportunity $opportunity, string $value): string
+    {
 
         $business = $opportunity->business;
 
@@ -138,12 +157,6 @@ final class OpportunityActionExecutor
         }
 
         $actionKey = $recommendedAction['action_key'];
-
-        if ($actionKey !== self::SUPPORTED_ACTION_KEY) {
-            throw new OpportunityActionNotExecutableException(
-                "Action [{$actionKey}] is not executable."
-            );
-        }
 
         $actionDefinition = $this->registry::get($actionKey);
 

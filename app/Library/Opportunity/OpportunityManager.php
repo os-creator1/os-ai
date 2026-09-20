@@ -9,6 +9,7 @@ use App\Enums\Business\BusinessGoal;
 use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Enums\Opportunity\OpportunityFreshness;
+use App\Enums\Opportunity\OpportunityInitiatedByType;
 use App\Enums\Opportunity\OpportunityRunStatus;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityTransitionActorType;
@@ -47,6 +48,8 @@ use App\Library\Opportunity\Exceptions\OpportunityAttestationNotAvailableExcepti
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
+use App\Library\Opportunity\Exceptions\OpportunityRetryRequiresReapprovalException;
+use App\Library\Opportunity\Exceptions\OpportunityApprovalExpiredException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
 use App\Library\Opportunity\Exceptions\RunAlreadyFailedException;
@@ -123,6 +126,7 @@ class OpportunityManager
         private readonly OpportunityTransitionRepository $transitionRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly OpportunityActionExecutor $opportunityActionExecutor,
+        private readonly OpportunityAuthorityGuard $authority,
     ) {
     }
 
@@ -863,12 +867,15 @@ class OpportunityManager
      * unconfigured action (empty `parameters`) can never reach
      * awaiting_approval.
      */
-    public function requestApproval(Opportunity $opportunity, Customer $customer): Opportunity
+    public function requestApproval(Opportunity $opportunity, Customer $customer, OpportunityInitiatedByType $proposer = OpportunityInitiatedByType::Customer): Opportunity
     {
-        return DB::transaction(function () use ($opportunity, $customer) {
+        $this->authority->assertEngineEnabled();
+
+        return DB::transaction(function () use ($opportunity, $customer, $proposer) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
 
             $locked = $this->assertOpportunityOwnership($customer, $locked);
+            $this->authority->assertTenancy($locked, (int) $customer->user_id);
 
             if ($locked->status !== OpportunityStatus::Open) {
                 throw new InvalidOpportunityStateException(
@@ -876,10 +883,15 @@ class OpportunityManager
                 );
             }
 
+            $definition = OpportunityActionRegistry::get($locked->recommended_action['action_key'] ?? '');
+            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $locked->recommended_action['action_key'] ?? '', $definition ?? []);
             $this->assertActionIsApprovableAndExecutable($locked);
+            $this->authority->assertPaidEffectIsCovered($locked, $locked->recommended_action['action_key'], null);
 
             $updated = $this->opportunityRepository->update($locked, [
                 'status' => OpportunityStatus::AwaitingApproval->value,
+                'approval_expires_at' => $this->authority->approvalExpiryFromNow(),
+                'approval_initiated_by_type' => $proposer->value,
             ]);
 
             $this->transitionRepository->create([
@@ -889,6 +901,7 @@ class OpportunityManager
                 'to_status' => OpportunityStatus::AwaitingApproval->value,
                 'actor_type' => OpportunityTransitionActorType::Customer->value,
                 'actor_user_id' => $customer->user_id,
+                'initiated_by_type' => $proposer->value,
                 'opportunity_run_id' => null,
                 'action_execution_id' => null,
                 'reason_code' => 'customer_requested_approval',
@@ -954,12 +967,6 @@ class OpportunityManager
 
         $actionKey = $recommendedAction['action_key'];
 
-        if ($actionKey !== 'add_phone') {
-            throw new OpportunityActionNotExecutableException(
-                "Action [{$actionKey}] is not executable."
-            );
-        }
-
         $actionDefinition = OpportunityActionRegistry::get($actionKey);
 
         if ($actionDefinition === null) {
@@ -968,8 +975,7 @@ class OpportunityManager
             );
         }
 
-        if (($actionDefinition['handler_identifier'] ?? null) !== 'business.update_phone'
-            || ($actionDefinition['verifier_identifier'] ?? null) !== 'business.phone_matches_parameter'
+        if (! $this->opportunityActionExecutor->supports($actionKey, $actionDefinition)
             || ($actionDefinition['mutates_business_data'] ?? null) !== true
         ) {
             throw new OpportunityActionNotExecutableException(
@@ -1029,13 +1035,11 @@ class OpportunityManager
      * eligibility is always re-derived from the locked Opportunity's own
      * persisted state, never trusted from the caller.
      */
-    public function confirmApproval(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
+    public function confirmApproval(Opportunity $opportunity, Customer $customer, OpportunityInitiatedByType $confirmingPrincipal = OpportunityInitiatedByType::Customer): OpportunityActionExecution
     {
-        if (! config('opportunity.enabled', false)) {
-            throw new OpportunityEngineDisabledException();
-        }
+        $this->authority->assertEngineEnabled();
 
-        return DB::transaction(function () use ($opportunity, $customer) {
+        $result = DB::transaction(function () use ($opportunity, $customer, $confirmingPrincipal) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
 
             $locked = $this->assertOpportunityOwnership($customer, $locked);
@@ -1050,7 +1054,35 @@ class OpportunityManager
                 );
             }
 
+            $this->authority->assertConfirmingPrincipalIsHuman((int) $locked->id, $customer->user_id, $confirmingPrincipal);
+            $actionKey = $locked->recommended_action['action_key'] ?? '';
+            $definition = OpportunityActionRegistry::get($actionKey);
+            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $actionKey, $definition ?? []);
             $this->assertActionIsApprovableAndExecutable($locked);
+            try {
+                $this->authority->assertApprovalIsFresh((int) $locked->id, $locked->approval_expires_at);
+            } catch (OpportunityApprovalExpiredException) {
+                $this->opportunityRepository->update($locked, [
+                    'status' => OpportunityStatus::Open->value,
+                    'approval_expires_at' => null,
+                ]);
+                $this->transitionRepository->create([
+                    'opportunity_id' => $locked->id,
+                    'category' => OpportunityTransitionCategory::Workflow->value,
+                    'from_status' => OpportunityStatus::AwaitingApproval->value,
+                    'to_status' => OpportunityStatus::Open->value,
+                    'actor_type' => OpportunityTransitionActorType::Customer->value,
+                    'actor_user_id' => $customer->user_id,
+                    'initiated_by_type' => $locked->approval_initiated_by_type,
+                    'opportunity_run_id' => null,
+                    'action_execution_id' => null,
+                    'reason_code' => 'approval_expired',
+                    'safe_note' => null,
+                ]);
+
+                return null;
+            }
+            $this->authority->assertPaidEffectIsCovered($locked, $actionKey);
 
             $attemptNumber = $this->actionExecutionRepository->nextAttemptNumberForUpdate($locked->id);
 
@@ -1079,7 +1111,7 @@ class OpportunityManager
 
             $execution = $this->actionExecutionRepository->create([
                 'opportunity_id' => $locked->id,
-                'action_key' => 'add_phone',
+                'action_key' => $actionKey,
                 'recommended_action_hash' => $locked->recommended_action_hash,
                 'action_schema_version' => $locked->action_schema_version,
                 'occurrence_number' => $locked->occurrence_number,
@@ -1087,7 +1119,10 @@ class OpportunityManager
                 'idempotency_key' => $idempotencyKey,
                 'status' => OpportunityActionExecutionStatus::Pending->value,
                 'initiated_by_user_id' => $customer->user_id,
-                'initiated_by_type' => 'customer',
+                'initiated_by_type' => $locked->approval_initiated_by_type ?? OpportunityInitiatedByType::Customer->value,
+                'confirmed_by_user_id' => $customer->user_id,
+                'confirmed_by_type' => $confirmingPrincipal->value,
+                'approval_expires_at' => $locked->approval_expires_at,
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             ]);
 
@@ -1102,6 +1137,7 @@ class OpportunityManager
                 'to_status' => OpportunityStatus::InProgress->value,
                 'actor_type' => OpportunityTransitionActorType::Customer->value,
                 'actor_user_id' => $customer->user_id,
+                'initiated_by_type' => $locked->approval_initiated_by_type ?? OpportunityInitiatedByType::Customer->value,
                 'opportunity_run_id' => null,
                 'action_execution_id' => $execution->id,
                 'reason_code' => 'customer_confirmed_approval',
@@ -1113,13 +1149,19 @@ class OpportunityManager
                 $locked->business_id,
                 $customer->user_id,
                 $execution->id,
-                'add_phone',
+                $actionKey,
             );
 
             ExecuteOpportunityAction::dispatch($execution->id);
 
             return $execution;
         });
+
+        if ($result === null) {
+            throw OpportunityApprovalExpiredException::forOpportunity((int) $opportunity->id, 'expired');
+        }
+
+        return $result;
     }
 
     /**
@@ -1137,9 +1179,7 @@ class OpportunityManager
      */
     public function retryFailedExecution(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
     {
-        if (! config('opportunity.enabled', false)) {
-            throw new OpportunityEngineDisabledException();
-        }
+        $this->authority->assertEngineEnabled();
 
         return DB::transaction(function () use ($opportunity, $customer) {
             $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
@@ -1161,6 +1201,10 @@ class OpportunityManager
             $this->assertActionIsExecutable($lockedOpportunity);
 
             $actionKey = $lockedOpportunity->recommended_action['action_key'];
+
+            if (! OpportunityActionRegistry::mayRetryUnderOriginalApproval($actionKey)) {
+                throw new OpportunityRetryRequiresReapprovalException($actionKey);
+            }
 
             $failedExecution = $this->actionExecutionRepository->findLatestFailedMatching(
                 $lockedOpportunity->id,
@@ -1192,6 +1236,9 @@ class OpportunityManager
                 'status' => OpportunityActionExecutionStatus::Pending->value,
                 'initiated_by_user_id' => $customer->user_id,
                 'initiated_by_type' => 'customer',
+                'confirmed_by_user_id' => $customer->user_id,
+                'confirmed_by_type' => OpportunityInitiatedByType::Customer->value,
+                'approval_expires_at' => $failedExecution->approval_expires_at,
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             ]);
 
@@ -1264,7 +1311,7 @@ class OpportunityManager
     private function assertExecutionMatchesLockedOpportunity(OpportunityActionExecution $execution, Opportunity $lockedOpportunity): void
     {
         if ($execution->opportunity_id !== $lockedOpportunity->id
-            || $execution->action_key !== 'add_phone'
+            || $execution->action_key !== ($lockedOpportunity->recommended_action['action_key'] ?? null)
             || $execution->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
             || $execution->action_schema_version !== $lockedOpportunity->action_schema_version
             || $execution->occurrence_number !== $lockedOpportunity->occurrence_number
@@ -1294,7 +1341,7 @@ class OpportunityManager
 
         if ($active === null
             || $active->opportunity_id !== $lockedOpportunity->id
-            || $active->action_key !== 'add_phone'
+            || $active->action_key !== ($lockedOpportunity->recommended_action['action_key'] ?? null)
             || $active->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
             || $active->action_schema_version !== $lockedOpportunity->action_schema_version
             || $active->occurrence_number !== $lockedOpportunity->occurrence_number
@@ -1368,6 +1415,8 @@ class OpportunityManager
                 'status' => OpportunityActionExecutionStatus::Pending->value,
                 'initiated_by_user_id' => $customer->user_id,
                 'initiated_by_type' => 'customer',
+                'confirmed_by_user_id' => $customer->user_id,
+                'confirmed_by_type' => OpportunityInitiatedByType::Customer->value,
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             ]);
 
@@ -1707,6 +1756,8 @@ class OpportunityManager
      */
     public function beginExecutionAttempt(OpportunityActionExecution $execution): ?OpportunityExecutionAttempt
     {
+        $this->authority->assertEngineEnabled();
+
         return DB::transaction(function () use ($execution) {
             $unlockedOpportunity = $execution->opportunity;
 
@@ -1738,6 +1789,13 @@ class OpportunityManager
                 );
             }
 
+            $this->authority->assertConfirmingPrincipalIsHuman(
+                (int) $lockedOpportunity->id,
+                $lockedExecution->confirmed_by_user_id,
+                OpportunityInitiatedByType::tryFrom((string) $lockedExecution->confirmed_by_type) ?? OpportunityInitiatedByType::Coo,
+            );
+            $this->authority->assertTenancy($lockedOpportunity, (int) $lockedExecution->confirmed_by_user_id);
+
             // OpportunityActionExecutionStatus is exhaustive (pending,
             // running, succeeded, failed) — every non-pending case is a
             // redelivered job for an execution already past this step, and
@@ -1746,10 +1804,21 @@ class OpportunityManager
                 return null;
             }
 
+            $actionKey = $lockedExecution->action_key;
+            $this->authority->assertMutableAuthority(
+                $lockedOpportunity,
+                (int) $lockedExecution->confirmed_by_user_id,
+                $actionKey,
+                OpportunityActionRegistry::get($actionKey) ?? [],
+                $lockedExecution,
+            );
             $this->assertPendingExecutionAttemptIsValid($lockedOpportunity, $lockedExecution);
+            $this->authority->assertApprovalIsFresh((int) $lockedOpportunity->id, $lockedExecution->approval_expires_at);
+            $this->authority->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $lockedExecution);
 
             $runningExecution = $this->actionExecutionRepository->update($lockedExecution, [
                 'status' => OpportunityActionExecutionStatus::Running->value,
+                'started_at' => now(),
             ]);
 
             return new OpportunityExecutionAttempt($lockedOpportunity, $runningExecution);
@@ -1797,12 +1866,6 @@ class OpportunityManager
 
         $actionKey = $recommendedAction['action_key'];
 
-        if ($actionKey !== 'add_phone') {
-            throw new OpportunityActionNotExecutableException(
-                "Action [{$actionKey}] is not executable."
-            );
-        }
-
         $actionDefinition = OpportunityActionRegistry::get($actionKey);
 
         if ($actionDefinition === null) {
@@ -1811,8 +1874,7 @@ class OpportunityManager
             );
         }
 
-        if (($actionDefinition['handler_identifier'] ?? null) !== 'business.update_phone'
-            || ($actionDefinition['verifier_identifier'] ?? null) !== 'business.phone_matches_parameter'
+        if (! $this->opportunityActionExecutor->supports($actionKey, $actionDefinition)
             || ($actionDefinition['mutates_business_data'] ?? null) !== true
             || ($actionDefinition['approval_required'] ?? null) !== true
             || ! isset($actionDefinition['completion_policy'])
@@ -2094,7 +2156,13 @@ class OpportunityManager
      */
     private function assertOpportunityOwnership(Customer $customer, ?Opportunity $opportunity): Opportunity
     {
-        if ($opportunity === null || (int) $opportunity->business->customer_id !== (int) $customer->user_id) {
+        if ($opportunity === null) {
+            throw new AuthorizationException('This opportunity does not belong to the given customer.');
+        }
+
+        try {
+            $this->authority->assertTenancy($opportunity, (int) $customer->user_id);
+        } catch (OpportunityActionNotExecutableException) {
             throw new AuthorizationException('This opportunity does not belong to the given customer.');
         }
 

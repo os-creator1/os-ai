@@ -666,7 +666,7 @@
     |--------------------------------------------------------------------------
     */
 
-    Route::prefix('opportunities')->name('opportunities.')->group(function () {
+    Route::prefix('opportunities')->name('opportunities.')->middleware('can:business_advisor')->group(function () {
         Route::get('/', 'OpportunityController@index')->name('index');
         Route::get('/{opportunity}', 'OpportunityController@show')->name('show')->whereNumber('opportunity');
 

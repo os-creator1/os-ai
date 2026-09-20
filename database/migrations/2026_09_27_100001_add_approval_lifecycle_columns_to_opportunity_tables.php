@@ -55,6 +55,7 @@ return new class extends Migration
             // The live approval window. NULL means "not awaiting approval",
             // which is every row until one is requested — never "no expiry".
             $table->timestamp('approval_expires_at')->nullable()->after('occurrence_number');
+            $table->string('approval_initiated_by_type', 16)->nullable()->after('approval_expires_at');
         });
 
         Schema::table('opportunity_action_executions', function (Blueprint $table): void {
@@ -62,6 +63,8 @@ return new class extends Migration
             // it can be re-checked without trusting the Opportunity's
             // current state.
             $table->timestamp('approval_expires_at')->nullable()->after('initiated_by_type');
+            $table->unsignedBigInteger('confirmed_by_user_id')->nullable()->after('approval_expires_at');
+            $table->string('confirmed_by_type', 16)->nullable()->after('confirmed_by_user_id');
 
             // §8 / §19.E — the approval-side cost snapshot. NULL means "no
             // estimate", which for a paid_effect action is a refusal, not a
@@ -92,6 +95,8 @@ return new class extends Migration
         Schema::table('opportunity_action_executions', function (Blueprint $table): void {
             $table->dropColumn([
                 'approval_expires_at',
+                'confirmed_by_user_id',
+                'confirmed_by_type',
                 'estimated_cost_microusd',
                 'estimated_cost_currency',
                 'cost_estimated_at',
@@ -99,7 +104,7 @@ return new class extends Migration
         });
 
         Schema::table('opportunities', function (Blueprint $table): void {
-            $table->dropColumn('approval_expires_at');
+            $table->dropColumn(['approval_expires_at', 'approval_initiated_by_type']);
         });
     }
 };

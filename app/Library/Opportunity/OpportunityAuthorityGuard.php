@@ -19,6 +19,7 @@ use App\Models\BusinessLocation;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
 use App\Models\User;
+use App\Library\Workspace\WorkspaceManager;
 use App\Repositories\Contracts\AccountRepository;
 use App\Library\Workspace\LocationAccessGuard;
 use Carbon\CarbonInterface;
@@ -86,6 +87,7 @@ final class OpportunityAuthorityGuard
         private readonly AccountRepository $accounts,
         private readonly EntitlementManager $entitlements,
         private readonly LocationAccessGuard $locations,
+        private readonly WorkspaceManager $workspaces,
     ) {
     }
 
@@ -123,7 +125,15 @@ final class OpportunityAuthorityGuard
         $this->assertActorHoldsCapability($actorUserId);
         $this->assertLocationAccess($lockedOpportunity, $actorUserId, $actionKey);
         $this->assertEntitled($lockedOpportunity, $actorUserId);
-        $this->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $execution);
+    }
+
+    public function assertTenancy(Opportunity $lockedOpportunity, int $actorUserId): void
+    {
+        $business = $lockedOpportunity->business;
+
+        if ($business === null || ! $this->workspaces->userCanAccessBusiness($actorUserId, $business)) {
+            throw new OpportunityActionNotExecutableException('Opportunity tenancy is no longer available.');
+        }
     }
 
     /**
@@ -287,25 +297,21 @@ final class OpportunityAuthorityGuard
     /**
      * §5.4(1) — the confirming principal is always a human.
      *
-     * The contract names a `confirmed_by_user_id`; the schema's real field
-     * is `opportunity_action_executions.initiated_by_user_id`, the NOT NULL
-     * user whose explicit act created the execution. Both halves of the
-     * invariant are enforced here: a present human user id, and a proposer
-     * type that is allowed to confirm (never `coo`). Self-approval by one
-     * human stays permitted — §23 requires *a* human confirmation, not four
-     * eyes.
+     * The proposal type is deliberately separate from the confirmer type.
+     * A COO proposal may be confirmed by a human; a COO principal may not
+     * confirm even a customer proposal.
      */
     public function assertConfirmingPrincipalIsHuman(
         int $opportunityId,
         ?int $confirmingUserId,
-        OpportunityInitiatedByType $principalType,
+        OpportunityInitiatedByType $confirmingPrincipalType,
     ): void {
         if ($confirmingUserId === null || $confirmingUserId <= 0) {
             throw OpportunityConfirmingPrincipalNotHumanException::forOpportunity($opportunityId, 'absent');
         }
 
-        if (! $principalType->mayConfirm()) {
-            throw OpportunityConfirmingPrincipalNotHumanException::forOpportunity($opportunityId, $principalType->value);
+        if (! $confirmingPrincipalType->mayConfirm() || User::query()->find($confirmingUserId)?->customer === null) {
+            throw OpportunityConfirmingPrincipalNotHumanException::forOpportunity($opportunityId, $confirmingPrincipalType->value);
         }
     }
 
@@ -316,7 +322,7 @@ final class OpportunityAuthorityGuard
      */
     public function approvalExpiryFromNow(): CarbonInterface
     {
-        $minutes = (int) config('opportunity.approval_window_minutes', 60);
+        $minutes = (int) config('opportunity.approval_window_minutes');
 
         if ($minutes < 1) {
             $minutes = 1;

@@ -5,11 +5,13 @@ namespace Tests\Feature\Opportunity;
 use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Enums\Business\BusinessStatus;
 use App\Helpers\Helper;
 use App\Library\Opportunity\OpportunityActionHash;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\View;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
@@ -45,6 +47,35 @@ class OpportunityQueueHttpTest extends TestCase
         $opportunity = $this->createOpportunity($business);
 
         $this->get(route('customer.opportunities.show', $opportunity->id))->assertOk();
+    }
+
+    public function test_route_refuses_customer_after_advisor_capability_is_revoked(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business);
+        $business->customer->update(['permissions' => json_encode([])]);
+
+        $this->get(route('customer.opportunities.index'))->assertForbidden();
+        $this->get(route('customer.opportunities.show', $opportunity->id))->assertForbidden();
+    }
+
+    public function test_queue_follows_customer_context_selected_business_instead_of_primary(): void
+    {
+        $primary = $this->actingAsCustomerWithBusiness();
+        $this->createOpportunity($primary, ['title' => 'Primary business opportunity']);
+        $secondary = $this->createBusinessWithWorkspace($primary->customer, $primary->workspace, $this->businessAttributes());
+        $secondary = app(BusinessRepository::class)->updateStatus($secondary, BusinessStatus::Active);
+        $this->createOpportunity($secondary, ['title' => 'Selected business opportunity']);
+
+        $this->post(route('customer.context.business.switch'), [
+            'workspace' => $secondary->workspace->uid,
+            'business' => $secondary->uid,
+        ])->assertRedirect();
+
+        $this->get(route('customer.opportunities.index'))
+            ->assertOk()
+            ->assertSee('Selected business opportunity')
+            ->assertDontSee('Primary business opportunity');
     }
 
     public function test_guest_index_returns_401(): void

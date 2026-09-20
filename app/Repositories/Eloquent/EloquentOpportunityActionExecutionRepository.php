@@ -108,6 +108,12 @@ class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepositor
                 'idempotency_key',
                 'initiated_by_user_id',
                 'initiated_by_type',
+                'confirmed_by_user_id',
+                'confirmed_by_type',
+                'approval_expires_at',
+                'estimated_cost_microusd',
+                'estimated_cost_currency',
+                'cost_estimated_at',
                 'completion_policy',
             ],
             self::MUTABLE_FIELDS
