@@ -57,21 +57,28 @@ class PackagesProductsEntitlementIdentityTest extends TestCase
         );
     }
 
-    public function test_packages_products_stays_planned_not_available(): void
+    public function test_packages_products_is_available_after_the_final_flip(): void
     {
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
+        // Sub-slice E's flip. The full customer surface and its authorization
+        // matrix are proven in CatalogAuthorizationMatrixTest and
+        // CatalogActivationTest; this asserts only the registry fact this
+        // file's Sub-slice A identity checks are about.
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
     }
 
-    public function test_no_customer_route_exists_for_packages_products(): void
+    public function test_no_alternate_ungated_customer_route_exists_for_packages_products(): void
     {
-        // The hard boundary this sub-slice must not cross: no controller,
-        // route, or customer-facing surface for THIS feature — that is
-        // Sub-slice E's job, gated behind this sub-slice's still-Planned
-        // entitlement. Scoped to customer.* routes and specific catalog-item/
-        // packages-products name fragments, deliberately excluding the
-        // pre-existing, unrelated admin.workspace-plan-catalog.* routes
-        // (the platform's own SaaS subscription-tier catalog — a different
-        // bounded context, §4 of the contract).
+        // The customer catalog now exists (Sub-slice E), but only as the one
+        // Business-scoped surface under `customer.workspaces.businesses.
+        // catalog.*` (see CatalogRouteInventoryTest), every route of which
+        // runs the full authorization chain. This needle-scan remains a
+        // guard against any OTHER, differently-named customer route for the
+        // feature appearing outside that gated surface. Scoped to customer.*
+        // routes and specific catalog-item/packages-products name fragments,
+        // deliberately excluding the pre-existing, unrelated
+        // admin.workspace-plan-catalog.* routes (the platform's own SaaS
+        // subscription-tier catalog — a different bounded context, §4 of the
+        // contract).
         $needles = ['catalog-item', 'catalog_item', 'packages-products', 'packages_products'];
 
         foreach (Route::getRoutes() as $route) {
@@ -89,19 +96,25 @@ class PackagesProductsEntitlementIdentityTest extends TestCase
         }
     }
 
-    public function test_no_catalog_controller_or_later_sub_slice_class_exists_yet(): void
+    public function test_every_catalog_sub_slice_deliverable_now_exists(): void
     {
-        // Corrected for Sub-slice C (§12.C): CatalogItemLocationOverrideManager
-        // and CatalogItemPricingResolver are exactly that sub-slice's own
-        // deliverables — domain services with no customer HTTP surface of
-        // their own — so their existence is now expected, alongside
-        // Sub-slice B's CatalogItemManager. Only Sub-slice D/E's classes
-        // remain absent.
-        $this->assertTrue(class_exists('App\\Library\\Catalog\\CatalogItemManager'));
-        $this->assertTrue(class_exists('App\\Library\\Catalog\\CatalogItemLocationOverrideManager'));
-        $this->assertTrue(class_exists('App\\Library\\Catalog\\CatalogItemPricingResolver'));
-        $this->assertFalse(class_exists('App\\Http\\Controllers\\Customer\\Business\\CatalogController'));
-        $this->assertFalse(class_exists('App\\Http\\Controllers\\Customer\\Business\\CatalogItemController'));
-        $this->assertFalse(class_exists('App\\Library\\Catalog\\PackageSnapshotService'));
+        // This replaces `test_no_catalog_controller_or_later_sub_slice_class_
+        // exists_yet`, which asserted that Sub-slice D's PackageSnapshotService
+        // and Sub-slice E's controllers did NOT exist. It was already failing
+        // on `main` once Sub-slice D merged (D added the service without
+        // updating it), and Sub-slice E's controllers retire the rest of it —
+        // so the original could not survive this sub-slice and is inverted
+        // rather than deleted: every deliverable of Sub-slices B, C, D and E
+        // is asserted PRESENT, which is what is now true.
+        foreach ([
+            'App\\Library\\Catalog\\CatalogItemManager',                              // B
+            'App\\Library\\Catalog\\CatalogItemLocationOverrideManager',             // C
+            'App\\Library\\Catalog\\CatalogItemPricingResolver',                     // C
+            'App\\Library\\Catalog\\PackageSnapshotService',                         // D
+            'App\\Http\\Controllers\\Customer\\Business\\CatalogItemsController',           // E
+            'App\\Http\\Controllers\\Customer\\Business\\CatalogLocationOffersController',  // E
+        ] as $class) {
+            $this->assertTrue(class_exists($class), $class . ' must exist.');
+        }
     }
 }

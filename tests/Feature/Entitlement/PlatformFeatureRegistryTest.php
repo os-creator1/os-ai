@@ -36,17 +36,16 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::MetaAdsModule,
             PlatformFeature::WhiteLabel,
             PlatformFeature::AgencyPackageCapabilities,
-            // Implementation Contract 16, Sub-slice A — schema and inert
-            // entitlement identity only; stays Planned until Sub-slice E's
-            // final flip, after Sub-slices B/C/D are merged and verified.
-            PlatformFeature::PackagesProducts,
+            // (PackagesProducts left this list at Contract 16 Sub-slice E's final
+            // flip; test_packages_products_is_available_after_sub_slice_es_final_flip
+            // asserts it is Available.)
             // Implementation Contract 17, Sub-slice A — schema and inert
             // entitlement identity only; stays Planned until Sub-slice G's
             // final flip, after A-F are merged and verified end to end.
             PlatformFeature::PaymentsContracts,
         ];
 
-        $this->assertCount(11, $planned);
+        $this->assertCount(10, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -67,14 +66,17 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
     }
 
-    public function test_packages_products_exists_and_starts_planned(): void
+    public function test_packages_products_is_available_after_sub_slice_es_final_flip(): void
     {
-        // Implementation Contract 16, Sub-slice A: schema and inert
-        // entitlement identity only. Must remain unreachable — Planned,
-        // not Available — until Sub-slice E's final flip.
+        // Implementation Contract 16: Planned through Sub-slices A-D (schema,
+        // inert entitlement identity and domain services with no customer HTTP
+        // surface), flipped to Available only by Sub-slice E once the full
+        // authorization chain over a real customer surface was proven. It is
+        // Business-scoped, like every catalog surface.
         $this->assertSame('packages_products', PlatformFeature::PackagesProducts->value);
         $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PackagesProducts->value));
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PackagesProducts->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void
