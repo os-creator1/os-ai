@@ -959,6 +959,19 @@
             Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/documents')->name('businesses.documents.')->group(function () {
+            Route::get('/', 'Business\DocumentsController@listing')->name('index');
+            Route::post('/', 'Business\DocumentsController@store')->name('store');
+            Route::get('{documentUid}', 'Business\DocumentsController@show')->name('show');
+            Route::patch('{documentUid}', 'Business\DocumentsController@update')->name('update');
+            Route::post('{documentUid}/catalog-lines', 'Business\DocumentsController@catalogLine')->name('catalog-lines.store');
+            Route::post('{documentUid}/custom-lines', 'Business\DocumentsController@customLine')->name('custom-lines.store');
+            Route::delete('{documentUid}/lines/{lineUid}', 'Business\DocumentsController@removeLine')->name('lines.destroy');
+            Route::put('{documentUid}/lines/order', 'Business\DocumentsController@reorder')->name('lines.order');
+            Route::put('{documentUid}/schedule', 'Business\DocumentsController@schedule')->name('schedule.update');
+            Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
+        });
+
         /*
         |----------------------------------------------------------------
         | Automations V2-E — visual workflows (contract §20.2)
