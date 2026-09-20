@@ -1212,7 +1212,7 @@
 
         /*
         |----------------------------------------------------------------
-        | Calendar — Booking Types + Staff Availability (Contract 15, 15B)
+        | Calendar — configuration and authenticated schedule (Contract 15, 15B/15D)
         |----------------------------------------------------------------
         |
         | Location-bound by construction: every path carries the Location's
@@ -1230,8 +1230,9 @@
         | account owner — intended, and the reason building them now is
         | safe. Sub-slice E's flip is what makes them executable.
         |
-        | No booking engine, no appointment lifecycle, no calendar grid and
-        | no public scheduler: Sub-slices C, D and E own those.
+        | The booking engine lives in Sub-slice C. Sub-slice D adds the
+        | authenticated schedule and lifecycle actions below. Public
+        | self-booking remains Sub-slice E's work.
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/calendar/locations/{locationUid}')->name('businesses.calendar.')->group(function () {
