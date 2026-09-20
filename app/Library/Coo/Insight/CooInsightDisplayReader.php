@@ -3,12 +3,14 @@
 namespace App\Library\Coo\Insight;
 
 use App\Enums\Coo\CooInsightKind;
+use App\Enums\Coo\CooInsightOrigin;
 use App\Enums\Coo\CooInsightStatementClass;
 use App\Library\Ai\AiBudgetPolicyResolver;
 use App\Library\Ai\AiUsagePresenter;
 use App\Library\Ai\AiUsageReadModel;
 use App\Library\Ai\Enums\AiUsageState;
 use App\Library\Analytics\AnalyticsDateRange;
+use App\Library\Coo\Context\CooContextEnvelope;
 use App\Models\Business;
 use App\Models\CooInsight;
 use Illuminate\Support\Carbon;
@@ -32,6 +34,18 @@ use Illuminate\Support\Carbon;
  *
  * Anything that does not look like validated output renders nothing: a row
  * is shown whole or not at all.
+ *
+ * Implementation Contract 19 sub-slice 19.A added the authorization half of
+ * that read. A cached answer is now selectable only by an actor whose
+ * CooContextEnvelope — recomputed from live state by the caller, never
+ * restored from storage — carries EXACTLY the fingerprint the row was
+ * generated under (§5.8 R-22, R-31), plus the §5.9 origin rule: a background
+ * row belongs to nobody and is readable by any exactly-matching scope, while
+ * a human's own answer is readable only by that human.
+ *
+ * There is NO fallback (R-32). When nothing matches exactly the method
+ * returns null and Home renders without an AI line; it never relaxes a
+ * component of the fingerprint, ignores one, or degrades to `business_id`.
  */
 final class CooInsightDisplayReader
 {
@@ -45,9 +59,19 @@ final class CooInsightDisplayReader
     /**
      * @return array{statements: array<int, array{class: string, label: string, text: string}>, updated: string, generated_at: string}|null
      */
-    public function forHome(Business $business, AnalyticsDateRange $range): ?array
+    public function forHome(Business $business, AnalyticsDateRange $range, CooContextEnvelope $envelope): ?array
     {
+        if ($envelope->businessId !== (int) $business->id) {
+            return null;
+        }
+
         $insight = CooInsight::query()
+            ->where('scope', $envelope->scope->value)
+            // Contract 19 §5.8 R-22 — the fingerprint compared here was
+            // recomputed from the live envelope by the caller. The stored copy
+            // is never trusted as proof of authorization; it is only the thing
+            // the live claim must match, exactly (R-31).
+            ->where('authorization_scope_fingerprint', $envelope->authorizationScopeFingerprint)
             ->where('business_id', (int) $business->id)
             ->where('kind', CooInsightKind::PerformanceDiagnosis->value)
             ->where('subject_type', CooInsight::SUBJECT_BUSINESS)
@@ -56,10 +80,27 @@ final class CooInsightDisplayReader
             ->where('prompt_version', (int) config('coo.insight.prompt_version'))
             ->where('policy_version', (int) config('coo.insight.policy_version'))
             ->whereNull('invalidated_at')
+            ->where(function ($query) use ($envelope): void {
+                // §5.9 — a background row was written for an audience and
+                // belongs to nobody, so anyone whose live scope matches
+                // exactly may read it. A human's own answer belongs to them
+                // alone (R-26) and is never served to a second actor.
+                $query->where('origin', CooInsightOrigin::System->value);
+
+                if ($envelope->actorUserId !== null) {
+                    $query->orWhere(function ($ownRow) use ($envelope): void {
+                        $ownRow->where('origin', CooInsightOrigin::OnDemand->value)
+                            ->where('actor_user_id', $envelope->actorUserId);
+                    });
+                }
+            })
             ->orderByDesc('generated_at')
             ->orderByDesc('id')
             ->first(['id', 'business_id', 'workspace_id', 'output', 'generated_at', 'expires_at']);
 
+        // R-32 — no fallback. When nothing matches exactly, Home renders
+        // without an AI insight; it never relaxes a component of the
+        // fingerprint, never ignores one, and never degrades to business_id.
         if ($insight === null) {
             return null;
         }

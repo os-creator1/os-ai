@@ -48,8 +48,23 @@ class DashboardQueryBudgetTest extends TestCase
      * indexed, LIMIT 1 statement for the cached "What we notice" insight.
      * Its entitlement comes from the request's existing snapshot, and the
      * "Explain this change" control costs no query at all.
+     *
+     * Implementation Contract 19 sub-slice 19.A raised it from 10 to 12, and
+     * both added reads are inputs to the authorization-scope fingerprint that
+     * now decides whether a cached AI answer belongs to THIS actor (§5.8):
+     *
+     *  1. `business_locations` for this Business — the actor's authorized
+     *     Location set, read once through LocationAccessGuard's own
+     *     set-shaped reader, never once per Location;
+     *  2. `customers` for this actor — the durable capability keys, read once
+     *     and deliberately not from the session copy, so a background job and
+     *     a request compute the same identity.
+     *
+     * Both are flat: neither grows with Businesses, Locations, contacts,
+     * conversations or messages, which the doubling test below proves. The
+     * insight read itself is still ONE indexed, LIMIT 1 statement.
      */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 10;
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 12;
 
     /**
      * Observed: three B5 methods per Business performance period, plus

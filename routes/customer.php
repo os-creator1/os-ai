@@ -927,6 +927,15 @@
         Route::prefix('{workspaceUid}/businesses/{businessUid}/seo')->name('businesses.seo.')->group(function () {
             Route::get('/', 'Business\SeoController@overview')->name('index');
 
+            // Sub-slice 18E — Citations. Its own controller, so the 18A
+            // read-only invariant on SeoController still holds. Reads need
+            // view_seo, the write needs manage_seo; both need the SeoModule
+            // entitlement (Planned until Sub-slice H, so 404 today). A
+            // citation is addressed by (Location uid, directory key), never
+            // by a guessable id, and both are resolved through the Business.
+            Route::get('/citations', 'Business\SeoCitationController@citations')->name('citations.index');
+            Route::put('/citations/{locationUid}/{directoryKey}', 'Business\SeoCitationController@saveCitation')->name('citations.update');
+
             // Sub-slice D — SEO keywords (NOT the legacy inbound-SMS
             // customer.keywords.* namespace). Reads need view_seo, writes
             // manage_seo; Location access is enforced by SeoKeywordManager.
@@ -935,6 +944,19 @@
             Route::post('/keywords/{keywordUid}/update', 'Business\SeoKeywordsController@update')->middleware('throttle:30,1')->name('keywords.update');
             Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
             Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
+
+            // Sub-slice 18F — Reviews: workflow tracking only (a manual review
+            // link per Location and a request ledger with a cooldown). SEO
+            // sends nothing and stores no review content. Reads need view_seo,
+            // writes manage_seo; both need the SeoModule entitlement (Planned
+            // until Sub-slice H, so 404 today). Every record is addressed by uid
+            // and resolved through the Business; no redirect or click-tracking.
+            Route::get('/reviews', 'Business\SeoReviewsController@reviews')->name('reviews.index');
+            Route::put('/reviews/locations/{locationUid}/link', 'Business\SeoReviewsController@saveLink')->middleware('throttle:30,1')->name('reviews.link.save');
+            Route::post('/reviews/locations/{locationUid}/link/clear', 'Business\SeoReviewsController@clearLink')->middleware('throttle:30,1')->name('reviews.link.clear');
+            Route::post('/reviews/locations/{locationUid}/requests', 'Business\SeoReviewsController@recordRequest')->middleware('throttle:30,1')->name('reviews.requests.store');
+            Route::post('/reviews/requests/{requestUid}/reviewed', 'Business\SeoReviewsController@markReviewed')->middleware('throttle:30,1')->name('reviews.requests.reviewed');
+            Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
         /*

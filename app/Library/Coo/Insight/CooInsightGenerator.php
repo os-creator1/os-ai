@@ -3,6 +3,7 @@
 namespace App\Library\Coo\Insight;
 
 use App\Enums\Coo\CooInsightKind;
+use App\Enums\Coo\CooInsightOrigin;
 use App\Enums\Coo\CooInsightTrigger;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Ai\AiBusinessActivityGate;
@@ -12,6 +13,7 @@ use App\Library\Ai\AiRequest;
 use App\Library\Ai\AiUsageLedgerManager;
 use App\Library\Ai\Enums\AiModelRoute;
 use App\Library\Analytics\AnalyticsDateRange;
+use App\Library\Coo\Context\CooContextEnvelope;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Business;
 use App\Models\CooInsight;
@@ -31,12 +33,18 @@ use Illuminate\Support\Facades\Log;
  *  1. AI switched off (`services.openai.active`)          → nothing read, nothing spent
  *  2. `ai_coo_basic` not allowed (incl. unassigned, inactive, suspended plans)
  *  3. dormant Business, for the three scheduled triggers   (E-4 is the customer asking)
- *  4. read the facts; invalidate same-window rows whose fingerprint moved (free)
- *  5. the trigger's own condition (E-1/E-2 multi-signal, E-3 fingerprint moved)
- *  6. an insight with this exact identity already exists   → reuse, never pay twice
- *  7. the ledger already paid for, or is holding, this identity → skip
- *  8. ask the gateway — which re-checks entitlement, dormancy and the budget
- *  9. validate the output; cache it only if every statement passes
+ *  4. the context envelope agrees with the trigger and the Business (Contract 19)
+ *  5. read the facts; invalidate same-window rows whose fingerprint moved (free)
+ *  6. the trigger's own condition (E-1/E-2 multi-signal, E-3 fingerprint moved)
+ *  7. an answer this actor could already read exists       → reuse, never pay twice
+ *  8. the ledger already paid for, or is holding, this identity → skip
+ *  9. ask the gateway — which re-checks entitlement, dormancy and the budget
+ * 10. validate the output; cache it only if every statement passes
+ *
+ * Implementation Contract 19 sub-slice 19.A added the caller-supplied
+ * CooContextEnvelope: the cache identity is now the authorization scope as
+ * well as the facts, so two actors whose authorization differs get two rows
+ * and two separate payments, and neither can ever read the other's.
  *
  * A refusal (budget exhausted included) or a provider failure ends the
  * attempt: there is no retry loop, the job runs once, and whatever was cached
@@ -57,7 +65,7 @@ final class CooInsightGenerator
     ) {
     }
 
-    public function generate(Business $business, CooInsightTrigger $trigger, AnalyticsDateRange $range, ?int $actorUserId = null): CooInsightOutcome
+    public function generate(Business $business, CooInsightTrigger $trigger, AnalyticsDateRange $range, CooContextEnvelope $envelope): CooInsightOutcome
     {
         $business->loadMissing('workspace');
         $workspace = $business->workspace;
@@ -65,6 +73,9 @@ final class CooInsightGenerator
         if ($workspace === null) {
             return CooInsightOutcome::skipped(CooInsightOutcome::BUSINESS_UNAVAILABLE);
         }
+
+        $origin = $trigger->origin();
+        $actorUserId = $envelope->actorUserId;
 
         if (! (bool) config('services.openai.active')) {
             return CooInsightOutcome::skipped(CooInsightOutcome::AI_DISABLED);
@@ -78,31 +89,50 @@ final class CooInsightGenerator
             return CooInsightOutcome::skipped(CooInsightOutcome::DORMANT);
         }
 
+        // Contract 19 §5.9 — the envelope and the trigger must agree about who
+        // caused this row and which Business it is about. A human-initiated
+        // trigger with no actor, a background trigger carrying one, or an
+        // envelope describing different tenancy is a wiring bug, not a row to
+        // write. Checked after the free refusals above so the "cheapest
+        // refusal first" order this class documents still holds.
+        if ($origin->requiresActor() !== ($actorUserId !== null)
+            || (int) $business->id !== $envelope->businessId
+            || (int) $workspace->id !== $envelope->workspaceId) {
+            return CooInsightOutcome::skipped(CooInsightOutcome::CONTEXT_MISMATCH);
+        }
+
         $kind = CooInsightKind::PerformanceDiagnosis;
         $promptVersion = (int) config('coo.insight.prompt_version');
         $policyVersion = (int) config('coo.insight.policy_version');
 
-        $facts = $this->factsReader->read($business, $range);
+        $facts = $this->factsReader->read($business, $range, $envelope);
         $fingerprint = $facts->fingerprint($promptVersion, $policyVersion);
 
         // §9.3 — the next signal read is what invalidates. Free, and done
         // whether or not anything is generated below.
         $this->invalidator->invalidateChangedSignals((int) $business->id, $kind, $facts->periodKey, $fingerprint, $promptVersion, $policyVersion);
 
-        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion)) {
+        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion, $envelope)) {
             return CooInsightOutcome::skipped(CooInsightOutcome::CONDITION_NOT_MET);
         }
 
+        // Contract 19 §8 — the cache identity is the authorization scope as
+        // well as the facts. Two actors whose authorization differs get two
+        // rows and two separate payments; neither can ever read the other's.
         $identity = [
-            'business_id' => (int) $business->id,
+            'scope' => $envelope->scope->value,
+            'authorization_scope_fingerprint' => $envelope->authorizationScopeFingerprint,
+            'origin' => $origin->value,
+            'actor_user_id' => $actorUserId,
             'kind' => $kind->value,
             'subject_type' => CooInsight::SUBJECT_BUSINESS,
             'subject_id' => (int) $business->id,
             'signal_fingerprint' => $fingerprint,
             'prompt_version' => $promptVersion,
+            'policy_version' => $policyVersion,
         ];
 
-        if (CooInsight::query()->where($identity)->exists()) {
+        if ($this->readableAnswerExists($identity, $origin)) {
             return CooInsightOutcome::skipped(CooInsightOutcome::ALREADY_CACHED);
         }
 
@@ -159,8 +189,7 @@ final class CooInsightGenerator
         $now = Carbon::now();
 
         try {
-            $insight = CooInsight::query()->create($identity + [
-                'workspace_id' => (int) $workspace->id,
+            $insight = CooInsight::query()->create($identity + $envelope->insightColumns() + [
                 'period_key' => $facts->periodKey,
                 'facts_snapshot' => $facts->forPrompt(),
                 'output' => ['statements' => $statements],
@@ -178,7 +207,59 @@ final class CooInsightGenerator
         return CooInsightOutcome::generated($insight);
     }
 
-    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion): bool
+    /**
+     * §9 T-INS-1, preserved under Contract 19's scoped identity — identical
+     * facts are never paid for twice.
+     *
+     * The exact identity is always checked. For a human's own ask there is a
+     * second, equally valid answer: a background row with the SAME
+     * authorization fingerprint and the SAME facts, which the display rules
+     * already let this actor read (§5.9 — a `system` row belongs to nobody and
+     * is readable by any exactly-matching scope). Paying again for a sentence
+     * the customer can already see would be a regression, so that row counts.
+     *
+     * The reverse is deliberately NOT true: a background generation never
+     * reuses somebody's `on_demand` row, because that row is theirs alone
+     * (R-26) and a system row must be readable by every matching scope.
+     *
+     * @param  array<string, mixed>  $identity
+     */
+    private function readableAnswerExists(array $identity, CooInsightOrigin $origin): bool
+    {
+        if ($this->identityExists($identity)) {
+            return true;
+        }
+
+        if (! $origin->requiresActor()) {
+            return false;
+        }
+
+        return $this->identityExists(array_merge($identity, [
+            'origin' => CooInsightOrigin::System->value,
+            'actor_user_id' => null,
+        ]));
+    }
+
+    /**
+     * The identity carries `actor_user_id`, which is NULL for every background
+     * row — and `where('actor_user_id', null)` compiles to `= NULL`, which is
+     * never true. Null-valued components are therefore matched with whereNull,
+     * exactly as the database's own generated surrogate does in the UNIQUE key.
+     *
+     * @param  array<string, mixed>  $identity
+     */
+    private function identityExists(array $identity): bool
+    {
+        $query = CooInsight::query();
+
+        foreach ($identity as $column => $value) {
+            $value === null ? $query->whereNull($column) : $query->where($column, $value);
+        }
+
+        return $query->exists();
+    }
+
+    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion, CooContextEnvelope $envelope): bool
     {
         return match ($trigger) {
             // E-1, and E-2's "E-1 still holds afterwards".
@@ -186,7 +267,18 @@ final class CooInsightGenerator
                 && ! $facts->hasDeterministicExplanation(),
 
             // E-3 — only when the fingerprint differs from the last insight's.
+            //
+            // Contract 19 §5.8 — "the last insight's" has to mean the last one
+            // written for THIS authorization scope. Before 19.A a Business had
+            // at most one scope, so filtering by Business alone was
+            // unambiguous; now several scopes can hold rows for the same
+            // window, and reading another scope's fingerprint here would let
+            // one audience's unchanged signals suppress another audience's
+            // review, or the reverse. The comparison is therefore made inside
+            // the same scope, exactly as the display read is.
             CooInsightTrigger::MonthlyReview => CooInsight::query()
+                ->where('scope', $envelope->scope->value)
+                ->where('authorization_scope_fingerprint', $envelope->authorizationScopeFingerprint)
                 ->where('business_id', (int) $business->id)
                 ->where('kind', CooInsightKind::PerformanceDiagnosis->value)
                 ->where('period_key', $facts->periodKey)
