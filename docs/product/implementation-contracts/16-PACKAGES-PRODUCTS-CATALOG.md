@@ -771,6 +771,73 @@ long B/C were merged ahead of E.
   customer-facing, hence the explicit adversarial matrix above.
 - **Model**: Sonnet 5 sufficient.
 
+### Sub-slice E — delivery record (as built)
+
+Recorded so the contract matches what shipped. Nothing below widens §6 or
+§12.E; each item is a decision the contract left to the implementer or a
+detail the original text could not know.
+
+- **HTTP surface.** Two thin controllers — `CatalogItemsController`
+  (list/create/edit/archive/reactivate/reorder, every write through
+  `CatalogItemManager`) and `CatalogLocationOffersController` (per-Location
+  offer toggle and price override, every write through
+  `CatalogItemLocationOverrideManager`) — under
+  `customer.workspaces.businesses.catalog.*`. Twelve routes, all carrying
+  `{businessUid}`, so View As classifies them Business-scoped. No controller
+  writes `catalog_items`, `catalog_item_location_overrides` or
+  `package_snapshots`; `PackageSnapshotService` is untouched. The boundary is
+  enforced by a runtime test (every write to those tables has a manager on its
+  call stack) and a structural source tripwire.
+- **Gate order, as implemented and tested independently.** Tenancy (404) →
+  `packages_products` capability → `EntitlementManager` (404) → for
+  Location-scoped routes, the Location must belong to this Business and then
+  `LocationAccessGuard` (404). **A missing capability answers 401, not 403**:
+  this application renders every `AuthorizationException` as `errors.401`, and
+  the existing capability-gated controllers (CRM, Google Business Profile) are
+  tested for exactly that. Tenancy is checked before capability, so a foreign
+  Business never yields a capability refusal that would confirm it exists. A
+  foreign Business, a foreign or ungranted Location and a foreign catalog item
+  all answer the same plain 404 a nonexistent id would.
+- **Locations the actor cannot reach do not exist here.** The Location list is
+  built from `LocationAccessGuard::accessibleLocationIdsForBusiness()` — the
+  decision `userCanAccessLocation()` runs, not a second algorithm — so an
+  unreachable Location is not listed, not counted (no total is shown) and not
+  guessable by uid.
+- **Effective price is only ever the resolver's answer.** A read-only
+  `CatalogLocationOfferReader` assembles the per-Location page; "is it offered
+  here, and at what price" comes solely from `CatalogItemPricingResolver`, and
+  a resolver refusal is shown as "Not offered here". The override row is read
+  only to pre-fill the form.
+- **Money entry.** The domain stores whole minor units and its manager
+  documents "deliberately no floating-point money parsing". The form therefore
+  takes a plain decimal and converts it with `CatalogMoney` using exact string
+  arithmetic and the currency's real exponent (`CurrencyExponent`): more
+  decimals than the currency has, a non-number, or a currency the exponent
+  table does not list is REFUSED, never rounded or guessed, and a typed price
+  with no currency is refused rather than silently dropped. `CatalogMoney`
+  validates nothing the managers own. (The CRM's `CrmMoney` is two-decimal
+  float arithmetic and was deliberately not reused.)
+- **Capability.** One key, `packages_products`, default `true`, plus a
+  backfill migration (mirroring `payments_contracts` and GBP) granting it to
+  existing customers and the operator default list. Not a CRUD matrix (§15).
+- **Nav.** "Packages & Products" is registered in `CustomerMenuBuilder` and the
+  feature key is in `ENTITLEMENT_GATED_FEATURES`. Visibility is presentation
+  only; every route re-runs the full chain.
+- **The flip.** `PlatformFeature::PackagesProducts` moved Planned → Available in
+  its own final commit, after a pre-flip test proved all twelve routes 404 for a
+  fully authorized owner with the refusal being the entitlement gate's
+  (`platform_feature_unavailable`). The flip changes availability only; plan
+  mapping, overrides and status still decide.
+- **Known, deliberately not done here.** The customer "Your plan" page lists a
+  feature only if `PlatformFeatureCopy` has an entry for it, so Packages &
+  Products is not yet named there (the existing Available `ai_coo_basic` is
+  omitted the same way). That is plan-page copy, not catalog behavior.
+- **A pre-existing stale test was corrected.** `PackagesProductsEntitlementIdentityTest::
+  test_no_catalog_controller_or_later_sub_slice_class_exists_yet` asserted that
+  `PackageSnapshotService` does NOT exist and had been failing on `main` since
+  Sub-slice D merged. Sub-slice E's controllers retire the rest of it, so it is
+  inverted to assert that every B–E deliverable now exists.
+
 ## 13. Required tests
 
 Beyond each sub-slice's own tests (§12): once D ships, an end-to-end test

@@ -959,6 +959,19 @@
             Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/documents')->name('businesses.documents.')->group(function () {
+            Route::get('/', 'Business\DocumentsController@listing')->name('index');
+            Route::post('/', 'Business\DocumentsController@store')->name('store');
+            Route::get('{documentUid}', 'Business\DocumentsController@show')->name('show');
+            Route::patch('{documentUid}', 'Business\DocumentsController@update')->name('update');
+            Route::post('{documentUid}/catalog-lines', 'Business\DocumentsController@catalogLine')->name('catalog-lines.store');
+            Route::post('{documentUid}/custom-lines', 'Business\DocumentsController@customLine')->name('custom-lines.store');
+            Route::delete('{documentUid}/lines/{lineUid}', 'Business\DocumentsController@removeLine')->name('lines.destroy');
+            Route::put('{documentUid}/lines/order', 'Business\DocumentsController@reorder')->name('lines.order');
+            Route::put('{documentUid}/schedule', 'Business\DocumentsController@schedule')->name('schedule.update');
+            Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
+        });
+
         /*
         |----------------------------------------------------------------
         | Automations V2-E — visual workflows (contract §20.2)
@@ -1254,6 +1267,50 @@
         // (no Location in the path): it lists ONLY the Locations the actor may
         // reach and, when that is exactly one, redirects straight to it.
         Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
+
+        /*
+        |----------------------------------------------------------------
+        | Packages & Products catalog (Contract 16, Sub-slice E)
+        |----------------------------------------------------------------
+        |
+        | ONE Business-wide catalog, plus sparse per-Location deviations from
+        | it (never a per-Location copy — Addendum §14). Every action runs
+        | the §6 chain in this order, each gate independent of the others:
+        |
+        |   1. Workspace/Business tenancy        (404)
+        |   2. the `packages_products` capability (401 - this app renders a failed
+        |      authorize() as 401, exactly like CRM and Google Business Profile)
+        |   3. the PackagesProducts entitlement   (404)
+        |   4. Location-scoped routes only: the Location belongs to THIS
+        |      Business, then LocationAccessGuard (404)
+        |
+        | Both controllers are thin: every write is CatalogItemManager or
+        | CatalogItemLocationOverrideManager, every price is
+        | CatalogItemPricingResolver. `{businessUid}` in every path is what
+        | classifies these routes as Business-scoped for View As.
+        |
+        | The final Sub-slice E activation makes this feature Available;
+        | gate 3 still refuses unentitled Workspaces with 404.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/catalog')->name('businesses.catalog.')->group(function () {
+            Route::get('/', 'Business\CatalogItemsController@index')->name('index');
+            Route::get('/new', 'Business\CatalogItemsController@create')->name('create');
+            Route::post('/', 'Business\CatalogItemsController@store')->name('store');
+            Route::post('/order', 'Business\CatalogItemsController@reorder')->name('reorder');
+
+            // Location-scoped. Declared BEFORE the `{catalogItemUid}` routes so
+            // the literal `locations` segment is never captured as an item uid.
+            Route::get('/locations', 'Business\CatalogLocationOffersController@index')->name('locations.index');
+            Route::get('/locations/{locationUid}', 'Business\CatalogLocationOffersController@show')->name('locations.show');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/enabled', 'Business\CatalogLocationOffersController@setEnabled')->name('locations.enabled');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/price', 'Business\CatalogLocationOffersController@setPrice')->name('locations.price');
+
+            Route::get('/{catalogItemUid}', 'Business\CatalogItemsController@edit')->name('edit');
+            Route::post('/{catalogItemUid}', 'Business\CatalogItemsController@update')->name('update');
+            Route::post('/{catalogItemUid}/archive', 'Business\CatalogItemsController@archive')->name('archive');
+            Route::post('/{catalogItemUid}/reactivate', 'Business\CatalogItemsController@reactivate')->name('reactivate');
+        });
 
         /*
         |----------------------------------------------------------------
