@@ -1258,8 +1258,8 @@
         | CatalogItemPricingResolver. `{businessUid}` in every path is what
         | classifies these routes as Business-scoped for View As.
         |
-        | While PlatformFeature::PackagesProducts is Planned, gate 3 refuses
-        | every one of these with 404, including for an owner.
+        | The final Sub-slice E activation makes this feature Available;
+        | gate 3 still refuses unentitled Workspaces with 404.
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/catalog')->name('businesses.catalog.')->group(function () {
