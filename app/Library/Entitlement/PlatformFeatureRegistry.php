@@ -80,12 +80,23 @@ final class PlatformFeatureRegistry
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AgencyPackageCapabilities->value => PlatformFeatureAvailability::Planned,
-        // Implementation Contract 16, Sub-slice A: schema and inert
-        // entitlement identity only — no controller, route, or view exists
-        // yet. Stays Planned through Sub-slices B/C/D (domain managers with
-        // no customer HTTP surface); only Sub-slice E, once A-D are merged
-        // and verified end-to-end, performs the Planned -> Available flip.
-        PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Planned,
+        // Implementation Contract 16, Sub-slice E — the FINAL flip,
+        // Planned -> Available, meeting the exact evidentiary bar every flip
+        // above was held to: a real, executable, Business-scoped surface now
+        // exists (App\Http\Controllers\Customer\Business\CatalogItemsController
+        // and CatalogLocationOffersController, their catalog routes and views,
+        // over CatalogItemManager, CatalogItemLocationOverrideManager and
+        // CatalogItemPricingResolver). It was Planned through Sub-slices A-D,
+        // which built the schema, inert entitlement identity and domain
+        // services with no customer HTTP surface, and was flipped only after
+        // the surface's full authorization chain was proven: tenancy, the
+        // packages_products capability, this entitlement, and for
+        // Location-scoped routes LocationAccessGuard. Plan packaging already
+        // existed for Core, Growth and Agency (Sub-slice A,
+        // 2026_09_23_100005_seed_packages_products_plan_packaging.php) and is
+        // unchanged; an unassigned, inactive, suspended or override-denied
+        // Workspace is still refused by EntitlementManager exactly as before.
+        PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Available,
         // Implementation Contract 17, Sub-slice A: schema and inert entitlement
         // identity only — no controller, route, view, provider call or public
         // link exists yet. Stays Planned through Sub-slices B-F; only Sub-slice

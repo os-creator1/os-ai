@@ -81,6 +81,30 @@
             'default'      => false,
         ],
         /*
+         * Implementation Contract 16 §6/§12.E — Packages & Products. ONE
+         * capability for the whole module, the simple single-key shape
+         * `website`/`automations` use — deliberately NOT a CRUD matrix of
+         * separate create/edit/archive/reorder/override keys, which no
+         * document authorizes (Contract 16 §15).
+         *
+         * Default true, following the `website` precedent: it is the
+         * Acceptance Matrix's "Owner + staff per feature permission" boundary,
+         * and the backfill migration grants it to existing customers so the
+         * persisted per-customer list does not refuse a surface their plan
+         * entitles them to.
+         *
+         * Necessary but NEVER sufficient. The canonical chain (§6) is tenancy,
+         * THIS capability, the EntitlementManager decision for
+         * PlatformFeature::PackagesProducts, then LocationAccessGuard for any
+         * Location-scoped action — each checked independently, none
+         * substituting for another.
+         */
+        'packages_products'             => [
+            'display_name' => 'packages_products',
+            'category'     => 'Packages & Products',
+            'default'      => true,
+        ],
+        /*
          * Implementation Contract 17 §6.1 — Payments & Contracts (Proposal /
          * Contract / e-signature / Invoice). ONE capability for the whole
          * module, the simple single-key shape `website`/`automations` use —

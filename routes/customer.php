@@ -959,6 +959,19 @@
             Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/documents')->name('businesses.documents.')->group(function () {
+            Route::get('/', 'Business\DocumentsController@listing')->name('index');
+            Route::post('/', 'Business\DocumentsController@store')->name('store');
+            Route::get('{documentUid}', 'Business\DocumentsController@show')->name('show');
+            Route::patch('{documentUid}', 'Business\DocumentsController@update')->name('update');
+            Route::post('{documentUid}/catalog-lines', 'Business\DocumentsController@catalogLine')->name('catalog-lines.store');
+            Route::post('{documentUid}/custom-lines', 'Business\DocumentsController@customLine')->name('custom-lines.store');
+            Route::delete('{documentUid}/lines/{lineUid}', 'Business\DocumentsController@removeLine')->name('lines.destroy');
+            Route::put('{documentUid}/lines/order', 'Business\DocumentsController@reorder')->name('lines.order');
+            Route::put('{documentUid}/schedule', 'Business\DocumentsController@schedule')->name('schedule.update');
+            Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
+        });
+
         /*
         |----------------------------------------------------------------
         | Automations V2-E — visual workflows (contract §20.2)
@@ -1199,7 +1212,7 @@
 
         /*
         |----------------------------------------------------------------
-        | Calendar — Booking Types + Staff Availability (Contract 15, 15B)
+        | Calendar — configuration and authenticated schedule (Contract 15, 15B/15D)
         |----------------------------------------------------------------
         |
         | Location-bound by construction: every path carries the Location's
@@ -1217,8 +1230,9 @@
         | account owner — intended, and the reason building them now is
         | safe. Sub-slice E's flip is what makes them executable.
         |
-        | No booking engine, no appointment lifecycle, no calendar grid and
-        | no public scheduler: Sub-slices C, D and E own those.
+        | The booking engine lives in Sub-slice C. Sub-slice D adds the
+        | authenticated schedule and lifecycle actions below. Public
+        | self-booking remains Sub-slice E's work.
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/calendar/locations/{locationUid}')->name('businesses.calendar.')->group(function () {
@@ -1235,6 +1249,68 @@
             Route::post('/availability/rules/{ruleId}/delete', 'Business\StaffAvailabilityController@destroyRule')->whereNumber('ruleId')->name('availability.rules.destroy');
             Route::post('/availability/time-off', 'Business\StaffAvailabilityController@storeTimeOff')->name('availability.time-off.store');
             Route::post('/availability/time-off/{timeOffId}/delete', 'Business\StaffAvailabilityController@destroyTimeOff')->whereNumber('timeOffId')->name('availability.time-off.destroy');
+
+            // 15D — the day/week schedule and the five appointment actions.
+            // Every write is one call to AppointmentBookingService (Sub-slice
+            // C); nothing here changes appointment state itself. `/new` is
+            // registered before `{appointmentUid}` so it is not swallowed.
+            Route::get('/schedule', 'Business\CalendarController@show')->name('schedule');
+            Route::get('/appointments/new', 'Business\CalendarController@create')->name('appointments.create');
+            Route::post('/appointments', 'Business\CalendarController@store')->name('appointments.store');
+            Route::get('/appointments/{appointmentUid}', 'Business\CalendarController@showAppointment')->name('appointments.show');
+            Route::post('/appointments/{appointmentUid}/reschedule', 'Business\CalendarController@reschedule')->name('appointments.reschedule');
+            Route::post('/appointments/{appointmentUid}/cancel', 'Business\CalendarController@cancel')->name('appointments.cancel');
+            Route::post('/appointments/{appointmentUid}/complete', 'Business\CalendarController@complete')->name('appointments.complete');
+            Route::post('/appointments/{appointmentUid}/no-show', 'Business\CalendarController@noShow')->name('appointments.no-show');
+        });
+
+        // 15D — the Calendar's entry point and Location picker. Business-level
+        // (no Location in the path): it lists ONLY the Locations the actor may
+        // reach and, when that is exactly one, redirects straight to it.
+        Route::get('{workspaceUid}/businesses/{businessUid}/calendar', 'Business\CalendarController@index')->name('businesses.calendar.index');
+
+        /*
+        |----------------------------------------------------------------
+        | Packages & Products catalog (Contract 16, Sub-slice E)
+        |----------------------------------------------------------------
+        |
+        | ONE Business-wide catalog, plus sparse per-Location deviations from
+        | it (never a per-Location copy — Addendum §14). Every action runs
+        | the §6 chain in this order, each gate independent of the others:
+        |
+        |   1. Workspace/Business tenancy        (404)
+        |   2. the `packages_products` capability (401 - this app renders a failed
+        |      authorize() as 401, exactly like CRM and Google Business Profile)
+        |   3. the PackagesProducts entitlement   (404)
+        |   4. Location-scoped routes only: the Location belongs to THIS
+        |      Business, then LocationAccessGuard (404)
+        |
+        | Both controllers are thin: every write is CatalogItemManager or
+        | CatalogItemLocationOverrideManager, every price is
+        | CatalogItemPricingResolver. `{businessUid}` in every path is what
+        | classifies these routes as Business-scoped for View As.
+        |
+        | The final Sub-slice E activation makes this feature Available;
+        | gate 3 still refuses unentitled Workspaces with 404.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/catalog')->name('businesses.catalog.')->group(function () {
+            Route::get('/', 'Business\CatalogItemsController@index')->name('index');
+            Route::get('/new', 'Business\CatalogItemsController@create')->name('create');
+            Route::post('/', 'Business\CatalogItemsController@store')->name('store');
+            Route::post('/order', 'Business\CatalogItemsController@reorder')->name('reorder');
+
+            // Location-scoped. Declared BEFORE the `{catalogItemUid}` routes so
+            // the literal `locations` segment is never captured as an item uid.
+            Route::get('/locations', 'Business\CatalogLocationOffersController@index')->name('locations.index');
+            Route::get('/locations/{locationUid}', 'Business\CatalogLocationOffersController@show')->name('locations.show');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/enabled', 'Business\CatalogLocationOffersController@setEnabled')->name('locations.enabled');
+            Route::post('/locations/{locationUid}/items/{catalogItemUid}/price', 'Business\CatalogLocationOffersController@setPrice')->name('locations.price');
+
+            Route::get('/{catalogItemUid}', 'Business\CatalogItemsController@edit')->name('edit');
+            Route::post('/{catalogItemUid}', 'Business\CatalogItemsController@update')->name('update');
+            Route::post('/{catalogItemUid}/archive', 'Business\CatalogItemsController@archive')->name('archive');
+            Route::post('/{catalogItemUid}/reactivate', 'Business\CatalogItemsController@reactivate')->name('reactivate');
         });
 
         /*

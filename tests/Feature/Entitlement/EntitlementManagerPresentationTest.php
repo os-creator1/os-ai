@@ -273,7 +273,13 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::GoogleBusinessProfileModule->value, $result);
 
         $this->assertArrayHasKey(PlatformFeature::AiCooBasic->value, $result);
-        $this->assertCount(6, $result);
+        // Implementation Contract 16 Sub-slice E: PackagesProducts flipped
+        // Planned -> Available. It is Business-scoped and packaged into every
+        // tier (Core, Growth and Agency), so it joins this map for this
+        // Agency fixture Workspace like every other Available Business feature.
+        $this->assertArrayHasKey(PlatformFeature::PackagesProducts->value, $result);
+
+        $this->assertCount(7, $result);
     }
 
     /**
