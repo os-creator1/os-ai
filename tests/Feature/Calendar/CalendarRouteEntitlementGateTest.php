@@ -66,5 +66,23 @@ class CalendarRouteEntitlementGateTest extends TestCase
         DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)->delete();
         $this->authenticate($this->owner->user);
         $this->assertEveryRouteDenied($this->locationA);
+        $this->assertDatabaseCount('booking_types', 0);
+        $this->assertDatabaseCount('staff_availability_rules', 0);
+    }
+
+    public function test_forged_direct_posts_cannot_write_through_ungranted_location(): void
+    {
+        $restricted = $this->memberGrantedOnly($this->locationA);
+        $this->authenticate($restricted);
+        $scope = $this->scopeFor($this->locationB);
+        $this->post($this->calendarUrl('booking-types.store', $scope), [
+            'name' => 'Forged', 'duration_minutes' => 30,
+        ])->assertNotFound();
+        $this->post($this->calendarUrl('availability.rules.store', $scope), [
+            'staff_user_id' => $restricted->id, 'day_of_week' => 1,
+            'start_time' => '09:00', 'end_time' => '17:00',
+        ])->assertNotFound();
+        $this->assertDatabaseCount('booking_types', 0);
+        $this->assertDatabaseCount('staff_availability_rules', 0);
     }
 }

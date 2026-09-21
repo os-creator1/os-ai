@@ -5,16 +5,22 @@ namespace Tests\Feature\Calendar;
 use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Entitlement\CustomerAccountAccessGuard;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\Appointment;
 use App\Models\Blacklists;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Tests\Feature\Calendar\Concerns\CreatesCalendarHttpFixtures;
 use Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class PublicBookingTest extends TestCase
 {
@@ -147,19 +153,89 @@ class PublicBookingTest extends TestCase
         $this->assertDenied(function (): void { $this->type->staff()->detach(); });
     }
 
-    public function test_locked_account_and_missing_entitlement_are_both_public_404s(): void
+    private function platformAdminId(): int
     {
-        DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)
-            ->update(['status' => WorkspacePlanAssignmentStatus::Suspended->value]);
-        $this->get($this->url())->assertNotFound();
-        $this->post($this->url(), $this->payload())->assertNotFound();
+        return (int) User::create([
+            'first_name' => 'Platform', 'last_name' => 'Admin',
+            'email' => 'calendar-admin-'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+    }
 
-        DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)
-            ->update(['status' => WorkspacePlanAssignmentStatus::Active->value]);
-        DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)->delete();
+    private function assertPublicNotFound(): void
+    {
         $this->get($this->url())->assertNotFound();
         $this->post($this->url(), $this->payload())->assertNotFound();
         $this->assertDatabaseCount('appointments', 0);
+    }
+
+    public function test_canonical_locked_lifecycle_refuses_get_and_post(): void
+    {
+        $manager = app(EntitlementManager::class);
+        $manager->enterGracePeriod($this->workspace, null, 'Fixture grace.');
+        $manager->lockForNonPayment($this->workspace, null, 'Fixture lock.');
+        $this->assertTrue(app(CustomerAccountAccessGuard::class)->decisionForBusiness($this->business->fresh())->isLocked());
+        $this->assertPublicNotFound();
+    }
+
+    #[DataProvider('inactiveAndSuspended')]
+    public function test_canonical_account_status_refuses_get_and_post(WorkspacePlanAssignmentStatus $status): void
+    {
+        app(EntitlementManager::class)->changePlanStatus($this->workspace, $status, $this->platformAdminId(), 'Fixture status.');
+        $this->assertTrue(app(CustomerAccountAccessGuard::class)->decisionForBusiness($this->business->fresh())->isLocked());
+        $this->assertPublicNotFound();
+    }
+
+    public static function inactiveAndSuspended(): array
+    {
+        return [
+            'inactive' => [WorkspacePlanAssignmentStatus::Inactive],
+            'suspended' => [WorkspacePlanAssignmentStatus::Suspended],
+        ];
+    }
+
+    public function test_no_plan_entitlement_refuses_get_and_post(): void
+    {
+        DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)->delete();
+        $this->assertPublicNotFound();
+    }
+
+    #[DataProvider('agencyLockedStates')]
+    public function test_managing_agency_lock_refuses_client_public_get_and_post(string $state): void
+    {
+        $agencyOwner = $this->createCustomer();
+        $agency = $this->createWorkspace($agencyOwner->user);
+        $manager = app(EntitlementManager::class);
+        $manager->assignFirstPlan($agency, WorkspacePlanTier::Agency, $this->platformAdminId(), 'Fixture Agency.', true, 0);
+        $this->assertFalse(app(CustomerAccountAccessGuard::class)->decisionForBusiness($this->business->fresh())->isLocked());
+        app(AgencyClientRelationshipManager::class)->create((int) $agency->owner_user_id, $agency, $this->workspace);
+
+        match ($state) {
+            'locked' => [
+                $manager->enterGracePeriod($agency, null, 'Fixture grace.'),
+                $manager->lockForNonPayment($agency, null, 'Fixture lock.'),
+            ],
+            'inactive' => $manager->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Inactive, $this->platformAdminId(), 'Fixture inactive.'),
+            'suspended' => $manager->changePlanStatus($agency, WorkspacePlanAssignmentStatus::Suspended, $this->platformAdminId(), 'Fixture suspended.'),
+        };
+        $this->assertTrue(app(CustomerAccountAccessGuard::class)->decisionForBusiness($this->business->fresh())->isLocked());
+        $this->assertPublicNotFound();
+    }
+
+    public static function agencyLockedStates(): array
+    {
+        return ['locked' => ['locked'], 'inactive' => ['inactive'], 'suspended' => ['suspended']];
+    }
+
+    public function test_stale_staff_pivot_and_rule_do_not_restore_revoked_location_access(): void
+    {
+        $staffId = $this->type->staff()->firstOrFail()->id;
+        DB::table('workspace_memberships')->where('workspace_id', $this->workspace->id)
+            ->where('user_id', $staffId)->update(['location_access_scope' => 'selected']);
+        $this->assertDatabaseHas('booking_type_staff', ['booking_type_id' => $this->type->id, 'staff_user_id' => $staffId]);
+        $this->assertDatabaseHas('staff_availability_rules', ['business_location_id' => $this->locationA->id, 'staff_user_id' => $staffId]);
+        $this->assertPublicNotFound();
     }
 
     public function test_public_creation_writes_custom_fields_without_welcome_or_signup_sms(): void
@@ -221,5 +297,14 @@ class PublicBookingTest extends TestCase
         $this->post($this->url(), $this->payload())->assertSessionHasErrors('time');
         $this->assertDatabaseCount('appointments', 1);
         $this->assertDatabaseCount('contacts', 1);
+    }
+
+    public function test_refused_new_phone_leaves_no_orphan_contact(): void
+    {
+        $this->post($this->url(), $this->payload())->assertRedirect();
+        $this->post($this->url(), $this->payload('14155559999'))->assertSessionHasErrors('time');
+        $this->assertDatabaseCount('appointments', 1);
+        $this->assertDatabaseCount('contacts', 1);
+        $this->assertDatabaseMissing('contacts', ['location_id' => $this->locationA->id, 'phone' => '14155559999']);
     }
 }

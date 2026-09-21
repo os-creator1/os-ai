@@ -87,6 +87,24 @@ class AppointmentBookingConcurrencyTest extends TestCase
         $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->distinct()->count('contact_id'));
     }
 
+    public function test_two_concurrent_overlapping_public_contact_bookings_leave_one_appointment(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+        $groupId = end($this->createdContactGroupIds);
+        $phone = '14155559877';
+
+        $results = $this->race([
+            ['public-contact', (string) $typeId, (string) $locationId, (string) $groupId, $phone, $this->slot('10:00:00')],
+            ['public-contact', (string) $typeId, (string) $locationId, (string) $groupId, $phone, $this->slot('10:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertExactlyOneCommitted($results);
+        $this->assertLoserWasRefusedByTheDomainRule($results, 'NoEligibleStaffAvailableException');
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', $phone)->count());
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

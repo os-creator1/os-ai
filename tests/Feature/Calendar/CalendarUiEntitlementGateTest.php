@@ -67,5 +67,17 @@ class CalendarUiEntitlementGateTest extends TestCase
         DB::table('workspace_plan_assignments')->where('workspace_id', $this->workspace->id)->delete();
         $this->authenticate($this->owner->user);
         $this->assertEveryRouteDenied($this->locationA);
+        $this->assertDatabaseCount('appointments', 0);
+    }
+
+    public function test_forged_direct_appointment_post_cannot_write_through_ungranted_location(): void
+    {
+        $restricted = $this->memberGrantedOnly($this->locationA);
+        $this->authenticate($restricted);
+        $this->post($this->calendarUrl('appointments.store', $this->scopeFor($this->locationB)), [
+            'booking_type_uid' => 'forged', 'contact_uid' => 'forged',
+            'staff' => 'auto', 'date' => '2027-03-01', 'time' => '10:00',
+        ])->assertNotFound();
+        $this->assertDatabaseCount('appointments', 0);
     }
 }

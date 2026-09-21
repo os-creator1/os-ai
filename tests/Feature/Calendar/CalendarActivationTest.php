@@ -4,6 +4,7 @@ namespace Tests\Feature\Calendar;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Entitlement\PlatformFeatureRegistry;
+use App\Library\Navigation\CustomerMenuBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -28,11 +29,20 @@ class CalendarActivationTest extends TestCase
 
     public function test_public_and_authenticated_calendar_routes_are_registered(): void
     {
-        foreach (['public.booking.show', 'public.booking.store', 'public.booking.confirmed',
-            'customer.workspaces.businesses.calendar.schedule',
-            'customer.workspaces.businesses.calendar.appointments.show'] as $name) {
+        $calendar = 'customer.workspaces.businesses.calendar.';
+        foreach (['public.booking.show', 'public.booking.store', 'public.booking.confirmed'] as $name) {
             $this->assertNotNull(Route::getRoutes()->getByName($name));
         }
+        foreach (['booking-types.index', 'booking-types.create', 'booking-types.store',
+            'booking-types.edit', 'booking-types.update', 'booking-types.active',
+            'booking-types.staff', 'availability.index', 'availability.rules.store',
+            'availability.rules.destroy', 'availability.time-off.store',
+            'availability.time-off.destroy', 'index', 'schedule', 'appointments.create',
+            'appointments.store', 'appointments.show', 'appointments.reschedule',
+            'appointments.cancel', 'appointments.complete', 'appointments.no-show'] as $suffix) {
+            $this->assertNotNull(Route::getRoutes()->getByName($calendar.$suffix));
+        }
+        $this->assertContains(PlatformFeature::Calendar->value, CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES);
     }
 
     public function test_no_external_provider_sync_was_started(): void

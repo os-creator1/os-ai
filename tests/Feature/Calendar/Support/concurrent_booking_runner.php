@@ -115,18 +115,24 @@ try {
             $group = App\Models\ContactGroups::query()->findOrFail((int) $argv[5]);
             $repository = $app->make(App\Repositories\Eloquent\EloquentContactsRepository::class);
             $phone = $repository->ensureBookingIdentityLock($location, $argv[6]);
-            Illuminate\Support\Facades\DB::statement('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
-            [$contact, $appointment] = Illuminate\Support\Facades\DB::transaction(
-                static function () use ($repository, $location, $group, $argv, $type, $engine, $phone): array {
+            if (Illuminate\Support\Facades\DB::transactionLevel() !== 0) {
+                throw new LogicException('Public booking must enter the engine without an outer transaction.');
+            }
+            $contactId = null;
+            $appointment = $engine->bookWithRoundRobinContactResolver(
+                $type,
+                Illuminate\Support\Carbon::parse($argv[7]),
+                static function () use ($repository, $location, $group, $argv, $phone, &$contactId): int {
+                    if (Illuminate\Support\Facades\DB::transactionLevel() !== 1) {
+                        throw new LogicException('Contact resolution must run in the engine\'s one transaction.');
+                    }
                     $repository->lockBookingIdentity($location, $phone);
                     $contact = $repository->findOrCreateForBooking($location, $group, $argv[6]);
-                    $appointment = $engine->bookWithRoundRobin(
-                        $type, (int) $contact->id, Illuminate\Support\Carbon::parse($argv[7])
-                    );
-                    return [$contact, $appointment];
-                }, 3
+                    $contactId = (int) $contact->id;
+                    return $contactId;
+                }
             );
-            return 'contact_id=' . $contact->id . ' appointment_id=' . $appointment->id;
+            return 'contact_id=' . $contactId . ' appointment_id=' . $appointment->id;
         },
         'reschedule' => static function () use ($engine, $argv): string {
             $appointment = App\Models\Appointment::query()->findOrFail((int) $argv[3]);

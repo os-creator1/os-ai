@@ -21,7 +21,6 @@ use App\Repositories\Eloquent\EloquentContactsRepository;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 use Illuminate\Validation\ValidationException;
 
@@ -103,29 +102,30 @@ class PublicBookingController extends Controller
         $phone = $this->contacts->ensureBookingIdentityLock($location, $phone);
 
         try {
-            // The outer transaction includes Contact and Appointment. READ COMMITTED
-            // lets the engine's nested locked reads see a prior writer's commit.
-            DB::statement('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
-            DB::transaction(function () use ($type, $location, $business, $data, $start, $phone): void {
-                $this->contacts->lockBookingIdentity($location, $phone);
-                $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
-                if ($group === null) {
-                    $group = $this->contacts->store([
-                        'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
-                    ]);
+            $this->booking->bookWithRoundRobinContactResolver(
+                $type,
+                $start,
+                function () use ($location, $business, $data, $phone): int {
+                    // The engine holds tier 1 and tier 2 before calling us.
+                    // Lock this identity before any plain Contact/group read.
+                    $this->contacts->lockBookingIdentity($location, $phone);
+                    $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
+                    if ($group === null) {
+                        $group = $this->contacts->store([
+                            'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
+                        ]);
+                    }
+                    $contact = $this->contacts->findOrCreateForBooking(
+                        $location, $group, $data['phone'], [
+                            'FIRST_NAME' => $data['first_name'],
+                            'LAST_NAME' => $data['last_name'],
+                        ]
+                    );
+                    return (int) $contact->id;
                 }
-                $contact = $this->contacts->findOrCreateForBooking(
-                    $location, $group, $data['phone'], [
-                        'FIRST_NAME' => $data['first_name'],
-                        'LAST_NAME' => $data['last_name'],
-                    ]
-                );
-                $this->booking->bookWithRoundRobin($type, (int) $contact->id, $start);
-            }, 3);
+            );
         } catch (BookingRefusedException $exception) {
             return back()->withInput()->withErrors(['time' => 'That time is no longer available. Choose another time.']);
-        } finally {
-            DB::statement('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ');
         }
 
         return redirect()->route('public.booking.confirmed', [$type->public_booking_uuid]);
