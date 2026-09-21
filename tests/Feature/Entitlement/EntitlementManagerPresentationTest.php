@@ -82,7 +82,7 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertContains('crm', $core->planFeatureKeys);
         $this->assertContains('calendar', $core->planFeatureKeys);
         $this->assertTrue($core->featureAvailability['crm']);
-        $this->assertFalse($core->featureAvailability['calendar']);
+        $this->assertTrue($core->featureAvailability['calendar']);
 
         $agency = $summaries[2];
         $this->assertTrue($agency->unlimitedBusinessSlots);
@@ -251,7 +251,8 @@ class EntitlementManagerPresentationTest extends TestCase
 
         $result = app(EntitlementManager::class)->decideAvailableFeaturesForBusiness($workspace, $business, $this->createAdmin());
 
-        $this->assertArrayNotHasKey(PlatformFeature::Calendar->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::Calendar->value, $result);
+        $this->assertArrayNotHasKey(PlatformFeature::Forms->value, $result);
 
         // Correction 1 — ProspectOutreach is Available but Workspace-
         // scoped only (PlatformFeatureRegistry::isWorkspaceScoped()): this
@@ -279,7 +280,7 @@ class EntitlementManagerPresentationTest extends TestCase
         // Agency fixture Workspace like every other Available Business feature.
         $this->assertArrayHasKey(PlatformFeature::PackagesProducts->value, $result);
 
-        $this->assertCount(7, $result);
+        $this->assertCount(8, $result);
     }
 
     /**

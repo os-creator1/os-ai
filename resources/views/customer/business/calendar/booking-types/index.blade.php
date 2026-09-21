@@ -33,6 +33,7 @@
                                 <th>Name</th>
                                 <th>Duration</th>
                                 <th>Status</th>
+                                <th>Public booking link</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -42,6 +43,16 @@
                                     <td>{{ $bookingType->name }}</td>
                                     <td>{{ $bookingType->duration_minutes }} min</td>
                                     <td>{{ $bookingType->is_active ? 'Active' : 'Inactive' }}</td>
+                                    <td>
+                                        @if ($bookingType->is_active)
+                                            <a href="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}" target="_blank" rel="noopener">
+                                                Open booking page
+                                            </a>
+                                            <input class="form-control form-control-sm mt-1" type="text" readonly
+                                                   aria-label="Public booking link for {{ $bookingType->name }}"
+                                                   value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+                                        @endif
+                                    </td>
                                     <td class="text-right">
                                         <a href="{{ route('customer.workspaces.businesses.calendar.booking-types.edit', array_merge($scope, [$bookingType->uid])) }}">
                                             Edit

@@ -1,5 +1,14 @@
 <?php
 
+    Route::get('book/{bookingTypeUuid}', 'Customer\PublicBookingController@show')
+        ->whereUuid('bookingTypeUuid')->name('public.booking.show');
+    // Public mutation: 10 attempts per minute matches the lower end of the
+    // existing customer write limits while allowing a real guest to retry a slot.
+    Route::post('book/{bookingTypeUuid}', 'Customer\PublicBookingController@store')
+        ->whereUuid('bookingTypeUuid')->middleware('throttle:10,1')->name('public.booking.store');
+    Route::get('book/{bookingTypeUuid}/confirmed', 'Customer\PublicBookingController@confirmed')
+        ->whereUuid('bookingTypeUuid')->name('public.booking.confirmed');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */

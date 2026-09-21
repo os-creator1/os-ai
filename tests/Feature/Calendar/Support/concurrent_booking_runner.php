@@ -109,6 +109,25 @@ try {
 
             return 'appointment_id=' . $appointment->id . ' staff_user_id=' . $appointment->staff_user_id;
         },
+        'public-contact' => static function () use ($engine, $app, $argv): string {
+            $type = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $location = App\Models\BusinessLocation::query()->findOrFail((int) $argv[4]);
+            $group = App\Models\ContactGroups::query()->findOrFail((int) $argv[5]);
+            $repository = $app->make(App\Repositories\Eloquent\EloquentContactsRepository::class);
+            $phone = $repository->ensureBookingIdentityLock($location, $argv[6]);
+            Illuminate\Support\Facades\DB::statement('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
+            [$contact, $appointment] = Illuminate\Support\Facades\DB::transaction(
+                static function () use ($repository, $location, $group, $argv, $type, $engine, $phone): array {
+                    $repository->lockBookingIdentity($location, $phone);
+                    $contact = $repository->findOrCreateForBooking($location, $group, $argv[6]);
+                    $appointment = $engine->bookWithRoundRobin(
+                        $type, (int) $contact->id, Illuminate\Support\Carbon::parse($argv[7])
+                    );
+                    return [$contact, $appointment];
+                }, 3
+            );
+            return 'contact_id=' . $contact->id . ' appointment_id=' . $appointment->id;
+        },
         'reschedule' => static function () use ($engine, $argv): string {
             $appointment = App\Models\Appointment::query()->findOrFail((int) $argv[3]);
             $moved = $engine->reschedule(

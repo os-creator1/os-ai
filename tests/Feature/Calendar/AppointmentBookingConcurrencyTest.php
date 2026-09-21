@@ -69,6 +69,24 @@ class AppointmentBookingConcurrencyTest extends TestCase
 
     private array $createdCustomerUserIds = [];
 
+    public function test_two_concurrent_first_public_contact_bookings_share_one_location_identity(): void
+    {
+        [$typeId, , $locationId] = $this->scenario();
+        $this->insertContact($locationId);
+        $groupId = end($this->createdContactGroupIds);
+        $phone = '14155559876';
+
+        $results = $this->race([
+            ['public-contact', (string) $typeId, (string) $locationId, (string) $groupId, '+1 (415) 555-9876', $this->slot('10:00:00')],
+            ['public-contact', (string) $typeId, (string) $locationId, (string) $groupId, $phone, $this->slot('12:00:00')],
+        ]);
+        $this->assertGenuinelyRaced($results);
+        $this->assertSame([0, 0], array_column($results, 'exitCode'));
+        $this->assertSame(1, DB::table('contacts')->where('location_id', $locationId)->where('phone', $phone)->count());
+        $this->assertSame(2, DB::table('appointments')->where('booking_type_id', $typeId)->count());
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $typeId)->distinct()->count('contact_id'));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

@@ -12,6 +12,7 @@
     use App\Models\ContactGroups;
     use App\Models\Contacts;
     use App\Models\ContactsCustomField;
+    use App\Models\BusinessLocation;
     use App\Models\User;
     use App\Repositories\Contracts\ContactsRepository;
     use App\Rules\Phone;
@@ -29,6 +30,76 @@
 
     class EloquentContactsRepository extends EloquentBaseRepository implements ContactsRepository
     {
+        /** Contract 15 §5.8: ensure the unique serialization row before a transaction starts. */
+        public function ensureBookingIdentityLock(BusinessLocation $location, string $rawPhone): string
+        {
+            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
+
+            if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
+                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+
+            return $phone;
+        }
+
+        /** Called inside the booking transaction, after ensureBookingIdentityLock(). */
+        public function findOrCreateForBooking(
+            BusinessLocation $location,
+            ContactGroups $contactGroups,
+            string $rawPhone,
+            array $input = [],
+        ): Contacts {
+            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            $this->lockBookingIdentity($location, $phone);
+
+            $contact = Contacts::query()->where('location_id', $location->id)
+                ->where('phone', $phone)->orderBy('id')->first();
+            if ($contact !== null) {
+                if ($contact->isListedInBlacklist()) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                    ]);
+                }
+                return $contact;
+            }
+
+            $contact = new Contacts(['phone' => $phone]);
+            if ($contact->isListedInBlacklist()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                ]);
+            }
+
+            $contact->group_id = $contactGroups->id;
+            $contact->customer_id = $contactGroups->customer_id;
+            $contact->business_id = $contactGroups->business_id;
+            $contact->location_id = $location->id;
+            $contact->status = Contacts::STATUS_SUBSCRIBE;
+            $contact->save();
+            $contact->updateFields($input + ['PHONE' => $phone]);
+
+            if ($contact->wasRecentlyCreated && $contact->business_id !== null) {
+                dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
+                dispatch(EnrollWorkflowContact::forContactCreated(
+                    (int) $contact->id, ContactCreationSource::Other
+                ))->afterCommit();
+            }
+
+            $contactGroups->updateCache();
+
+            return $contact;
+        }
+
+        public function lockBookingIdentity(BusinessLocation $location, string $phone): void
+        {
+            DB::table('booking_contact_identity_locks')
+                ->where('business_location_id', $location->id)
+                ->where('normalized_phone', $phone)
+                ->lockForUpdate()->firstOrFail();
+        }
         /**
          * EloquentContactsRepository constructor.
          *

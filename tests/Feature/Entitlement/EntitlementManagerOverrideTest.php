@@ -53,14 +53,14 @@ class EntitlementManagerOverrideTest extends TestCase
         $workspace = $this->assignedWorkspace();
 
         $this->expectException(UnavailablePlatformFeatureOverrideException::class);
-        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Calendar, WorkspaceEntitlementOverrideState::Allow, $this->createAdmin(), 'Reason.');
+        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Forms, WorkspaceEntitlementOverrideState::Allow, $this->createAdmin(), 'Reason.');
     }
 
     public function test_deny_override_for_unavailable_feature_is_permitted(): void
     {
         $workspace = $this->assignedWorkspace();
 
-        $override = app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Calendar, WorkspaceEntitlementOverrideState::Deny, $this->createAdmin(), 'Reason.');
+        $override = app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Forms, WorkspaceEntitlementOverrideState::Deny, $this->createAdmin(), 'Reason.');
 
         $this->assertSame(WorkspaceEntitlementOverrideState::Deny, $override->state);
     }
@@ -164,7 +164,7 @@ class EntitlementManagerOverrideTest extends TestCase
         $workspace = $this->assignedWorkspace();
 
         try {
-            app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Calendar, WorkspaceEntitlementOverrideState::Allow, $this->createNonAdmin(), 'Reason.');
+            app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::Forms, WorkspaceEntitlementOverrideState::Allow, $this->createNonAdmin(), 'Reason.');
             $this->fail('Expected AuthorizationException.');
         } catch (AuthorizationException) {
             $this->assertTrue(true);
