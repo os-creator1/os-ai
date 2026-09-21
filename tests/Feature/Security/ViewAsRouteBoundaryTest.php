@@ -7,13 +7,19 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\ViewAs\ViewAsProhibitedActions;
 use App\Library\ViewAs\ViewAsRouteClass;
 use App\Library\ViewAs\ViewAsRouteClassification;
+use App\Library\Navigation\CustomerContext;
+use App\Library\Opportunity\OpportunityActionHash;
+use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\Customer;
+use App\Models\Opportunity;
+use App\Models\OpportunityTransition;
 use App\Models\ViewAsSession;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
@@ -32,6 +38,77 @@ class ViewAsRouteBoundaryTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
+
+    public function test_agency_view_as_approval_records_real_actor_and_server_session(): void
+    {
+        config(['opportunity.enabled' => true]);
+        Queue::fake([ExecuteOpportunityAction::class]);
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
+        $agency->update(['permissions' => json_encode(['business_advisor'])]);
+        $this->authenticateAs($agency);
+        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+        $this->get(route('user.home'))->assertOk();
+        $context = app(CustomerContext::class);
+        $this->assertNotNull($context->viewAs);
+
+        $action = [
+            'schema_version' => 1,
+            'action_key' => 'add_phone',
+            'parameters' => ['value' => '+15551234567'],
+            'approval_required' => true,
+            'completion_policy' => 'system_verified',
+        ];
+        $opportunity = Opportunity::create([
+            'business_id' => $viewed->id,
+            'worker_key' => 'business_advisor',
+            'type' => 'missing_phone',
+            'fingerprint_version' => 1,
+            'fingerprint' => hash('sha256', 'view-as-approval-fixture'),
+            'title' => 'Add phone',
+            'summary' => 'Add the Business phone number.',
+            'impact' => 3,
+            'urgency' => 3,
+            'effort' => 1,
+            'confidence' => '0.90',
+            'goal_relevance_rank' => 1,
+            'evidence_freshness_rank' => 1,
+            'priority_score' => 50,
+            'scoring_version' => 1,
+            'scored_at' => now(),
+            'evidence' => ['phone_blank' => true],
+            'recommended_action' => $action,
+            'recommended_action_hash' => (new OpportunityActionHash())->compute($action),
+            'action_schema_version' => 1,
+            'last_confirmed_at' => now(),
+            'first_detected_at' => now(),
+        ]);
+
+        $spoof = ['actor_user_id' => 99999, 'view_as_session_id' => 99999];
+        $this->post(route('customer.opportunities.request-approval', $opportunity->id), $spoof)->assertRedirect();
+        $this->post(route('customer.opportunities.confirm-approval', $opportunity->id), $spoof)->assertRedirect();
+
+        $this->assertSame(2, OpportunityTransition::query()
+            ->where('opportunity_id', $opportunity->id)
+            ->where('actor_user_id', $agency->user_id)
+            ->where('view_as_session_id', $context->viewAs->sessionId)
+            ->count());
+        $this->assertSame(0, OpportunityTransition::query()
+            ->where('opportunity_id', $opportunity->id)
+            ->where('view_as_session_id', 99999)->count());
+    }
+
+    public function test_opportunity_route_is_scoped_to_the_active_viewed_business(): void
+    {
+        config(['opportunity.enabled' => true]);
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Client', 'Northwind Agency');
+        $this->addSiblingBusiness($agency);
+        $this->authenticateAs($agency);
+        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+
+        $this->assertSame(ViewAsRouteClass::ContextScoped,
+            app(ViewAsRouteClassification::class)->classifyByName('customer.opportunities.index'));
+        $this->get(route('customer.opportunities.index'))->assertOk();
+    }
 
     // -----------------------------------------------------------------
     // Closed inventories
@@ -63,7 +140,7 @@ class ViewAsRouteBoundaryTest extends TestCase
 
         $this->assertSame([], $unclassified, "Unclassified authenticated routes — add them to ViewAsRouteClassification deliberately:\n" . implode("\n", $unclassified));
 
-        foreach (['business_scoped', 'safe', 'redirect_to_viewed', 'prohibited', 'denied'] as $expectedClass) {
+        foreach (['business_scoped', 'context_scoped', 'safe', 'redirect_to_viewed', 'prohibited', 'denied'] as $expectedClass) {
             $this->assertArrayHasKey($expectedClass, $counts, 'Every class must be exercised by the current route table.');
         }
     }
@@ -259,7 +336,6 @@ class ViewAsRouteBoundaryTest extends TestCase
             route('customer.contacts.index'),
             route('customer.chatbox.index'),
             route('customer.business.edit'),
-            route('customer.opportunities.index'),
             route('customer.sms.quick_send'),
             route('customer.templates.index'),
             route('customer.blacklists.index'),

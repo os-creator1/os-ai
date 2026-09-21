@@ -5,11 +5,13 @@ namespace Tests\Feature\Opportunity;
 use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Enums\Business\BusinessStatus;
 use App\Helpers\Helper;
 use App\Library\Opportunity\OpportunityActionHash;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\View;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
@@ -45,6 +47,36 @@ class OpportunityQueueHttpTest extends TestCase
         $opportunity = $this->createOpportunity($business);
 
         $this->get(route('customer.opportunities.show', $opportunity->id))->assertOk();
+    }
+
+    public function test_route_refuses_customer_after_advisor_capability_is_revoked(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business);
+        $business->customer->update(['permissions' => json_encode([])]);
+
+        // The application's exception handler maps an authenticated Gate denial to 401.
+        $this->get(route('customer.opportunities.index'))->assertUnauthorized();
+        $this->get(route('customer.opportunities.show', $opportunity->id))->assertUnauthorized();
+    }
+
+    public function test_queue_follows_customer_context_selected_business_instead_of_primary(): void
+    {
+        $primary = $this->actingAsCustomerWithBusiness();
+        $this->createOpportunity($primary, ['title' => 'Primary business opportunity']);
+        $secondary = $this->createBusinessWithWorkspace($primary->customer, $this->businessAttributes());
+        $secondary = app(BusinessRepository::class)->updateStatus($secondary, BusinessStatus::Active);
+        $this->createOpportunity($secondary, ['title' => 'Selected business opportunity']);
+
+        $this->post(route('customer.context.business.switch'), [
+            'workspace' => $secondary->workspace->uid,
+            'business' => $secondary->uid,
+        ])->assertRedirect();
+
+        $this->get(route('customer.opportunities.index'))
+            ->assertOk()
+            ->assertSee('Selected business opportunity')
+            ->assertDontSee('Primary business opportunity');
     }
 
     public function test_guest_index_returns_401(): void
@@ -273,7 +305,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response->assertDontSee(route('customer.opportunities.index'), false);
     }
 
-    public function test_enabled_navigation_entry_is_present(): void
+    public function test_enabled_business_sidebar_has_no_separate_advisor_entry(): void
     {
         $this->actingAsCustomerWithBusiness();
         $this->setOpportunityEngineEnabled(true);
@@ -281,7 +313,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.business.edit'));
 
         $response->assertOk();
-        $response->assertSee(route('customer.opportunities.index'), false);
+        $response->assertDontSee(route('customer.opportunities.index'), false);
     }
 
     public function test_detail_displays_the_latest_execution_by_attempt_number_then_id(): void

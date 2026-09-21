@@ -21,16 +21,46 @@ use App\Enums\Opportunity\OpportunityCompletionPolicy;
  *
  * Every entry mirrors RFC-001 Milestone 5's OnboardingActionExecutor
  * allowlist for the business_advisor actions (RFC-002 §39, locked).
+ *
+ * IMPLEMENTATION CONTRACT 19 §5.4(5) adds two first-class risk flags
+ * alongside the existing `approval_required`/`mutates_business_data` pair.
+ * Both are SOURCE-CONTROLLED and never a column, never client-supplied and
+ * never model-authored (§8: "`paid_effect` on the action registry
+ * (source-controlled, not a column)") — the point of a closed registry is
+ * that what an action may cost and what it may touch are decided in review,
+ * not at runtime:
+ *
+ *   `paid_effect`    — executing it spends real money (a purchase, a
+ *                      metered provider call, a wallet debit). §5.4(4)
+ *                      forbids retrying one under its original approval,
+ *                      and §5.4(5) forbids executing one with no approved
+ *                      cost estimate. Every action today is `false`:
+ *                      `add_phone` writes a Business column through
+ *                      BusinessManager and buys nothing.
+ *   `location_bound` — the effect belongs to one Business Location, so
+ *                      §5.4(2)'s Location gate must re-check
+ *                      LocationAccessGuard against it. Every action today is
+ *                      `false`: all eleven mutate Business-level profile
+ *                      fields. The flag exists because the gate needs a
+ *                      declared source of truth; inferring "does this touch
+ *                      a Location" from parameters at runtime is exactly the
+ *                      kind of derived authority this registry exists to
+ *                      prevent.
+ *
+ * Adding an action with either flag `true` is therefore a deliberate,
+ * reviewed act — which is the whole design.
  */
 final class OpportunityActionRegistry
 {
     /**
-     * @var array<string, array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
+     * @var array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
      */
     private const DEFINITIONS = [
         'add_phone' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [
@@ -47,6 +77,8 @@ final class OpportunityActionRegistry
         'add_email' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -54,6 +86,8 @@ final class OpportunityActionRegistry
         'add_website' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -61,6 +95,8 @@ final class OpportunityActionRegistry
         'add_description' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -68,6 +104,8 @@ final class OpportunityActionRegistry
         'add_location' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -75,6 +113,8 @@ final class OpportunityActionRegistry
         'complete_location' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -82,6 +122,8 @@ final class OpportunityActionRegistry
         'add_service' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -89,6 +131,8 @@ final class OpportunityActionRegistry
         'confirm_primary_service' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -96,6 +140,8 @@ final class OpportunityActionRegistry
         'add_gbp_url' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -103,6 +149,8 @@ final class OpportunityActionRegistry
         'add_facebook_url' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -110,6 +158,8 @@ final class OpportunityActionRegistry
         'add_instagram_url' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
+            'paid_effect' => false,
+            'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
             'parameter_rules' => [],
@@ -122,7 +172,65 @@ final class OpportunityActionRegistry
     }
 
     /**
-     * @return array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}|null
+     * Implementation Contract 19 §5.4(4)/(5) — does executing this action
+     * spend money?
+     *
+     * Fails CLOSED for an unknown action key: something the registry has
+     * never heard of is treated as paid, so a typo or a half-registered
+     * action inherits the strictest rule (re-approval required, cost
+     * estimate required) rather than the loosest.
+     */
+    public static function hasPaidEffect(string $actionKey): bool
+    {
+        $definition = self::get($actionKey);
+
+        return $definition === null || ($definition['paid_effect'] ?? true) !== false;
+    }
+
+    /**
+     * Implementation Contract 19 §5.4(2) gate 4 — is this action's effect
+     * bound to one Business Location?
+     *
+     * Fails CLOSED for an unknown action key, for the same reason as
+     * hasPaidEffect(): an unrecognised action is assumed to need the
+     * stricter Location check, and the caller then refuses because it cannot
+     * resolve a Location for it.
+     */
+    public static function isLocationBound(string $actionKey): bool
+    {
+        $definition = self::get($actionKey);
+
+        return $definition === null || ($definition['location_bound'] ?? true) !== false;
+    }
+
+    /**
+     * Implementation Contract 19 §5.4(4) — may a FAILED attempt at this
+     * action be retried under the approval that authorised the first one?
+     *
+     * Only a non-mutating, non-paid action may. Every action in the registry
+     * today mutates Business data, so every retry today re-enters approval.
+     */
+    public static function mayRetryUnderOriginalApproval(string $actionKey): bool
+    {
+        $definition = self::get($actionKey);
+
+        if ($definition === null) {
+            return false;
+        }
+
+        return self::metadataAllowsRetry($definition);
+    }
+
+    /** Pure policy seam; null/unknown metadata fails closed. */
+    public static function metadataAllowsRetry(?array $definition): bool
+    {
+        return $definition !== null
+            && ($definition['mutates_business_data'] ?? null) === false
+            && ($definition['paid_effect'] ?? null) === false;
+    }
+
+    /**
+     * @return array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}|null
      */
     public static function get(string $actionKey): ?array
     {
@@ -130,7 +238,7 @@ final class OpportunityActionRegistry
     }
 
     /**
-     * @return array<string, array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
+     * @return array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
      */
     public static function all(): array
     {

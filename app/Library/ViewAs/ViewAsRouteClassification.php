@@ -23,11 +23,12 @@ use Illuminate\Support\Facades\Route as RouteFacade;
  *     viewed Business's canonical page rather than allowed to choose.
  *  4. BusinessScoped — carries `businessUid`; allowed only when the
  *     Workspace/Business pair is the viewed one (checked by the middleware).
- *  5. Denied — every other route: legacy user-scoped surfaces (contacts,
+ *  5. ContextScoped — the Opportunity controller reads the resolved viewed
+ *     Business, with the middleware checking the exact viewed pair.
+ *  6. Denied — every other route: legacy user-scoped surfaces (contacts,
  *     conversations, campaigns, templates, blacklists…), Workspace-frame
- *     pages, Business-resolving global pages (Advisor, Business details,
- *     onboarding) and provider surfaces. 404 while viewing.
- *  6. Unclassified — not in any list. The boundary test
+ *     pages, other global pages and provider surfaces. 404 while viewing.
+ *  7. Unclassified — not in any list. The boundary test
  *     (tests/Feature/Security/ViewAsRouteBoundaryTest.php) fails on it, so
  *     a new Business-capable route must be classified deliberately.
  *
@@ -36,6 +37,20 @@ use Illuminate\Support\Facades\Route as RouteFacade;
  */
 final class ViewAsRouteClassification
 {
+    /** Existing Opportunity actions all resolve the selected Business from CustomerContext. */
+    public const CONTEXT_SCOPED = [
+        'customer.opportunities.index',
+        'customer.opportunities.show',
+        'customer.opportunities.configure-action',
+        'customer.opportunities.request-approval',
+        'customer.opportunities.confirm-approval',
+        'customer.opportunities.snooze',
+        'customer.opportunities.dismiss',
+        'customer.opportunities.reopen',
+        'customer.opportunities.retry',
+        'customer.opportunities.execution-status',
+    ];
+
     /** Exact route names that are safe, account-independent behaviour. */
     public const SAFE = [
         'user.home',
@@ -171,6 +186,10 @@ final class ViewAsRouteClassification
             return ViewAsRouteClass::RedirectToViewed;
         }
 
+        if (in_array($name, self::CONTEXT_SCOPED, true)) {
+            return ViewAsRouteClass::ContextScoped;
+        }
+
         if (in_array('businessUid', $route->parameterNames(), true)) {
             return ViewAsRouteClass::BusinessScoped;
         }
@@ -208,6 +227,7 @@ final class ViewAsRouteClassification
     {
         return in_array($this->classifyByName($routeName), [
             ViewAsRouteClass::BusinessScoped,
+            ViewAsRouteClass::ContextScoped,
             ViewAsRouteClass::Safe,
             ViewAsRouteClass::RedirectToViewed,
         ], true);

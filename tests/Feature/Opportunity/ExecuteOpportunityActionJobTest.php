@@ -108,7 +108,10 @@ class ExecuteOpportunityActionJobTest extends TestCase
         $this->assertSame(OpportunityActionExecutionStatus::Succeeded, $execution->fresh()->status);
         $this->assertSame('Business phone updated and verified.', $execution->fresh()->safe_result_summary);
         $this->assertSame(OpportunityStatus::Completed, $opportunity->fresh()->status);
-        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)
+            ->where('reason_code', 'execution_succeeded')
+            ->where('action_execution_id', $execution->id)
+            ->count());
     }
 
     public function test_pre_invocation_mismatch_is_recorded_as_a_state_mismatch_failure(): void
@@ -307,7 +310,7 @@ class ExecuteOpportunityActionJobTest extends TestCase
             'occurrence_number' => 1,
         ], $opportunityOverrides));
 
-        $user = $this->createUser();
+        $user = $business->customer->user;
 
         $execution = $this->createOpportunityActionExecution($opportunity, $user, array_merge([
             'action_key' => 'add_phone',

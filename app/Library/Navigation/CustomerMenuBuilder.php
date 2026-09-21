@@ -257,14 +257,6 @@ final class CustomerMenuBuilder
 
         $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
 
-        if (config('opportunity.enabled', false) && $this->hasAnyAccessibleBusiness($context)) {
-            // The Advisor queue is a customer-level surface that resolves its
-            // own Business; it stays reachable from both frames, but only
-            // once the actor has a Business at all — with none there is
-            // nothing for the Advisor to recommend on.
-            $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
-        }
-
         $workspace = $context->selectedWorkspace;
 
         if ($context->requiresWorkspaceSelection() || $workspace === null) {
@@ -575,21 +567,6 @@ final class CustomerMenuBuilder
         }
 
         return $this->entitlements->allows($featureKey) ? $item : null;
-    }
-
-    /**
-     * Any Business the actor can reach, active or not (a draft Business is
-     * still theirs to work on).
-     */
-    private function hasAnyAccessibleBusiness(CustomerContext $context): bool
-    {
-        foreach ($context->workspaces as $workspace) {
-            if ($workspace->accessibleBusinesses() !== []) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

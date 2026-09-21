@@ -22,6 +22,19 @@ class OpportunityActionRegistryTest extends TestCase
         'add_instagram_url',
     ];
 
+    public function test_retry_policy_covers_both_risk_flags_without_a_production_action(): void
+    {
+        $this->assertTrue(OpportunityActionRegistry::metadataAllowsRetry([
+            'mutates_business_data' => false, 'paid_effect' => false,
+        ]));
+        foreach ([[true, false], [false, true], [true, true]] as [$mutates, $paid]) {
+            $this->assertFalse(OpportunityActionRegistry::metadataAllowsRetry([
+                'mutates_business_data' => $mutates, 'paid_effect' => $paid,
+            ]));
+        }
+        $this->assertFalse(OpportunityActionRegistry::metadataAllowsRetry(null));
+        $this->assertFalse(OpportunityActionRegistry::mayRetryUnderOriginalApproval('unknown_action'));
+    }
     public function test_all_eleven_business_advisor_actions_are_registered(): void
     {
         $this->assertSame(self::EXPECTED_ACTION_KEYS, array_keys(OpportunityActionRegistry::all()));
@@ -81,7 +94,11 @@ class OpportunityActionRegistryTest extends TestCase
      */
     public function test_registry_exposes_only_the_trusted_execution_metadata_boundary(): void
     {
-        $baseKeys = ['schema_version', 'mutates_business_data', 'approval_required', 'completion_policy', 'parameter_rules'];
+        // Implementation Contract 19 §5.4(5)/§8: paid_effect and
+        // location_bound are first-class source-controlled risk flags, so
+        // they belong in the trusted metadata boundary — still plain
+        // booleans, never a callable or class name.
+        $baseKeys = ['schema_version', 'mutates_business_data', 'paid_effect', 'location_bound', 'approval_required', 'completion_policy', 'parameter_rules'];
         $addPhoneKeys = [...$baseKeys, 'handler_identifier', 'verifier_identifier'];
         $forbiddenKeys = ['validator', 'handler', 'verifier', 'callback', 'handler_class', 'verifier_class', 'system_verification_method'];
 
@@ -98,6 +115,25 @@ class OpportunityActionRegistryTest extends TestCase
         $addPhone = OpportunityActionRegistry::get('add_phone');
         $this->assertSame('business.update_phone', $addPhone['handler_identifier']);
         $this->assertSame('business.phone_matches_parameter', $addPhone['verifier_identifier']);
+    }
+
+    public function test_19d_keeps_only_add_phone_executable_and_preserves_both_hash_guards(): void
+    {
+        $executable = array_keys(array_filter(
+            OpportunityActionRegistry::all(),
+            static fn (array $definition): bool => isset($definition['handler_identifier']),
+        ));
+        $this->assertSame(['add_phone'], $executable);
+        $this->assertFalse(OpportunityActionRegistry::hasPaidEffect('add_phone'));
+        $this->assertFalse(OpportunityActionRegistry::isLocationBound('add_phone'));
+        $this->assertFalse(OpportunityActionRegistry::mayRetryUnderOriginalApproval('add_phone'));
+
+        $executor = file_get_contents(app_path('Library/Opportunity/OpportunityActionExecutor.php'));
+        $manager = file_get_contents(app_path('Library/Opportunity/OpportunityManager.php'));
+        $this->assertStringNotContainsString('SUPPORTED_ACTION_KEY', $executor);
+        $this->assertStringContainsString('OpportunityActionRegistry::get', $manager);
+        $this->assertStringContainsString('$recomputedHash !== $opportunity->recommended_action_hash', $executor);
+        $this->assertStringContainsString('$execution->recommended_action_hash !== $opportunity->recommended_action_hash', $executor);
     }
 
     /**

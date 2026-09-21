@@ -43,6 +43,12 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     use RefreshDatabase;
     use CreatesOpportunityTestData;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config()->set('opportunity.enabled', true);
+    }
+
     public function test_fully_configured_add_phone_becomes_awaiting_approval(): void
     {
         $business = $this->createBusinessForOpportunities();

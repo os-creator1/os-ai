@@ -268,7 +268,7 @@ class BusinessHomeNextBestMoveTest extends TestCase
         );
     }
 
-    public function test_a_recommendation_for_a_business_the_advisor_would_not_open_is_shown_without_a_link(): void
+    public function test_a_selected_secondary_business_has_advisor_links(): void
     {
         [$customer, $primary, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Primary Venue', 'Primary Account');
         $secondAccount = $this->createIndependentWorkspaceBusiness(businessName: 'Second Venue', workspaceName: 'Second Account');
@@ -283,11 +283,46 @@ class BusinessHomeNextBestMoveTest extends TestCase
         $html = $this->bandHtml($this->home()->assertOk()->getContent(), 'next_best_move');
 
         $this->assertSame('opportunity', $band['move']['key'], 'Real work is never replaced by "all caught up".');
-        $this->assertNull($band['move']['actionUrl'], 'The Advisor opens the PRIMARY Business, so no link is offered here.');
-        $this->assertNull($band['recommendations']['url']);
-        $this->assertStringNotContainsString(route('customer.opportunities.show', $opportunity), $html, 'An unauthorized destination is never linked.');
-        $this->assertStringNotContainsString('data-role="next-best-move-action"', $html);
+        $this->assertSame(route('customer.opportunities.show', $opportunity), $band['move']['actionUrl']);
+        $this->assertSame(route('customer.opportunities.index'), $band['recommendations']['url']);
+        $this->assertStringContainsString(route('customer.opportunities.show', $opportunity), $html);
         $this->assertStringContainsString('Add your business phone number', $html);
+    }
+
+    public function test_a_customer_without_business_advisor_sees_the_recommendation_without_advisor_links(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'No Advisor Venue', 'No Advisor Account');
+        $opportunity = $this->recommendation($business, ['type' => 'missing_phone']);
+        $this->authenticateAs($customer, array_values(array_diff($this->allCustomerPermissions(), ['business_advisor'])));
+
+        $band = $this->band($customer->user);
+        $html = $this->bandHtml($this->home()->assertOk()->getContent(), 'next_best_move');
+
+        $this->assertSame('opportunity', $band['move']['key']);
+        $this->assertNull($band['move']['actionUrl']);
+        $this->assertNull($band['recommendations']['url']);
+        $this->assertStringNotContainsString(route('customer.opportunities.show', $opportunity), $html);
+        $this->assertStringNotContainsString(route('customer.opportunities.index'), $html);
+        $this->get(route('customer.opportunities.show', $opportunity))->assertUnauthorized();
+        $this->get(route('customer.opportunities.index'))->assertUnauthorized();
+    }
+
+    public function test_agency_view_as_links_and_routes_stay_on_the_viewed_business(): void
+    {
+        [$agency, $viewed, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Viewed Venue', 'Agency Account');
+        $sibling = $this->createAgencyManagedClient($workspace, 'Sibling Venue', 'Sibling Account')['clientBusiness'];
+        $viewedOpportunity = $this->recommendation($viewed, ['type' => 'missing_phone']);
+        $siblingOpportunity = $this->recommendation($sibling, ['type' => 'missing_email', 'title' => 'Sibling only recommendation']);
+        $this->authenticateAs($agency);
+        $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
+
+        $band = $this->band($agency->user);
+        $this->assertSame(route('customer.opportunities.show', $viewedOpportunity), $band['move']['actionUrl']);
+        $this->assertSame(route('customer.opportunities.index'), $band['recommendations']['url']);
+        $this->get($band['move']['actionUrl'])->assertOk();
+        $queue = $this->get($band['recommendations']['url'])->assertOk();
+        $queue->assertDontSee('Sibling only recommendation');
+        $this->get(route('customer.opportunities.show', $siblingOpportunity))->assertNotFound();
     }
 
     // =================================================================

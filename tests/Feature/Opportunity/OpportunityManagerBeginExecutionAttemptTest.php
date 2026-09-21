@@ -49,6 +49,12 @@ class OpportunityManagerBeginExecutionAttemptTest extends TestCase
     use RefreshDatabase;
     use CreatesOpportunityTestData;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config()->set('opportunity.enabled', true);
+    }
+
     private const KNOWN_EVENTS = [
         OpportunityApprovalRequested::class,
         OpportunityBecameCurrent::class,
@@ -91,7 +97,7 @@ class OpportunityManagerBeginExecutionAttemptTest extends TestCase
         $this->assertSame(OpportunityActionExecutionStatus::Running, $attempt->execution->status);
     }
 
-    public function test_only_execution_status_changes(): void
+    public function test_claim_records_started_at_before_business_mutation(): void
     {
         $business = $this->createBusinessForOpportunities();
         [$opportunity, $execution] = $this->pendingOpportunityWithExecution($business);
@@ -100,7 +106,8 @@ class OpportunityManagerBeginExecutionAttemptTest extends TestCase
         $manager->beginExecutionAttempt($execution);
 
         $refreshed = $execution->fresh();
-        $this->assertNull($refreshed->started_at);
+        $this->assertNotNull($refreshed->started_at);
+        $this->assertNull($business->fresh()->phone);
         $this->assertNull($refreshed->completed_at);
         $this->assertNull($refreshed->safe_result_summary);
         $this->assertNull($refreshed->safe_error_summary);
@@ -334,7 +341,7 @@ class OpportunityManagerBeginExecutionAttemptTest extends TestCase
             'occurrence_number' => 1,
         ], $opportunityOverrides));
 
-        $user = $this->createUser();
+        $user = $business->customer->user;
 
         $execution = $this->createOpportunityActionExecution($opportunity, $user, array_merge([
             'action_key' => 'add_phone',

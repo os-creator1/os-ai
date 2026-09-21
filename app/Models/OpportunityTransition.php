@@ -23,6 +23,10 @@ class OpportunityTransition extends Model
         'to_status',
         'actor_type',
         'actor_user_id',
+        'view_as_session_id',
+        'initiated_by_type',
+        'coo_insight_id',
+        'coo_draft_id',
         'opportunity_run_id',
         'action_execution_id',
         'reason_code',
@@ -32,6 +36,7 @@ class OpportunityTransition extends Model
     protected $casts = [
         'category' => OpportunityTransitionCategory::class,
         'actor_type' => OpportunityTransitionActorType::class,
+        'view_as_session_id' => 'integer',
         'created_at' => 'datetime',
     ];
 

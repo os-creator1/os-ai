@@ -32,6 +32,7 @@ use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\CanonicalJson;
 use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityActionHash;
+use App\Library\Opportunity\OpportunityAuthorityGuard;
 use App\Library\Opportunity\OpportunityEvidenceValidator;
 use App\Library\Opportunity\OpportunityFingerprint;
 use App\Library\Opportunity\OpportunityManager;
@@ -709,7 +710,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
         [$opportunity, $execution] = $this->inProgressTrustedOpportunityWithExecution($business, OpportunityActionExecutionStatus::Pending, [], [
             'action_key' => 'some_other_action',
         ]);
-        $originalAttributes = $execution->getAttributes();
+        $originalAttributes = $execution->fresh()->getAttributes();
         $manager = $this->trustedManager($this->validTrustedActionDefinition());
 
         try {
@@ -837,6 +838,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
             app(OpportunityTransitionRepository::class),
             app(OpportunityActionExecutionRepository::class),
             app(OpportunityActionExecutor::class),
+            app(OpportunityAuthorityGuard::class),
             $definition,
             $supportsExecution,
         ) extends OpportunityManager {
@@ -853,6 +855,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
                 OpportunityTransitionRepository $transitionRepository,
                 OpportunityActionExecutionRepository $actionExecutionRepository,
                 OpportunityActionExecutor $opportunityActionExecutor,
+                OpportunityAuthorityGuard $authority,
                 private readonly ?array $testDefinition,
                 private readonly bool $testSupportsExecution,
             ) {
@@ -869,6 +872,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
                     $transitionRepository,
                     $actionExecutionRepository,
                     $opportunityActionExecutor,
+                    $authority,
                 );
             }
 
