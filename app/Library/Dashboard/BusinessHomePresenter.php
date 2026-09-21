@@ -544,9 +544,9 @@ final class BusinessHomePresenter
      *
      * LINKS. Every destination goes through DashboardLinkGate. An attention
      * move always has one (that is why it is in the pool). An Opportunity move
-     * links to the Advisor page only when that page would open THIS Business —
-     * the Advisor resolves the actor's own primary Business — and otherwise
-     * renders its title and "Why this?" as plain text with no action. It is
+     * links to Advisor only for the selected Business frame, when the route
+     * gate permits it. Otherwise it renders its title and "Why this?" as
+     * plain text with no action. It is
      * never replaced by "You're all caught up." while real work exists, and an
      * unauthorized destination is never linked (T-NBM-4).
      *
@@ -562,8 +562,7 @@ final class BusinessHomePresenter
             ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
             : collect();
 
-        $candidate = $context->selectedBusiness;
-        $advisorOpensThisBusiness = $candidate !== null && $candidate->customerId === $context->userId && $candidate->isPrimary;
+        $advisorOpensThisBusiness = $context->isBusinessFrame() && $context->selectedBusiness !== null;
 
         $move = $this->nextBestMoveSelector->select($attention, $queue->first());
 
@@ -590,7 +589,7 @@ final class BusinessHomePresenter
                 'why' => $this->whyThis->forOpportunity($opportunity),
                 'actionLabel' => 'Open recommendation',
                 'actionUrl' => $advisorOpensThisBusiness
-                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.show', [(string) $opportunity->id], ['access_backend'])
+                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.show', [(string) $opportunity->id], ['business_advisor'])
                     : null,
             ];
         }
@@ -602,7 +601,7 @@ final class BusinessHomePresenter
             'recommendations' => $count === 0 ? null : [
                 'label' => $count >= self::RECOMMENDATION_QUEUE_CAP ? self::RECOMMENDATION_QUEUE_CAP . '+' : (string) $count,
                 'url' => $advisorOpensThisBusiness
-                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.index', [], ['access_backend'])
+                    ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.index', [], ['business_advisor'])
                     : null,
             ],
         ];

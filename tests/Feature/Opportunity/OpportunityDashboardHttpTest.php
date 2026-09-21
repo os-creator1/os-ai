@@ -259,7 +259,7 @@ class OpportunityDashboardHttpTest extends TestCase
         $this->assertStringNotContainsString('data-role="next-best-move-all"', $band);
         $response->assertDontSee('No opportunities are available right now.');
         $response->assertDontSee($this->showHref($stale), false);
-        // The navigation still offers the Advisor queue; the band adds no link to it.
+        // With no recommendation, Business Home offers no Advisor queue link.
         $this->assertStringNotContainsString(route('customer.opportunities.index'), $band);
     }
 
