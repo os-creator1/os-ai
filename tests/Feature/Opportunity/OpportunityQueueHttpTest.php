@@ -55,15 +55,16 @@ class OpportunityQueueHttpTest extends TestCase
         $opportunity = $this->createOpportunity($business);
         $business->customer->update(['permissions' => json_encode([])]);
 
-        $this->get(route('customer.opportunities.index'))->assertForbidden();
-        $this->get(route('customer.opportunities.show', $opportunity->id))->assertForbidden();
+        // The application's exception handler maps an authenticated Gate denial to 401.
+        $this->get(route('customer.opportunities.index'))->assertUnauthorized();
+        $this->get(route('customer.opportunities.show', $opportunity->id))->assertUnauthorized();
     }
 
     public function test_queue_follows_customer_context_selected_business_instead_of_primary(): void
     {
         $primary = $this->actingAsCustomerWithBusiness();
         $this->createOpportunity($primary, ['title' => 'Primary business opportunity']);
-        $secondary = $this->createBusinessWithWorkspace($primary->customer, $primary->workspace, $this->businessAttributes());
+        $secondary = $this->createBusinessWithWorkspace($primary->customer, $this->businessAttributes());
         $secondary = app(BusinessRepository::class)->updateStatus($secondary, BusinessStatus::Active);
         $this->createOpportunity($secondary, ['title' => 'Selected business opportunity']);
 
