@@ -190,17 +190,13 @@ final class CustomerMenuBuilder
         ]);
 
         // Opportunities — the CRM sales board of the selected Business
-        // (App\Library\Crm), separate from the AI COO Advisor.
+        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
         // Business frame only: an Agency reaches it after choosing a client
         // Business. Offered exactly when the CRM boundary would let the actor
         // in — the `crm` entitlement and the board's own read permission.
         $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
             'customer.workspaces.businesses.crm.',
         ]));
-
-        if (config('opportunity.enabled', false)) {
-            $items[] = $this->entitled('ai_coo_basic', $this->item($user, 'advisor', 'Advisor', 'compass', ['business_advisor'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']));
-        }
 
         // Calendar — the authenticated day/week schedule (Contract 15 §12.D). Offered
         // only when the Business is entitled to it; while PlatformFeature::Calendar is

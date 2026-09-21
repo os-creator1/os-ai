@@ -18,8 +18,8 @@ use Illuminate\Support\Facades\Schema;
  * `opportunities` row sitting in `awaiting_approval` — so §8's "approval/
  * execution rows" resolves to those two tables:
  *   - `opportunities.approval_expires_at` is the live window, stamped when
- *     the approval is requested and cleared when the Opportunity leaves
- *     `awaiting_approval`;
+ *     the approval is requested; the execution captures that value at
+ *     confirmation;
  *   - `opportunity_action_executions.approval_expires_at` is the SNAPSHOT
  *     taken at confirmation, so the queued job can re-check the very window
  *     the customer agreed under even after the Opportunity has moved on
@@ -31,8 +31,9 @@ use Illuminate\Support\Facades\Schema;
  * are written only for `paid_effect` actions; existing rows keep `NULL`,
  * which the executor treats as 'not a paid-effect action' — never as
  * 'unlimited'"). No action in the registry is `paid_effect` today, so every
- * value written by this slice is NULL by construction. Microdollars mirror
- * `ai_usage_ledger`'s existing integer-money convention rather than a float.
+ * value written by this slice is NULL by construction. These are customer
+ * action-cost ceilings, in payer-currency minor units or action units; AI
+ * provider cost in micro-USD belongs to the separate AI usage ledger.
  *
  * `actor_user_id` ALREADY EXISTS on `opportunity_transitions`
  * (2026_07_19_120005, as a nullable bigint), so §8's list is satisfied for
@@ -56,6 +57,7 @@ return new class extends Migration
             // which is every row until one is requested — never "no expiry".
             $table->timestamp('approval_expires_at')->nullable()->after('occurrence_number');
             $table->string('approval_initiated_by_type', 16)->nullable()->after('approval_expires_at');
+            $this->addActionCostColumns($table);
         });
 
         Schema::table('opportunity_action_executions', function (Blueprint $table): void {
@@ -69,14 +71,12 @@ return new class extends Migration
             // §8 / §19.E — the approval-side cost snapshot. NULL means "no
             // estimate", which for a paid_effect action is a refusal, not a
             // licence.
-            $table->unsignedBigInteger('estimated_cost_microusd')->nullable()->after('approval_expires_at');
-            $table->char('estimated_cost_currency', 3)->nullable()->after('estimated_cost_microusd');
-            $table->timestamp('cost_estimated_at')->nullable()->after('estimated_cost_currency');
+            $this->addActionCostColumns($table);
         });
 
         Schema::table('opportunity_transitions', function (Blueprint $table): void {
             // Who the actor was acting AS, and what proposed the change.
-            $table->string('view_as_session_id', 64)->nullable()->after('actor_user_id');
+            $table->unsignedBigInteger('view_as_session_id')->nullable()->after('actor_user_id');
             $table->string('initiated_by_type', 16)->nullable()->after('view_as_session_id');
 
             // Provenance: which COO artefact, if any, this transition came
@@ -97,14 +97,38 @@ return new class extends Migration
                 'approval_expires_at',
                 'confirmed_by_user_id',
                 'confirmed_by_type',
-                'estimated_cost_microusd',
-                'estimated_cost_currency',
-                'cost_estimated_at',
+                ...$this->actionCostColumnNames(),
             ]);
         });
 
         Schema::table('opportunities', function (Blueprint $table): void {
-            $table->dropColumn(['approval_expires_at', 'approval_initiated_by_type']);
+            $table->dropColumn(['approval_expires_at', 'approval_initiated_by_type', ...$this->actionCostColumnNames()]);
         });
+    }
+
+    private function addActionCostColumns(Blueprint $table): void
+    {
+        $table->string('action_cost_payer_type', 16)->nullable();
+        $table->unsignedBigInteger('action_cost_payer_workspace_id')->nullable();
+        $table->char('action_cost_currency_code', 3)->nullable();
+        $table->unsignedBigInteger('action_cost_amount_minor_upper_bound')->nullable();
+        $table->unsignedBigInteger('action_cost_unit_count')->nullable();
+        $table->string('action_cost_unit_kind', 32)->nullable();
+        $table->string('action_cost_basis', 16)->nullable();
+        $table->string('action_cost_price_version', 64)->nullable();
+        $table->timestamp('action_cost_estimated_at')->nullable();
+        $table->timestamp('action_cost_expires_at')->nullable();
+        $table->boolean('action_cost_wallet_sufficient')->nullable();
+    }
+
+    private function actionCostColumnNames(): array
+    {
+        return [
+            'action_cost_payer_type', 'action_cost_payer_workspace_id',
+            'action_cost_currency_code', 'action_cost_amount_minor_upper_bound',
+            'action_cost_unit_count', 'action_cost_unit_kind', 'action_cost_basis',
+            'action_cost_price_version', 'action_cost_estimated_at',
+            'action_cost_expires_at', 'action_cost_wallet_sufficient',
+        ];
     }
 };

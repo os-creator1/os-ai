@@ -25,6 +25,12 @@ use App\Models\BusinessLocation;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
 use App\Models\User;
+use App\Library\Navigation\CustomerContext;
+use App\Library\Navigation\CustomerFrame;
+use App\Library\Navigation\ContextSource;
+use App\Library\ViewAs\ViewAsContext;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
 use Tests\TestCase;
@@ -38,6 +44,57 @@ class OpportunityApprovalLifecycleHardeningTest extends TestCase
     {
         parent::setUp();
         config()->set('opportunity.enabled', true);
+    }
+
+    public function test_action_cost_schema_has_matching_approval_and_execution_snapshots(): void
+    {
+        foreach (['opportunities', 'opportunity_action_executions'] as $table) {
+            $this->assertTrue(Schema::hasColumns($table, OpportunityAuthorityGuard::ACTION_COST_FIELDS));
+        }
+        $this->assertTrue(Schema::hasColumn('opportunity_transitions', 'view_as_session_id'));
+    }
+
+    public function test_normal_human_approval_transition_records_real_actor_without_view_as(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->configured($business);
+        app(OpportunityManager::class)->requestApproval($opportunity, $business->customer);
+
+        $this->assertDatabaseHas('opportunity_transitions', [
+            'opportunity_id' => $opportunity->id,
+            'actor_user_id' => $business->customer->user_id,
+            'view_as_session_id' => null,
+            'reason_code' => 'customer_requested_approval',
+        ]);
+    }
+
+    public function test_view_as_attribution_uses_resolved_session_and_refuses_spoofed_ids(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $actorId = (int) $business->customer->user_id;
+        $viewAs = new ViewAsContext(
+            4242, 'server-session', $actorId, 'Agency human',
+            (int) $business->workspace_id, (string) $business->workspace->uid,
+            (int) $business->id, (string) $business->uid, (string) $business->name,
+            CarbonImmutable::now(), CarbonImmutable::now()->addHour(),
+        );
+        request()->attributes->set('customerContext', new CustomerContext(
+            $actorId, CustomerFrame::Business, [], null, null,
+            ContextSource::ViewAs, $viewAs, false,
+        ));
+        request()->merge(['actor_user_id' => 99999, 'view_as_session_id' => 99999]);
+        $opportunity = $this->configured($business);
+        $manager = app(OpportunityManager::class);
+        $manager->requestApproval($opportunity, $business->customer);
+        $execution = $manager->confirmApproval($opportunity, $business->customer);
+
+        $this->assertSame(2, \App\Models\OpportunityTransition::query()
+            ->where('opportunity_id', $opportunity->id)
+            ->where('actor_user_id', $actorId)
+            ->where('view_as_session_id', 4242)->count());
+        $business->customer->update(['permissions' => json_encode([])]);
+        $this->runExecution($execution);
+        $this->assertRefusedWithoutEffect($business, $execution);
     }
 
     public function test_capability_revoked_after_approval_refuses_execution_without_effect(): void
@@ -191,6 +248,60 @@ class OpportunityApprovalLifecycleHardeningTest extends TestCase
 
         $this->expectException(OpportunityPaidEffectEstimateMissingException::class);
         app(OpportunityAuthorityGuard::class)->assertPaidEffectIsCovered($opportunity, 'unregistered_paid_action', $execution);
+    }
+
+    public function test_paid_effect_approval_snapshot_can_be_confirmed_and_execution_must_match(): void
+    {
+        [$business, $opportunity, $execution] = $this->approved();
+        $snapshot = [
+            'action_cost_payer_type' => 'workspace',
+            'action_cost_payer_workspace_id' => $business->workspace_id,
+            'action_cost_currency_code' => 'USD',
+            'action_cost_amount_minor_upper_bound' => 250,
+            'action_cost_unit_count' => null,
+            'action_cost_unit_kind' => null,
+            'action_cost_basis' => 'upper_bound',
+            'action_cost_price_version' => 'test-v1',
+            'action_cost_estimated_at' => now(),
+            'action_cost_expires_at' => now()->addHour(),
+            'action_cost_wallet_sufficient' => true,
+        ];
+        $opportunity->update($snapshot);
+        $guard = app(OpportunityAuthorityGuard::class);
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action');
+        $execution->update($snapshot);
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh());
+
+        $execution->update(['action_cost_amount_minor_upper_bound' => 251]);
+        $this->expectException(OpportunityPaidEffectEstimateMissingException::class);
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh());
+    }
+
+    public function test_confirmation_copies_the_approval_record_action_cost_ceiling(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->configured($business);
+        $manager = app(OpportunityManager::class);
+        $manager->requestApproval($opportunity, $business->customer);
+        $opportunity->update([
+            'action_cost_payer_type' => 'workspace',
+            'action_cost_payer_workspace_id' => $business->workspace_id,
+            'action_cost_currency_code' => 'USD',
+            'action_cost_amount_minor_upper_bound' => 250,
+            'action_cost_basis' => 'upper_bound',
+            'action_cost_price_version' => 'test-v1',
+            'action_cost_estimated_at' => now(),
+            'action_cost_expires_at' => now()->addHour(),
+            'action_cost_wallet_sufficient' => true,
+        ]);
+
+        $execution = $manager->confirmApproval($opportunity, $business->customer);
+
+        $guard = app(OpportunityAuthorityGuard::class);
+        $this->assertSame(
+            $guard->actionCostSnapshot($opportunity->fresh()),
+            $guard->actionCostSnapshot($execution->fresh()),
+        );
     }
 
     public function test_kill_switch_refuses_all_four_lifecycle_entry_points(): void

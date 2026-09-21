@@ -305,7 +305,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response->assertDontSee(route('customer.opportunities.index'), false);
     }
 
-    public function test_enabled_navigation_entry_is_present(): void
+    public function test_enabled_business_sidebar_has_no_separate_advisor_entry(): void
     {
         $this->actingAsCustomerWithBusiness();
         $this->setOpportunityEngineEnabled(true);
@@ -313,7 +313,7 @@ class OpportunityQueueHttpTest extends TestCase
         $response = $this->get(route('customer.business.edit'));
 
         $response->assertOk();
-        $response->assertSee(route('customer.opportunities.index'), false);
+        $response->assertDontSee(route('customer.opportunities.index'), false);
     }
 
     public function test_detail_displays_the_latest_execution_by_attempt_number_then_id(): void

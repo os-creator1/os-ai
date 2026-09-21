@@ -216,11 +216,13 @@ class CustomerNavigationTreeTest extends TestCase
      */
     public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
     {
+        config(['opportunity.enabled' => true]);
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
 
         $this->switchToAccount($workspace);
         $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
+        $this->assertNotContains('advisor', $this->menuKeys($this->home()->assertOk()->getContent()), 'The account frame cannot open a Business-context Advisor route.');
 
         $this->switchTo($workspace, $clientOne);
         $html = $this->home()->assertOk()->getContent();

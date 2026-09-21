@@ -218,8 +218,15 @@ final class OpportunityActionRegistry
             return false;
         }
 
-        return ($definition['mutates_business_data'] ?? true) === false
-            && self::hasPaidEffect($actionKey) === false;
+        return self::metadataAllowsRetry($definition);
+    }
+
+    /** Pure policy seam; null/unknown metadata fails closed. */
+    public static function metadataAllowsRetry(?array $definition): bool
+    {
+        return $definition !== null
+            && ($definition['mutates_business_data'] ?? null) === false
+            && ($definition['paid_effect'] ?? null) === false;
     }
 
     /**

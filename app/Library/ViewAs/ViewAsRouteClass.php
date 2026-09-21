@@ -12,6 +12,9 @@ enum ViewAsRouteClass: string
     /** Carries `businessUid`: allowed only for the viewed Business. */
     case BusinessScoped = 'business_scoped';
 
+    /** Uses the resolved viewed Business rather than URL Workspace/Business ids. */
+    case ContextScoped = 'context_scoped';
+
     /** A bare module entry: redirected into the viewed Business. */
     case RedirectToViewed = 'redirect_to_viewed';
 

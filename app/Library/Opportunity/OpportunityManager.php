@@ -64,6 +64,8 @@ use App\Models\OpportunityActionExecution;
 use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
 use App\Models\User;
+use App\Models\OpportunityTransition;
+use App\Library\Navigation\CustomerContext;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
@@ -483,7 +485,7 @@ class OpportunityManager
             'dismissed_at' => $now,
         ]);
 
-        $this->transitionRepository->create([
+        $this->createTransition([
             'opportunity_id' => $locked->id,
             'category' => OpportunityTransitionCategory::Workflow->value,
             'from_status' => $fromStatus->value,
@@ -584,7 +586,7 @@ class OpportunityManager
             'snoozed_until' => $snoozedUntil,
         ]);
 
-        $this->transitionRepository->create([
+        $this->createTransition([
             'opportunity_id' => $locked->id,
             'category' => OpportunityTransitionCategory::Workflow->value,
             'from_status' => $fromStatus->value,
@@ -685,7 +687,7 @@ class OpportunityManager
             'completed_at' => null,
         ]);
 
-        $this->transitionRepository->create([
+        $this->createTransition([
             'opportunity_id' => $locked->id,
             'category' => OpportunityTransitionCategory::Workflow->value,
             'from_status' => $fromStatus->value,
@@ -745,7 +747,7 @@ class OpportunityManager
                         'snoozed_until' => null,
                     ]);
 
-                    $this->transitionRepository->create([
+                    $this->createTransition([
                         'opportunity_id' => $locked->id,
                         'category' => OpportunityTransitionCategory::Workflow->value,
                         'from_status' => OpportunityStatus::Snoozed->value,
@@ -830,7 +832,7 @@ class OpportunityManager
                 'completed_at' => $now,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $lockedOpportunity->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Open->value,
@@ -894,7 +896,7 @@ class OpportunityManager
                 'approval_initiated_by_type' => $proposer->value,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $locked->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Open->value,
@@ -1066,7 +1068,7 @@ class OpportunityManager
                     'status' => OpportunityStatus::Open->value,
                     'approval_expires_at' => null,
                 ]);
-                $this->transitionRepository->create([
+                $this->createTransition([
                     'opportunity_id' => $locked->id,
                     'category' => OpportunityTransitionCategory::Workflow->value,
                     'from_status' => OpportunityStatus::AwaitingApproval->value,
@@ -1123,6 +1125,7 @@ class OpportunityManager
                 'confirmed_by_user_id' => $customer->user_id,
                 'confirmed_by_type' => $confirmingPrincipal->value,
                 'approval_expires_at' => $locked->approval_expires_at,
+                ...$this->authority->actionCostSnapshot($locked),
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             ]);
 
@@ -1130,7 +1133,7 @@ class OpportunityManager
                 'status' => OpportunityStatus::InProgress->value,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $locked->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::AwaitingApproval->value,
@@ -1239,6 +1242,7 @@ class OpportunityManager
                 'confirmed_by_user_id' => $customer->user_id,
                 'confirmed_by_type' => OpportunityInitiatedByType::Customer->value,
                 'approval_expires_at' => $failedExecution->approval_expires_at,
+                ...$this->authority->actionCostSnapshot($failedExecution),
                 'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
             ]);
 
@@ -1246,7 +1250,7 @@ class OpportunityManager
                 'status' => OpportunityStatus::InProgress->value,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $lockedOpportunity->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Open->value,
@@ -1424,7 +1428,7 @@ class OpportunityManager
                 'status' => OpportunityStatus::InProgress->value,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $lockedOpportunity->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Open->value,
@@ -1698,7 +1702,7 @@ class OpportunityManager
                 'recommended_action_hash' => $newHash,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $locked->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Open->value,
@@ -1999,7 +2003,7 @@ class OpportunityManager
                     'completed_at' => $now,
                 ]);
 
-                $this->transitionRepository->create([
+                $this->createTransition([
                     'opportunity_id' => $lockedOpportunity->id,
                     'category' => OpportunityTransitionCategory::Workflow->value,
                     'from_status' => OpportunityStatus::InProgress->value,
@@ -2051,7 +2055,7 @@ class OpportunityManager
                 'completed_at' => null,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $lockedOpportunity->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::InProgress->value,
@@ -2612,7 +2616,7 @@ class OpportunityManager
         $updated = $this->opportunityRepository->update($existing, $updates);
 
         if ($isRecurrence) {
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $existing->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::Completed->value,
@@ -2627,7 +2631,7 @@ class OpportunityManager
         }
 
         if ($isActionRevision) {
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $existing->id,
                 'category' => OpportunityTransitionCategory::Workflow->value,
                 'from_status' => OpportunityStatus::AwaitingApproval->value,
@@ -2642,7 +2646,7 @@ class OpportunityManager
         }
 
         if ($wasStale) {
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $existing->id,
                 'category' => OpportunityTransitionCategory::Freshness->value,
                 'from_status' => OpportunityFreshness::Stale->value,
@@ -2693,7 +2697,7 @@ class OpportunityManager
                 'stale_at' => $now,
             ]);
 
-            $this->transitionRepository->create([
+            $this->createTransition([
                 'opportunity_id' => $opportunity->id,
                 'category' => OpportunityTransitionCategory::Freshness->value,
                 'from_status' => OpportunityFreshness::Current->value,
@@ -2708,5 +2712,22 @@ class OpportunityManager
 
             OpportunityMarkedStale::dispatch($opportunity->id, $lockedRun->business_id, $lockedRun->id, $lockedRun->worker_key->value);
         }
+    }
+
+    /** Append-only transition with attribution from the canonical resolved request. */
+    private function createTransition(array $attributes): OpportunityTransition
+    {
+        $attributes['view_as_session_id'] = null;
+        $context = request()->attributes->get('customerContext');
+
+        if (($attributes['actor_type'] ?? null) === OpportunityTransitionActorType::Customer->value
+            && $context instanceof CustomerContext
+            && $context->viewAs !== null
+            && $context->userId === $context->viewAs->actorUserId
+            && $context->userId === (int) ($attributes['actor_user_id'] ?? 0)) {
+            $attributes['view_as_session_id'] = $context->viewAs->sessionId;
+        }
+
+        return $this->transitionRepository->create($attributes);
     }
 }

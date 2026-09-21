@@ -60,9 +60,9 @@ use Illuminate\Support\Carbon;
  *   8. paid-effect guards     assertPaidEffectIsCovered()
  *   9. idempotency claim      the caller's existing UNIQUE-key claim
  *
- * Gates 3-5 and 8 are grouped in assertMutableAuthority() so no caller can
- * accidentally run them out of order or skip one; gates 2, 6 and 9 stay with
- * the caller because they are inseparable from its lock and its writes.
+ * Gates 3-5 are grouped in assertMutableAuthority(); gate 8 is called after
+ * the hash and freshness checks. Gates 2, 6 and 9 stay with the caller
+ * because they are inseparable from its lock and its writes.
  *
  * WHY THE REFUSALS ARE OpportunityActionNotExecutableException SUBCLASSES.
  * The queued ExecuteOpportunityAction already routes that type to a clean,
@@ -73,6 +73,13 @@ use Illuminate\Support\Carbon;
  */
 final class OpportunityAuthorityGuard
 {
+    public const ACTION_COST_FIELDS = [
+        'action_cost_payer_type', 'action_cost_payer_workspace_id',
+        'action_cost_currency_code', 'action_cost_amount_minor_upper_bound',
+        'action_cost_unit_count', 'action_cost_unit_kind', 'action_cost_basis',
+        'action_cost_price_version', 'action_cost_estimated_at',
+        'action_cost_expires_at', 'action_cost_wallet_sufficient',
+    ];
     /**
      * §5.4(2) gate 3 — "the actor's feature permission for the action's
      * domain". One key for the whole Advisor module; see
@@ -107,7 +114,7 @@ final class OpportunityAuthorityGuard
     }
 
     /**
-     * §5.4(2) gates 3, 4, 5 and 8, in order, against the LOCKED Opportunity.
+     * §5.4(2) gates 3, 4 and 5, in order, against the LOCKED Opportunity.
      *
      * $lockedOpportunity must be the row returned by
      * findOwnedForUpdate() — never a caller-supplied model — so every read
@@ -270,12 +277,10 @@ final class OpportunityAuthorityGuard
      * §5.4(5) gate 8 — a `paid_effect` action may not run without an
      * approved cost estimate.
      *
-     * Unreachable today by construction: no registry action is
-     * `paid_effect`. It is written now so the first paid action cannot ship
-     * through a path that never asked what it would cost. §8 fixes the
-     * reading of a NULL snapshot: "the executor treats [it] as 'not a
-     * paid-effect action' — never as 'unlimited'", so a NULL cost on a
-     * PAID action is a refusal.
+     * The awaiting-approval Opportunity owns the approved customer action
+     * ceiling. At confirmation there is no execution yet; its snapshot is
+     * compared with that approval record on each execution attempt. The
+     * estimator and live payer/wallet recheck belong to 19.E.
      */
     public function assertPaidEffectIsCovered(
         Opportunity $lockedOpportunity,
@@ -286,12 +291,45 @@ final class OpportunityAuthorityGuard
             return;
         }
 
-        if ($execution === null || $execution->estimated_cost_microusd === null) {
+        $approval = $this->actionCostSnapshot($lockedOpportunity);
+        $complete = $approval['action_cost_payer_type'] !== null
+            && $approval['action_cost_payer_workspace_id'] !== null
+            && $approval['action_cost_basis'] !== null
+            && $approval['action_cost_price_version'] !== null
+            && $approval['action_cost_estimated_at'] !== null
+            && $approval['action_cost_expires_at'] !== null
+            && Carbon::parse($approval['action_cost_expires_at'])->isFuture()
+            && $approval['action_cost_wallet_sufficient'] === true
+            && ($approval['action_cost_amount_minor_upper_bound'] !== null
+                || $approval['action_cost_unit_count'] !== null)
+            && ($approval['action_cost_amount_minor_upper_bound'] === null
+                || $approval['action_cost_currency_code'] !== null)
+            && ($approval['action_cost_unit_count'] === null
+                || $approval['action_cost_unit_kind'] !== null);
+
+        if ($complete && $execution !== null) {
+            $complete = $approval === $this->actionCostSnapshot($execution);
+        }
+
+        if (! $complete) {
             throw OpportunityPaidEffectEstimateMissingException::forAction(
                 (int) $lockedOpportunity->id,
                 $actionKey
             );
         }
+    }
+
+    /** @return array<string, mixed> */
+    public function actionCostSnapshot(Opportunity|OpportunityActionExecution $record): array
+    {
+        $snapshot = [];
+
+        foreach (self::ACTION_COST_FIELDS as $field) {
+            $value = $record->{$field};
+            $snapshot[$field] = $value instanceof CarbonInterface ? $value->toISOString() : $value;
+        }
+
+        return $snapshot;
     }
 
     /**

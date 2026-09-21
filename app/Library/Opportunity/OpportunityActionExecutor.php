@@ -9,7 +9,6 @@ use App\Enums\Opportunity\OpportunityStatus;
 use App\Library\Business\BusinessManager;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionVerificationException;
-use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
 
@@ -46,6 +45,7 @@ final class OpportunityActionExecutor
     public function __construct(
         private readonly BusinessManager $businessManager,
         private readonly OpportunityActionRegistry $registry,
+        private readonly OpportunityAuthorityGuard $authority,
     ) {
     }
 
@@ -76,10 +76,7 @@ final class OpportunityActionExecutor
     {
         $value = $this->assertExecutable($opportunity, $execution);
 
-        if (OpportunityActionRegistry::hasPaidEffect($execution->action_key)
-            && $execution->estimated_cost_microusd === null) {
-            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $opportunity->id, $execution->action_key);
-        }
+        $this->authority->assertPaidEffectIsCovered($opportunity, $execution->action_key, $execution);
 
         $definition = $this->registry::get($execution->action_key);
         $handler = self::HANDLERS[$definition['handler_identifier']];

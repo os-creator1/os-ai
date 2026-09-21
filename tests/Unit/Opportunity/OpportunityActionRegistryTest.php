@@ -22,6 +22,19 @@ class OpportunityActionRegistryTest extends TestCase
         'add_instagram_url',
     ];
 
+    public function test_retry_policy_covers_both_risk_flags_without_a_production_action(): void
+    {
+        $this->assertTrue(OpportunityActionRegistry::metadataAllowsRetry([
+            'mutates_business_data' => false, 'paid_effect' => false,
+        ]));
+        foreach ([[true, false], [false, true], [true, true]] as [$mutates, $paid]) {
+            $this->assertFalse(OpportunityActionRegistry::metadataAllowsRetry([
+                'mutates_business_data' => $mutates, 'paid_effect' => $paid,
+            ]));
+        }
+        $this->assertFalse(OpportunityActionRegistry::metadataAllowsRetry(null));
+        $this->assertFalse(OpportunityActionRegistry::mayRetryUnderOriginalApproval('unknown_action'));
+    }
     public function test_all_eleven_business_advisor_actions_are_registered(): void
     {
         $this->assertSame(self::EXPECTED_ACTION_KEYS, array_keys(OpportunityActionRegistry::all()));

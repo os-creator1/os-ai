@@ -51,6 +51,7 @@ class ResolveCustomerContext
         }
 
         $viewAs = $this->viewAs->current($user);
+        $class = null;
 
         if ($viewAs !== null) {
             $route = $request->route();
@@ -86,6 +87,11 @@ class ResolveCustomerContext
                     }
                     break;
 
+                case ViewAsRouteClass::ContextScoped:
+                    // The controller resolves only the Business selected by
+                    // CustomerContext; the exact viewed pair is checked below.
+                    break;
+
                 case ViewAsRouteClass::RedirectToViewed:
                     $target = $this->classification->redirectTargetFor((string) $route?->getName());
 
@@ -105,6 +111,12 @@ class ResolveCustomerContext
         }
 
         $context = $this->resolver->resolve($user, $request, $viewAs);
+
+        if ($viewAs !== null && $class === ViewAsRouteClass::ContextScoped
+            && ((int) ($context->selectedBusiness?->id ?? 0) !== $viewAs->businessId
+                || (int) ($context->selectedWorkspace?->id ?? 0) !== $viewAs->workspaceId)) {
+            abort(404);
+        }
 
         $this->container->instance(CustomerContext::class, $context);
         $request->attributes->set('customerContext', $context);
