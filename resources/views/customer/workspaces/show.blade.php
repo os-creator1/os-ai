@@ -276,9 +276,17 @@
             @endif
 
             @if ($section === 'team' && isset($directory))
+                @include('customer.settings._module-header', [
+                    'backUrl' => route('customer.workspaces.settings.show', request()->route('workspaceUid')),
+                    'title' => 'Team',
+                    'description' => 'Manage members and their Business access.',
+                ])
+
                 <div class="col-12">
                     <x-card title="Members">
-                        <form method="POST" data-workspace-action="members" class="mb-2">
+                        <div class="row">
+                            <div class="col-12 col-xl-8">
+                                <form method="POST" data-workspace-action="members" class="mb-2">
                             @csrf
 
                             <x-input name="member_email" label="Email address" type="email" value="{{ old('member_email') }}" autocomplete="off" help="They need an existing Business OS account before you can add them." :error="$errors->first('member_email')" required />
@@ -324,7 +332,9 @@
                             @endif
 
                             <x-button type="submit" variant="outline">Add member</x-button>
-                        </form>
+                                </form>
+                            </div>
+                        </div>
 
                         @if (empty($directory))
                             <x-empty-state icon="inbox" title="This {{ $accountNoun }} has no members." />

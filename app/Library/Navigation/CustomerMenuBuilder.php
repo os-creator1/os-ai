@@ -206,7 +206,7 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.calendar.',
         ]));
 
-        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
+        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [
             'customer.workspaces.businesses.automations.', 'customer.automations.',
         ]));
         $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [

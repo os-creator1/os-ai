@@ -12,14 +12,18 @@
             <h4 class="card-title">Add a package or product</h4>
             <p class="card-text text-muted">It is added to <strong>{{ $business->name }}</strong>'s one catalog and offered at every location until you say otherwise.</p>
 
-            <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.store', $scope) }}" data-role="catalog-create-form">
-                @csrf
+                <div class="row">
+                    <div class="col-12 col-xl-8">
+                        <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.store', $scope) }}" data-role="catalog-create-form">
+                        @csrf
 
                 @include('customer.business.catalog._form', ['item' => null])
 
-                <button type="submit" class="btn btn-primary">Add to catalog</button>
-                <a href="{{ route('customer.workspaces.businesses.catalog.index', $scope) }}" class="btn btn-outline-secondary">Cancel</a>
-            </form>
+                        <button type="submit" class="btn btn-primary">Add to catalog</button>
+                        <a href="{{ route('customer.workspaces.businesses.catalog.index', $scope) }}" class="btn btn-outline-secondary">Cancel</a>
+                        </form>
+                    </div>
+                </div>
         </div>
     </div>
 @endsection

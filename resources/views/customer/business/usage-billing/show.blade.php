@@ -53,17 +53,14 @@
         $stateLabel = static fn (string $state): string => \Illuminate\Support\Facades\Lang::has('locale.usage_billing.activity.states.' . $state) ? __('locale.usage_billing.activity.states.' . $state) : ucfirst(str_replace('_', ' ', $state));
     @endphp
 
+    @include('customer.settings._module-header', [
+        'backUrl' => $isAgencyFrame ? route('customer.workspaces.show', $workspaceUid) : route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
+        'backLabel' => $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_settings'),
+        'title' => __('locale.usage_billing.title'),
+    ])
+
     <section id="usage-billing-dashboard">
         <div class="row">
-            <div class="col-12">
-                {{-- An Agency returns to its client accounts; anyone else came here from
-                     this Business's Settings (walkthrough settings cleanup). --}}
-                <a href="{{ $isAgencyFrame ? route('customer.workspaces.show', $workspaceUid) : route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
-                    <x-ds-icon name="arrow-left" size="16" aria-hidden="true" />
-                    {{ $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_settings') }}
-                </a>
-            </div>
-
             <div class="col-12">
                 @if (session('flash_success'))
                     <x-alert variant="success" icon="check-circle" class="mb-2" role="status">{{ session('flash_success') }}</x-alert>
@@ -90,7 +87,7 @@
 
             {{-- 1. Balance --}}
             <div class="col-12">
-                <x-card id="usage-billing-wallet" :title="$dashboard->business['name'] . ' — ' . __('locale.usage_billing.title')">
+                <x-card id="usage-billing-wallet" title="Balance">
                     @if ($wallet === null)
                         <p class="mb-0">{{ __('locale.usage_billing.not_set_up') }}</p>
                     @else
@@ -440,7 +437,9 @@
                             </dl>
                         @endif
 
-                        <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.billing-contact', [$workspaceUid, $businessUid]) }}" novalidate>
+                        <div class="row">
+                            <div class="col-12 col-xl-8">
+                                <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.billing-contact', [$workspaceUid, $businessUid]) }}" novalidate>
                             @csrf
 
                             <div class="mb-1">
@@ -459,8 +458,10 @@
                                 <label class="form-check-label text-label" for="usage-billing-contact-notify">Send billing notifications to this contact</label>
                             </div>
 
-                            <x-button type="submit" variant="outline">Update billing contact</x-button>
-                        </form>
+                                <x-button type="submit" variant="outline">Update billing contact</x-button>
+                            </form>
+                            </div>
+                        </div>
                     </x-card>
                 </div>
             @endif

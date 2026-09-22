@@ -456,7 +456,7 @@ final class BusinessHomePresenter
             AttentionType::ConversationsAwaitingReply => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.conversations.index', $scoped, ['chat_box'], 'conversations'),
             AttentionType::WebsiteUnpublished => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
             AttentionType::GoogleConnectionLost, AttentionType::GoogleLocationUnhealthy => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.gbp.index', $scoped, ['view_google_business_profile'], 'google_business_profile_module'),
-            AttentionType::AutomationFailing => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations'),
+            AttentionType::AutomationFailing => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.index', $scoped, ['automations'], 'automations'),
         };
     }
 
@@ -982,7 +982,7 @@ final class BusinessHomePresenter
             'rangeLabel' => self::rangeLabel($range),
             // The same destination AttentionType::AutomationFailing remediates to.
             'reviewUrl' => $failed > 0
-                ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations')
+                ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.workflows.index', $scoped, ['automations'], 'automations')
                 : null,
         ];
     }

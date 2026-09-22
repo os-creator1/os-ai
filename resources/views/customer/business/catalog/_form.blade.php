@@ -30,6 +30,14 @@
     </div>
     <div class="form-group col-md-6">
         <label for="currency_code">Currency</label>
-        <input type="text" id="currency_code" name="currency_code" class="form-control text-uppercase" maxlength="3" value="{{ old('currency_code', $item->currency_code ?? ($defaultCurrency ?? '')) }}" placeholder="USD" autocomplete="off">
+        @php($selectedCurrency = strtoupper((string) old('currency_code', $item->currency_code ?? ($defaultCurrency ?? ''))))
+        <select id="currency_code" name="currency_code" class="form-control" autocomplete="off">
+            <option value="">No currency (quote only)</option>
+            @foreach ($currencies as $currency)
+            <option value="{{ $currency->code }}" @selected($selectedCurrency === strtoupper($currency->code))>
+                    {{ $currency->name }} ({{ $currency->code }})
+                </option>
+            @endforeach
+        </select>
     </div>
 </div>

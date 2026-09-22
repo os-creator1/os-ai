@@ -173,7 +173,7 @@ final class RecentWorkReader
                 key: 'automation_failed',
                 text: $group['automation'] . ' failed ' . $failures . ' ' . ($failures === 1 ? 'time' : 'times'),
                 at: $group['at'],
-                routeName: 'customer.workspaces.businesses.automations.index',
+                routeName: 'customer.workspaces.businesses.automations.workflows.index',
                 permissions: ['automations'],
                 featureKey: 'automations',
             );

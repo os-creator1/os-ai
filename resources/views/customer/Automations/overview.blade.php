@@ -7,7 +7,7 @@
         <div class="col-12 d-flex justify-content-between align-items-center">
             <h4 class="mb-0">{{ $automation->name }}</h4>
             <x-button variant="outline" size="sm" icon="arrow-left"
-                      :href="route('customer.workspaces.businesses.automations.index', [$workspaceUid, $businessUid])">
+                      :href="route('customer.workspaces.businesses.automations.workflows.index', [$workspaceUid, $businessUid])">
                 Back
             </x-button>
         </div>

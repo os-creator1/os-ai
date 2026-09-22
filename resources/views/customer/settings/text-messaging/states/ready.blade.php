@@ -3,12 +3,11 @@
 @section('title', 'Text messaging')
 
 @section('content')
-    <div class="row mb-2">
-        <div class="col-12">
-            <h4 class="mb-0">Text messaging</h4>
-            <p class="text-caption mb-0">How this Business sends and receives text messages.</p>
-        </div>
-    </div>
+    @include('customer.settings._module-header', [
+        'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
+        'title' => 'Text messaging',
+        'description' => 'How this Business sends and receives text messages.',
+    ])
 
     <x-card :padded="true" class="mb-2">
         <div class="mb-2">

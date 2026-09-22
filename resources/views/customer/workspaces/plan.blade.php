@@ -11,6 +11,11 @@
 @section('title', 'Plan & subscription')
 
 @section('content')
+    @include('customer.settings._module-header', [
+        'backUrl' => route('customer.workspaces.settings.show', request()->route('workspaceUid')),
+        'title' => 'Plan & subscription',
+    ])
+
     <section id="workspace-plan">
         <div class="row">
             <div class="col-12 col-lg-8">

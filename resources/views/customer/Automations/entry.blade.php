@@ -24,7 +24,7 @@
             <p class="text-section-heading mb-2">Choose a Business to continue</p>
             <div class="list-group">
                 @foreach($accessible as [$workspace, $business])
-                    <a href="{{ route('customer.workspaces.businesses.automations.index', [$workspace->uid, $business->uid]) }}"
+                    <a href="{{ route('customer.workspaces.businesses.automations.workflows.index', [$workspace->uid, $business->uid]) }}"
                        class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
                         <span>
                             <strong>{{ $business->name }}</strong>

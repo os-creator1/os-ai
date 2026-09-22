@@ -21,14 +21,18 @@
                 @endif
             </p>
 
-            <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.update', $withItem) }}" data-role="catalog-edit-form">
-                @csrf
+            <div class="row">
+                <div class="col-12 col-xl-8">
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.catalog.update', $withItem) }}" data-role="catalog-edit-form">
+                    @csrf
 
                 @include('customer.business.catalog._form')
 
-                <button type="submit" class="btn btn-primary">Save changes</button>
-                <a href="{{ route('customer.workspaces.businesses.catalog.index', $scope) }}" class="btn btn-outline-secondary">Back to list</a>
-            </form>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                    <a href="{{ route('customer.workspaces.businesses.catalog.index', $scope) }}" class="btn btn-outline-secondary">Back to list</a>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
 
