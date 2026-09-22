@@ -55,8 +55,8 @@ use Illuminate\Support\Facades\DB;
  * each other; the retry exists for a victim chosen because of unrelated
  * concurrent work on the same parent rows.
  *
- * NO CONTROLLERS, NO UI, NO PUBLIC BOOKING — Sub-slices D and E. This class is
- * the only thing in the slice that writes an appointment row.
+ * Controllers and the public scheduler delegate here; this class is the only
+ * thing in the slice that writes an appointment row.
  *
  * NO APPOINTMENT HISTORY. V1 ships no `appointment_transitions` (§5.4, §10,
  * §15); the five events this class dispatches are transient integration
@@ -136,6 +136,30 @@ class AppointmentBookingService
         ?int $createdByUserId = null,
         ?int $crmOpportunityId = null
     ): Appointment {
+        return $this->bookWithRoundRobinContactResolver(
+            $bookingType,
+            $startAt,
+            static fn (): int => $contactId,
+            $createdByUserId,
+            $crmOpportunityId
+        );
+    }
+
+    /**
+     * Public booking's narrow adapter: resolve a Contact after tiers 1 and 2
+     * are held, inside this service's one real transaction. The callback may
+     * write a Contact; a refusal rolls it back with the Appointment and cursor.
+     * Existing authenticated callers continue through bookWithRoundRobin().
+     *
+     * @param callable(): int $resolveContactId
+     */
+    public function bookWithRoundRobinContactResolver(
+        BookingType $bookingType,
+        CarbonInterface $startAt,
+        callable $resolveContactId,
+        ?int $createdByUserId = null,
+        ?int $crmOpportunityId = null
+    ): Appointment {
         $location = $this->locationFor($bookingType);
         $endAt = $this->endFor($bookingType, $startAt);
 
@@ -159,13 +183,15 @@ class AppointmentBookingService
         $this->ensureRoundRobinState($bookingType);
 
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $pool, $contactId, $startAt, $endAt, $createdByUserId, $crmOpportunityId
+            $bookingType, $location, $pool, $resolveContactId, $startAt, $endAt, $createdByUserId, $crmOpportunityId
         ): Appointment {
             // Tier 1 first, and held for the whole assignment.
             $state = $this->lockRoundRobinState($bookingType);
 
             // Tier 2 for every candidate, ascending.
             $this->locks->lockAscending($pool);
+
+            $contactId = $resolveContactId();
 
             $order = $this->rotation->candidateOrder($pool, $state->last_assigned_staff_user_id === null
                 ? null

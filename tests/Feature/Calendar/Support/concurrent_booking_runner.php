@@ -109,6 +109,29 @@ try {
 
             return 'appointment_id=' . $appointment->id . ' staff_user_id=' . $appointment->staff_user_id;
         },
+        'public-contact' => static function () use ($engine, $app, $argv): string {
+            $type = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $location = App\Models\BusinessLocation::query()->findOrFail((int) $argv[4]);
+            $group = App\Models\ContactGroups::query()->findOrFail((int) $argv[5]);
+            $repository = $app->make(App\Repositories\Eloquent\EloquentContactsRepository::class);
+            if (Illuminate\Support\Facades\DB::transactionLevel() !== 0) {
+                throw new LogicException('Public booking must enter the engine without an outer transaction.');
+            }
+            $contactId = null;
+            $appointment = $engine->bookWithRoundRobinContactResolver(
+                $type,
+                Illuminate\Support\Carbon::parse($argv[7]),
+                static function () use ($repository, $location, $group, $argv, &$contactId): int {
+                    if (Illuminate\Support\Facades\DB::transactionLevel() !== 1) {
+                        throw new LogicException('Contact resolution must run in the engine\'s one transaction.');
+                    }
+                    $contact = $repository->findOrCreateForBooking($location, $group, $argv[6]);
+                    $contactId = (int) $contact->id;
+                    return $contactId;
+                }
+            );
+            return 'contact_id=' . $contactId . ' appointment_id=' . $appointment->id;
+        },
         'reschedule' => static function () use ($engine, $argv): string {
             $appointment = App\Models\Appointment::query()->findOrFail((int) $argv[3]);
             $moved = $engine->reschedule(

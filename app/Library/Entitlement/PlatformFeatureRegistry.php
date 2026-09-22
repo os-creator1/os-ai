@@ -60,7 +60,11 @@ final class PlatformFeatureRegistry
         // 2026_09_09_120004_seed_google_business_profile_plan_packaging.php,
         // and Core is deliberately excluded.
         PlatformFeature::GoogleBusinessProfileModule->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::Calendar->value => PlatformFeatureAvailability::Planned,
+        // Contract 15.E: public UUID scheduler, Location-local Contact identity,
+        // canonical booking engine and authenticated calendar now form one flow.
+        // Core/Growth/Agency packaging was seeded by the original catalog
+        // migration; this deploy does not rewrite mutable plan features.
+        PlatformFeature::Calendar->value => PlatformFeatureAvailability::Available,
         PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
         // Unified Business Home and COO Decision Engine contract §17, slice
         // AI-3: flipped Planned -> Available, meeting the same evidentiary

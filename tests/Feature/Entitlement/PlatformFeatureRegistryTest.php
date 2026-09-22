@@ -20,6 +20,7 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Automations->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::WebsiteGeneration->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Calendar->value));
         // Unified Business Home & COO contract §17, slice AI-3.
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::AiCooBasic->value));
     }
@@ -27,7 +28,6 @@ class PlatformFeatureRegistryTest extends TestCase
     public function test_every_other_feature_is_planned_not_available(): void
     {
         $planned = [
-            PlatformFeature::Calendar,
             PlatformFeature::Forms,
             PlatformFeature::SeoBasicVisibility,
             PlatformFeature::AdsBasicVisibility,
@@ -45,7 +45,7 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::PaymentsContracts,
         ];
 
-        $this->assertCount(10, $planned);
+        $this->assertCount(9, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
