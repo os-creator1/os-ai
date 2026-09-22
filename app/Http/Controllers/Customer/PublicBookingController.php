@@ -99,16 +99,12 @@ class PublicBookingController extends Controller
             return back()->withInput()->withErrors(['time' => 'Choose an available time.']);
         }
 
-        $phone = $this->contacts->ensureBookingIdentityLock($location, $phone);
-
         try {
             $this->booking->bookWithRoundRobinContactResolver(
                 $type,
                 $start,
-                function () use ($location, $business, $data, $phone): int {
+                function () use ($location, $business, $data): int {
                     // The engine holds tier 1 and tier 2 before calling us.
-                    // Lock this identity before any plain Contact/group read.
-                    $this->contacts->lockBookingIdentity($location, $phone);
                     $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
                     if ($group === null) {
                         $group = $this->contacts->store([

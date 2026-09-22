@@ -30,22 +30,7 @@
 
     class EloquentContactsRepository extends EloquentBaseRepository implements ContactsRepository
     {
-        /** Contract 15 §5.8: ensure the unique serialization row before a transaction starts. */
-        public function ensureBookingIdentityLock(BusinessLocation $location, string $rawPhone): string
-        {
-            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
-            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
-
-            if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
-                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
-                    'created_at' => now(), 'updated_at' => now(),
-                ]);
-            }
-
-            return $phone;
-        }
-
-        /** Called inside the booking transaction, after ensureBookingIdentityLock(). */
+        /** Called inside the booking transaction, after the Calendar tier-1 and tier-2 locks. */
         public function findOrCreateForBooking(
             BusinessLocation $location,
             ContactGroups $contactGroups,
@@ -53,6 +38,12 @@
             array $input = [],
         ): Contacts {
             $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
+            if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
+                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
             $this->lockBookingIdentity($location, $phone);
 
             $contact = Contacts::query()->where('location_id', $location->id)

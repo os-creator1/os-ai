@@ -114,7 +114,6 @@ try {
             $location = App\Models\BusinessLocation::query()->findOrFail((int) $argv[4]);
             $group = App\Models\ContactGroups::query()->findOrFail((int) $argv[5]);
             $repository = $app->make(App\Repositories\Eloquent\EloquentContactsRepository::class);
-            $phone = $repository->ensureBookingIdentityLock($location, $argv[6]);
             if (Illuminate\Support\Facades\DB::transactionLevel() !== 0) {
                 throw new LogicException('Public booking must enter the engine without an outer transaction.');
             }
@@ -122,11 +121,10 @@ try {
             $appointment = $engine->bookWithRoundRobinContactResolver(
                 $type,
                 Illuminate\Support\Carbon::parse($argv[7]),
-                static function () use ($repository, $location, $group, $argv, $phone, &$contactId): int {
+                static function () use ($repository, $location, $group, $argv, &$contactId): int {
                     if (Illuminate\Support\Facades\DB::transactionLevel() !== 1) {
                         throw new LogicException('Contact resolution must run in the engine\'s one transaction.');
                     }
-                    $repository->lockBookingIdentity($location, $phone);
                     $contact = $repository->findOrCreateForBooking($location, $group, $argv[6]);
                     $contactId = (int) $contact->id;
                     return $contactId;

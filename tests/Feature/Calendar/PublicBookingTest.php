@@ -256,6 +256,9 @@ class PublicBookingTest extends TestCase
         $this->assertDatabaseHas('contacts_custom_field', ['contact_id' => $contact->id, 'value' => 'Ada']);
         $this->assertDatabaseHas('contacts_custom_field', ['contact_id' => $contact->id, 'value' => 'Lovelace']);
         $this->assertDatabaseCount('campaigns', 0);
+        $this->assertDatabaseHas('booking_contact_identity_locks', [
+            'business_location_id' => $this->locationA->id, 'normalized_phone' => '14155551234',
+        ]);
     }
 
     public function test_blacklisted_phone_is_refused_without_contact_or_appointment(): void
@@ -269,6 +272,7 @@ class PublicBookingTest extends TestCase
         $this->post($this->url(), $this->payload())->assertSessionHasErrors('phone');
         $this->assertDatabaseCount('contacts', 0);
         $this->assertDatabaseCount('appointments', 0);
+        $this->assertDatabaseCount('booking_contact_identity_locks', 0);
     }
 
     private function assertDenied(callable $change): void
@@ -297,6 +301,9 @@ class PublicBookingTest extends TestCase
         $this->post($this->url(), $this->payload())->assertSessionHasErrors('time');
         $this->assertDatabaseCount('appointments', 1);
         $this->assertDatabaseCount('contacts', 1);
+        $this->assertDatabaseHas('booking_contact_identity_locks', [
+            'business_location_id' => $this->locationA->id, 'normalized_phone' => '14155551234',
+        ]);
     }
 
     public function test_refused_new_phone_leaves_no_orphan_contact(): void
@@ -306,5 +313,8 @@ class PublicBookingTest extends TestCase
         $this->assertDatabaseCount('appointments', 1);
         $this->assertDatabaseCount('contacts', 1);
         $this->assertDatabaseMissing('contacts', ['location_id' => $this->locationA->id, 'phone' => '14155559999']);
+        $this->assertDatabaseMissing('booking_contact_identity_locks', [
+            'business_location_id' => $this->locationA->id, 'normalized_phone' => '14155559999',
+        ]);
     }
 }
