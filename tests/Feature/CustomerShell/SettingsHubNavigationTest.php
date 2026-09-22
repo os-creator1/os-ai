@@ -36,6 +36,21 @@ class SettingsHubNavigationTest extends TestCase
     // The sidebar
     // =================================================================
 
+    public function test_automations_sidebar_lands_on_the_v2_workflow_list(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $automationsUrl = route('customer.workspaces.businesses.automations.workflows.index', [$workspace->uid, $business->uid]);
+
+        $this->assertTrue(
+            collect($this->menuLinks($html))->contains(fn (string $link): bool => str_contains($link, '/automations/workflows')),
+            'Automations sidebar link must target the V2 workflow path.'
+        );
+        $this->get($automationsUrl)->assertOk()->assertSee('data-role="wf-list-header"', false);
+    }
+
     public function test_core_and_growth_get_a_flat_sidebar_with_one_direct_settings_destination(): void
     {
         // The Opportunity engine is on, so an Advisor entry would render if
@@ -64,6 +79,9 @@ class SettingsHubNavigationTest extends TestCase
 
             $links = $this->menuLinks($html);
             $this->assertContains(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $links, 'Conversations goes straight to the Business conversations.');
+            $automationsUrl = route('customer.workspaces.businesses.automations.workflows.index', [$workspace->uid, $business->uid]);
+            $this->assertContains($automationsUrl, $links, 'Automations goes straight to the V2 workflow list.');
+            $this->get($automationsUrl)->assertOk()->assertSee('data-role="wf-list-header"', false);
             $this->assertContains(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]), $links, 'Settings goes straight to the hub.');
 
             foreach (['advisor', 'messages', 'inbox', 'business', 'locations', 'text-messaging', 'usage-billing', 'plan', 'team', 'team-members', 'blocked-numbers', 'account-details', 'advanced'] as $gone) {

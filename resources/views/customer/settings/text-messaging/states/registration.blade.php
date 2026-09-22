@@ -8,12 +8,11 @@
 @endphp
 
 @section('content')
-    <div class="row mb-2">
-        <div class="col-12">
-            <h4 class="mb-0">Text messaging</h4>
-            <p class="text-caption mb-0">One more step before this number is ready to send and receive texts.</p>
-        </div>
-    </div>
+    @include('customer.settings._module-header', [
+        'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
+        'title' => 'Text messaging',
+        'description' => 'One more step before this number is ready to send and receive texts.',
+    ])
 
     <x-card :padded="true" class="mb-2">
         <dl class="row mb-0">

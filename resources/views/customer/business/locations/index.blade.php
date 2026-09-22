@@ -31,12 +31,11 @@
         $otherActive = static fn ($location) => $activeLocations->filter(fn ($other) => $other->id !== $location->id)->values();
     @endphp
 
-    <section class="mb-2" aria-labelledby="locations-heading">
-        <h2 class="h4 text-section-heading mb-50" id="locations-heading">Locations of {{ $business->name }}</h2>
-        <p class="text-body mb-0">
-            Your storefronts, branches and service areas. A location is part of this business — it isn't a separate account.
-        </p>
-    </section>
+    @include('customer.settings._module-header', [
+        'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]),
+        'title' => 'Locations',
+        'description' => "Your storefronts, branches and service areas. A location is part of this business — it isn't a separate account.",
+    ])
 
     @foreach (['flash_success' => 'success', 'flash_info' => 'neutral', 'flash_error' => 'danger'] as $key => $variant)
         @if (session($key))

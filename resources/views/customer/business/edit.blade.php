@@ -11,10 +11,22 @@
 @endsection
 
 @section('content')
+    @php
+        $customerContext = request()->attributes->get('customerContext');
+        $settingsUrl = $customerContext instanceof \App\Library\Navigation\CustomerContext && $customerContext->selectedBusiness !== null
+            ? route('customer.workspaces.businesses.settings.show', [$customerContext->selectedBusiness->workspaceUid, $customerContext->selectedBusiness->uid])
+            : route('customer.workspaces.index');
+    @endphp
+    @include('customer.settings._module-header', [
+        'backUrl' => $settingsUrl,
+        'title' => 'Business details',
+        'description' => 'The public details customers see for this Business.',
+    ])
+
     <section id="business-edit">
         <div class="row">
             <div class="col-12">
-                <x-card title="Business Profile">
+                <x-card>
                     @if (session('status') === 'success')
                         <x-alert variant="success" role="status" data-role="flash-message">{{ session('message') }}</x-alert>
                     @endif

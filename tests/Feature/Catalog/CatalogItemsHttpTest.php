@@ -4,6 +4,7 @@ namespace Tests\Feature\Catalog;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Models\CatalogItem;
+use App\Models\Currency;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Catalog\Concerns\CreatesCatalogHttpFixtures;
@@ -194,12 +195,14 @@ class CatalogItemsHttpTest extends TestCase
         [$owner, $business, $workspace] = $this->catalogTenant();
         $this->authenticateAs($owner);
         $item = $this->catalogItem($business, 'Wedding Package', ['price_minor' => 123456, 'description' => 'All day']);
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '${PRICE}', 'status' => true]);
 
         $this->get($this->catalogRoute('edit', $workspace, $business, [$item->uid]))
             ->assertOk()
             ->assertSee('value="Wedding Package"', false)
             ->assertSee('value="1234.56"', false)
-            ->assertSee('value="USD"', false)
+            ->assertSee('<select id="currency_code" name="currency_code"', false)
+            ->assertSee('<option value="USD" selected', false)
             ->assertSee('All day');
     }
 

@@ -9,6 +9,7 @@ use App\Library\Catalog\CatalogItemManager;
 use App\Library\Catalog\CatalogMoney;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
 use App\Models\CatalogItem;
+use App\Models\Currency;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -72,6 +73,7 @@ class CatalogItemsController extends Controller
             'business' => $business,
             'types' => CatalogItemType::cases(),
             'defaultCurrency' => $business->currency_code,
+            'currencies' => Currency::query()->where('status', true)->orderBy('name')->get(['code', 'name']),
         ]);
     }
 
@@ -103,6 +105,7 @@ class CatalogItemsController extends Controller
             'item' => $item,
             'types' => CatalogItemType::cases(),
             'priceInput' => CatalogMoney::toInput($item->price_minor, $item->currency_code),
+            'currencies' => Currency::query()->where('status', true)->orderBy('name')->get(['code', 'name']),
         ]);
     }
 

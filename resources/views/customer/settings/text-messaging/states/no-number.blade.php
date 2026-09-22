@@ -3,12 +3,11 @@
 @section('title', 'Text messaging')
 
 @section('content')
-    <div class="row mb-2">
-        <div class="col-12">
-            <h4 class="mb-0">Text messaging</h4>
-            <p class="text-caption mb-0">Get a phone number so this Business can send and receive text messages.</p>
-        </div>
-    </div>
+    @include('customer.settings._module-header', [
+        'backUrl' => route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
+        'title' => 'Text messaging',
+        'description' => 'Get a phone number so this Business can send and receive text messages.',
+    ])
 
     @unless($available)
         <x-alert variant="warning" icon="alert-triangle" class="mb-2" data-role="preview-notice">
@@ -20,7 +19,9 @@
     <x-card :padded="true">
         <x-empty-state icon="phone" title="Get a phone number" description="Choose a few preferences and we'll find a number for this Business." />
 
-        <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]) }}" class="mt-2">
+        <div class="row">
+            <div class="col-12 col-xl-8">
+                <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceUid, $businessUid]) }}" class="mt-2">
             @csrf
 
             <div class="mb-1">
@@ -57,8 +58,10 @@
                 <p class="text-caption text-muted mb-0">We'll find the closest match if this exact area code isn't available.</p>
             </div>
 
-            <x-button type="submit" variant="primary">Find a number</x-button>
-        </form>
+                    <x-button type="submit" variant="primary">Find a number</x-button>
+                </form>
+            </div>
+        </div>
 
         @if($searched)
             <hr class="my-2">
