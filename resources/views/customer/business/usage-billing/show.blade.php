@@ -55,6 +55,7 @@
 
     @include('customer.settings._module-header', [
         'backUrl' => $isAgencyFrame ? route('customer.workspaces.show', $workspaceUid) : route('customer.workspaces.businesses.settings.show', [$workspaceUid, $businessUid]),
+        'backLabel' => $isAgencyFrame ? __('locale.usage_billing.back_to_agency') : __('locale.usage_billing.back_to_settings'),
         'title' => __('locale.usage_billing.title'),
     ])
 

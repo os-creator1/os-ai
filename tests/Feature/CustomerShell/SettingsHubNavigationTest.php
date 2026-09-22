@@ -299,6 +299,23 @@ class SettingsHubNavigationTest extends TestCase
         $this->assertArrayNotHasKey('features', $modules, "A client's switches live on the Agency account page.");
     }
 
+    public function test_settings_module_back_links_preserve_business_and_agency_destinations(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $settings = $this->get(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('Back to Settings', $settings);
+
+        [$agency, $client, $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        $this->switchTo($agencyWorkspace, $client)->assertRedirect(route('user.home'));
+
+        $billing = $this->get(route('customer.workspaces.businesses.usage-billing.show', [$agencyWorkspace->uid, $client->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString(__('locale.usage_billing.back_to_agency'), $billing);
+        $this->assertStringNotContainsString('>Back to Settings<', $billing);
+    }
+
     // =================================================================
     // Permissions
     // =================================================================
