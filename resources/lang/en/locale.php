@@ -484,7 +484,7 @@
             'notify_me_by'                          => 'Notify me by',
             'credit_warning'                        => 'Credit Warning',
             'subscription_warning'                  => 'Subscription Warning',
-            'new_conversion'                        => 'New Conversion',
+            'new_conversion'                        => 'New Conversation',
             'welcome_to'                            => 'Welcome To',
 
             /* Customer Experience Slice 2 — shared shell and empty-state foundation (contract §9.2, §17.3) */
