@@ -367,7 +367,6 @@ class DocumentsRemainInertTest extends TestCase
     public function test_no_manager_gateway_job_or_command_exists_yet(): void
     {
         foreach ([
-            'App\\Library\\Payments\\StripeConnectGateway',                      // Sub-slice D
             'App\\Library\\Payments\\PaymentManager',                            // Sub-slices E/F
             'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',          // Sub-slice E
             'App\\Library\\Timeline\\Sources\\DocumentActivitySource',           // Sub-slice G
@@ -379,16 +378,24 @@ class DocumentsRemainInertTest extends TestCase
             $this->assertFalse(class_exists($class), "[{$class}] belongs to a later sub-slice and must not exist yet.");
         }
 
-        // Sub-slice C legitimately creates these; asserted positively so the
-        // boundary above stays a real inventory rather than a stale list.
+        // Sub-slices C and D legitimately create these; asserted positively
+        // so the boundary above stays a real inventory rather than a stale
+        // list.
         foreach ([
             'App\\Events\\DocumentSent',
             'App\\Events\\DocumentSigned',
             'App\\Library\\Documents\\PublicDocumentGuard',
             'App\\Library\\Documents\\DocumentContentHasher',
+            'App\\Library\\Payments\\StripeConnectManager',
+            'App\\Library\\Payments\\StripeApiConnectGateway',
         ] as $class) {
-            $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's own.");
+            $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's or D's own.");
         }
+
+        $this->assertTrue(
+            interface_exists('App\\Library\\Payments\\StripeConnectGateway'),
+            "Sub-slice D's lane-B provider boundary is an interface, so the SDK stays swappable and testable."
+        );
     }
 
     public function test_no_documents_command_is_scheduled_yet(): void

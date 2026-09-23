@@ -152,6 +152,18 @@
                 \App\Library\Messaging\TelnyxProvisioningAdapter::class,
             );
 
+            // Implementation Contract 17 §4.2/§12.D — the lane-B Stripe
+            // Connect boundary. Deliberately a SECOND gateway, unrelated to
+            // App\Library\Usage's lane-D platform gateway: lane B charges the
+            // end customer on the BUSINESS's own connected account, which is
+            // exactly what routing it through the platform's account would
+            // violate. Bound fail-closed: the implementation's constructor
+            // refuses a missing or malformed platform key.
+            $this->app->bind(
+                \App\Library\Payments\StripeConnectGateway::class,
+                \App\Library\Payments\StripeApiConnectGateway::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,
