@@ -113,6 +113,13 @@ final class CustomerMenuBuilder
         // this answer from the same one bulk snapshot, so checking it costs
         // the page no entitlement query of its own (§16).
         'ai_coo_basic',
+        // Payments & Contracts (Contract 17 §12.G). Omitting this line would
+        // not merely fall back to a slower query: entitled() answers from the
+        // bulk snapshot, which fails closed on any key not listed here, so an
+        // unlisted key would silently hide the entry forever even once the
+        // feature is Available (the exact lesson Contract 16 §18.E already
+        // recorded).
+        'payments_contracts',
     ];
 
     /**
@@ -223,6 +230,17 @@ final class CustomerMenuBuilder
         // showing this entry changes nothing about what a request can do.
         $items[] = $this->entitled('packages_products', $this->item($user, 'packages_products', 'Packages & Products', 'package', ['packages_products'], 'customer.workspaces.businesses.catalog.index', $scoped, $current, [
             'customer.workspaces.businesses.catalog.',
+        ]));
+        // Payments & Contracts — proposals, contracts and invoices (Contract
+        // 17 §12.G). Same shape as Packages & Products immediately above:
+        // offered exactly when the single `payments_contracts` capability
+        // (item()) and the matching entitlement (entitled()) both let the
+        // actor in. Visibility is NEVER authorization — every documents route
+        // independently re-runs the full §6.1 chain, so this entry changes
+        // nothing about what a request can do; while the feature is Planned,
+        // entitled() always answers false and the entry is absent.
+        $items[] = $this->entitled('payments_contracts', $this->item($user, 'payments_contracts', 'Payments & Contracts', 'file-text', ['payments_contracts'], 'customer.workspaces.businesses.documents.index', $scoped, $current, [
+            'customer.workspaces.businesses.documents.',
         ]));
         $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',

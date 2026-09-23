@@ -52,7 +52,15 @@ class DocumentsControllerTest extends TestCase
         });
     }
 
-    public function test_planned_feature_refuses_authoring_route(): void
+    /**
+     * activeBundle() assigns no Workspace plan at all, so the entitlement
+     * decision fails closed here regardless of whether PaymentsContracts
+     * itself is Planned or (since Sub-slice G) Available — an unplanned
+     * Workspace is exactly as unentitled either way. The route-level "every
+     * §6.1 gate independently refuses" proof this pins does not depend on
+     * which reason fires first.
+     */
+    public function test_an_unentitled_workspace_refuses_the_authoring_route(): void
     {
         $bundle = $this->activeBundle();
         $this->authenticateAs(Customer::where('user_id', $bundle['business']->workspace->owner_user_id)->firstOrFail());
@@ -113,7 +121,8 @@ class DocumentsControllerTest extends TestCase
         $this->get($this->url($bundle))->assertStatus(401);
     }
 
-    public function test_planned_entitlement_refuses_every_authoring_route_without_writing(): void
+    /** Same unplanned-Workspace refusal as above, exercised across every authoring route. */
+    public function test_an_unentitled_workspace_refuses_every_authoring_route_without_writing(): void
     {
         $bundle = $this->activeBundle();
         $documentId = $this->insertDocument($bundle);
@@ -135,7 +144,8 @@ class DocumentsControllerTest extends TestCase
             ['PUT', $base.'/'.$document->uid.'/schedule', []],
             ['POST', $base.'/'.$document->uid.'/void', []],
             // Sub-slice F — the refund action is behind the SAME chain, so it
-            // fails closed while PaymentsContracts is Planned (§6.1).
+            // fails closed for this unentitled Workspace exactly like every
+            // other route here (§6.1).
             ['POST', $base.'/'.$document->uid.'/payments/00000000-0000-0000-0000-000000000000/refund',
                 ['confirm' => '1', 'amount_minor' => 100]],
         ];

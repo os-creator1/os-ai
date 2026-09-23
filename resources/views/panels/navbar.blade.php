@@ -262,6 +262,43 @@
                                                             <small class="notification-text">{{ str_limit($value->message, 60) }}</small>
                                                         </div>
                                                         @break
+
+                                                    {{-- Implementation Contract 17 §12.G — Payments & Contracts document
+                                                         lifecycle activity, written by SurfaceDocumentActivityInActivityCenter. --}}
+                                                    @case('document_sent')
+                                                    @case('document_signed')
+                                                    @case('document_payment_succeeded')
+                                                    @case('document_fully_paid')
+                                                    @case('document_refunded')
+                                                        <div class="me-1">
+                                                            <div class="avatar bg-light-success">
+                                                                <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div class="list-item-body flex-grow-1">
+                                                            <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
+                                                            </p>
+                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
+                                                        </div>
+                                                        @break
+
+                                                    @case('document_expired')
+                                                    @case('document_voided')
+                                                        <div class="me-1">
+                                                            <div class="avatar bg-light-warning">
+                                                                <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div class="list-item-body flex-grow-1">
+                                                            <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
+                                                            </p>
+                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
+                                                        </div>
+                                                        @break
                                                 @endswitch
                                                 <small>
                                                     <time class="media-meta">{{ Tool::formatHumanTime($value->created_at) }}</time>

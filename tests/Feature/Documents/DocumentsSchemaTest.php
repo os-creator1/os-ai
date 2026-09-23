@@ -1075,6 +1075,9 @@ class DocumentsSchemaTest extends TestCase
             glob(database_path('migrations/2026_09_25_1000*business_document*.php')),
             glob(database_path('migrations/2026_09_25_1000*business_stripe_connection*.php')),
             glob(database_path('migrations/2026_09_25_1000*business_payment_event*.php')),
+            // Sub-slice G — §11.1 names this file by its exact path as this
+            // slice's own surface.
+            [app_path('Library/Timeline/Sources/DocumentActivitySource.php')],
         );
 
         $this->assertNotEmpty($files);
