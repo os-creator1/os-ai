@@ -58,6 +58,16 @@ final class PlatformBillingException extends RuntimeException
     /** §7 — the previous checkout session was already completed. */
     public const CHECKOUT_ALREADY_COMPLETED = 'checkout_already_completed';
 
+    /** §7 — too many concurrent requests replaced the attempt under us. */
+    public const CHECKOUT_CONTENDED = 'checkout_contended';
+
+    /**
+     * §10 — a durable plan-change operation for a DIFFERENT target is still
+     * in flight. Replacing it would leave the provider on one Price and the
+     * local record converging towards another.
+     */
+    public const CHANGE_IN_PROGRESS = 'change_in_progress';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -78,6 +88,8 @@ final class PlatformBillingException extends RuntimeException
             self::PRICE_NOT_RETRIEVABLE => 'That Stripe Price could not be found on this platform\'s own Stripe account.',
             self::PRICE_TERMS_MISMATCH => 'That Stripe Price does not match the plan terms you entered.',
             self::CHECKOUT_ALREADY_COMPLETED => 'That checkout has already been paid.',
+            self::CHECKOUT_CONTENDED => 'Something else changed this checkout. Please try again.',
+            self::CHANGE_IN_PROGRESS => 'A plan change is still being confirmed. Please try again shortly.',
             default => 'That could not be completed.',
         });
     }

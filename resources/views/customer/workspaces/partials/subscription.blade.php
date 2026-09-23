@@ -90,6 +90,34 @@
             </p>
         @endif
 
+        {{--
+            §10.4 — an ENDED subscription gets "start again", never the
+            upgrade/downgrade controls. There is no live provider subscription
+            to change, so those controls could only ever fail; this form opens a
+            NEW hosted Checkout on the SAME account.
+        --}}
+        @if ($subscription['can_resubscribe'] && count($subscription['resubscribe_plans']) > 0)
+            <form method="POST" action="{{ route('customer.workspaces.plan.resubscribe', [$workspaceUid]) }}"
+                  data-role="subscription-resubscribe">
+                @csrf
+                <fieldset>
+                    <legend>{{ __('Start subscription again') }}</legend>
+                    <p class="text-caption">{{ __('Your account, your business and everything in it are still here. Choose a plan to pick up where you left off.') }}</p>
+                    @foreach ($subscription['resubscribe_plans'] as $plan)
+                        <label>
+                            <input type="radio" name="tier" value="{{ $plan['tier_value'] }}" required>
+                            {{ $plan['display_name'] }} — {{ $plan['price'] }} {{ $plan['currency_code'] }} / {{ $plan['billing_cycle'] }}
+                        </label>
+                    @endforeach
+                    <label>
+                        <input type="checkbox" name="confirm" value="1" required>
+                        {{ __('I want to start a new subscription on this account.') }}
+                    </label>
+                    <button type="submit">{{ __('Start subscription again') }}</button>
+                </fieldset>
+            </form>
+        @endif
+
         {{-- §10.2 — change plan, with the resulting behaviour stated BEFORE confirming. --}}
         @if (count($subscription['available_plans']) > 0)
             <form method="POST" action="{{ route('customer.workspaces.plan.change', [$workspaceUid]) }}"

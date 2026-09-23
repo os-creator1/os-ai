@@ -146,6 +146,25 @@ class CustomerAccountAccessGate
     private const ALLOWED_ROUTE_NAMES = [
         'customer.account-locked.show',
         'customer.workspaces.plan.show',
+        // Implementation Contract 21 §10.4 — RESTARTING A SUBSCRIPTION AFTER
+        // IT ENDED.
+        //
+        // A fully canceled account is LOCKED, which is correct: the service
+        // has stopped. But the locked screen's own recovery action sends the
+        // customer to 'customer.workspaces.plan.show', which is allowlisted
+        // above precisely so they can put that right — and the button it
+        // offers them there is this one. Without these two names the form
+        // would render on a reachable page and then bounce straight back to
+        // the locked screen, which is the dead end §10.4 exists to remove.
+        //
+        // Neither route grants any product access: one opens a hosted
+        // Checkout Session, the other re-reads its result from the provider.
+        // Access returns only when the provider confirms a new subscription
+        // and EntitlementManager's own writer clears the lock. Both are still
+        // owner-or-active-Admin, answered 404 otherwise, inside the
+        // controller.
+        'customer.workspaces.plan.resubscribe',
+        'customer.workspaces.plan.resubscribe-return',
         // Registered outside the customer.* route group (routes/auth.php)
         // but still runs through this Kernel-level middleware like every
         // other web route — a locked customer must always be able to sign

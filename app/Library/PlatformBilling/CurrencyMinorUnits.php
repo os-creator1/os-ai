@@ -44,6 +44,23 @@ final class CurrencyMinorUnits
         'MGA', 'PYG', 'RWF', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
     ];
 
+    /**
+     * ISK and UGX are sent as TWO-DECIMAL values "where the decimal amount is
+     * always `00`", and Stripe states plainly that you "can't charge fractions
+     * of ISK" / "of UGX".
+     *
+     * So factor 100 is right for them and a non-zero fraction is NOT: 297.50
+     * ISK is not a chargeable amount, and accepting it would let the catalog
+     * hold a price Stripe can never match — the exact class of parity failure
+     * §11 exists to prevent.
+     *
+     * HUF and TWD are deliberately absent: they are ordinary two-decimal
+     * currencies for CHARGES, and are zero-decimal only for payouts.
+     *
+     * @var array<int, string>
+     */
+    private const WHOLE_UNITS_ONLY = ['ISK', 'UGX'];
+
     /** How many minor units make one major unit of this currency. */
     public static function factor(string $currencyCode): int
     {
@@ -53,6 +70,15 @@ final class CurrencyMinorUnits
     public static function isZeroDecimal(string $currencyCode): bool
     {
         return self::factor($currencyCode) === 1;
+    }
+
+    /**
+     * Two-decimal at the wire, but only whole units are chargeable — the
+     * ISK/UGX rule.
+     */
+    public static function isWholeUnitsOnly(string $currencyCode): bool
+    {
+        return in_array(mb_strtoupper(trim($currencyCode)), self::WHOLE_UNITS_ONLY, true);
     }
 
     /**
@@ -81,6 +107,13 @@ final class CurrencyMinorUnits
         // More precision than the currency can carry is a mismatch, not
         // something to round away: 297.005 is not a chargeable USD amount.
         if (mb_strlen(rtrim($fraction, '0')) > $places) {
+            return null;
+        }
+
+        // ISK and UGX carry two decimals for compatibility, but the decimal
+        // part must always be 00 — fractions of them cannot be charged at all.
+        // 297.00 is fine; 297.50 is not a price that exists.
+        if (rtrim($fraction, '0') !== '' && self::isWholeUnitsOnly($currencyCode)) {
             return null;
         }
 

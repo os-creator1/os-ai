@@ -737,6 +737,13 @@
             ->middleware('throttle:30,1')->name('plan.cancel');
         Route::post('{workspaceUid}/plan/resume', 'Workspace\PlanSubscriptionController@resume')
             ->middleware('throttle:30,1')->name('plan.resume');
+        // §10.4 — the way back for an account whose subscription fully ended.
+        // A NEW provider subscription through hosted Checkout, on the SAME
+        // Workspace, Business and Locations.
+        Route::post('{workspaceUid}/plan/resubscribe', 'Workspace\PlanSubscriptionController@resubscribe')
+            ->middleware('throttle:30,1')->name('plan.resubscribe');
+        Route::get('{workspaceUid}/plan/resubscribe/return', 'Workspace\PlanSubscriptionController@resubscribeReturn')
+            ->middleware('throttle:30,1')->name('plan.resubscribe-return');
         // Redirects to Stripe's hosted Billing Portal; no card detail ever
         // reaches this application.
         Route::get('{workspaceUid}/plan/payment-method', 'Workspace\PlanSubscriptionController@paymentMethod')

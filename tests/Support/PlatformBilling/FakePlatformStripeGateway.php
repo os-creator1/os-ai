@@ -61,6 +61,22 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
     /** null when the key is missing/invalid — never a fabricated "test". */
     public ?string $mode = 'test';
 
+    /**
+     * INTERLEAVING SEAMS. A callable registered under a method name is fired
+     * INSIDE that provider call, at exactly the point a real request would be
+     * suspended on the network.
+     *
+     * That is the only honest way to test §7's concurrency: the whole defect
+     * is that a second request can act on the world WHILE the first one is
+     * waiting for Stripe. A hook here lets a test drive that second request
+     * deterministically, with no threads, no sleeps and no luck.
+     *
+     * Each hook receives the recorded arguments and this gateway.
+     *
+     * @var array<string, callable(array<string, mixed>, self): void>
+     */
+    public array $hooks = [];
+
     public function createSubscriptionCheckout(
         string $providerPriceId,
         string $clientReferenceId,
@@ -254,6 +270,21 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'idempotency_key' => $idempotencyKey,
         ]);
 
+        // The same idempotency rule Stripe applies to every request, not just
+        // to checkout: reusing one key with different parameters is an error.
+        // Keying a plan change on the target CATALOG id broke exactly here,
+        // because a repriced tier carries a different immutable Price.
+        $fingerprint = md5(json_encode([$providerSubscriptionId, $providerPriceId, $prorate]));
+
+        if (isset($this->keyFingerprints[$idempotencyKey])
+            && $this->keyFingerprints[$idempotencyKey] !== $fingerprint) {
+            throw new RuntimeException(
+                "Stripe idempotency violated: key [{$idempotencyKey}] was reused with different parameters. "
+                . 'A plan-change key must belong to the OPERATION, not to the target catalog id.'
+            );
+        }
+
+        $this->keyFingerprints[$idempotencyKey] = $fingerprint;
         $this->subscriptions[$providerSubscriptionId]['price'] = $providerPriceId;
 
         return $this->subscriptionSnapshot($providerSubscriptionId);
@@ -358,8 +389,29 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
 
         $this->calls[] = ['method' => $method, 'args' => $args, 'transaction_level' => $level];
 
+        // The suspension point: whatever a concurrent request would have done
+        // while this call was on the wire, it does here.
+        $hook = $this->hooks[$method] ?? null;
+
+        if ($hook !== null) {
+            $hook($args, $this);
+        }
+
         if ($this->failWith !== null) {
             throw $this->failWith;
         }
+    }
+
+    /**
+     * Registers an interleaving seam that fires exactly ONCE, which is what a
+     * "one concurrent request arrives at this instant" test actually wants.
+     */
+    public function interleaveOnce(string $method, callable $hook): void
+    {
+        $this->hooks[$method] = function (array $args, self $gateway) use ($method, $hook): void {
+            unset($gateway->hooks[$method]);
+
+            $hook($args, $gateway);
+        };
     }
 }

@@ -56,7 +56,36 @@ class PlatformSubscription extends Model
         'pending_effective_at' => 'datetime',
         'last_event_at' => 'datetime',
         'checkout_attempt_started_at' => 'datetime',
+        'checkout_attempt_generation' => 'integer',
+        'retired_provider_subscription_ids' => 'array',
     ];
+
+    /**
+     * §10 — the provider idempotency key for ONE plan-change operation.
+     *
+     * Keyed on the OPERATION, not on the target catalog id: the same catalog
+     * can later carry a different immutable Stripe Price, and reusing one key
+     * with different parameters is an error at the provider. Retrying one
+     * uncertain change therefore reuses this key, while a later legitimate
+     * change gets a new one.
+     */
+    public function planChangeKey(): ?string
+    {
+        return $this->pending_operation_uid === null
+            ? null
+            : self::idempotencyKeyFor((string) $this->uid) . ':change:' . $this->pending_operation_uid;
+    }
+
+    /**
+     * §3 — provider subscriptions this row has finished with. A late event
+     * from one of them must never take ownership of the current relationship.
+     *
+     * @return array<int, string>
+     */
+    public function retiredProviderSubscriptionIds(): array
+    {
+        return array_values(array_filter((array) ($this->retired_provider_subscription_ids ?? [])));
+    }
 
     public function generateUid(): void
     {

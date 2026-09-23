@@ -114,6 +114,7 @@ database edit is required at any point.
 | 1.5.7 | **Only one payable checkout.** Start checkout on one tier, leave the Stripe tab open, go back and resume on a DIFFERENT tier, then return to the first tab and try to pay. | The first session shows as expired and cannot be completed. Stripe's Dashboard shows one open session for this customer, carrying the NEW tier's Price. | |
 | 1.5.8 | Complete a checkout, then go back and try to resume. | Refused — "that checkout has already been paid". No second Checkout Session and no second subscription is created. | |
 | 1.5.9 | While signed in, open `/register` directly and try to submit it with a different email. | You are redirected to the plan screen or Home; no second user account is created and you are not switched out of your own account. | |
+| 1.5.10 | **Two tabs at once.** Open the resumable plan screen in two browser tabs and submit a DIFFERENT tier in each, as close together as you can manage. | The Stripe Dashboard shows exactly **one** open Checkout Session for this customer when both requests have finished. Every other session for them is `expired`, and `platform_subscriptions.provider_checkout_session_id` is the one still open. | |
 
 ### 1.6 Renewal
 
@@ -159,7 +160,22 @@ database edit is required at any point.
 | 1.9.3 | From Growth, confirm a downgrade to Core. | **Nothing changes today.** The customer keeps Growth, and the page shows the scheduled change and its effective date. | |
 | 1.9.4 | Advance the clock past the period end and let `platform-subscriptions:apply-due-plan-changes` run. | The tier becomes Core, the Stripe price changes with no proration, and **no customer data is deleted** — components are merely no longer active. | |
 | 1.9.5 | Change a catalog price in the owner surface. | Existing subscribers' amounts are unchanged, and **Plan & subscription still shows what they actually pay**; a **new** signup is charged the new amount. | |
-| 1.9.6 | Sign in as a **Staff** member of a subscribed Workspace and try to reach the change-plan, cancel, resume and payment-method routes. | All 404. No financial action is possible. | |
+| 1.9.6 | Sign in as a **Staff** member of a subscribed Workspace and try to reach the change-plan, cancel, resume, payment-method and re-subscribe routes. | All 404. No financial action is possible. | |
+| 1.9.7 | Schedule a downgrade to Core, then **reprice Core onto a new Stripe Price** in the owner surface, then let the boundary arrive. | The customer is charged the amount they agreed to when they scheduled the change, on the Price they agreed to — **not** the new one. | |
+| 1.9.8 | During an upgrade, use the Stripe Dashboard to confirm the Price changed, then interrupt the app before it finishes (stop the worker / close the request). | The entitlement has **not** widened yet, and the subscription row still shows a pending operation. | |
+| 1.9.9 | Replay `customer.subscription.updated` from the Dashboard. | The same operation finishes: the tier, the snapshot amount and the entitlement all reach the target, exactly once, and the pending operation clears. | |
+
+### 1.9a Re-subscribing after cancellation
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 1.9a.1 | Take an account all the way to `canceled` (1.8.4) and open **Plan & subscription**. | Status reads **Ended**. There is a **Start subscription again** form and **no** change-plan or cancel form. | |
+| 1.9a.2 | Choose a **different** tier and confirm. | A new Stripe Checkout Session opens. Before paying, the account is still ended and still locked — nothing has been granted. | |
+| 1.9a.3 | Complete payment and return. | A **new** Stripe subscription exists; access is restored; the plan is the tier just purchased; the amount shown is what was just paid. | |
+| 1.9a.4 | Check the database and the Stripe Dashboard. | Exactly **one** Workspace, one Business, its Locations and one subscription row — no second account was provisioned. The previous provider subscription id is retained for audit. | |
+| 1.9a.5 | Replay the OLD subscription's `customer.subscription.deleted` from the Dashboard. | 200, and the account stays active. A dead subscription cannot lock the one that replaced it. | |
+| 1.9a.6 | Repeat 1.9a.2–1.9a.3 but close the tab instead of returning. | The webhook alone finishes it: access is restored and the tier is correct without the browser ever coming back. | |
+| 1.9a.7 | Reload the return URL and replay the webhook several times. | No duplicate assignment, no duplicate subscription, no change in outcome. | |
 
 ### 1.10 Complimentary account
 

@@ -472,6 +472,34 @@ key is `platform-subscription:{uid}:attempt:{attempt_uid}`:
 **At most one payable session exists per Workspace at any moment**, by
 construction rather than by timing.
 
+#### 7.3.1 Replacement is compare-and-swap, never a lock across the network
+
+The table above describes one request in isolation. Under concurrency it was
+not enough, and the gap was a money gap: the DECISION to replace is taken
+against provider state read OUTSIDE any lock, so two simultaneous requests
+could both inspect the same open session, both expire it, and both mint an
+attempt — two payable sessions, two possible subscriptions, one Workspace.
+
+Locking the row inside the mint does not fix that, and holding a transaction
+across the Stripe call is forbidden by §5. The rule is therefore:
+
+- `checkout_attempt_generation` is a monotonically advancing **CAS token**. A
+  request records the generation it inspected, and the mint commits only if the
+  generation is still that one.
+- A superseded request **abandons its own decision and starts again from
+  current database state**; it never overwrites a newer attempt.
+- After a Checkout Session is created at the provider, the session id is
+  persisted **only if the attempt uid is still current**. If it is not, the
+  session that was just created is an ORPHAN that would still be payable, so it
+  is expired at the provider before the request retries.
+- Retry is **bounded** (three rounds). A request that keeps losing gives up
+  with `CHECKOUT_CONTENDED`, leaving nothing payable behind, rather than
+  recursing without a limit.
+
+Expiring a superseded session is best-effort by design: a concurrent
+replacement may legitimately have expired it a moment earlier, and that must
+not turn into an error for the customer whose request actually succeeded.
+
 An attempt's creation parameters are FIXED for its life: `provider_customer_id`
 is deliberately not written from the checkout result, because doing so would
 change the parameters the next call sends and make an honest retry fail the
@@ -603,6 +631,59 @@ Canonical, per Blueprint §27 and Contract 03, using the **existing** writers:
   (Addendum §6). Lane A invents no payment-specific deletion or archive
   behavior.
 
+#### 10.2.1 Every plan change is a DURABLE OPERATION, written before Stripe
+
+Calling Stripe and then writing locally is not a plan change; it is two
+independent events that usually happen together. A lost HTTP response, or any
+exception in between, left the customer **paying for Growth while receiving
+Core**, permanently: the webhook finalizer mirrors provider price and status,
+and had no way to know which local tier that price was supposed to mean.
+
+So a change is persisted **before the provider is touched**:
+
+| Column | Meaning |
+|---|---|
+| `pending_operation_uid` | This operation's identity, and the source of its provider idempotency key |
+| `pending_kind` | `upgrade`, `downgrade` or `resubscribe` |
+| `pending_plan_catalog_id` | The target tier |
+| `pending_price_id` | The target immutable Stripe Price |
+| `pending_price_snapshot` / `pending_currency_id` / `pending_currency_code` / `pending_billing_cycle` | The commercial terms **agreed at request time** |
+| `pending_effective_at` | Now for an upgrade; the period boundary for a downgrade |
+
+The provider call happens outside every transaction, and the key is
+`platform-subscription:{uid}:change:{pending_operation_uid}`.
+
+**The key belongs to the operation, not to the target catalog id.** A Stripe
+Price is immutable, so repricing a tier means a different Price; keying on the
+catalog would send one key with different parameters for the same tier, which
+the provider rejects.
+
+**Convergence has exactly one seam**, `PlatformSubscriptionFinalizer`, reached
+identically by the synchronous provider response, the scheduled downgrade
+sweep, and any later webhook. Its gate is provider truth:
+
+> **PROVIDER PRICE CHANGED TO TARGET → eventually the local commercial snapshot
+> AND the canonical V1 entitlement converge to that same target, exactly
+> once.**
+
+If the provider is not on the target Price, **the entitlement is not widened**
+and the operation stays open. When it is, convergence writes the commercial
+snapshot, then the canonical entitlement, then clears the operation — in that
+order, because every step is idempotent and clearing first would destroy the
+record that repair depends on.
+
+An operation that may already have reached the provider (an upgrade, a
+re-subscribe, or a downgrade whose boundary has passed) is not silently
+replaced: the same target re-drives the same operation and the same key, and a
+different target is refused with `CHANGE_IN_PROGRESS`.
+
+#### 10.2.2 A scheduled downgrade is bound to the terms agreed at request time
+
+The boundary can arrive weeks after the request. Everything the sweep sends —
+the Price, the amount, the currency, the cycle — comes from the operation, not
+from today's catalog. **A customer who scheduled a 97.00 Core plan is not
+moved onto a repriced 147.00 Core when the boundary arrives.**
+
 ### 10.3 Cancellation
 
 - Customer cancellation has **one** deterministic meaning: it preserves access
@@ -611,6 +692,42 @@ Canonical, per Blueprint §27 and Contract 03, using the **existing** writers:
 - At the actual end of service, the lifecycle/access authority changes
   accordingly.
 - Webhook replay must not double-transition or corrupt a canceled Workspace.
+
+### 10.4 Re-subscribing after the subscription has fully ended
+
+A `canceled` or `incomplete_expired` customer has no provider relationship left
+to change, so §10.2 correctly refuses them — and that refusal was a dead end.
+The page still offered upgrade/downgrade controls that could only ever fail,
+and the account had no way back at all.
+
+The rules:
+
+- **Terminal ended states show "Start subscription again", never plan-change
+  controls.** `state` is `ended`, which outranks `locked`: the lock is the
+  consequence of the subscription ending, and telling that customer their
+  account is merely locked invites them to fix a payment method that has
+  nothing left to pay.
+- **The account is reused, never rebuilt.** The same Workspace, the same
+  Business, the same Locations, the same local subscription row — one row per
+  Workspace is structural. No second account is ever provisioned.
+- **A NEW provider subscription is created through hosted Checkout.** A
+  canceled Stripe subscription cannot be revived by changing its Price.
+- **Old provider history is retired, not erased.** The finished provider
+  subscription id moves to `retired_provider_subscription_ids`, and the
+  finalizer's cross-check refuses any snapshot naming a retired id. This is
+  what stops a late `customer.subscription.deleted` from the previous life
+  locking the account the customer has just paid to restart — those events
+  still resolve to this row through the shared customer id and through our own
+  `app_operation_id` metadata, so the retired list is the only thing that can
+  tell the two lives apart.
+- **Nothing is marked paid before confirmation.** The row keeps its ended
+  status; the tier being bought is recorded as a `resubscribe` operation
+  (§10.2.1) and the canonical entitlement moves — and access is restored — only
+  when the provider confirms.
+- The re-subscribe POST and its Checkout return are allowlisted in
+  `CustomerAccountAccessGate`, because a locked account is exactly the account
+  that needs them. Neither grants any product access; both remain
+  owner-or-active-Admin and answer 404 otherwise.
 
 ---
 
@@ -692,6 +809,22 @@ two-decimal for CHARGES: ISK and UGX ("represent as a two-decimal value where
 the decimal amount is always 00"), and HUF/TWD (zero-decimal for payouts only).
 The conversion is string arithmetic, never a float, because the result is
 compared for exact equality.
+
+**ISK and UGX carry two decimals but only whole units are chargeable.** Stripe
+says plainly that you "can't charge fractions of" either, so the factor is 100
+AND a non-zero fractional part is refused outright:
+
+| Amount | ISK / UGX | HUF / TWD |
+|---|---|---|
+| `297` | 29700 | 29700 |
+| `297.00` | 29700 | 29700 |
+| `297.01` | refused | 29701 |
+| `297.50` | refused | 29750 |
+
+Treating `297.50 ISK` as 29750 would let the catalog hold a price Stripe can
+never charge, and then let it pass a parity check that should have failed —
+exactly the class of failure §11 exists to prevent. HUF and TWD are ordinary
+two-decimal currencies for charges and are deliberately unaffected.
 
 The gateway was deliberately **not** extended to create or version Prices
 itself: that would be the beginning of a general Stripe product-management
@@ -776,8 +909,8 @@ product.
 
 `CustomerSubscriptionPresenter` supplies the read model and
 `Workspace\PlanSubscriptionController` the actions, at
-`{workspaceUid}/plan/change`, `/plan/cancel`, `/plan/resume` and
-`/plan/payment-method`.
+`{workspaceUid}/plan/change`, `/plan/cancel`, `/plan/resume`,
+`/plan/payment-method`, `/plan/resubscribe` and `/plan/resubscribe/return`.
 
 The **price shown is the customer's own snapshot**, not the current catalog
 price. The **state word is derived from the access decision first** — the same
@@ -798,6 +931,10 @@ the gate.
 - **Grace** shows the billing problem, the deadline from the canonical
   lifecycle, and the real recovery action — never a link to legacy Ultimate SMS
   billing.
+- **Ended** (`canceled` / `incomplete_expired`) replaces the plan-change and
+  cancel controls entirely with **"Start subscription again"** (§10.4). Showing
+  upgrade/downgrade to a customer with no live provider subscription produced a
+  form that could only ever fail.
 
 **Owner or active Admin only, never Staff.** A failure is 404, so account
 existence is not disclosed.

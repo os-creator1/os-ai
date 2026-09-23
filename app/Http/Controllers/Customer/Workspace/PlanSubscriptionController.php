@@ -76,6 +76,68 @@ class PlanSubscriptionController extends CustomerBaseController
     }
 
     /**
+     * §10.4 — START AGAIN after a subscription has fully ended.
+     *
+     * The account is reused, never rebuilt: same Workspace, same Business,
+     * same Locations. What is created is a NEW provider subscription, through
+     * hosted Checkout, because a canceled Stripe subscription cannot be
+     * revived by changing its Price.
+     */
+    public function resubscribe(Request $request, string $workspaceUid): RedirectResponse
+    {
+        $workspace = $this->authorizedWorkspace($workspaceUid);
+
+        $data = $request->validate([
+            'tier' => ['required', 'string', 'in:core,growth,agency'],
+            'confirm' => ['required', 'accepted'],
+        ]);
+
+        $catalog = WorkspacePlanCatalog::query()->where('tier', $data['tier'])->firstOrFail();
+
+        try {
+            $session = $this->subscriptions->startResubscribeCheckout(
+                $workspace,
+                $catalog,
+                (string) Auth::user()?->email,
+                route('customer.workspaces.plan.resubscribe-return', [$workspaceUid]),
+                route('customer.workspaces.plan.show', [$workspaceUid]),
+            );
+        } catch (PlatformBillingException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+
+        return redirect()->away((string) $session->url);
+    }
+
+    /**
+     * §8.5 — the Checkout return for a re-subscribe. It trusts no query flag:
+     * it re-reads the session from the provider through the shared confirm
+     * seam, which is the SAME one the webhook uses.
+     *
+     * The webhook alone is sufficient, so this endpoint is a convenience for
+     * the browser that did come back, never the only way the account
+     * converges.
+     */
+    public function resubscribeReturn(string $workspaceUid): RedirectResponse
+    {
+        $workspace = $this->authorizedWorkspace($workspaceUid);
+        $subscription = $this->subscriptions->findForWorkspace($workspace);
+
+        if ($subscription === null || blank($subscription->provider_checkout_session_id)) {
+            return redirect()->route('customer.workspaces.plan.show', [$workspaceUid]);
+        }
+
+        try {
+            $this->subscriptions->confirmCheckoutSession((string) $subscription->provider_checkout_session_id);
+        } catch (PlatformBillingException $e) {
+            return redirect()->route('customer.workspaces.plan.show', [$workspaceUid])
+                ->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+
+        return redirect()->route('customer.workspaces.plan.show', [$workspaceUid]);
+    }
+
+    /**
      * §10.3 — cancellation preserves access through the paid period. Repeating
      * it is harmless: the provider call is a set-to-true, not a toggle.
      */
