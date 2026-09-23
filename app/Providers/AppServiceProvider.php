@@ -376,6 +376,11 @@
                 \App\Library\Timeline\Sources\AttributedOutboundMessagesSource::class,
                 \App\Library\Timeline\Sources\AutomationActivitySource::class,
                 \App\Library\Timeline\Sources\ContactRecordSource::class,
+                // Implementation Contract 17 §12.G — Payments & Contracts joins
+                // the timeline the same way every other domain has: by
+                // implementing TimelineSource and being tagged here. The
+                // Conversations screen itself does not change.
+                \App\Library\Timeline\Sources\DocumentActivitySource::class,
             ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
 
             $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(

@@ -54,6 +54,29 @@ class EventServiceProvider extends ServiceProvider
         // replayed or duplicated event still sends exactly one receipt (§8.4).
         \App\Events\DocumentPaymentSucceeded::class => [
             \App\Listeners\BusinessPayments\SendReceiptOnPaymentSucceeded::class,
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handlePaymentSucceeded',
+        ],
+        // Implementation Contract 17 §12.G — Blueprint §24's "payment events
+        // reach the Activity Center", extended to the whole document
+        // lifecycle so the Business owner is told the same way for every one
+        // of these durable transitions.
+        \App\Events\DocumentSent::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSent',
+        ],
+        \App\Events\DocumentSigned::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSigned',
+        ],
+        \App\Events\DocumentFullyPaid::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleFullyPaid',
+        ],
+        \App\Events\DocumentExpired::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleExpired',
+        ],
+        \App\Events\DocumentVoided::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleVoided',
+        ],
+        \App\Events\DocumentRefunded::class => [
+            \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleRefunded',
         ],
         BusinessCreated::class => [
             InitializeBusinessUsageProfile::class.'@handleBusinessCreated',

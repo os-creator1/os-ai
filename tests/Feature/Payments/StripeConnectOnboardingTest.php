@@ -467,10 +467,30 @@ class StripeConnectOnboardingTest extends TestCase
     // HTTP surface: the gate chain
     // =================================================================
 
-    public function test_every_route_is_404_while_payments_contracts_is_planned(): void
+    /**
+     * Sub-slice G flipped PaymentsContracts to Available as its own final
+     * step (§6.4), once A-F were merged and the end-to-end path verified —
+     * so a genuinely entitled Workspace/Business no longer sees these
+     * routes fail closed for that reason. What §6.1 gate 3 still does,
+     * unconditionally, is fail closed for a Workspace the entitlement
+     * authority has explicitly denied, proved here through the exact same
+     * WorkspaceEntitlementOverrideState::Deny mechanism
+     * CatalogNavigationTest::test_the_entry_is_hidden_when_the_workspace_is_unentitled()
+     * already establishes as the correct way to test "capability and
+     * tenancy present, but unentitled" once a feature is Available.
+     */
+    public function test_every_route_is_404_for_an_explicitly_unentitled_workspace(): void
     {
         [, $business, $workspace] = $this->tenantBusiness();
         $this->actAsOwner($business);
+
+        app(EntitlementManager::class)->createOrChangeOverride(
+            $workspace,
+            \App\Enums\Entitlement\PlatformFeature::PaymentsContracts,
+            \App\Enums\Entitlement\WorkspaceEntitlementOverrideState::Deny,
+            $this->platformAdminId(),
+            'Stripe Connect onboarding test: deny the feature.'
+        );
 
         $this->get($this->url('show', $workspace, $business))->assertNotFound();
         $this->post($this->url('start', $workspace, $business))->assertNotFound();

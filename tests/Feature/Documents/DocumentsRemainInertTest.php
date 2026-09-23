@@ -50,12 +50,13 @@ class DocumentsRemainInertTest extends TestCase
         $this->assertFalse(PlatformFeatureRegistry::isWorkspaceScoped(self::FEATURE_KEY));
     }
 
-    public function test_payments_contracts_stays_planned_not_available(): void
+    public function test_payments_contracts_is_now_available(): void
     {
-        $this->assertFalse(
-            PlatformFeatureRegistry::isAvailable(self::FEATURE_KEY),
-            'Sub-slice A must not flip PlatformFeature::PaymentsContracts to Available.'
-        );
+        // Sub-slice G's own last step (§6.4, §12.G): the flip happens only
+        // once A-F are merged and the end-to-end path is verified, which
+        // PaymentsContractsAcceptanceTest now proves against the real,
+        // unmocked authenticated and public routes.
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(self::FEATURE_KEY));
     }
 
     public function test_payments_contracts_is_packaged_for_core_growth_and_agency(): void
@@ -101,11 +102,13 @@ class DocumentsRemainInertTest extends TestCase
     }
 
     /**
-     * §6.4 — a Planned feature already fails closed at the decision layer.
-     * That is what makes it safe for later sub-slices to build authenticated
-     * routes behind the ordinary entitlement gate while the flip is pending.
+     * §6.4 — Sub-slice G flipped PaymentsContracts to Available as its last
+     * step, once A-F were merged and the end-to-end path verified
+     * (PaymentsContractsAcceptanceTest). A fully-entitled Business is now
+     * genuinely allowed at the decision layer, closing the loop this test
+     * originally proved fails closed for while the flip was pending.
      */
-    public function test_entitlement_manager_refuses_payments_contracts_for_a_fully_entitled_business(): void
+    public function test_entitlement_manager_allows_payments_contracts_for_a_fully_entitled_business(): void
     {
         $owner = User::create([
             'first_name' => 'Owner',
@@ -158,8 +161,7 @@ class DocumentsRemainInertTest extends TestCase
             $admin->id
         );
 
-        $this->assertFalse($decision->allowed);
-        $this->assertSame('platform_feature_unavailable', $decision->reason);
+        $this->assertTrue($decision->allowed);
     }
 
     // ------------------------------------------------------------------
@@ -272,7 +274,7 @@ class DocumentsRemainInertTest extends TestCase
         );
     }
 
-    public function test_a_backfilled_customer_passes_the_capability_gate_but_it_opens_nothing_yet(): void
+    public function test_a_backfilled_customer_passes_the_capability_gate(): void
     {
         $id = $this->customerWithPermissions(json_encode(['view_contact']));
         $this->loadMigration('2026_09_25_100013_backfill_payments_contracts_customer_permission.php')->up();
@@ -280,9 +282,11 @@ class DocumentsRemainInertTest extends TestCase
         $user = Customer::find($id)->user;
         $this->assertTrue(Gate::forUser($user)->allows('payments_contracts'));
 
-        // ...but the capability is only ONE link in the §6.1 chain; the
-        // feature it fronts is still Planned, so nothing is reachable.
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(self::FEATURE_KEY));
+        // The capability is only ONE link in the §6.1 chain; since
+        // Sub-slice G's flip the feature it fronts is also Available, so a
+        // backfilled customer's capability alone is enough to reach it
+        // (still subject to tenancy, Workspace entitlement and Location).
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(self::FEATURE_KEY));
     }
 
     // ------------------------------------------------------------------
@@ -376,7 +380,6 @@ class DocumentsRemainInertTest extends TestCase
     public function test_no_manager_gateway_job_or_command_exists_yet(): void
     {
         foreach ([
-            'App\\Library\\Timeline\\Sources\\DocumentActivitySource',           // Sub-slice G
             // Sub-slice F deliberately did NOT introduce a parallel refund
             // manager: refunds extend PaymentManager and the shared finalizer
             // pattern instead of inventing a second money flow (§7.4).
@@ -408,6 +411,9 @@ class DocumentsRemainInertTest extends TestCase
             'App\\Console\\Commands\\ExpireDueDocuments',
             'App\\Console\\Commands\\DispatchDueDocumentReminders',
             'App\\Console\\Commands\\ReconcileStaleDocumentPayments',
+            // Sub-slice G — joins the Conversations timeline the same way
+            // every other domain does (§12.G).
+            'App\\Library\\Timeline\\Sources\\DocumentActivitySource',
         ] as $class) {
             $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's, D's or E's own.");
         }
@@ -447,13 +453,12 @@ class DocumentsRemainInertTest extends TestCase
         );
     }
 
-    public function test_payments_contracts_is_not_yet_a_nav_gated_feature(): void
+    public function test_payments_contracts_is_now_a_nav_gated_feature(): void
     {
-        $this->assertNotContains(
-            self::FEATURE_KEY,
-            CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES,
-            "'payments_contracts' joins ENTITLEMENT_GATED_FEATURES in Sub-slice G, with the nav entry it gates."
-        );
+        // Sub-slice G adds the nav entry and, with it, the gate — the exact
+        // lesson Contract 16 §18.E already recorded: omitting this line would
+        // silently hide the entry forever even once the feature is Available.
+        $this->assertContains(self::FEATURE_KEY, CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES);
     }
 
     public function test_documents_config_exists_but_is_disabled_by_default(): void

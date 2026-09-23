@@ -959,6 +959,20 @@
             Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
         });
 
+        /*
+        |----------------------------------------------------------------
+        | Global Search (Blueprint §7/§24) — the top-bar search across
+        | Contacts, Opportunities, Conversations and transactional
+        | documents, all inside the current selected Business only. No
+        | single feature gates this route: each domain carries its own
+        | permission/entitlement/Location authorization inside
+        | GlobalSearchCoordinator's sources (Contract 17 §12.G).
+        |----------------------------------------------------------------
+        */
+        Route::get('{workspaceUid}/businesses/{businessUid}/search', 'Business\GlobalSearchController@search')
+            ->middleware('throttle:60,1')
+            ->name('businesses.search');
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/documents')->name('businesses.documents.')->group(function () {
             Route::get('/', 'Business\DocumentsController@listing')->name('index');
             Route::post('/', 'Business\DocumentsController@store')->name('store');

@@ -101,14 +101,25 @@ final class PlatformFeatureRegistry
         // unchanged; an unassigned, inactive, suspended or override-denied
         // Workspace is still refused by EntitlementManager exactly as before.
         PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Available,
-        // Implementation Contract 17, Sub-slice A: schema and inert entitlement
-        // identity only — no controller, route, view, provider call or public
-        // link exists yet. Stays Planned through Sub-slices B-F; only Sub-slice
-        // G, once A-F are merged and the end-to-end path is verified, performs
-        // the Planned -> Available flip (§6.4). While Planned, every
-        // authenticated route and every public request fails closed at
-        // EntitlementManager.
-        PlatformFeature::PaymentsContracts->value => PlatformFeatureAvailability::Planned,
+        // Implementation Contract 17, Sub-slice G — the FINAL flip,
+        // Planned -> Available, after a review correction closed the two
+        // gaps the first G pass left: the Global Search foundation
+        // (Blueprint §7/§24 — App\Library\Search, four bounded sources, no
+        // new index/schema) and the Activity Center's READ-TIME
+        // authorization (§12.G — DocumentActivityCenterReader re-derives
+        // tenancy, the payments_contracts capability, the entitlement,
+        // document existence and LocationAccessGuard fresh on every read,
+        // through the existing platform_database_notifications substrate,
+        // never the legacy notifications table). Flipped only once nav,
+        // timeline, the corrected Activity Center and Global Search all
+        // passed their focused tests and the end-to-end acceptance path
+        // (PaymentsContractsAcceptanceTest) passed again against the real,
+        // unmocked authenticated and public routes. Plan packaging already
+        // existed for Core, Growth and Agency (Sub-slice A,
+        // 2026_09_25_100012_seed_payments_contracts_plan_packaging.php) and
+        // is unchanged; an unassigned, inactive, suspended or override-denied
+        // Workspace is still refused by EntitlementManager exactly as before.
+        PlatformFeature::PaymentsContracts->value => PlatformFeatureAvailability::Available,
     ];
 
     /**
