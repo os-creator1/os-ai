@@ -9,6 +9,34 @@
     Route::get('book/{bookingTypeUuid}/confirmed', 'Customer\PublicBookingController@confirmed')
         ->whereUuid('bookingTypeUuid')->name('public.booking.confirmed');
 
+    /*
+    | Implementation Contract 17 §6.3 — the secure document link.
+    |
+    | Two segments, and the split is load-bearing: {uid} LOCATES the row and
+    | {token} AUTHENTICATES it, because the token is stored as a bcrypt hash
+    | and therefore cannot be a lookup key. Mirrors client_workspace_invitations.
+    |
+    | NO IMPLICIT ROUTE-MODEL BINDING, deliberately. Both segments arrive as
+    | plain strings and the controller resolves them itself, so the failure
+    | the §6.3 `->missing()` delta exists to prevent — an unresolved binding
+    | rendering a 500, as PublicContactOptInTest documents happening on the
+    | opt-in route — is structurally impossible here rather than patched. No
+    | segment is constrained either: a malformed uid must reach the same
+    | uniform refusal as an unknown one, never a differently-shaped router
+    | 404 that an attacker could distinguish.
+    |
+    | THROTTLED (§6.3 delta 1). This is an unauthenticated, high-value target
+    | — the link both signs and, from Sub-slice E, pays. The GET is sized for
+    | a real recipient who opens, refreshes and revisits the page, including
+    | on a shared office IP, while refusing the volume a token-guessing sweep
+    | needs: 30/minute. The POST is a deliberate, once-per-document human act
+    | and is held to the same 10/minute the public booking mutation uses.
+    */
+    Route::get('documents/{uid}/{token}', 'Public\PublicDocumentController@show')
+        ->middleware('throttle:30,1')->name('public.documents.show');
+    Route::post('documents/{uid}/{token}/sign', 'Public\PublicDocumentController@sign')
+        ->middleware('throttle:10,1')->name('public.documents.sign');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */
