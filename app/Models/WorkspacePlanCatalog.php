@@ -29,6 +29,12 @@ class WorkspacePlanCatalog extends Model
         'unlimited_location_slots',
         'additional_location_slot_price_ratio',
         'is_active',
+        // Implementation Contract 21 §11 — lane-A commercial configuration,
+        // owned by this catalog rather than by a payments-only settings table.
+        'trial_enabled',
+        'trial_days',
+        'available_for_signup',
+        'provider_price_id',
     ];
 
     protected $casts = [
@@ -43,7 +49,47 @@ class WorkspacePlanCatalog extends Model
         'unlimited_location_slots' => 'boolean',
         'additional_location_slot_price_ratio' => 'decimal:4',
         'is_active' => 'boolean',
+        'trial_enabled' => 'boolean',
+        'trial_days' => 'integer',
+        'available_for_signup' => 'boolean',
     ];
+
+    /**
+     * Implementation Contract 21 §7/§11 — whether this tier can be SOLD to a
+     * new customer right now: offered for signup, assignable at all, and
+     * carrying complete commercial terms.
+     *
+     * `is_active` and `available_for_signup` are deliberately both required
+     * and deliberately different. `is_active` governs assignability in general
+     * (turning it off would strand existing subscribers who need to change
+     * plans); `available_for_signup` is the narrower commercial switch that
+     * stops new sales without touching anybody already on the tier.
+     */
+    public function isSellable(): bool
+    {
+        return (bool) $this->is_active
+            && (bool) $this->available_for_signup
+            && $this->price !== null
+            && $this->currency_id !== null
+            && ! blank($this->provider_price_id);
+    }
+
+    /**
+     * The trial length to SNAPSHOT at signup (§8), or null for no trial.
+     * `trial_days` is meaningless while `trial_enabled` is false, so an
+     * operator who switches trials off for a week does not lose the duration
+     * they had configured.
+     */
+    public function configuredTrialDays(): ?int
+    {
+        if (! (bool) $this->trial_enabled) {
+            return null;
+        }
+
+        $days = (int) $this->trial_days;
+
+        return $days >= 1 ? $days : null;
+    }
 
     public function currency(): BelongsTo
     {

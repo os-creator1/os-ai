@@ -1055,6 +1055,104 @@ final class EntitlementManager
     // =====================================================================
 
     /**
+     * Implementation Contract 21 §7/§10.2 — narrow, SUBSCRIPTION-PROOF-
+     * PROVENANCE-ONLY entry points, reachable only from lane A's
+     * PlatformSubscriptionManager after that caller has already independently
+     * verified a durable, provider-confirmed subscription for exactly this
+     * Workspace.
+     *
+     * WHY THEY EXIST. assignFirstPlan() and changePlan() assert a platform
+     * administrator, which is correct for an admin acting on someone else's
+     * account and wrong for a customer buying the product: in self-serve
+     * signup the authority is not a human administrator, it is a confirmed
+     * payment. This is the same authority model RFC-004 Amendment 1 already
+     * established for allocateAdditionalBusinessSlotsFromVerifiedPayment() —
+     * "the caller has already verified a durable, successful, idempotent
+     * payment record", and this class trusts that prior verification rather
+     * than re-deciding it.
+     *
+     * WHY A FLAG RATHER THAN A SECOND IMPLEMENTATION. Copying the assignment
+     * and plan-change bodies would create two versions of the tier/pricing/
+     * slot validation and the audit trail, which is exactly the duplication
+     * that lets the two drift. There is one implementation; these wrappers
+     * change only WHO is permitted to reach it, and the actor recorded in the
+     * audit trail is the Workspace OWNER — honest, because they are the party
+     * who consented and paid.
+     *
+     * NEVER A GENERAL ADMIN BYPASS. The flag is private, is set only inside
+     * these wrappers, is cleared in a `finally` so an exception cannot leak
+     * it, and every wrapper validates its evidence first.
+     */
+    private bool $verifiedSubscriptionProvenance = false;
+
+    public function assignFirstPlanFromVerifiedSubscription(
+        Workspace $workspace,
+        WorkspacePlanTier $tier,
+        int $ownerUserId,
+        string $subscriptionUid,
+        string $providerReference,
+        ?CarbonInterface $trialEndsAt,
+        string $reason,
+    ): WorkspacePlanAssignment {
+        $this->assertVerifiedSubscriptionEvidence($subscriptionUid, $providerReference);
+
+        return $this->withVerifiedSubscriptionProvenance(fn (): WorkspacePlanAssignment => $this->assignFirstPlan(
+            $workspace,
+            $tier,
+            $ownerUserId,
+            $reason,
+            false,
+            0,
+            $trialEndsAt,
+        ));
+    }
+
+    public function changePlanFromVerifiedSubscription(
+        Workspace $workspace,
+        WorkspacePlanTier $newTier,
+        int $ownerUserId,
+        string $subscriptionUid,
+        string $providerReference,
+        string $reason,
+    ): WorkspacePlanAssignment {
+        $this->assertVerifiedSubscriptionEvidence($subscriptionUid, $providerReference);
+
+        return $this->withVerifiedSubscriptionProvenance(fn (): WorkspacePlanAssignment => $this->changePlan(
+            $workspace,
+            $newTier,
+            $ownerUserId,
+            $reason,
+        ));
+    }
+
+    private function assertVerifiedSubscriptionEvidence(string $subscriptionUid, string $providerReference): void
+    {
+        if (trim($subscriptionUid) === '' || trim($providerReference) === '') {
+            throw new InvalidArgumentException(
+                'A verified lane-A subscription requires both a durable local subscription uid and a provider reference.'
+            );
+        }
+    }
+
+    /**
+     * @template TReturn
+     *
+     * @param  callable():TReturn  $operation
+     * @return TReturn
+     */
+    private function withVerifiedSubscriptionProvenance(callable $operation)
+    {
+        $previous = $this->verifiedSubscriptionProvenance;
+        $this->verifiedSubscriptionProvenance = true;
+
+        try {
+            return $operation();
+        } finally {
+            $this->verifiedSubscriptionProvenance = $previous;
+        }
+    }
+
+    /**
      * Contract 03 §5 — `$trialEndsAt` is optional and trailing: every one of
      * the existing call sites uses positional arguments against the previous
      * six-parameter signature, so none of them changes. Pass it only when the
@@ -2333,6 +2431,14 @@ final class EntitlementManager
      */
     private function assertPlatformAdministrator(int $actorUserId): void
     {
+        // Implementation Contract 21 §7 — a confirmed, durable lane-A
+        // subscription is its own authority. The flag is set only by the
+        // narrow wrappers above, which validate their evidence first and clear
+        // it in a `finally`; it is never reachable from customer input.
+        if ($this->verifiedSubscriptionProvenance) {
+            return;
+        }
+
         $isAdmin = (bool) $this->userRepository->query()->whereKey($actorUserId)->value('is_admin');
 
         if (! $isAdmin) {
