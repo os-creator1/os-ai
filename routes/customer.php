@@ -969,6 +969,11 @@
             Route::delete('{documentUid}/lines/{lineUid}', 'Business\DocumentsController@removeLine')->name('lines.destroy');
             Route::put('{documentUid}/lines/order', 'Business\DocumentsController@reorder')->name('lines.order');
             Route::put('{documentUid}/schedule', 'Business\DocumentsController@schedule')->name('schedule.update');
+            // Sub-slice C §7.1 — send freezes the draft into an issued version
+            // and rotates the secure link (invalidating every earlier one);
+            // revise opens version N+1 on an already-sent document.
+            Route::post('{documentUid}/send', 'Business\DocumentsController@send')->middleware('throttle:30,1')->name('send');
+            Route::post('{documentUid}/revise', 'Business\DocumentsController@revise')->middleware('throttle:30,1')->name('revise');
             Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
         });
 

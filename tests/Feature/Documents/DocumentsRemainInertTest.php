@@ -310,7 +310,11 @@ class DocumentsRemainInertTest extends TestCase
 
             foreach ($needles as $needle) {
                 if ((str_contains($uri, $needle) || str_contains($name, $needle))
-                    && ! str_contains($name, 'businesses.documents.')) {
+                    && ! str_contains($name, 'businesses.documents.')
+                    // Sub-slice C §6.3 — the end customer's secure link. It is
+                    // the ONLY public document surface permitted to exist, and
+                    // the next assertion pins its exact shape.
+                    && ! str_starts_with($name, 'public.documents.')) {
                     $offending[] = ($name !== '' ? $name : $uri) . " [{$needle}]";
                 }
             }
@@ -319,14 +323,32 @@ class DocumentsRemainInertTest extends TestCase
         $this->assertSame([], array_values(array_unique($offending)), 'Only Sub-slice B authoring routes may exist.');
     }
 
-    public function test_no_public_document_link_or_business_payments_webhook_route_exists(): void
+    public function test_the_public_document_surface_is_exactly_the_link_and_no_webhook_exists(): void
     {
+        // Sub-slice C adds the secure link — and NOTHING else public. In
+        // particular §6.3.2's payment-start POST and the lane-B webhook are
+        // Sub-slice E's, so their absence is still asserted here.
+        $publicDocumentUris = [];
+
         foreach (Route::getRoutes() as $route) {
             $uri = strtolower($route->uri());
 
-            $this->assertStringStartsNotWith('documents/', $uri);
+            if (str_starts_with($uri, 'documents/')) {
+                $publicDocumentUris[] = $uri;
+            }
+
             $this->assertStringNotContainsString('stripe/webhook/business-payments', $uri);
+            $this->assertStringNotContainsString('pay-start', $uri);
+            $this->assertStringNotContainsString('payment-start', $uri);
         }
+
+        sort($publicDocumentUris);
+
+        $this->assertSame(
+            ['documents/{uid}/{token}', 'documents/{uid}/{token}/sign'],
+            array_values(array_unique($publicDocumentUris)),
+            'Only the Sub-slice C view and sign routes may be publicly reachable.'
+        );
 
         $except = (new ReflectionClass(VerifyCsrfToken::class))->getDefaultProperties()['except'] ?? [];
 
@@ -349,10 +371,23 @@ class DocumentsRemainInertTest extends TestCase
             'App\\Library\\Payments\\PaymentManager',                            // Sub-slices E/F
             'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',          // Sub-slice E
             'App\\Library\\Timeline\\Sources\\DocumentActivitySource',           // Sub-slice G
-            'App\\Events\\DocumentSent',                                         // Sub-slice C
             'App\\Events\\DocumentPaymentSucceeded',                             // Sub-slice E
+            'App\\Events\\DocumentFullyPaid',                                    // Sub-slice E
+            'App\\Events\\DocumentExpired',                                      // Sub-slice F
+            'App\\Events\\DocumentRefunded',                                     // Sub-slice F
         ] as $class) {
             $this->assertFalse(class_exists($class), "[{$class}] belongs to a later sub-slice and must not exist yet.");
+        }
+
+        // Sub-slice C legitimately creates these; asserted positively so the
+        // boundary above stays a real inventory rather than a stale list.
+        foreach ([
+            'App\\Events\\DocumentSent',
+            'App\\Events\\DocumentSigned',
+            'App\\Library\\Documents\\PublicDocumentGuard',
+            'App\\Library\\Documents\\DocumentContentHasher',
+        ] as $class) {
+            $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's own.");
         }
     }
 

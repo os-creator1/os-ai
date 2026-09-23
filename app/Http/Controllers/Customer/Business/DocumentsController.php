@@ -66,8 +66,37 @@ class DocumentsController extends CustomerBaseController
     public function update(Request $request, string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
     {
         $document = $this->document($workspaceUid, $businessUid, $documentUid);
-        $data = $request->validate(['title' => 'sometimes|required|string|max:200', 'content' => 'sometimes|array']);
+        $data = $request->validate([
+            'title' => 'sometimes|required|string|max:200',
+            'content' => 'sometimes|array',
+            // §5.2 — the delivery identity. Prefillable while the document has
+            // never been sent, frozen by the manager from the first send on.
+            'recipient_name_snapshot' => 'sometimes|nullable|string|max:191',
+            'recipient_email_snapshot' => 'sometimes|nullable|email|max:255',
+            'recipient_phone_snapshot' => 'sometimes|nullable|string|max:32',
+        ]);
         $this->manager->edit($document, $data);
+        return back();
+    }
+
+    /**
+     * §7.1 SEND — freezes the draft version, mints the secure link and, only
+     * after commit, emails it to the frozen recipient snapshot.
+     */
+    public function send(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
+    {
+        $this->manager->send($this->document($workspaceUid, $businessUid, $documentUid));
+        return back();
+    }
+
+    /**
+     * §7.1 REVISE — opens version N+1 on an already-sent document, copying
+     * the issued version's lines and schedule commercial terms. The existing
+     * link keeps working until the new version is sent.
+     */
+    public function revise(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
+    {
+        $this->manager->revise($this->document($workspaceUid, $businessUid, $documentUid), Auth::user());
         return back();
     }
 
