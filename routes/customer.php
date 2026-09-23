@@ -975,6 +975,14 @@
             Route::post('{documentUid}/send', 'Business\DocumentsController@send')->middleware('throttle:30,1')->name('send');
             Route::post('{documentUid}/revise', 'Business\DocumentsController@revise')->middleware('throttle:30,1')->name('revise');
             Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
+            // Sub-slice F §7.4/§6.1 — refund one captured payment. Same single
+            // `payments_contracts` capability as every route above plus an
+            // explicit confirmation field; NOT owner-only (that is §6.2's rule
+            // for connecting Stripe, not for refunding). The payment is named
+            // by OUR uid and re-scoped to the document; no Stripe identifier
+            // is ever accepted from the browser. Throttled like the other
+            // actions that reach the provider.
+            Route::post('{documentUid}/payments/{paymentUid}/refund', 'Business\DocumentsController@refund')->middleware('throttle:30,1')->name('payments.refund');
         });
 
         /*

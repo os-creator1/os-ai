@@ -3,6 +3,7 @@
 namespace App\Library\Payments;
 
 use App\Enums\Documents\BusinessDocumentPaymentStatus;
+use App\Enums\Documents\BusinessDocumentRefundStatus;
 use App\Exceptions\Payments\StripeConnectException;
 
 /**
@@ -72,5 +73,59 @@ final class ProviderStatusMap
     public static function handlesEventType(string $eventType): bool
     {
         return array_key_exists($eventType, self::EVENT_STATUS);
+    }
+
+    // =================================================================
+    // Sub-slice F — refunds
+    // =================================================================
+
+    /** Stripe Refund status -> our §5.9 local refund status. */
+    private const REFUND_STATUS = [
+        'pending' => BusinessDocumentRefundStatus::Pending,
+        // The customer must complete a step before the refund settles; it is
+        // still in flight, so it still RESERVES capacity (§8.7).
+        'requires_action' => BusinessDocumentRefundStatus::Pending,
+        'succeeded' => BusinessDocumentRefundStatus::Succeeded,
+        'failed' => BusinessDocumentRefundStatus::Failed,
+        // A canceled refund never moved money, so it releases its reservation
+        // exactly like a failed one.
+        'canceled' => BusinessDocumentRefundStatus::Failed,
+    ];
+
+    /**
+     * §8.3/§4.5 — refund events are routed by EVENT TYPE, never by metadata.
+     * Stripe's Charge/Dispute/Refund metadata is independent and is never
+     * inherited from the originating PaymentIntent, so an app_operation_id
+     * cannot be relied on to appear on a refund object at all.
+     *
+     * EVERY TYPE HERE CARRIES A REFUND OBJECT IN `data.object`. `charge.refunded`
+     * is deliberately absent even though it sounds like the obvious one: its
+     * `data.object` is a CHARGE, whose refunds sit in a nested paginated list.
+     * Admitting it would mean one handler silently parsing two different object
+     * shapes, and the refund's own events already carry the authoritative
+     * status — so a charge-level event is recorded and ignored rather than
+     * half-understood.
+     */
+    private const REFUND_EVENT_TYPES = [
+        'refund.created',
+        'refund.updated',
+        'refund.failed',
+        // The legacy name for the same refund-object event.
+        'charge.refund.updated',
+    ];
+
+    /**
+     * @throws StripeConnectException when the provider reports a refund status
+     *         this contract has no mapping for
+     */
+    public static function forRefundStatus(string $providerStatus): BusinessDocumentRefundStatus
+    {
+        return self::REFUND_STATUS[$providerStatus]
+            ?? throw StripeConnectException::unmappedProviderStatus();
+    }
+
+    public static function isRefundEventType(string $eventType): bool
+    {
+        return in_array($eventType, self::REFUND_EVENT_TYPES, true);
     }
 }

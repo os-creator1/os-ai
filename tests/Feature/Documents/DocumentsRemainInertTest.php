@@ -377,9 +377,10 @@ class DocumentsRemainInertTest extends TestCase
     {
         foreach ([
             'App\\Library\\Timeline\\Sources\\DocumentActivitySource',           // Sub-slice G
-            'App\\Events\\DocumentExpired',                                      // Sub-slice F
-            'App\\Events\\DocumentRefunded',                                     // Sub-slice F
-            'App\\Library\\Payments\\RefundManager',                             // Sub-slice F
+            // Sub-slice F deliberately did NOT introduce a parallel refund
+            // manager: refunds extend PaymentManager and the shared finalizer
+            // pattern instead of inventing a second money flow (§7.4).
+            'App\\Library\\Payments\\RefundManager',
         ] as $class) {
             $this->assertFalse(class_exists($class), "[{$class}] belongs to a later sub-slice and must not exist yet.");
         }
@@ -400,6 +401,13 @@ class DocumentsRemainInertTest extends TestCase
             'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',
             'App\\Events\\DocumentPaymentSucceeded',
             'App\\Events\\DocumentFullyPaid',
+            // Sub-slice F.
+            'App\\Events\\DocumentExpired',
+            'App\\Events\\DocumentRefunded',
+            'App\\Library\\Payments\\RefundFinalizer',
+            'App\\Console\\Commands\\ExpireDueDocuments',
+            'App\\Console\\Commands\\DispatchDueDocumentReminders',
+            'App\\Console\\Commands\\ReconcileStaleDocumentPayments',
         ] as $class) {
             $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's, D's or E's own.");
         }
@@ -410,7 +418,12 @@ class DocumentsRemainInertTest extends TestCase
         );
     }
 
-    public function test_no_documents_command_is_scheduled_yet(): void
+    /**
+     * Sub-slice F added exactly three `documents:*` commands and no more. The
+     * assertion stayed rather than being deleted, so it keeps working as an
+     * inventory: a fourth scheduled documents command would fail here.
+     */
+    public function test_only_the_three_contracted_documents_commands_are_scheduled(): void
     {
         $schedule = new Schedule();
         $kernel = app(\App\Console\Kernel::class);
@@ -418,9 +431,20 @@ class DocumentsRemainInertTest extends TestCase
         $method->setAccessible(true);
         $method->invoke($kernel, $schedule);
 
+        $scheduled = [];
+
         foreach ($schedule->events() as $event) {
-            $this->assertStringNotContainsString('documents:', (string) $event->command, 'Sub-slice F owns the documents:* commands.');
+            if (preg_match('/(documents:[a-z-]+)/', (string) $event->command, $matches) === 1) {
+                $scheduled[] = $matches[1];
+            }
         }
+
+        sort($scheduled);
+
+        $this->assertSame(
+            ['documents:dispatch-due-reminders', 'documents:expire-due', 'documents:reconcile-stale-payments'],
+            $scheduled,
+        );
     }
 
     public function test_payments_contracts_is_not_yet_a_nav_gated_feature(): void

@@ -128,12 +128,25 @@ class FakeStripeConnectGateway implements StripeConnectGateway
         return $this->intentSnapshot($intentId);
     }
 
+    /**
+     * Invoked DURING retrievePaymentIntent(), with the intent id, so a test
+     * can make one specific row's provider call fail while the others succeed
+     * — which is how "one bad row must not abort the batch" is proved.
+     *
+     * @var null|callable(string):void
+     */
+    public $duringRetrieveIntent = null;
+
     public function retrievePaymentIntent(string $connectedAccountId, string $providerPaymentIntentId): PaymentIntentSnapshot
     {
         $this->record('retrievePaymentIntent', [
             'account' => $connectedAccountId,
             'intent' => $providerPaymentIntentId,
         ]);
+
+        if ($this->duringRetrieveIntent !== null) {
+            ($this->duringRetrieveIntent)($providerPaymentIntentId);
+        }
 
         return $this->intentSnapshot($providerPaymentIntentId);
     }
@@ -169,6 +182,113 @@ class FakeStripeConnectGateway implements StripeConnectGateway
             providerChargeId: null,
             failureCode: null,
             clientSecret: $intentId . '_secret_fake',
+        );
+    }
+
+    // =================================================================
+    // Sub-slice F — refunds
+    // =================================================================
+
+    /** Refund id keyed by the Stripe idempotency key, mimicking Stripe's own behaviour. */
+    public array $refundsByKey = [];
+
+    /** Refund state keyed by refund id. */
+    public array $refunds = [];
+
+    public int $refundSequence = 0;
+
+    /** The local status every newly created refund reports. */
+    public \App\Enums\Documents\BusinessDocumentRefundStatus $refundStatus = \App\Enums\Documents\BusinessDocumentRefundStatus::Pending;
+
+    /**
+     * The refund equivalent of loseNextCreateResponse: Stripe really created
+     * the refund under the key, but the response never arrived. A re-drive
+     * with the SAME key must find that same refund rather than returning money
+     * a second time.
+     */
+    public bool $loseNextRefundResponse = false;
+
+    /**
+     * Invoked DURING createRefund(), i.e. in the exact window where refund A
+     * has been admitted and committed as `pending` but its outcome is not yet
+     * known. That window is where §8.7's race actually lives — a second
+     * admission arriving while the first reservation is outstanding — so a
+     * test drives the concurrent request from here rather than pretending the
+     * two calls were sequential.
+     *
+     * @var null|callable():void
+     */
+    public $duringCreateRefund = null;
+
+    public function createRefund(
+        string $connectedAccountId,
+        string $providerPaymentIntentId,
+        int $amountMinor,
+        string $idempotencyKey,
+        string $operationId,
+    ): \App\Library\Payments\RefundSnapshot {
+        $this->record('createRefund', [
+            'account' => $connectedAccountId,
+            'intent' => $providerPaymentIntentId,
+            'amount' => $amountMinor,
+            'idempotency_key' => $idempotencyKey,
+            'operation_id' => $operationId,
+        ]);
+
+        $refundId = $this->refundsByKey[$idempotencyKey]
+            ?? ('re_fake' . str_pad((string) (++$this->refundSequence), 6, '0', STR_PAD_LEFT));
+
+        $this->refundsByKey[$idempotencyKey] = $refundId;
+        $this->refunds[$refundId] ??= [
+            'status' => $this->refundStatus,
+            'amount' => $amountMinor,
+            'currency' => $this->intents[$providerPaymentIntentId]['currency'] ?? 'USD',
+            'account' => $connectedAccountId,
+            'operation_id' => $operationId,
+        ];
+
+        if ($this->duringCreateRefund !== null) {
+            $hook = $this->duringCreateRefund;
+            // One-shot, so a concurrent request driven from the hook does not
+            // recurse into it forever.
+            $this->duringCreateRefund = null;
+            $hook();
+        }
+
+        if ($this->loseNextRefundResponse) {
+            $this->loseNextRefundResponse = false;
+
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->refundSnapshot($refundId);
+    }
+
+    public function retrieveRefund(string $connectedAccountId, string $providerRefundId): \App\Library\Payments\RefundSnapshot
+    {
+        $this->record('retrieveRefund', ['account' => $connectedAccountId, 'refund' => $providerRefundId]);
+
+        return $this->refundSnapshot($providerRefundId);
+    }
+
+    /** Moves a provider-side refund to a new status, as Stripe would. */
+    public function setRefundStatus(string $refundId, \App\Enums\Documents\BusinessDocumentRefundStatus $status): void
+    {
+        $this->refunds[$refundId]['status'] = $status;
+    }
+
+    public function refundSnapshot(string $refundId): \App\Library\Payments\RefundSnapshot
+    {
+        $refund = $this->refunds[$refundId] ?? [];
+
+        return new \App\Library\Payments\RefundSnapshot(
+            providerRefundId: $refundId,
+            status: $refund['status'] ?? \App\Enums\Documents\BusinessDocumentRefundStatus::Pending,
+            amountMinor: (int) ($refund['amount'] ?? 0),
+            currencyCode: (string) ($refund['currency'] ?? 'USD'),
+            connectedAccountId: (string) ($refund['account'] ?? ''),
+            operationId: $refund['operation_id'] ?? null,
+            providerChargeId: null,
         );
     }
 

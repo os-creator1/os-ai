@@ -47,7 +47,7 @@ class DocumentsControllerTest extends TestCase
 
     private function allowEntitlement(): void
     {
-        $this->app->bind(DocumentsController::class, fn ($app) => new class($app->make(DocumentManager::class), $app->make(EntitlementManager::class), $app->make(LocationAccessGuard::class)) extends DocumentsController {
+        $this->app->bind(DocumentsController::class, fn ($app) => new class($app->make(DocumentManager::class), $app->make(EntitlementManager::class), $app->make(LocationAccessGuard::class), $app->make(\App\Library\Payments\PaymentManager::class)) extends DocumentsController {
             protected function entitlementAllows(\App\Models\Workspace $workspace, \App\Models\Business $business): bool { return true; }
         });
     }
@@ -134,12 +134,62 @@ class DocumentsControllerTest extends TestCase
             ['PUT', $base.'/'.$document->uid.'/lines/order', []],
             ['PUT', $base.'/'.$document->uid.'/schedule', []],
             ['POST', $base.'/'.$document->uid.'/void', []],
+            // Sub-slice F — the refund action is behind the SAME chain, so it
+            // fails closed while PaymentsContracts is Planned (§6.1).
+            ['POST', $base.'/'.$document->uid.'/payments/00000000-0000-0000-0000-000000000000/refund',
+                ['confirm' => '1', 'amount_minor' => 100]],
         ];
         foreach ($routes as [$method, $url, $payload]) {
             $this->call($method, $url, $payload)->assertNotFound();
         }
         $this->assertSame(1, BusinessDocument::count());
         $this->assertSame('draft', $document->fresh()->status->value);
+    }
+
+    /**
+     * Sub-slice F §6.1 — refunds take the SAME single `payments_contracts`
+     * capability as the rest of this controller PLUS an explicit confirmation.
+     * There is no new permission key and no owner-only rule.
+     */
+    public function test_a_refund_without_explicit_confirmation_is_refused(): void
+    {
+        $bundle = $this->activeBundle();
+        $document = BusinessDocument::findOrFail($this->insertDocument($bundle));
+        $this->allowEntitlement();
+        $this->authenticateAs(Customer::where('user_id', $bundle['business']->workspace->owner_user_id)->firstOrFail());
+
+        $this->post($this->url($bundle, '/'.$document->uid.'/payments/'.$document->uid.'/refund'), [
+            'amount_minor' => 5000,
+        ])->assertSessionHasErrors('confirm');
+
+        $this->assertSame(0, DB::table('business_document_refunds')->count());
+    }
+
+    public function test_a_refund_naming_a_payment_outside_the_document_is_a_404(): void
+    {
+        $bundle = $this->activeBundle();
+        $document = BusinessDocument::findOrFail($this->insertDocument($bundle));
+        $this->allowEntitlement();
+        $this->authenticateAs(Customer::where('user_id', $bundle['business']->workspace->owner_user_id)->firstOrFail());
+
+        $this->post($this->url($bundle, '/'.$document->uid.'/payments/00000000-0000-0000-0000-000000000000/refund'), [
+            'confirm' => '1', 'amount_minor' => 5000,
+        ])->assertNotFound();
+
+        $this->assertSame(0, DB::table('business_document_refunds')->count());
+    }
+
+    public function test_the_refund_route_needs_the_same_capability_as_every_other_action(): void
+    {
+        $bundle = $this->activeBundle();
+        $document = BusinessDocument::findOrFail($this->insertDocument($bundle));
+        $this->allowEntitlement();
+        Customer::where('user_id', $bundle['business']->workspace->owner_user_id)->update(['permissions' => json_encode([])]);
+        $this->authenticateAs(Customer::where('user_id', $bundle['business']->workspace->owner_user_id)->firstOrFail(), []);
+
+        $this->post($this->url($bundle, '/'.$document->uid.'/payments/'.$document->uid.'/refund'), [
+            'confirm' => '1', 'amount_minor' => 5000,
+        ])->assertStatus(401);
     }
 
     public function test_staff_without_exact_location_grant_cannot_view_document(): void

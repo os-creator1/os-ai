@@ -141,6 +141,17 @@
                 '--page=' . (int) config('opportunity.sweep_page', 100),
             ])->dailyAt('03:10')->withoutOverlapping();
 
+            // Implementation Contract 17 §12.F — the three document sweeps.
+            // Registered unconditionally for exactly the reason the snooze
+            // sweep above is: each command owns the documents.enabled no-op,
+            // so the scheduler never has to know whether Payments & Contracts
+            // is turned on. Each is bounded by its own config limit and is
+            // idempotent by durable markers or provider truth, so an
+            // overlapping tick expires, reminds or reconciles nothing twice.
+            $schedule->command('documents:expire-due')->everyFifteenMinutes();
+            $schedule->command('documents:dispatch-due-reminders')->hourly();
+            $schedule->command('documents:reconcile-stale-payments')->everyFiveMinutes();
+
             // RFC-005 Milestone 3 (Correction Round 1, item 110) —
             // without these, both jobs are permanently unreachable
             // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,

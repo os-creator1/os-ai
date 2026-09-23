@@ -224,6 +224,69 @@ final class StripeApiConnectGateway implements StripeConnectGateway
     }
 
     /**
+     * §7.4 — a refund on the payment's own historical connected account.
+     *
+     * Refunding by PaymentIntent (rather than by charge id) lets Stripe pick
+     * the right charge, which keeps us from having to store and trust a
+     * second provider identifier. `refund_application_fee` is deliberately
+     * absent: §11.2 takes no application fee, so there is none to refund.
+     */
+    public function createRefund(
+        string $connectedAccountId,
+        string $providerPaymentIntentId,
+        int $amountMinor,
+        string $idempotencyKey,
+        string $operationId,
+    ): RefundSnapshot {
+        try {
+            $refund = $this->client()->refunds->create([
+                'payment_intent' => $providerPaymentIntentId,
+                'amount' => $amountMinor,
+                // Recorded for our own tracing. It is NOT relied on when the
+                // event comes back: §4.5/§8.3 note that Stripe refund
+                // metadata is independent and never inherited, so resolution
+                // is by provider reference.
+                'metadata' => ['app_operation_id' => $operationId],
+            ], [
+                'stripe_account' => $connectedAccountId,
+                'idempotency_key' => $idempotencyKey,
+            ]);
+        } catch (ApiErrorException) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->refundSnapshot($refund, $connectedAccountId);
+    }
+
+    public function retrieveRefund(string $connectedAccountId, string $providerRefundId): RefundSnapshot
+    {
+        try {
+            $refund = $this->client()->refunds->retrieve($providerRefundId, [], [
+                'stripe_account' => $connectedAccountId,
+            ]);
+        } catch (ApiErrorException) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->refundSnapshot($refund, $connectedAccountId);
+    }
+
+    private function refundSnapshot(object $refund, string $connectedAccountId): RefundSnapshot
+    {
+        $charge = $refund->charge ?? null;
+
+        return new RefundSnapshot(
+            providerRefundId: (string) $refund->id,
+            status: ProviderStatusMap::forRefundStatus((string) $refund->status),
+            amountMinor: (int) $refund->amount,
+            currencyCode: mb_strtoupper((string) $refund->currency),
+            connectedAccountId: $connectedAccountId,
+            operationId: $refund->metadata->app_operation_id ?? null,
+            providerChargeId: is_string($charge) ? $charge : ($charge->id ?? null),
+        );
+    }
+
+    /**
      * §11.8 — the provider's status string dies here. Everything past this
      * point speaks only our six local values.
      */

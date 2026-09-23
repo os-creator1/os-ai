@@ -597,20 +597,21 @@ class StripeConnectOnboardingTest extends TestCase
         }
     }
 
-    public function test_lane_b_contains_no_refund_dispute_or_platform_fee_machinery(): void
+    public function test_lane_b_contains_no_dispute_or_platform_fee_machinery(): void
     {
         // Sub-slice E legitimately added PaymentIntents, the Payment Element
-        // and the verified webhook, so those are no longer forbidden here.
-        // What is STILL out of scope is F's refund/dispute surface and any
-        // platform intermediation of the Business's revenue.
+        // and the verified webhook, and Sub-slice F legitimately added
+        // refunds, so none of those are forbidden here any more. What remains
+        // out of scope in V1 is the DISPUTE surface and, permanently, any
+        // platform intermediation of the Business's revenue (§11.2).
         foreach ($this->laneBSources() as $path => $code) {
             foreach ([
                 'application_fee', 'on_behalf_of', 'transfer_data',
-                'Refund', 'refunds', 'dispute', 'Dispute',
+                'dispute', 'Dispute',
                 'reminder', 'Reminder',
             ] as $forbidden) {
                 $this->assertStringNotContainsString($forbidden, $code,
-                    basename($path) . " must not contain [{$forbidden}] — that is Sub-slice F.");
+                    basename($path) . " must not contain [{$forbidden}].");
             }
         }
 
@@ -641,9 +642,23 @@ class StripeConnectOnboardingTest extends TestCase
     public function test_no_secret_is_ever_returned_logged_or_thrown(): void
     {
         foreach ($this->laneBSources() as $path => $code) {
-            // Nothing in this lane logs: a provider payload or an account id
-            // in a log line is exactly the leak this boundary prevents.
-            $this->assertStringNotContainsString('Log::', $code, basename($path) . ' must not log in the provider lane.');
+            // The GATEWAY — the one file that holds secrets and raw provider
+            // objects — still may not log at all.
+            if (basename($path) === 'StripeApiConnectGateway.php') {
+                $this->assertStringNotContainsString('Log::', $code, 'The gateway must never log.');
+            }
+
+            // Everywhere else in the lane, Sub-slice F's bounded sweeps do
+            // need to record that one row failed — otherwise a failure is
+            // silent. What a log line may never carry is the material this
+            // boundary exists to contain: a secret, a provider payload or
+            // account, or a raw exception (whose message is provider text).
+            foreach (["/Log::[^;]*\\\$secret/", "/Log::[^;]*\\\$snapshot/", "/Log::[^;]*stripe_account/",
+                "/Log::[^;]*getMessage/", "/Log::[^;]*=>\s*\\\$e\b/", "/Log::[^;]*\\\$connection/",
+            ] as $pattern) {
+                $this->assertSame(0, preg_match($pattern, $code),
+                    basename($path) . ' must not log provider material.');
+            }
 
             // The API key is read in ONE place and never leaves it.
             if (basename($path) !== 'StripeApiConnectGateway.php') {

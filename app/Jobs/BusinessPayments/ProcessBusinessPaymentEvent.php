@@ -2,12 +2,16 @@
 
 namespace App\Jobs\BusinessPayments;
 
+use App\Enums\Documents\BusinessDocumentRefundStatus;
 use App\Enums\Documents\BusinessPaymentEventState;
 use App\Jobs\Base;
 use App\Library\Payments\PaymentFinalizer;
 use App\Library\Payments\PaymentIntentSnapshot;
 use App\Library\Payments\ProviderStatusMap;
+use App\Library\Payments\RefundFinalizer;
+use App\Library\Payments\RefundSnapshot;
 use App\Models\BusinessDocumentPayment;
+use App\Models\BusinessDocumentRefund;
 use App\Models\BusinessPaymentEvent;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
@@ -43,7 +47,7 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
     {
     }
 
-    public function handle(PaymentFinalizer $finalizer): void
+    public function handle(PaymentFinalizer $finalizer, RefundFinalizer $refundFinalizer): void
     {
         $claimed = $this->claim();
 
@@ -58,7 +62,7 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
         }
 
         try {
-            [$state, $reason] = $this->process($event, $finalizer);
+            [$state, $reason] = $this->process($event, $finalizer, $refundFinalizer);
         } catch (Throwable $e) {
             $this->finish(BusinessPaymentEventState::Failed, class_basename($e));
 
@@ -71,9 +75,15 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
     /**
      * @return array{0: BusinessPaymentEventState, 1: ?string}
      */
-    private function process(BusinessPaymentEvent $event, PaymentFinalizer $finalizer): array
+    private function process(BusinessPaymentEvent $event, PaymentFinalizer $finalizer, RefundFinalizer $refundFinalizer): array
     {
         $eventType = (string) $event->event_type;
+
+        // §8.3/§4.5 — refunds are routed by EVENT TYPE, through this same
+        // claim/lease, never by inheriting the PaymentIntent's metadata.
+        if (ProviderStatusMap::isRefundEventType($eventType)) {
+            return $this->processRefund($event, $refundFinalizer);
+        }
 
         // Only the lane-B payment events are acted on. Everything else is
         // recorded and ignored rather than guessed at (§8.3).
@@ -128,6 +138,113 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
             // inspection as a reason CODE.
             default => [BusinessPaymentEventState::Failed, $disposition],
         };
+    }
+
+    /**
+     * §8.3 — apply a refund event.
+     *
+     * RESOLUTION IS BY PROVIDER REFERENCE, in that order and no other:
+     *   1. the refund's own id against `provider_refund_id`;
+     *   2. failing that — the webhook can beat our own create response back —
+     *      the refund's `payment_intent` / `charge` reference, narrowed to the
+     *      still-pending refunds of that payment for the exact amount.
+     *
+     * If step 2 leaves MORE THAN ONE candidate, that is
+     * `cross_reference_ambiguity` and the event fails closed. Guessing which
+     * of two identical pending refunds an event belongs to would settle the
+     * wrong row and release the wrong reservation.
+     *
+     * The refund OBJECT's status is authoritative here, unlike the payment
+     * path: Stripe's refund statuses are unambiguous, so there is no
+     * `requires_payment_method`-style collision to disambiguate by event type.
+     *
+     * @return array{0: BusinessPaymentEventState, 1: ?string}
+     */
+    private function processRefund(BusinessPaymentEvent $event, RefundFinalizer $refundFinalizer): array
+    {
+        $payload = json_decode((string) $event->payload_encrypted, true);
+        $object = $payload['data']['object'] ?? null;
+
+        if (! is_array($object) || ! is_string($object['id'] ?? null) || ! is_string($object['status'] ?? null)) {
+            return [BusinessPaymentEventState::Ignored, 'unusable_payload'];
+        }
+
+        $refund = BusinessDocumentRefund::query()
+            ->where('provider_refund_id', $object['id'])
+            ->first();
+
+        if ($refund === null) {
+            $resolved = $this->resolveUnlinkedRefund($object);
+
+            if (is_string($resolved)) {
+                return [BusinessPaymentEventState::Failed, $resolved];
+            }
+
+            $refund = $resolved;
+        }
+
+        $snapshot = new RefundSnapshot(
+            providerRefundId: (string) $object['id'],
+            status: ProviderStatusMap::forRefundStatus((string) $object['status']),
+            amountMinor: (int) ($object['amount'] ?? 0),
+            currencyCode: mb_strtoupper((string) ($object['currency'] ?? '')),
+            // The event's own `account` field, cross-checked by the finalizer
+            // against the connection recorded on the ORIGINAL payment (§5.7).
+            connectedAccountId: (string) $event->stripe_account_id,
+            operationId: null,
+            providerChargeId: is_string($object['charge'] ?? null) ? $object['charge'] : null,
+        );
+
+        $disposition = $refundFinalizer->apply($refund, $snapshot);
+
+        return match ($disposition) {
+            RefundFinalizer::APPLIED => [BusinessPaymentEventState::Processed, null],
+            RefundFinalizer::IGNORED_ALREADY_TERMINAL => [BusinessPaymentEventState::Ignored, $disposition],
+            default => [BusinessPaymentEventState::Failed, $disposition],
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $object
+     * @return BusinessDocumentRefund|string the row, or a fail-closed reason code
+     */
+    private function resolveUnlinkedRefund(array $object): BusinessDocumentRefund|string
+    {
+        $payment = null;
+
+        if (is_string($object['payment_intent'] ?? null)) {
+            $payment = BusinessDocumentPayment::query()
+                ->where('provider_payment_intent_id', $object['payment_intent'])
+                ->first();
+        }
+
+        if ($payment === null && is_string($object['charge'] ?? null)) {
+            $payment = BusinessDocumentPayment::query()
+                ->where('provider_charge_id', $object['charge'])
+                ->first();
+        }
+
+        if ($payment === null) {
+            return 'no_matching_local_record';
+        }
+
+        $candidates = BusinessDocumentRefund::query()
+            ->where('business_document_payment_id', $payment->id)
+            ->whereNull('provider_refund_id')
+            ->where('status', BusinessDocumentRefundStatus::Pending->value)
+            ->where('amount_minor', (int) ($object['amount'] ?? 0))
+            ->orderBy('id')
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return 'no_matching_local_record';
+        }
+
+        if ($candidates->count() > 1) {
+            return 'cross_reference_ambiguity';
+        }
+
+        return $candidates->first();
     }
 
     /**

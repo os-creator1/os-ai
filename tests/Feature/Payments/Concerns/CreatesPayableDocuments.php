@@ -29,6 +29,8 @@ trait CreatesPayableDocuments
 
     protected FakeStripeConnectGateway $gateway;
 
+    protected int $payableAccountSequence = 0;
+
     protected function bindFakeGateway(): FakeStripeConnectGateway
     {
         $this->gateway = new FakeStripeConnectGateway();
@@ -63,10 +65,16 @@ trait CreatesPayableDocuments
      * @param  array<int, array<string, mixed>>|null  $schedule
      * @return array{tenant: array, document: BusinessDocument, token: string, connection: BusinessStripeConnection}
      */
-    protected function payableDocument(?array $schedule = null, bool $sign = true): array
+    protected function payableDocument(?array $schedule = null, bool $sign = true, ?string $accountId = null): array
     {
         $tenant = $this->sendableTenant();
-        $connection = $this->chargeReadyConnection($tenant['business']);
+        // `stripe_account_id` is globally unique, so a test that builds more
+        // than one payable fixture needs a distinct account each time. The
+        // first one is still acct_ready001.
+        $connection = $this->chargeReadyConnection(
+            $tenant['business'],
+            $accountId ?? 'acct_ready' . str_pad((string) (++$this->payableAccountSequence), 3, '0', STR_PAD_LEFT),
+        );
 
         $document = $this->draftDocument($tenant);
 

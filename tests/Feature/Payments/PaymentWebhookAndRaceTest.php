@@ -281,7 +281,10 @@ class PaymentWebhookAndRaceTest extends TestCase
         // A second worker picking up the same row finds it already processed:
         // the conditional claim admits only received / retryable-failed /
         // lease-expired, so this returns immediately.
-        (new ProcessBusinessPaymentEvent((int) $event->id))->handle(app(\App\Library\Payments\PaymentFinalizer::class));
+        (new ProcessBusinessPaymentEvent((int) $event->id))->handle(
+            app(\App\Library\Payments\PaymentFinalizer::class),
+            app(\App\Library\Payments\RefundFinalizer::class),
+        );
 
         $this->assertSame($attemptsAfterFirst, (int) $event->refresh()->attempts, 'A losing claim must not even count an attempt.');
         Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 1);
