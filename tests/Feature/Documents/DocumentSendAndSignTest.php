@@ -145,6 +145,7 @@ class DocumentSendAndSignTest extends TestCase
         foreach ([
             '/app/Library/Documents/DocumentManager.php',
             '/app/Library/Documents/PublicDocumentGuard.php',
+            '/app/Jobs/Documents/SendDocumentLinkEmail.php',
             '/app/Notifications/Documents/DocumentIssuedNotification.php',
             '/app/Http/Controllers/Public/PublicDocumentController.php',
         ] as $file) {

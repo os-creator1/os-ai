@@ -16,10 +16,13 @@ use Illuminate\Notifications\Notification;
  * (business_documents stores only access_token_hash), never logged, and
  * never appears in an exception message.
  *
- * Deliberately NOT ShouldQueue — like its precedent, so the plaintext token
- * is never serialized into a queue payload a second time. The surrounding
- * job (SendDocumentLinkEmail) already provides the queueing and is itself
- * encrypted at rest.
+ * Deliberately NOT ShouldQueue. SendDocumentLinkEmail — a Base-extending,
+ * ShouldQueueAfterCommit, ShouldBeEncrypted job — already provides the
+ * queueing, and its payload is the only place the plaintext token is ever
+ * persisted, encrypted. Making this notification queueable too would
+ * serialize the token a SECOND time, into an ordinary unencrypted
+ * notification payload, which is exactly what §6.3 forbids. It is therefore
+ * sent synchronously from inside that job.
  *
  * The copy makes NO legal claim. It does not describe the signature as
  * qualified, advanced, identity-verified or legally sufficient (§6.5).

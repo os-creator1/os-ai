@@ -9,8 +9,8 @@ use App\Enums\Documents\BusinessDocumentPaymentStatus;
 use App\Events\DocumentSent;
 use App\Events\DocumentSigned;
 use App\Events\DocumentVoided;
+use App\Jobs\Documents\SendDocumentLinkEmail;
 use App\Library\Catalog\PackageSnapshotService;
-use App\Notifications\Documents\DocumentIssuedNotification;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentLineItem;
@@ -24,7 +24,6 @@ use App\Models\CrmOpportunity;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -193,32 +192,20 @@ final class DocumentManager
         });
 
         $version = BusinessDocumentVersion::findOrFail($result->current_version_id);
-        $businessName = (string) (Business::find($result->business_id)?->name ?? config('app.name'));
 
-        // §7.1 — ONLY after commit. A recipient must never be emailed a link
-        // for a row a later failure inside the transaction rolled back.
+        // §7.1/§11.3 — delivery ONLY after commit, through the Base-extending
+        // SendDocumentLinkEmail job. A recipient must never be emailed a link
+        // for a row a later failure inside the transaction rolled back, so
+        // that guarantee is held in two independent places: this afterCommit
+        // callback, and the job's own ShouldQueueAfterCommit contract.
         //
-        // DELIVERED INLINE, not through a queued job, and that is a
-        // deliberate departure from §11.3's "from a Base-extending job"
-        // wording in favour of §6.3's stronger, security-critical rule that
-        // the plaintext token is "never stored, never logged, never
-        // recoverable". This application's default queue connection is
-        // `database`, so a queued job would serialize the plaintext token
-        // into the `jobs` row — and into `failed_jobs`, indefinitely, on any
-        // delivery failure. Illuminate's ShouldBeEncrypted would close that,
-        // but JobServiceProvider::getJobObject() raw-unserialize()s every
-        // job payload for its legacy monitor and therefore cannot read an
-        // encrypted one. Inline delivery is exactly what
-        // ClientInvitationManager::send() does — the precedent §6.3 tells
-        // this sub-slice to mirror — and keeps the plaintext in memory only.
-        DB::afterCommit(function () use ($result, $version, $plaintextToken, $businessName) {
-            Notification::route('mail', $result->recipient_email_snapshot)->notify(new DocumentIssuedNotification(
-                (string) $result->uid,
-                $plaintextToken,
-                $businessName,
-                (string) $result->title,
-                (bool) $result->requires_signature,
-            ));
+        // The job is ShouldBeEncrypted because it carries the ONE plaintext
+        // token that will ever exist for this link, and §6.3 requires that
+        // plaintext never to be stored or recoverable — the default queue
+        // connection here is `database`, so an unencrypted payload would sit
+        // in `jobs`, and in `failed_jobs` indefinitely on any failure.
+        DB::afterCommit(function () use ($result, $version, $plaintextToken) {
+            SendDocumentLinkEmail::dispatch((int) $result->id, $plaintextToken);
 
             DocumentSent::dispatch($result->id, (int) $version->id, (int) $version->version_number);
         });
