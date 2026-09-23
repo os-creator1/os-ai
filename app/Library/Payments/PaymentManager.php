@@ -143,14 +143,25 @@ final class PaymentManager
                 'amount_minor' => (int) $item->amount_minor,
                 'currency_code' => (string) $item->currency_code,
             ]);
-            $payment->save();
 
-            // local_idempotency_key is derived from that durable row's UID and
-            // is what the provider's metadata is cross-checked against (§8.3).
-            $payment->forceFill([
-                'local_idempotency_key' => self::idempotencyKeyFor($payment),
-                'status' => BusinessDocumentPaymentStatus::Created->value,
-            ])->save();
+            // ONE INSERT CARRYING THE COMPLETE DURABLE IDENTITY. The UID is
+            // minted here rather than by the model's creating hook, so
+            // `local_idempotency_key` — which is derived from it and is what
+            // the provider's metadata is cross-checked against (§8.3) — is
+            // part of the same INSERT.
+            //
+            // Saving first and filling the key afterwards would leave the row
+            // momentarily holding an EMPTY key (the column is NOT NULL with no
+            // default, and this connection runs non-strict, so an omitted
+            // value becomes ''). Two unrelated payments being created
+            // concurrently for two documents of the same Business would then
+            // both present ('', business_id) and collide on
+            // unique(business_id, local_idempotency_key) — a raw driver error
+            // on a path that has nothing to do with either payment's identity.
+            $payment->generateUid();
+            $payment->local_idempotency_key = self::idempotencyKeyFor($payment);
+            $payment->status = BusinessDocumentPaymentStatus::Created->value;
+            $payment->save();
 
             return [$payment, (string) $connection->stripe_account_id];
         });
@@ -167,7 +178,7 @@ final class PaymentManager
                 (string) $payment->currency_code,
                 self::idempotencyKeyFor($payment),
                 (string) $payment->local_idempotency_key,
-                'Document ' . $access->document->uid,
+                self::descriptionFor((string) $access->document->uid),
             );
 
         // ---- (15) shared idempotent finalizer ---------------------------
@@ -191,6 +202,16 @@ final class PaymentManager
     public static function idempotencyKeyFor(BusinessDocumentPayment $payment): string
     {
         return 'document-payment:' . $payment->uid;
+    }
+
+    /**
+     * The intent description, in ONE place, because PAY START and §7.5's
+     * reconciliation must produce byte-identical creation arguments when they
+     * re-drive the same attempt under the same idempotency key.
+     */
+    private static function descriptionFor(string $documentUid): string
+    {
+        return 'Document ' . $documentUid;
     }
 
     // =================================================================
@@ -363,15 +384,28 @@ final class PaymentManager
      * provider-confirmed terminal outcome releases the slot, and it does so
      * through the finalizer, not here.
      *
-     * ROWS WITH NO PROVIDER INTENT ID ARE SKIPPED, not resolved. There is no
-     * authoritative object to retrieve for them, and the only way to find out
-     * would be to re-issue the creation — originating a PaymentIntent from a
-     * background sweep, which is not what §7.5 describes. Such a row is
-     * resolved the way §7.2.1 Case B already resolves it: the next deliberate
-     * Pay re-drives the same row under the same key.
+     * TWO SHAPES, exactly §7.2.1's, because a stale attempt can be stale in
+     * two different ways:
      *
-     * NO NETWORK UNDER A LOCK: the retrieval happens outside any transaction,
-     * and the finalizer opens its own.
+     *   Case A — the row knows its intent id: retrieve THAT intent on the
+     *            row's own historical connected account.
+     *   Case B — an earlier creation returned uncertainly, so the row has no
+     *            intent id at all. This is the state that would otherwise hold
+     *            `active_schedule_item_id` forever if nobody ever pressed Pay
+     *            again. It is re-driven on THE SAME durable row with the same
+     *            amount, currency, account, `document-payment:{payment_uid}`
+     *            Stripe key and persisted `local_idempotency_key` metadata —
+     *            so Stripe's own idempotency returns the ORIGINAL intent if
+     *            the first creation really reached it, and no second local row
+     *            and no second charge can exist either way.
+     *
+     * CASE B IS RECONCILIATION, NOT A NEW ATTEMPT. It re-sends the request the
+     * customer already made, under the key that already identifies it. It
+     * never inserts a payment row, never picks a schedule item, and never
+     * chooses an amount.
+     *
+     * NO NETWORK UNDER A LOCK: both provider calls happen outside any
+     * transaction, and the finalizer opens its own.
      *
      * THE RETURNED COUNT IS ATTEMPTS THAT REACHED A TERMINAL STATE. An attempt
      * the provider still reports as in flight is re-observed and left exactly
@@ -384,7 +418,6 @@ final class PaymentManager
 
         $candidates = BusinessDocumentPayment::query()
             ->whereIn('status', self::activeStatuses())
-            ->whereNotNull('provider_payment_intent_id')
             ->where('updated_at', '<=', $threshold)
             ->orderBy('id')
             ->limit($limit)
@@ -394,16 +427,30 @@ final class PaymentManager
 
         foreach ($candidates as $payment) {
             try {
+                // The HISTORICAL connection recorded on the row (§5.7) — the
+                // account that owns this attempt, not whatever the Business
+                // happens to be connected to now.
                 $connection = BusinessStripeConnection::query()->find($payment->business_stripe_connection_id);
+                $document = BusinessDocument::query()->find($payment->business_document_id);
 
-                if ($connection === null) {
+                if ($connection === null || $document === null) {
                     continue;
                 }
 
-                $snapshot = $this->gateway->retrievePaymentIntent(
-                    (string) $connection->stripe_account_id,
-                    (string) $payment->provider_payment_intent_id,
-                );
+                $account = (string) $connection->stripe_account_id;
+
+                $snapshot = $payment->provider_payment_intent_id !== null
+                    // Case A — that exact intent, on that exact account.
+                    ? $this->gateway->retrievePaymentIntent($account, (string) $payment->provider_payment_intent_id)
+                    // Case B — the same request, under the same key.
+                    : $this->gateway->createPaymentIntent(
+                        $account,
+                        (int) $payment->amount_minor,
+                        (string) $payment->currency_code,
+                        self::idempotencyKeyFor($payment),
+                        (string) $payment->local_idempotency_key,
+                        self::descriptionFor((string) $document->uid),
+                    );
 
                 $disposition = $this->finalizer->apply($payment, $snapshot);
 

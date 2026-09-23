@@ -99,6 +99,9 @@ class FakeStripeConnectGateway implements StripeConnectGateway
             'currency' => $currencyCode,
             'idempotency_key' => $idempotencyKey,
             'operation_id' => $operationId,
+            // Recorded so a §7.5 re-drive can be asserted to send BYTE-IDENTICAL
+            // creation arguments, description included.
+            'description' => $description,
         ]);
 
         if ($this->failCreateWith !== null) {

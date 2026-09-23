@@ -470,6 +470,95 @@ class PaymentExecutionTest extends TestCase
         $this->assertNotSame((string) $first->local_idempotency_key, (string) $second->local_idempotency_key);
     }
 
+    // =================================================================
+    // §7.2/§8.1 — the durable identity is complete in ONE insert
+    // =================================================================
+
+    /**
+     * `local_idempotency_key` is NOT NULL with no default, and
+     * unique(business_id, local_idempotency_key) is tenant-scoped. If a
+     * payment were inserted first and keyed afterwards, the row would exist
+     * for a moment holding '' (this connection runs non-strict), and two
+     * unrelated payments being created for two documents of the SAME Business
+     * would collide on ('', business_id) — a raw driver error that has nothing
+     * to do with either payment.
+     *
+     * So this asserts the property directly, from inside the model events: the
+     * key is already in the INSERT, and at no point does a persisted row carry
+     * an empty one.
+     */
+    public function test_each_payment_insert_already_carries_its_own_durable_key(): void
+    {
+        $tenant = $this->sendableTenant();
+        $this->chargeReadyConnection($tenant['business']);
+
+        $fixtures = [];
+
+        foreach ([1, 2] as $ignored) {
+            [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
+            app(DocumentManager::class)->sign($document, [
+                'signer_name' => 'Pat Rivera',
+                'signer_email' => 'pat@example.test',
+                'typed_name' => 'Pat Rivera',
+                'ip_address' => '127.0.0.1',
+                'user_agent' => null,
+            ]);
+            $fixtures[] = [$document->refresh(), $token];
+        }
+
+        $atInsert = [];
+        $afterInsert = [];
+
+        BusinessDocumentPayment::creating(function (BusinessDocumentPayment $payment) use (&$atInsert) {
+            // Whatever is set here is exactly what the INSERT statement sends.
+            $atInsert[] = [
+                'uid' => (string) $payment->uid,
+                'key' => (string) $payment->local_idempotency_key,
+                'status' => $payment->status,
+            ];
+        });
+
+        BusinessDocumentPayment::created(function (BusinessDocumentPayment $payment) use (&$afterInsert) {
+            // The instant after the INSERT, before any later UPDATE could
+            // repair anything.
+            $afterInsert[] = [
+                'key' => (string) $payment->fresh()->local_idempotency_key,
+                'blank_rows' => (int) DB::table('business_document_payments')
+                    ->where('local_idempotency_key', '')->count(),
+            ];
+        });
+
+        foreach ($fixtures as [$document, $token]) {
+            $this->manager()->start($this->accessFor($document, $token));
+        }
+
+        $this->assertCount(2, $atInsert);
+        $this->assertCount(2, $afterInsert);
+
+        foreach ($atInsert as $index => $observed) {
+            $this->assertNotSame('', $observed['uid'], 'The insert carries the UID the key is derived from.');
+            $this->assertSame('document-payment:' . $observed['uid'], $observed['key'],
+                'The insert already carries the full durable key.');
+            $this->assertSame(BusinessDocumentPaymentStatus::Created, $observed['status'],
+                'and the status the active_schedule_item_id guard depends on.');
+            $this->assertSame($observed['key'], $afterInsert[$index]['key'],
+                'The persisted key is the one the insert wrote; nothing repairs it afterwards.');
+            $this->assertSame(0, $afterInsert[$index]['blank_rows'],
+                'No payment row ever exists with an empty idempotency key.');
+        }
+
+        // Two independent payments for ONE Business, each with its own key.
+        $payments = BusinessDocumentPayment::query()->orderBy('id')->get();
+        $this->assertCount(2, $payments);
+        $this->assertSame(1, $payments->pluck('business_id')->unique()->count());
+        $this->assertSame(2, $payments->pluck('local_idempotency_key')->unique()->count());
+
+        foreach ($payments as $payment) {
+            $this->assertSame('document-payment:' . $payment->uid, (string) $payment->local_idempotency_key);
+            $this->assertSame((string) $payment->local_idempotency_key, PaymentManager::idempotencyKeyFor($payment));
+        }
+    }
+
     /**
      * @return array<string, array{0: string, 1: BusinessDocumentPaymentStatus}>
      */

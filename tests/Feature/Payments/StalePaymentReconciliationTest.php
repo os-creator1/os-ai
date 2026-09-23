@@ -165,19 +165,173 @@ class StalePaymentReconciliationTest extends TestCase
         $this->assertSame($before, count($this->gateway->calls));
     }
 
-    public function test_an_attempt_with_no_provider_intent_is_skipped_rather_than_re_issued(): void
-    {
-        $abandoned = $this->abandonedAttempt();
-        DB::table('business_document_payments')->where('id', $abandoned['payment']->id)
-            ->update(['provider_payment_intent_id' => null]);
-        $this->age($abandoned['payment']);
-        $before = count($this->gateway->calls);
+    // =================================================================
+    // §7.2.1 Case B — the attempt that never learned its intent id
+    // =================================================================
 
+    /**
+     * An attempt whose creation returned uncertainly. The intent DOES exist at
+     * the provider; the local row never learned its id. Without reconciliation
+     * this row holds `active_schedule_item_id` until someone presses Pay again.
+     *
+     * @return array{fixture: array, payment: BusinessDocumentPayment}
+     */
+    private function uncertainAttempt(): array
+    {
+        $this->gateway->intentStatus = BusinessDocumentPaymentStatus::Created;
+        $fixture = $this->payableDocument();
+        $this->gateway->loseNextCreateResponse = true;
+
+        try {
+            app(PaymentManager::class)->start($this->accessFor($fixture['document'], $fixture['token']));
+            $this->fail('The lost response must surface.');
+        } catch (StripeConnectException) {
+            // expected
+        }
+
+        $payment = BusinessDocumentPayment::query()->orderByDesc('id')->firstOrFail();
+        $this->assertNull($payment->provider_payment_intent_id);
+        $this->assertNotNull($payment->active_schedule_item_id, 'The slot is held by an attempt nobody can resolve.');
+
+        return ['fixture' => $fixture, 'payment' => $payment];
+    }
+
+    /**
+     * The other half of the uncertain case: the request never reached Stripe
+     * at all, so no intent exists there either.
+     *
+     * @return array{fixture: array, payment: BusinessDocumentPayment}
+     */
+    private function neverDeliveredAttempt(): array
+    {
+        $this->gateway->intentStatus = BusinessDocumentPaymentStatus::Created;
+        $fixture = $this->payableDocument();
+        $this->gateway->failCreateWith = StripeConnectException::providerFailed();
+
+        try {
+            app(PaymentManager::class)->start($this->accessFor($fixture['document'], $fixture['token']));
+            $this->fail('The failed creation must surface.');
+        } catch (StripeConnectException) {
+            // expected
+        }
+
+        $this->gateway->failCreateWith = null;
+        $payment = BusinessDocumentPayment::query()->orderByDesc('id')->firstOrFail();
+        $this->assertNull($payment->provider_payment_intent_id);
+        $this->assertSame([], $this->gateway->intents, 'The request never reached the provider.');
+
+        return ['fixture' => $fixture, 'payment' => $payment];
+    }
+
+    public function test_a_stale_attempt_with_no_intent_id_re_drives_the_identical_request(): void
+    {
+        $abandoned = $this->neverDeliveredAttempt();
+        $this->age($abandoned['payment']);
+
+        app(PaymentManager::class)->reconcileStalePayments(100);
+
+        $creates = $this->gateway->callsOf('createPaymentIntent');
+        $this->assertCount(2, $creates, 'One original attempt, one re-drive.');
+        $this->assertSame($creates[0]['args'], $creates[1]['args'],
+            'The re-drive sends byte-identical creation arguments: same account, amount, '
+            . 'currency, idempotency key, operation id and description.');
+        $this->assertSame('document-payment:' . $abandoned['payment']->uid, $creates[1]['args']['idempotency_key']);
+        $this->assertSame((string) $abandoned['payment']->local_idempotency_key, $creates[1]['args']['operation_id']);
+        $this->assertSame('acct_ready001', $creates[1]['args']['account'], 'On the row\'s own historical account.');
+    }
+
+    public function test_the_re_drive_never_creates_a_second_local_payment(): void
+    {
+        $abandoned = $this->neverDeliveredAttempt();
+        $this->age($abandoned['payment']);
+
+        app(PaymentManager::class)->reconcileStalePayments(100);
+
+        $this->assertSame(1, BusinessDocumentPayment::query()->count(),
+            'Reconciliation resolves the existing attempt; it never starts another.');
+        $this->assertSame((string) $abandoned['payment']->uid,
+            (string) BusinessDocumentPayment::query()->sole()->uid);
+    }
+
+    public function test_an_uncertain_creation_then_reconciliation_yields_one_provider_identity(): void
+    {
+        $abandoned = $this->uncertainAttempt();
+        $this->assertCount(1, $this->gateway->intents, 'The provider really does hold one intent.');
+        $originalIntentId = array_key_first($this->gateway->intents);
+
+        $this->age($abandoned['payment']);
+        app(PaymentManager::class)->reconcileStalePayments(100);
+
+        $this->assertCount(1, $this->gateway->intents,
+            'Stripe idempotency returns the ORIGINAL intent; no second one is ever created.');
+        $this->assertSame($originalIntentId, (string) $abandoned['payment']->refresh()->provider_payment_intent_id,
+            'and the local row is now bound to exactly that intent.');
+        $this->assertSame(1, BusinessDocumentPayment::query()->count());
+    }
+
+    public function test_a_still_nonterminal_re_drive_leaves_the_attempt_active(): void
+    {
+        $abandoned = $this->uncertainAttempt();
+        $this->age($abandoned['payment']);
+
+        // The provider still reports the intent as awaiting the customer.
         $this->assertSame(0, app(PaymentManager::class)->reconcileStalePayments(100));
 
-        $this->assertSame($before, count($this->gateway->calls),
-            'A sweep never originates a PaymentIntent — that is the customer pressing Pay.');
-        $this->assertSame(BusinessDocumentPaymentStatus::Created, $abandoned['payment']->refresh()->status);
+        $payment = $abandoned['payment']->refresh();
+        $this->assertSame(BusinessDocumentPaymentStatus::Created, $payment->status);
+        $this->assertNotNull($payment->active_schedule_item_id,
+            'A non-terminal provider answer is not a reason to free the slot.');
+    }
+
+    public function test_a_provider_confirmed_terminal_re_drive_frees_the_slot(): void
+    {
+        $abandoned = $this->uncertainAttempt();
+        $this->age($abandoned['payment']);
+        $this->gateway->setIntentStatus(array_key_first($this->gateway->intents),
+            BusinessDocumentPaymentStatus::Canceled);
+
+        $this->assertSame(1, app(PaymentManager::class)->reconcileStalePayments(100));
+
+        $payment = $abandoned['payment']->refresh();
+        $this->assertSame(BusinessDocumentPaymentStatus::Canceled, $payment->status);
+        $this->assertNull($payment->active_schedule_item_id);
+
+        // ...and exactly one new deliberate attempt is now permitted (§7.2).
+        $this->gateway->intentStatus = BusinessDocumentPaymentStatus::Created;
+        app(PaymentManager::class)->start($this->accessFor(
+            $abandoned['fixture']['document']->refresh(), $abandoned['fixture']['token']));
+        $this->assertSame(2, BusinessDocumentPayment::query()->count());
+    }
+
+    public function test_a_late_success_on_an_unknown_intent_still_finalizes(): void
+    {
+        $abandoned = $this->uncertainAttempt();
+        $this->age($abandoned['payment'], 240);
+
+        // The customer completed the payment long after we lost the response.
+        $this->gateway->setIntentStatus(array_key_first($this->gateway->intents),
+            BusinessDocumentPaymentStatus::Succeeded);
+
+        $this->assertSame(1, app(PaymentManager::class)->reconcileStalePayments(100));
+
+        $this->assertSame(BusinessDocumentPaymentStatus::Succeeded, $abandoned['payment']->refresh()->status);
+        $this->assertSame(PaymentScheduleItemStatus::Paid,
+            BusinessDocumentPaymentScheduleItem::query()->sole()->status);
+        $this->assertSame(DocumentStatus::Paid, $abandoned['fixture']['document']->refresh()->status);
+    }
+
+    public function test_the_re_drive_happens_outside_every_transaction_and_lock(): void
+    {
+        $abandoned = $this->neverDeliveredAttempt();
+        $this->age($abandoned['payment']);
+
+        // The fake throws if any provider call is made above the test's own
+        // transaction depth, so reaching the assertion at all is the proof.
+        app(PaymentManager::class)->reconcileStalePayments(100);
+
+        foreach ($this->gateway->callsOf('createPaymentIntent') as $call) {
+            $this->assertSame($this->gateway->baselineTransactionLevel, $call['transaction_level']);
+        }
     }
 
     public function test_a_provider_failure_on_one_row_does_not_abort_the_batch(): void
