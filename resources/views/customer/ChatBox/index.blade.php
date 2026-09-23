@@ -1,6 +1,6 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', __('locale.menu.Chat Box'))
+@section('title', __('locale.menu.Conversations'))
 
 
 @section('vendor-style')
@@ -261,6 +261,17 @@
             .conversation-context.show {
                 display: block;
             }
+        }
+
+        /*
+         * app-chat.css paints the "nothing selected" placeholder and the
+         * message timeline with a decorative food/drink SVG wallpaper.
+         * Replace it with the canvas token reserved for this screen.
+         */
+        .chat-application .chat-app-window .start-chat-area,
+        .chat-application .chat-app-window .user-chats {
+            background-color: var(--color-chat-canvas);
+            background-image: none;
         }
 
     </style>
