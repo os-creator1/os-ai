@@ -73,6 +73,15 @@
                         </x-card>
                     @endif
                 @endif
+
+                {{--
+                    Implementation Contract 21 §13 — the canonical V1 lane-A
+                    subscription. Everything here comes from
+                    CustomerSubscriptionPresenter; the PRICE is the customer's
+                    own snapshot, not the current catalog price, because that
+                    is what they are actually charged.
+                --}}
+                @include('customer.workspaces.partials.subscription', ['subscription' => $subscription])
             </div>
         </div>
     </section>

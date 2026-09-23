@@ -178,6 +178,28 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         return $this->subscriptionSnapshot($subscription);
     }
 
+    public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string
+    {
+        $params = ['customer' => $providerCustomerId, 'return_url' => $returnUrl];
+
+        if ($flow !== null) {
+            $params['flow_data'] = [
+                'type' => $flow,
+                // Come straight back to us rather than dropping the customer on
+                // the portal home page after they have fixed their card.
+                'after_completion' => ['type' => 'redirect', 'redirect' => ['return_url' => $returnUrl]],
+            ];
+        }
+
+        try {
+            $session = $this->client()->billingPortal->sessions->create($params);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return (string) $session->url;
+    }
+
     public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array
     {
         $secret = (string) config('services.stripe.platform_subscription_webhook.secret');

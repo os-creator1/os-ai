@@ -269,10 +269,21 @@ Binding rules instead:
 3. **No legacy `Plan` or `Subscription` row may influence any V1 entitlement,
    capability, access or lifecycle decision.** (Already true; now
    structurally asserted.)
-4. Legacy `RegisterController` and `Customer\SubscriptionController` may
-   remain reachable for inherited installs, but they are **no longer the
-   canonical V1 signup or the canonical plan page**, and the V1 routes must
-   not link to them.
+4. **Legacy signup disposition, as implemented.** The `register` route (GET and
+   POST) now resolves to `Auth\V1SignupController`. `Auth\RegisterController`
+   remains **on disk** — deleting it would broaden scope well past payments,
+   and inherited installs still reference its views — but it is **no longer
+   routed as the customer signup**, so there are not two equally valid signup
+   paths. Its per-gateway registration payment routes (`pay-offline`,
+   `pay-nowpayments`, and the braintree / authorize-net / sslcommerz /
+   aamarpay / vodacommpesa actions) stay registered only so inherited Blade
+   views cannot throw on a missing route name; none of them is reachable from
+   V1 signup, which takes exactly one payment route: a hosted lane-A Stripe
+   Checkout Session.
+   `Customer\SubscriptionController` likewise remains on disk and is not
+   resurrected: the customer's Plan & subscription page and its actions are
+   served by `Workspace\WorkspaceController@plan` and
+   `Workspace\PlanSubscriptionController`.
 5. `createLegacyOnboardingCompatibilityAssignment()` stays only for genuinely
    pre-existing legacy Workspaces. It must be unreachable from the new V1
    signup path.
@@ -381,13 +392,74 @@ Name / email / password
 
 - Visual presentation may be simplified; the **persisted authority must be
   correct**.
-- Signup **MUST NOT** require A2P, Google connection, calendar integration, or
-  Business Stripe Connect. Those are post-signup checklist items.
+- Signup **MUST NOT** require A2P, Google connection, calendar integration,
+  Business Stripe Connect or Telnyx configuration. Those are post-signup
+  checklist items.
 - The payment step uses **Stripe, lane A only**. No dropdown offering
   Braintree / Cash / NowPayments / Authorize.Net / EasyPay / FedaPay /
   Vodacom for the V1 commercial signup.
 - Nothing is provisioned as paid until the provider confirms. **No successful
   provider result → no fabricated paid Active state.**
+
+### 7.1 As implemented
+
+`Auth\V1SignupController`, routed at `register` (GET/POST) plus
+`signup/complete`, `signup/cancelled`, `signup/plan` and `signup/plan` (POST).
+
+**Ordering, chosen for durability rather than for screen order.** Provision
+first — Workspace + Business + exactly one Primary Location, committed before
+Stripe is contacted — then take the money, then assign the plan. Stashing a
+half-built account in the session would lose the signup if the session died,
+and would be unreachable from the webhook, which is the one path guaranteed to
+arrive.
+
+**An abandoned checkout is a known safe state**: a Workspace with no plan
+assignment, which `CustomerAccountAccessResolver` already treats as a distinct
+pre-existing case. `signup/plan` is the resumable screen, and restarting
+checkout re-drives the same Workspace, Business and Location rather than
+creating a second set.
+
+**Account creation uses `UserRepository::store(..., confirmed: true)`**, not
+`AccountRepository::register()`. `store()` is the same call `register()` makes
+for the user and Customer — `Hash::make` for the password (no plaintext is ever
+persisted), the `unique:users.email` rule, the standard Customer permissions —
+without `register()`'s two legacy side effects: a notification hard-coded to
+`user_id => 1`, which raises a foreign-key violation on any install where the
+platform admin is not literally user 1 and would take the whole signup down
+with it, and an implicit login this controller performs explicitly instead.
+
+### 7.2 Webhook-driven activation — the seam
+
+**THE WEBHOOK ALONE MUST BE ABLE TO FINISH THE ACCOUNT.** A customer who pays
+and closes the tab never reaches the Checkout success endpoint. If activation
+lived only there, that customer would be charged and left with an unassigned
+Workspace — a money bug, not a UX one.
+
+There is therefore **exactly one activation operation**,
+`V1SignupManager::activateFromConfirmedSubscription()`, called by both the
+success endpoint and `ProcessPlatformSubscriptionEvent`. Plan-assignment logic
+is not duplicated between controller and job.
+
+It is:
+
+- **gated on provider confirmation** — `pending`, `incomplete`,
+  `incomplete_expired`, `canceled`, `unpaid` and `paused` activate nothing;
+  `trialing`, `active` and `past_due` do (`past_due` means a real subscription
+  whose latest renewal failed, and Blueprint §27 keeps that account usable
+  through Grace);
+- **idempotent, and race-safe against the database** — the pre-check handles
+  the common case, and `unique(workspace_id)` plus `assignFirstPlan()`'s own
+  Workspace row lock turn a genuine browser-versus-webhook race into
+  `WorkspacePlanAlreadyAssignedException` for the loser, which is caught as
+  convergence;
+- **free of browser and session state** — it takes everything from the durable
+  subscription row;
+- **not the Blueprint installer.** `InstallBlueprintOnFirstPlanAssigned`
+  already listens for `WorkspacePlanAssigned`, which the assignment dispatches,
+  and `NicheBlueprintInstaller::installForBusiness()` is itself the idempotent
+  entry point that triggers and the recovery command share. A Blueprint failure
+  therefore cannot undo a legitimate paid subscription, and the existing
+  reconciliation path repairs it.
 
 ---
 
@@ -487,6 +559,44 @@ to a new payments-only settings table.
 
 Lane B/C/D money is **never** presented as platform SaaS revenue.
 
+### 11.0 As implemented
+
+`Admin\PlatformBillingController` at `platform-billing` (GET) and
+`platform-billing/{tier}` (POST), inside the existing admin route group behind
+`EnsureUserIsAdministrator` and the `access backend` gate.
+
+Per tier the owner sets **price, currency, billing cycle, trial enabled, trial
+length, availability for new signup, and the Stripe Price id** — so **no
+database edit is required to put a plan on sale**. Price and currency go
+through `EntitlementManager::updateCatalogPricing()`, which remains the only
+price-history authority and writes `workspace_plan_catalog_pricing_changes`
+with the reason the owner gave; the trial and availability switches are catalog
+columns with no price history of their own.
+
+The page also shows, per tier, **whether it is actually sellable and exactly
+what is missing if it is not**, and platform-wide: API key configured/missing,
+mode, webhook secret configured/missing, the endpoint URL to paste into Stripe,
+and the exact event list to subscribe.
+
+**Provider Price mapping.** A Stripe Price is immutable in the relevant sense,
+so the workflow is: create a recurring Price on the platform's own Stripe
+account, paste its `price_...` id here. The field is validated against
+`/\Aprice_[A-Za-z0-9]{6,}\z/`, so a Product id, a secret or a stray paste
+cannot be stored as a Price, and the copy states that changing the amount means
+a new Price id and that existing subscribers keep the price they were sold on.
+The gateway was deliberately **not** extended to create or version Prices
+itself: that would be the beginning of a general Stripe product-management
+system, which §11 rules out.
+
+**Billing & Revenue** reports trialing / active / past-due / canceling /
+canceled / pending counts, Grace and Locked counts taken from the canonical
+plan assignment rather than guessed from provider vocabulary, complimentary
+count, failed-payment attention items with their Grace start, a subscription
+list carrying Workspace identity, tier, snapshotted price, trial end, period
+end and cancellation state, and webhook health (received, failed, latest event
+and its state). It is built entirely from durable local facts, so it answers a
+support question without a provider round trip.
+
 ### 11.1 Complimentary / manual accounts
 
 - The Platform Owner may run complimentary Workspaces **without fabricating a
@@ -546,6 +656,51 @@ Endpoint policy:
 
 It **MUST NOT** surface legacy Ultimate SMS plan semantics as the current
 product.
+
+### 13.1 As implemented
+
+`CustomerSubscriptionPresenter` supplies the read model and
+`Workspace\PlanSubscriptionController` the actions, at
+`{workspaceUid}/plan/change`, `/plan/cancel`, `/plan/resume` and
+`/plan/payment-method`.
+
+The **price shown is the customer's own snapshot**, not the current catalog
+price. The **state word is derived from the access decision first** — the same
+authority that actually governs the account — so the page cannot disagree with
+the gate.
+
+- **Change plan** lists the sellable tiers with the resulting behaviour stated
+  before confirmation ("Upgrade — takes effect immediately, and you are billed
+  the difference now" / "Downgrade — takes effect at the end of your current
+  billing period. Nothing is deleted."), and requires an explicit
+  confirmation checkbox.
+- **Cancel** requires explicit confirmation, preserves access through the paid
+  period, shows the effective end date afterwards, and is harmless to repeat.
+- **Resume** is offered because the provider model genuinely supports it:
+  `cancel_at_period_end` is a boolean that can be set back to false while the
+  period is still running. It is shown only when there is a scheduled
+  cancellation to undo.
+- **Grace** shows the billing problem, the deadline from the canonical
+  lifecycle, and the real recovery action — never a link to legacy Ultimate SMS
+  billing.
+
+**Owner or active Admin only, never Staff.** A failure is 404, so account
+existence is not disclosed.
+
+## 13.2 Payment-method recovery (§4)
+
+An existing subscriber fixes or replaces their card through **Stripe's hosted
+Billing Portal**: `POST /v1/billing_portal/sessions` with `customer` and
+`return_url`, using the documented `flow_data.type = payment_method_update`
+deep link — Stripe's own description is "Customer will be able to add a new
+payment method. The payment method will be set as the customer's
+`invoice_settings.default_payment_method`."
+
+This was chosen over building our own card form because **card details must
+never reach this application**. The gateway method takes no card-shaped
+argument and returns only a URL; there is no field anywhere in this lane that
+could accept a PAN. The route is reachable from Plan & subscription and from
+the Grace billing warning.
 
 ---
 

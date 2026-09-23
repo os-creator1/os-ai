@@ -416,6 +416,34 @@ final class PlatformSubscriptionManager
     }
 
     /**
+     * §4 — the Stripe-hosted Billing Portal, which is how a subscriber fixes
+     * or replaces a payment method after a failure.
+     *
+     * CARD DETAILS NEVER REACH THIS APPLICATION. The customer types their card
+     * on Stripe's own page; all we ever hold is the URL to send them to. That
+     * is why this returns a string and takes no card-shaped argument.
+     *
+     * @throws PlatformBillingException
+     */
+    public function billingPortalUrl(Workspace $workspace, string $returnUrl, ?string $flow = null): string
+    {
+        $subscription = $this->findForWorkspace($workspace);
+
+        if ($subscription === null || blank($subscription->provider_customer_id)) {
+            throw PlatformBillingException::because(PlatformBillingException::NO_SUBSCRIPTION);
+        }
+
+        return $this->gateway->createBillingPortalSession(
+            (string) $subscription->provider_customer_id,
+            $returnUrl,
+            $flow,
+        );
+    }
+
+    /** The documented portal deep link for replacing the default payment method. */
+    public const PORTAL_FLOW_PAYMENT_METHOD = 'payment_method_update';
+
+    /**
      * @throws PlatformBillingException
      */
     private function liveSubscriptionFor(Workspace $workspace): PlatformSubscription

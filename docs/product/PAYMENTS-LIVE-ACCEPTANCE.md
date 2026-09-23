@@ -13,7 +13,7 @@ evidence for anything in this file.
 
 | Lane | Section | Ready to execute |
 |---|---|---|
-| A — Platform SaaS subscription | §1 below | after the Lane-A branch merges |
+| A — Platform SaaS subscription | §1 below — **every step is browser-operable today** | after the Lane-A branch merges |
 | C — Agency SaaS revenue | to be appended | not built yet |
 | B — Business revenue | to be appended | built (Contract 17), not yet live-tested |
 | D — Usage funding | to be appended | built (RFC-005), not yet live-tested |
@@ -64,30 +64,37 @@ involved.
 
 ### 1.3 Platform Owner commercial configuration
 
+All of this is done in the browser at **`/<admin path>/platform-billing`**. No
+database edit is required at any point.
+
 | # | Step | Expected | Observed |
 |---|---|---|---|
-| 1.3.1 | Sign in as the Platform Owner and open the plan/commercial configuration surface. | Core / Growth / Agency listed. | |
-| 1.3.2 | Set price, currency and billing cycle per tier, matching §1.1.2, and paste each tier's `price_...` id. | Saved; a `workspace_plan_catalog_pricing_changes` row records each price change with the reason you gave. | |
-| 1.3.3 | Enable a trial on one tier and set its duration; leave another tier with no trial. | Saved. | |
-| 1.3.4 | Mark all three tiers available for signup. | Saved. | |
-| 1.3.5 | Check the Stripe status panel. | Shows configured / test mode / webhook configured. **Shows no key, no key prefix and no key length.** | |
-| 1.3.6 | View page source of that panel. | No secret anywhere in the HTML. | |
+| 1.3.1 | Sign in as the Platform Owner and open **Platform Billing**. | Core / Growth / Agency each shown with an "On sale / Not on sale" badge and, where not on sale, the exact reasons. | |
+| 1.3.2 | For each tier set price, currency and billing cycle to match §1.1.2, paste that tier's `price_...` id, and enter a reason. Save. | Saved; a `workspace_plan_catalog_pricing_changes` row records each price change with your reason. | |
+| 1.3.3 | Try pasting a Product id (`prod_…`) or a secret into the Stripe Price field. | Rejected with a validation error; nothing is stored. | |
+| 1.3.4 | Enable a trial on one tier with a duration; leave another tier with no trial. Try enabling a trial with the length blank. | The blank length is rejected. | |
+| 1.3.5 | Tick "Available to new signups" for the tiers you intend to sell. | Each of those tiers now reads **On sale**. | |
+| 1.3.6 | Check the Stripe panel. | Shows API key Configured/Missing, mode, webhook secret Configured/Missing, the endpoint URL, and the exact event list to subscribe. **No key, no key prefix, no key length.** | |
+| 1.3.7 | View page source of the whole page. | No secret anywhere in the HTML, and no input field that could store one. | |
 
 ### 1.4 Brand-new signup, with trial
 
 | # | Step | Expected | Observed |
 |---|---|---|---|
-| 1.4.1 | In a clean browser profile, sign up as a brand-new customer: name/email/password → business name → niche → basic info. | Account created. | |
-| 1.4.2 | Confirm signup does **not** ask for A2P registration, a Google connection, calendar integration or a Business Stripe Connect account. | None requested. | |
-| 1.4.3 | Select the tier that has a trial. | Payment step offers **Stripe only** — no Braintree / Cash / NowPayments / Authorize.Net / EasyPay / FedaPay / Vodacom. | |
-| 1.4.4 | Complete checkout with test card `4242 4242 4242 4242`, any future expiry, any CVC. | Redirected back into the product. | |
-| 1.4.5 | **Stripe Dashboard:** the Customer exists, the Subscription exists with status `trialing`, and its trial end matches the configured duration. | Matches. | |
-| 1.4.6 | **Database:** `platform_subscriptions` has one row for this Workspace with `status = trialing`, a `provider_customer_id`, a `provider_subscription_id`, and `trial_days_snapshot` equal to what was configured at signup time. | Matches. | |
-| 1.4.7 | **Database:** `workspace_plan_assignments` has exactly one row for this Workspace, `is_complimentary = 0`, on the tier that was selected. | Matches. | |
-| 1.4.8 | **Database:** zero new rows in `subscriptions`, `subscription_transactions`, `invoices`, `payment_methods`. | Zero. | |
-| 1.4.9 | **Database:** exactly one Business and exactly one Primary Location for the new Workspace. | Matches. | |
-| 1.4.10 | In the product: the account is usable, and the Plan & Subscription page shows the tier, trial status and trial end. | Matches. | |
-| 1.4.11 | Change the tier's configured trial duration in the owner surface. | The existing subscriber's trial end is **unchanged**. | |
+| 1.4.1 | In a clean browser profile, open **`/register`**. | The V1 signup page. It lists ONLY the tiers marked on sale in §1.3, each with its price, cycle and configured trial. | |
+| 1.4.2 | Confirm signup does **not** ask for A2P registration, a Google connection, calendar integration, a Business Stripe Connect account or Telnyx configuration. | None requested. | |
+| 1.4.3 | Confirm there is no payment-method dropdown. | **Stripe only** — no Braintree / Cash / NowPayments / Authorize.Net / EasyPay / FedaPay / Vodacom. | |
+| 1.4.4 | Fill in name / email / password, business name, niche, country and time zone, select the tier that has a trial, and submit. | Redirected to Stripe's hosted Checkout. | |
+| 1.4.5 | Complete checkout with test card `4242 4242 4242 4242`, any future expiry, any CVC. | Redirected back into the product, landing on Home. | |
+| 1.4.6 | **Stripe Dashboard:** the Customer exists, the Subscription exists with status `trialing`, and its trial end matches the configured duration. | Matches. | |
+| 1.4.7 | **Database:** `platform_subscriptions` has one row for this Workspace with `status = trialing`, a `provider_customer_id`, a `provider_subscription_id`, and `trial_days_snapshot` equal to what was configured at signup time. | Matches. | |
+| 1.4.8 | **Database:** `workspace_plan_assignments` has exactly one row for this Workspace, `is_complimentary = 0`, on the tier that was selected. | Matches. | |
+| 1.4.9 | **Database:** zero new rows in `subscriptions`, `subscription_transactions`, `invoices`, `payment_methods`. | Zero. | |
+| 1.4.10 | **Database:** exactly one Business and exactly one Primary Location for the new Workspace, and the Business's `industry` is the niche you chose. | Matches. | |
+| 1.4.11 | In the product: the account is usable; **Settings → Plan & subscription** shows the tier, Trial status, the price you configured, and the trial end. | Matches. | |
+| 1.4.12 | **Owner surface:** the new account appears under Subscriptions, and the trialing count has gone up by one. | Matches. | |
+| 1.4.13 | Change that tier's configured trial duration in the owner surface. | The existing subscriber's trial end is **unchanged**. A *new* signup on that tier gets the new duration. | |
+| 1.4.14 | **Webhook-only completion.** Repeat 1.4.1–1.4.5 with a second customer, but **close the tab on Stripe's success page before it redirects back**. | The account still completes: the Workspace receives its non-complimentary assignment on the tier chosen, and the customer can sign in to a usable account. This is the step that proves the webhook alone is sufficient. | |
 
 ### 1.5 Brand-new signup, no trial
 
@@ -96,7 +103,8 @@ involved.
 | 1.5.1 | Repeat §1.4.1–1.4.4 with the no-trial tier. | Charged immediately. | |
 | 1.5.2 | **Stripe Dashboard:** subscription status `active`, and a paid invoice for the configured amount and currency. | Matches. | |
 | 1.5.3 | **Database:** `platform_subscriptions.status = active`, `current_period_start` / `current_period_end` populated. | Matches. | |
-| 1.5.4 | Abandon a checkout (start it, close the tab). | Workspace exists, **no** plan assignment, `platform_subscriptions.status = pending`. No paid access. | |
+| 1.5.4 | Start a checkout and click Stripe's **back/cancel** link. | You land on the resumable "Choose a plan" screen. The Workspace exists, there is **no** plan assignment, and `platform_subscriptions.status = pending`. No paid access, and the account is not deleted. | |
+| 1.5.5 | From that screen pick a plan and complete checkout. | It finishes normally, and there is still exactly **one** Workspace, one Business and one Primary Location — retrying created no duplicates. | |
 
 ### 1.6 Renewal
 
@@ -115,16 +123,21 @@ involved.
 | 1.7.3 | **Database:** `workspace_plan_assignments.grace_started_at` is set **once**; `locked_at` is null. | Matches. | |
 | 1.7.4 | In the product: the account **still works**, and shows a billing warning. | Matches (Blueprint §27). | |
 | 1.7.5 | Let Stripe retry (or advance the clock again) so a second failure arrives. | `grace_started_at` is **unchanged** — the window does not slide. | |
-| 1.7.6 | Advance past the 3-day grace window and let `workspaces:advance-account-lifecycle` run. | `locked_at` set. The product shows the locked screen; data is intact. | |
-| 1.7.7 | Update to a working card and pay the outstanding invoice from the Stripe Dashboard. | `invoice.paid` delivered; `grace_started_at` and `locked_at` both cleared; access restored immediately. | |
+| 1.7.6 | As the customer, open **Plan & subscription**. | It shows "We could not take your latest payment", the Grace deadline, and an **Update your payment method** link. It does not link to legacy Ultimate SMS billing, and there is no card field anywhere on the page. | |
+| 1.7.7 | Click **Update your payment method**. | Redirected to Stripe's hosted Billing Portal, straight into the add-a-payment-method flow, and returned to Plan & subscription afterwards. **You never type a card into our application.** | |
+| 1.7.8 | Add a working card there (`4242 4242 4242 4242`) and let Stripe retry, or pay the open invoice from the Dashboard. | `invoice.paid` delivered; `grace_started_at` and `locked_at` both cleared; access restored immediately. | |
+| 1.7.9 | Instead of recovering, advance past the 3-day grace window and let `workspaces:advance-account-lifecycle` run. | `locked_at` set. The product shows the locked screen; data is intact. | |
+| 1.7.10 | From the locked account, recover via the payment-method route and pay. | Access is restored immediately. | |
+| 1.7.11 | **Owner surface:** check Needs attention during 1.7.3–1.7.9. | The account is listed with its Grace start, and the past-due / grace / locked counts reflect reality. | |
 
 ### 1.8 Cancellation
 
 | # | Step | Expected | Observed |
 |---|---|---|---|
-| 1.8.1 | Cancel from the customer's Plan & Subscription page. | Stripe shows `cancel_at_period_end = true`. Local row agrees. | |
+| 1.8.1 | On **Plan & subscription**, tick the cancellation confirmation and cancel. | Stripe shows `cancel_at_period_end = true`; the local row agrees; the page now shows "Ending at period end" and the exact **Access ends** date. | |
 | 1.8.2 | Confirm access. | **Still usable** — the paid period is never taken away. | |
-| 1.8.3 | Resume/undo the cancellation. | `cancel_at_period_end` back to false, both sides. | |
+| 1.8.3 | Submit the cancellation a second time. | Harmless; nothing changes. | |
+| 1.8.4 | Click **Keep my subscription**. | `cancel_at_period_end` back to false on both sides, and the cancel form returns. | |
 | 1.8.4 | Cancel again and advance the clock past the period end. | `customer.subscription.deleted` delivered; the Workspace is locked; data intact. | |
 | 1.8.5 | Replay that same event from the Dashboard. | 200, no double transition, `locked_at` unchanged. | |
 
@@ -132,10 +145,12 @@ involved.
 
 | # | Step | Expected | Observed |
 |---|---|---|---|
-| 1.9.1 | From Core, upgrade to Growth. | Takes effect **immediately**: Stripe bills the difference, and the Workspace's entitlements widen right away. | |
-| 1.9.2 | From Growth, downgrade to Core. | **Nothing changes today.** The customer keeps Growth; the change is scheduled for the period end. | |
-| 1.9.3 | Advance the clock past the period end and let `platform-subscriptions:apply-due-plan-changes` run. | The tier becomes Core, the Stripe price changes with no proration, and **no customer data is deleted** — components are merely no longer active. | |
-| 1.9.4 | Change a catalog price in the owner surface. | Existing subscribers' amounts are unchanged; a **new** signup is charged the new amount. | |
+| 1.9.1 | On **Plan & subscription**, read the change-plan options. | Each option states what it will do before you confirm: upgrade "takes effect immediately, and you are billed the difference now"; downgrade "takes effect at the end of your current billing period. Nothing is deleted." | |
+| 1.9.2 | From Core, confirm an upgrade to Growth. | Takes effect **immediately**: Stripe bills the difference, and the Workspace's entitlements widen right away. | |
+| 1.9.3 | From Growth, confirm a downgrade to Core. | **Nothing changes today.** The customer keeps Growth, and the page shows the scheduled change and its effective date. | |
+| 1.9.4 | Advance the clock past the period end and let `platform-subscriptions:apply-due-plan-changes` run. | The tier becomes Core, the Stripe price changes with no proration, and **no customer data is deleted** — components are merely no longer active. | |
+| 1.9.5 | Change a catalog price in the owner surface. | Existing subscribers' amounts are unchanged, and **Plan & subscription still shows what they actually pay**; a **new** signup is charged the new amount. | |
+| 1.9.6 | Sign in as a **Staff** member of a subscribed Workspace and try to reach the change-plan, cancel, resume and payment-method routes. | All 404. No financial action is possible. | |
 
 ### 1.10 Complimentary account
 
@@ -143,7 +158,8 @@ involved.
 |---|---|---|---|
 | 1.10.1 | As Platform Owner, grant a Workspace complimentary status. | `is_complimentary = 1`, with a reason and a grantor recorded. | |
 | 1.10.2 | Confirm no Stripe subscription was created for it. | None in the Dashboard. | |
-| 1.10.3 | Confirm it reads as complimentary, not as a paid active subscription, everywhere it is shown. | Matches. | |
+| 1.10.3 | Confirm it reads as complimentary, not as a paid active subscription, everywhere it is shown. | The customer's Plan & subscription page says "Complimentary account" and offers no cancel action; the owner surface counts it separately. | |
+| 1.10.4 | Confirm no administrator anywhere can enter a customer's card or create a charge on their behalf. | There is no such field or action. Card entry happens only on Stripe's own pages, initiated by the customer. | |
 
 ### 1.11 Lane isolation
 

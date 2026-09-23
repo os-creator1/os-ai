@@ -101,6 +101,29 @@ interface PlatformStripeGateway
     public function setCancelAtPeriodEnd(string $providerSubscriptionId, bool $cancelAtPeriodEnd): PlatformSubscriptionSnapshot;
 
     /**
+     * §4 — a Stripe-hosted Billing Portal session, which is how an existing
+     * subscriber fixes or replaces a payment method.
+     *
+     * VERIFIED AGAINST THE CURRENT API REFERENCE: `POST
+     * /v1/billing_portal/sessions` takes `customer` and `return_url` and
+     * answers a `url`. `$flow` of `payment_method_update` is the documented
+     * deep link — "Customer will be able to add a new payment method. The
+     * payment method will be set as the customer's
+     * invoice_settings.default_payment_method" — which is exactly the Grace
+     * recovery action.
+     *
+     * WHY THE PORTAL RATHER THAN OUR OWN FORM. Card details must never reach
+     * this application (§6). The portal is Stripe-hosted, so the customer
+     * types their card on Stripe's page, and this method's return value is a
+     * URL and nothing else.
+     *
+     * @param  string|null  $flow  a documented portal flow, or null for the portal home
+     *
+     * @throws PlatformBillingException
+     */
+    public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string;
+
+    /**
      * §12 step 1 — verify the lane-A webhook signature over the EXACT RAW
      * BODY, before anything is inserted or processed.
      *

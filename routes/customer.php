@@ -716,6 +716,31 @@
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
         // The account's AI Business OS plan (Settings → Plan & subscription).
         Route::get('{workspaceUid}/plan', 'Workspace\WorkspaceController@plan')->name('plan.show');
+
+        /*
+        |----------------------------------------------------------------------
+        | Implementation Contract 21 §10/§13/§4 — the customer's own lane-A
+        | subscription actions, on the canonical V1 subscription.
+        |
+        | Deliberately NOT the legacy Customer\SubscriptionController, which
+        | renews/purchases/cancels legacy `Subscription` rows through inherited
+        | gateways — a different product's billing.
+        |
+        | Owner or active Admin only, never Staff; enforced in the controller
+        | and answered 404 so account existence is never disclosed. Throttled
+        | like every other action that reaches the provider.
+        |----------------------------------------------------------------------
+        */
+        Route::post('{workspaceUid}/plan/change', 'Workspace\PlanSubscriptionController@changePlan')
+            ->middleware('throttle:30,1')->name('plan.change');
+        Route::post('{workspaceUid}/plan/cancel', 'Workspace\PlanSubscriptionController@cancel')
+            ->middleware('throttle:30,1')->name('plan.cancel');
+        Route::post('{workspaceUid}/plan/resume', 'Workspace\PlanSubscriptionController@resume')
+            ->middleware('throttle:30,1')->name('plan.resume');
+        // Redirects to Stripe's hosted Billing Portal; no card detail ever
+        // reaches this application.
+        Route::get('{workspaceUid}/plan/payment-method', 'Workspace\PlanSubscriptionController@paymentMethod')
+            ->middleware('throttle:30,1')->name('plan.payment-method');
         // The account's members, roles and Business access (Settings → Team).
         Route::get('{workspaceUid}/team', 'Workspace\WorkspaceController@team')->name('team.show');
         // The account's own Settings hub (the Agency account's settings).

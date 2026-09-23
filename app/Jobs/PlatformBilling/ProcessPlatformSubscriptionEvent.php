@@ -7,6 +7,7 @@ use App\Jobs\Base;
 use App\Library\PlatformBilling\PlatformProviderStatusMap;
 use App\Library\PlatformBilling\PlatformSubscriptionFinalizer;
 use App\Library\PlatformBilling\PlatformSubscriptionManager;
+use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\PlatformSubscription;
 use App\Models\PlatformSubscriptionEvent;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -47,7 +48,7 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
     {
     }
 
-    public function handle(PlatformSubscriptionManager $manager): void
+    public function handle(PlatformSubscriptionManager $manager, V1SignupManager $signup): void
     {
         if ($this->claim() === 0) {
             return;
@@ -60,7 +61,7 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
         }
 
         try {
-            [$state, $reason, $subscriptionId] = $this->process($event, $manager);
+            [$state, $reason, $subscriptionId] = $this->process($event, $manager, $signup);
         } catch (Throwable $e) {
             $this->finish(PlatformSubscriptionEventState::Failed, class_basename($e), null);
 
@@ -73,7 +74,7 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
     /**
      * @return array{0: PlatformSubscriptionEventState, 1: ?string, 2: ?int}
      */
-    private function process(PlatformSubscriptionEvent $event, PlatformSubscriptionManager $manager): array
+    private function process(PlatformSubscriptionEvent $event, PlatformSubscriptionManager $manager, V1SignupManager $signup): array
     {
         $eventType = (string) $event->event_type;
 
@@ -113,6 +114,21 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
             (string) $event->provider_event_id,
             $event->provider_created_at,
         );
+
+        // THE WEBHOOK MUST BE SUFFICIENT TO FINISH THE ACCOUNT. A customer who
+        // pays and then closes the tab never reaches the Checkout success
+        // endpoint, so activation cannot live only there: it would leave a
+        // charged customer with an unassigned Workspace. This is the SAME
+        // idempotent seam the success endpoint calls — not a second copy of
+        // the plan-assignment logic — and it trusts no session or browser
+        // state, only the durable subscription row the finalizer just updated.
+        //
+        // It is called after the finalizer so the row already carries the
+        // provider-confirmed status the seam gates on; an unconfirmed or
+        // foreign state simply activates nothing.
+        if ($disposition === PlatformSubscriptionFinalizer::APPLIED) {
+            $signup->activateFromConfirmedSubscription($subscription->refresh());
+        }
 
         return match ($disposition) {
             PlatformSubscriptionFinalizer::APPLIED => [PlatformSubscriptionEventState::Processed, null, (int) $subscription->id],

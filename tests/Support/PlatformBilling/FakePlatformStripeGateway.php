@@ -186,6 +186,17 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         return $this->subscriptionSnapshot($providerSubscriptionId);
     }
 
+    public function createBillingPortalSession(string $providerCustomerId, string $returnUrl, ?string $flow = null): string
+    {
+        $this->record('createBillingPortalSession', [
+            'customer' => $providerCustomerId,
+            'return_url' => $returnUrl,
+            'flow' => $flow,
+        ]);
+
+        return 'https://billing.stripe.test/p/' . $providerCustomerId . ($flow === null ? '' : '?flow=' . $flow);
+    }
+
     public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array
     {
         $this->record('verifyWebhookPayload', []);

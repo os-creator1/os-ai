@@ -2,18 +2,16 @@
 
 namespace App\Library\PlatformBilling;
 
-use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Exceptions\Entitlement\WorkspacePlanAlreadyAssignedException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Business\BusinessManager;
-use App\Library\NicheBlueprint\NicheBlueprintInstaller;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\PlatformSubscription;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
-use Illuminate\Support\Facades\Log;
-use Throwable;
+use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
 
 /**
  * Implementation Contract 21 §7 — the canonical V1 signup, orchestrated.
@@ -55,7 +53,7 @@ final class V1SignupManager
         private readonly WorkspaceManager $workspaces,
         private readonly BusinessManager $businesses,
         private readonly PlatformSubscriptionManager $subscriptions,
-        private readonly NicheBlueprintInstaller $blueprints,
+        private readonly WorkspacePlanAssignmentRepository $assignments,
     ) {
     }
 
@@ -112,70 +110,81 @@ final class V1SignupManager
             return null;
         }
 
-        $workspace = Workspace::query()->find($subscription->workspace_id);
+        $this->activateFromConfirmedSubscription($subscription);
 
-        if ($workspace === null) {
-            return null;
-        }
-
-        $this->activate($workspace, $subscription);
-
-        return $workspace->fresh();
+        return Workspace::query()->find($subscription->workspace_id);
     }
 
     /**
-     * The part that genuinely depends on a confirmed subscription: the V1 plan
-     * assignment, and the entitlement-filtered Blueprint installation that
-     * depends on it.
+     * THE ONE ACTIVATION SEAM (§7).
+     *
+     * Both routes into a finished account call exactly this method:
+     *   - the browser returning to the Checkout success endpoint, and
+     *   - `ProcessPlatformSubscriptionEvent` handling a verified webhook.
+     *
+     * THE WEBHOOK MUST BE SUFFICIENT ON ITS OWN. A customer who pays and then
+     * closes the tab must still end up with a finished account; if activation
+     * lived only on the success endpoint, that customer would be charged and
+     * left with an unassigned Workspace. So this seam is deliberately reachable
+     * from the job, trusts NO session or browser state, and takes everything it
+     * needs from the durable subscription row.
+     *
+     * ONLY A PROVIDER-CONFIRMED SUBSCRIPTION ACTIVATES ANYTHING. `pending`,
+     * `incomplete`, `incomplete_expired`, `canceled`, `unpaid` and `paused` all
+     * return false and write nothing — §7's "no successful provider result → no
+     * fabricated paid Active state", enforced here rather than hoped for.
+     * `past_due` DOES activate, because it means a real subscription exists
+     * whose latest renewal failed; Blueprint §27 keeps that account usable
+     * through Grace, and refusing to finish it would strand a paying customer.
+     *
+     * IDEMPOTENT, AND RACE-SAFE AGAINST THE DATABASE. The pre-check avoids the
+     * common case; the guarantee is `unique(workspace_id)` on
+     * `workspace_plan_assignments` plus assignFirstPlan()'s own Workspace row
+     * lock, which turns a genuine browser-versus-webhook race into
+     * WorkspacePlanAlreadyAssignedException for the loser. Catching that is the
+     * convergence, not a swallowed error.
+     *
+     * THE BLUEPRINT IS NOT INSTALLED HERE. `InstallBlueprintOnFirstPlanAssigned`
+     * already listens for `WorkspacePlanAssigned` — dispatched by the very
+     * assignment below — and `NicheBlueprintInstaller::installForBusiness()` is
+     * itself the idempotent entry point both triggers and the recovery command
+     * share. Calling it again from here would be a second trigger for one
+     * event, and the existing listener is also the automatic repair if a run
+     * fails, so a Blueprint problem can never undo a legitimate paid
+     * subscription.
+     *
+     * @return bool whether this Workspace now holds a plan assignment
      */
-    public function activate(Workspace $workspace, PlatformSubscription $subscription): void
+    public function activateFromConfirmedSubscription(PlatformSubscription $subscription): bool
     {
-        $catalog = WorkspacePlanCatalog::query()->find($subscription->workspace_plan_catalog_id);
-
-        if ($catalog === null) {
-            return;
+        if (! $subscription->status->grantsAccess()) {
+            return false;
         }
 
-        $assignment = app(\App\Repositories\Contracts\WorkspacePlanAssignmentRepository::class)
-            ->findByWorkspaceId((int) $workspace->id);
+        $workspace = Workspace::query()->find($subscription->workspace_id);
+        $catalog = WorkspacePlanCatalog::query()->find($subscription->workspace_plan_catalog_id);
 
-        if ($assignment === null) {
+        if ($workspace === null || $catalog === null) {
+            return false;
+        }
+
+        if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
+            return true;
+        }
+
+        try {
             $this->subscriptions->assignPlanFromConfirmedSubscription(
                 $workspace,
                 $subscription,
                 $catalog->tier,
                 (int) $workspace->owner_user_id,
             );
+        } catch (WorkspacePlanAlreadyAssignedException) {
+            // The other path won the race. One assignment, which is the point.
+            return true;
         }
 
-        $this->installBlueprint($workspace);
-    }
-
-    /**
-     * Blueprint §22 — the niche's Blueprint is installed into the Business,
-     * filtered to what the chosen plan entitles.
-     *
-     * A Blueprint failure must not fail the signup: the customer has paid and
-     * their account exists. The setup checklist on Home is what surfaces
-     * anything still missing (Blueprint §8), and
-     * `InstallMissingBlueprintComponentsCommand` already exists to reconcile.
-     */
-    private function installBlueprint(Workspace $workspace): void
-    {
-        $business = Business::query()->where('workspace_id', $workspace->id)->first();
-
-        if ($business === null) {
-            return;
-        }
-
-        try {
-            $this->blueprints->installForBusiness($business);
-        } catch (Throwable $e) {
-            Log::warning('V1 signup: Blueprint installation deferred.', [
-                'business_id' => $business->id,
-                'exception' => class_basename($e),
-            ]);
-        }
+        return true;
     }
 
     /**
