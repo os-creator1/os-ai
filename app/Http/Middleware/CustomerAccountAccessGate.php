@@ -142,10 +142,70 @@ class CustomerAccountAccessGate
      * also allow 'customer.workspaces.settings.show' or
      * 'customer.workspaces.team.show' merely because they share the
      * 'customer.workspaces.' prefix.
+     *
+     * THE LOCKED-ACCOUNT RECOVERY SET, and nothing beyond it:
+     *
+     *   - 'customer.account-locked.show'                    the locked screen
+     *   - 'customer.workspaces.plan.show'                   Plan & subscription
+     *   - 'customer.workspaces.plan.payment-method'         fix the card
+     *   - 'customer.workspaces.plan.resubscribe'            buy again
+     *   - 'customer.workspaces.plan.resubscribe-return'     …and confirm it
+     *
+     * Those five are the whole of it: the screen a locked customer lands on,
+     * the page it sends them to, and the two things that page can actually do
+     * about the lock. Every other route on a locked Workspace — settings,
+     * team, operational work, and every other billing MUTATION (change plan,
+     * cancel, resume) — stays gated. The remaining names below are the
+     * unrelated STRUCTURAL exceptions documented in the class docblock
+     * (sign-out, the 2FA challenge, ending a View-as session, and claiming a
+     * client invitation for a Workspace that does not exist yet).
+     *
+     * Allowlisting grants no authority of its own. It only lets the request
+     * reach the authorization boundary that already exists in
+     * PlanSubscriptionController — owner or active Admin with account-frame
+     * authority, 404 for Staff and for strangers.
      */
     private const ALLOWED_ROUTE_NAMES = [
         'customer.account-locked.show',
         'customer.workspaces.plan.show',
+        // Implementation Contract 21 §4/§13.2 — FIXING THE CARD IS THE WHOLE
+        // POINT OF THE LOCKED SCREEN.
+        //
+        // The locked decision's own copy promises "completing payment restores
+        // access right away", and its recovery link goes to Plan &
+        // subscription, which offers exactly one action that can complete a
+        // payment: the Stripe-hosted Billing Portal. Without this name that
+        // button rendered on a reachable page and then bounced the customer
+        // straight back to the locked screen — the recovery flow dead-ended at
+        // the one step that could have ended the lock.
+        //
+        // It grants no product access and mutates nothing here: it redirects
+        // to Stripe's own hosted portal, where the customer types a card this
+        // application never sees. Access returns only when the provider
+        // confirms payment and the finalizer drives EntitlementManager's own
+        // writer. 'plan.change', 'plan.cancel' and 'plan.resume' are
+        // deliberately NOT allowlisted — they are billing mutations, not
+        // recovery, and a locked account has no business making them.
+        'customer.workspaces.plan.payment-method',
+        // Implementation Contract 21 §10.4 — RESTARTING A SUBSCRIPTION AFTER
+        // IT ENDED.
+        //
+        // A fully canceled account is LOCKED, which is correct: the service
+        // has stopped. But the locked screen's own recovery action sends the
+        // customer to 'customer.workspaces.plan.show', which is allowlisted
+        // above precisely so they can put that right — and the button it
+        // offers them there is this one. Without these two names the form
+        // would render on a reachable page and then bounce straight back to
+        // the locked screen, which is the dead end §10.4 exists to remove.
+        //
+        // Neither route grants any product access: one opens a hosted
+        // Checkout Session, the other re-reads its result from the provider.
+        // Access returns only when the provider confirms a new subscription
+        // and EntitlementManager's own writer clears the lock. Both are still
+        // owner-or-active-Admin, answered 404 otherwise, inside the
+        // controller.
+        'customer.workspaces.plan.resubscribe',
+        'customer.workspaces.plan.resubscribe-return',
         // Registered outside the customer.* route group (routes/auth.php)
         // but still runs through this Kernel-level middleware like every
         // other web route — a locked customer must always be able to sign

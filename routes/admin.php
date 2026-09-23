@@ -701,6 +701,28 @@
 
         /*
         |--------------------------------------------------------------------------
+        | Implementation Contract 21 §11 — Platform Owner lane-A commercial controls
+        |--------------------------------------------------------------------------
+        |
+        | Price, currency, billing cycle, trial policy, signup availability and
+        | the Stripe Price identity per tier, plus the Billing & Revenue view.
+        | No database edit is required to put a plan on sale.
+        |
+        | NO SECRET IS EVER WRITABLE OR RENDERABLE HERE (§5.1): the API key and
+        | the webhook signing secret stay in secure runtime configuration, and
+        | this surface shows only Configured / Missing, the mode, and the
+        | endpoint URL to paste into Stripe.
+        |
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape as
+        | workspace-plan-catalog.index above; EnsureUserIsAdministrator is the
+        | group's own middleware.
+        |
+        */
+        Route::get('platform-billing', 'PlatformBillingController@index')->name('platform-billing.index');
+        Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->name('platform-billing.update');
+
+        /*
+        |--------------------------------------------------------------------------
         | Payment provider events (RFC-005 Milestone 3, Correction Round 1, item 109)
         |--------------------------------------------------------------------------
         |

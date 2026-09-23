@@ -1055,6 +1055,104 @@ final class EntitlementManager
     // =====================================================================
 
     /**
+     * Implementation Contract 21 §7/§10.2 — narrow, SUBSCRIPTION-PROOF-
+     * PROVENANCE-ONLY entry points, reachable only from lane A's
+     * PlatformSubscriptionManager after that caller has already independently
+     * verified a durable, provider-confirmed subscription for exactly this
+     * Workspace.
+     *
+     * WHY THEY EXIST. assignFirstPlan() and changePlan() assert a platform
+     * administrator, which is correct for an admin acting on someone else's
+     * account and wrong for a customer buying the product: in self-serve
+     * signup the authority is not a human administrator, it is a confirmed
+     * payment. This is the same authority model RFC-004 Amendment 1 already
+     * established for allocateAdditionalBusinessSlotsFromVerifiedPayment() —
+     * "the caller has already verified a durable, successful, idempotent
+     * payment record", and this class trusts that prior verification rather
+     * than re-deciding it.
+     *
+     * WHY A FLAG RATHER THAN A SECOND IMPLEMENTATION. Copying the assignment
+     * and plan-change bodies would create two versions of the tier/pricing/
+     * slot validation and the audit trail, which is exactly the duplication
+     * that lets the two drift. There is one implementation; these wrappers
+     * change only WHO is permitted to reach it, and the actor recorded in the
+     * audit trail is the Workspace OWNER — honest, because they are the party
+     * who consented and paid.
+     *
+     * NEVER A GENERAL ADMIN BYPASS. The flag is private, is set only inside
+     * these wrappers, is cleared in a `finally` so an exception cannot leak
+     * it, and every wrapper validates its evidence first.
+     */
+    private bool $verifiedSubscriptionProvenance = false;
+
+    public function assignFirstPlanFromVerifiedSubscription(
+        Workspace $workspace,
+        WorkspacePlanTier $tier,
+        int $ownerUserId,
+        string $subscriptionUid,
+        string $providerReference,
+        ?CarbonInterface $trialEndsAt,
+        string $reason,
+    ): WorkspacePlanAssignment {
+        $this->assertVerifiedSubscriptionEvidence($subscriptionUid, $providerReference);
+
+        return $this->withVerifiedSubscriptionProvenance(fn (): WorkspacePlanAssignment => $this->assignFirstPlan(
+            $workspace,
+            $tier,
+            $ownerUserId,
+            $reason,
+            false,
+            0,
+            $trialEndsAt,
+        ));
+    }
+
+    public function changePlanFromVerifiedSubscription(
+        Workspace $workspace,
+        WorkspacePlanTier $newTier,
+        int $ownerUserId,
+        string $subscriptionUid,
+        string $providerReference,
+        string $reason,
+    ): WorkspacePlanAssignment {
+        $this->assertVerifiedSubscriptionEvidence($subscriptionUid, $providerReference);
+
+        return $this->withVerifiedSubscriptionProvenance(fn (): WorkspacePlanAssignment => $this->changePlan(
+            $workspace,
+            $newTier,
+            $ownerUserId,
+            $reason,
+        ));
+    }
+
+    private function assertVerifiedSubscriptionEvidence(string $subscriptionUid, string $providerReference): void
+    {
+        if (trim($subscriptionUid) === '' || trim($providerReference) === '') {
+            throw new InvalidArgumentException(
+                'A verified lane-A subscription requires both a durable local subscription uid and a provider reference.'
+            );
+        }
+    }
+
+    /**
+     * @template TReturn
+     *
+     * @param  callable():TReturn  $operation
+     * @return TReturn
+     */
+    private function withVerifiedSubscriptionProvenance(callable $operation)
+    {
+        $previous = $this->verifiedSubscriptionProvenance;
+        $this->verifiedSubscriptionProvenance = true;
+
+        try {
+            return $operation();
+        } finally {
+            $this->verifiedSubscriptionProvenance = $previous;
+        }
+    }
+
+    /**
      * Contract 03 §5 — `$trialEndsAt` is optional and trailing: every one of
      * the existing call sites uses positional arguments against the previous
      * six-parameter signature, so none of them changes. Pass it only when the
@@ -1458,6 +1556,88 @@ final class EntitlementManager
                 'locked_at' => null,
             ]);
 
+            $this->transitionRepository->create([
+                'workspace_id' => $assignment->workspace_id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AccessRestored,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+            ]);
+
+            WorkspaceAccessRestored::dispatch($assignment->workspace_id, $actorUserId, $reason);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Contract 03 §6 / Contract 21 §10.4 — a PROVIDER-CONFIRMED TRIAL begins
+     * on an assignment that already exists.
+     *
+     * WHY THIS IS NOT recoverAccess(). recoverAccess() means "nothing is
+     * outstanding any more" and clears all three timestamps, which is exactly
+     * right for a confirmed PAYMENT and exactly wrong for a confirmed TRIAL: a
+     * trial IS outstanding, and clearing `trial_ends_at` would hide it from
+     * the expiry sweep, so the account would sit on a trial that never ended.
+     *
+     * WHY IT IS NOT assignFirstPlan() EITHER. That path creates the
+     * assignment. This one is for a Workspace that already has a plan
+     * assignment and has just been confirmed onto a new trialing subscription
+     * — a customer who cancelled, was locked, and came back (Contract 21
+     * §10.4). Their old `locked_at` is stale the moment the provider confirms
+     * the new trial, and leaving it there would tell a customer with a valid
+     * Stripe trial that their account is locked.
+     *
+     * So this is the narrowest possible writer: the trial the PROVIDER
+     * confirmed, and the removal of the two timestamps that contradict it.
+     *
+     * `$trialEndsAt` is PROVIDER TRUTH, never a catalog duration. The catalog
+     * says what a new subscriber is offered; only the provider knows when this
+     * subscription's trial actually ends, and it is the provider that decides
+     * when to start charging. A local value that disagreed would either cut a
+     * paid-for trial short or promise one Stripe will not honour. (§8's rule
+     * that a later CATALOG edit cannot rewrite an existing trial is unaffected
+     * — nothing here reads the catalog.)
+     *
+     * IDEMPOTENT, and that matters more here than anywhere else in this
+     * family: every `customer.subscription.updated` delivery for a trialing
+     * subscription reaches this method. An assignment already carrying this
+     * exact trial end, with no grace and no lock, is returned untouched — no
+     * write, no transition row, no event — so replay cannot move the trial
+     * end forward or fabricate a second AccessRestored.
+     *
+     * Suspended and Inactive still throw, through the shared preamble: an
+     * administrative suspension outranks any provider event (§5's precedence),
+     * and failing closed is how that stays true.
+     */
+    public function startProviderConfirmedTrial(
+        Workspace $workspace,
+        CarbonInterface $trialEndsAt,
+        ?int $actorUserId = null,
+        ?string $reason = null,
+    ): WorkspacePlanAssignment {
+        return DB::transaction(function () use ($workspace, $trialEndsAt, $actorUserId, $reason) {
+            $assignment = $this->lockedLifecycleAssignment($workspace, $actorUserId);
+
+            // Second precision, because that is what the column stores: a
+            // provider timestamp carrying microseconds must not read as a
+            // different trial from the one already persisted.
+            $sameTrial = $assignment->trial_ends_at !== null
+                && $assignment->trial_ends_at->getTimestamp() === $trialEndsAt->getTimestamp();
+
+            if ($sameTrial && $assignment->grace_started_at === null && $assignment->locked_at === null) {
+                return $assignment;
+            }
+
+            $updated = $this->assignmentRepository->update($assignment, [
+                'trial_ends_at' => $trialEndsAt,
+                'grace_started_at' => null,
+                'locked_at' => null,
+            ]);
+
+            // AccessRestored rather than a new transition type: what happened
+            // to the ACCOUNT is that access was restored, and WHY travels in
+            // the reason string — the same choice lockForNonPayment() already
+            // makes for a cancellation.
             $this->transitionRepository->create([
                 'workspace_id' => $assignment->workspace_id,
                 'transition_type' => WorkspaceEntitlementTransitionType::AccessRestored,
@@ -2333,6 +2513,14 @@ final class EntitlementManager
      */
     private function assertPlatformAdministrator(int $actorUserId): void
     {
+        // Implementation Contract 21 §7 — a confirmed, durable lane-A
+        // subscription is its own authority. The flag is set only by the
+        // narrow wrappers above, which validate their evidence first and clear
+        // it in a `finally`; it is never reachable from customer input.
+        if ($this->verifiedSubscriptionProvenance) {
+            return;
+        }
+
         $isAdmin = (bool) $this->userRepository->query()->whereKey($actorUserId)->value('is_admin');
 
         if (! $isAdmin) {

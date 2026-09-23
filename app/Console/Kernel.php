@@ -152,6 +152,15 @@
             $schedule->command('documents:dispatch-due-reminders')->hourly();
             $schedule->command('documents:reconcile-stale-payments')->everyFiveMinutes();
 
+            // Implementation Contract 21 §10.2 — a downgrade takes effect at
+            // the END of the period the customer already paid for, so
+            // something has to notice the boundary arrived. Hourly matches
+            // workspaces:advance-account-lifecycle's own cadence: both are
+            // time-based commercial sweeps, and an account should not sit an
+            // extra day on a tier it cancelled. Bounded and idempotent, so an
+            // overlapping tick applies nothing twice.
+            $schedule->command('platform-subscriptions:apply-due-plan-changes')->hourly();
+
             // RFC-005 Milestone 3 (Correction Round 1, item 110) —
             // without these, both jobs are permanently unreachable
             // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,

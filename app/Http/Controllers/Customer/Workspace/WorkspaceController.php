@@ -42,6 +42,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Entitlement\WorkspacePlanPresenter;
 use App\Library\Navigation\CustomerMenuBuilder;
+use App\Library\PlatformBilling\CustomerSubscriptionPresenter;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\AccountFrameAccess;
@@ -365,6 +366,11 @@ class WorkspaceController extends CustomerBaseController
         return view('customer.workspaces.plan', array_merge(
             ['accountName' => (string) $workspace->name],
             $presenter->present($workspace),
+            // Implementation Contract 21 §13 — the canonical V1 lane-A
+            // subscription facts and the actions available from them. Legacy
+            // Ultimate SMS plan semantics are never surfaced as the current
+            // product.
+            ['subscription' => app(CustomerSubscriptionPresenter::class)->present($workspace)],
         ));
     }
 

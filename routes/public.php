@@ -64,6 +64,22 @@
     Route::post('stripe/webhook/business-payments', 'Public\BusinessPaymentWebhookController@handle')
         ->middleware('throttle:600,1')->name('public.business-payments.webhook');
 
+    /*
+    | Implementation Contract 21 §2/§12 — money lane A's OWN webhook, at its
+    | own path with its own secret. Three lanes, three endpoints, three
+    | secrets: lane B's Connect endpoint above and lane D's usage-billing
+    | endpoint below are deliberately separate, so a platform-subscription
+    | event can never be verified by, or resolved against, another lane.
+    |
+    | CSRF-exempt (VerifyCsrfToken::$except) because Stripe signs the raw body
+    | instead; that signature is verified before a single row is inserted.
+    | Throttled on the same generous basis: Stripe retries on 5xx, so the bound
+    | sits well above real delivery-plus-retry volume while still refusing a
+    | resource-exhaustion attempt.
+    */
+    Route::post('stripe/webhook/platform-subscriptions', 'Public\PlatformSubscriptionWebhookController@handle')
+        ->middleware('throttle:600,1')->name('public.platform-subscriptions.webhook');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */

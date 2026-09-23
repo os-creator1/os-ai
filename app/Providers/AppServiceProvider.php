@@ -164,6 +164,18 @@
                 \App\Library\Payments\StripeApiConnectGateway::class,
             );
 
+            // Implementation Contract 21 §5 — the lane-A platform-subscription
+            // boundary. A THIRD gateway, and deliberately so: lane B charges
+            // an end customer on the BUSINESS's connected account, lane D
+            // funds a usage wallet for an EffectivePayer, and neither models
+            // "the Workspace owner pays the Platform Owner for the software".
+            // Direct, first-party charges only — this implementation never
+            // sends a Stripe-Account header.
+            $this->app->bind(
+                \App\Library\PlatformBilling\PlatformStripeGateway::class,
+                \App\Library\PlatformBilling\StripeApiPlatformGateway::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,

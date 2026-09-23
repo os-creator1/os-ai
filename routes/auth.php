@@ -4,9 +4,52 @@
         ['namespace' => 'Auth'],
         function () {
             if (config('account.can_register')) {
-                // Registration Routes...
-                Route::get('register', 'RegisterController@showRegistrationForm')->name('register');
-                Route::post('register', 'RegisterController@register');
+                /*
+                |------------------------------------------------------------
+                | Implementation Contract 21 §7 — THE canonical V1 signup.
+                |------------------------------------------------------------
+                |
+                | `register` now resolves to V1SignupController. The legacy
+                | RegisterController selects a legacy `Plan` and one of eight
+                | inherited payment gateways, and produces a legacy
+                | `Subscription` plus a FABRICATED complimentary Core
+                | assignment (§3.4) — it is not, and must not be, the V1
+                | customer signup.
+                |
+                | The legacy controller is left on disk for inherited installs
+                | rather than deleted (deleting it would broaden scope well
+                | past payments), but it is no longer routed: there are not two
+                | equally valid customer signup paths.
+                |
+                | The legacy per-gateway registration payment routes below
+                | (braintree / authorize-net / sslcommerz / aamarpay /
+                | vodacommpesa, and pay-offline / pay-nowpayments) are
+                | deliberately NOT part of V1 signup. V1 takes exactly one
+                | payment route: a hosted lane-A Stripe Checkout Session.
+                */
+                // GUEST ONLY. These are the anonymous signup surface: an
+                // already-authenticated user POSTing here with another email
+                // would create a second User and silently switch Auth::login()
+                // into it, abandoning their own account mid-session. The
+                // authenticated re-entry routes below (signup.plan /
+                // signup.resume) are the supported path for someone who is
+                // already signed in.
+                Route::get('register', 'V1SignupController@show')->middleware('guest')->name('register');
+                Route::post('register', 'V1SignupController@store')->middleware(['guest', 'throttle:10,1']);
+
+                // The Checkout return. `success` trusts provider truth, never a
+                // query flag (§8.5); `cancelled` never deletes the account.
+                Route::get('signup/complete', 'V1SignupController@success')->middleware('auth')->name('signup.success');
+                Route::get('signup/cancelled', 'V1SignupController@cancelled')->middleware('auth')->name('signup.cancelled');
+                // The resumable state for an account that exists with no plan.
+                Route::get('signup/plan', 'V1SignupController@plan')->middleware('auth')->name('signup.plan');
+                Route::post('signup/plan', 'V1SignupController@resume')->middleware(['auth', 'throttle:10,1'])->name('signup.resume');
+
+                // Legacy-only, and unreachable from V1 signup: these two names
+                // are still referenced by inherited Blade views that only the
+                // now-unrouted RegisterController could render. Kept
+                // registered so removing the signup entry point cannot make an
+                // inherited view throw on a missing route name.
                 Route::post('pay-offline', 'RegisterController@PayOffline')->name('payment.offline');
                 Route::post('pay-nowpayments', 'RegisterController@PayNowpayments')->name('payment.nowpayments');
 

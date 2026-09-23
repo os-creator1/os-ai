@@ -34,6 +34,11 @@
             // webhook. Exempt because Stripe signs the raw body; that
             // signature is verified before anything is inserted (§8.2).
             'stripe/webhook/business-payments',
+            // Implementation Contract 21 §2/§12 — money lane A's own platform
+            // subscription webhook. Exempt for the same reason: Stripe signs
+            // the raw body, and that signature is verified before a single row
+            // is inserted.
+            'stripe/webhook/platform-subscriptions',
         ];
 
     }

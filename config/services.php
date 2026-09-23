@@ -54,6 +54,19 @@
                 'secret'    => env('STRIPE_CONNECT_WEBHOOK_SECRET'),
                 'tolerance' => env('STRIPE_CONNECT_WEBHOOK_TOLERANCE', 300),
             ],
+            // Implementation Contract 21 §2/§12 — money lane A's OWN webhook
+            // endpoint and signing secret, deliberately separate from lane B's
+            // Connect endpoint above and lane D's usage-billing endpoint.
+            // Three lanes, three endpoints, three secrets: a lane-A event must
+            // never be verifiable by, or resolvable against, another lane.
+            //
+            // This stays ENVIRONMENT configuration (§5.1). It is never moved
+            // into an editable database column to make an admin screen
+            // convenient, and it is never rendered back to a browser.
+            'platform_subscription_webhook' => [
+                'secret'    => env('STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET'),
+                'tolerance' => env('STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_TOLERANCE', 300),
+            ],
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),
