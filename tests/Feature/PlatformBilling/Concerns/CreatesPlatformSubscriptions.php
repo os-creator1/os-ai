@@ -43,6 +43,8 @@ trait CreatesPlatformSubscriptions
     {
         $catalog = WorkspacePlanCatalog::query()->where('tier', $tier->value)->firstOrFail();
 
+        $priceId = 'price_fake_' . $tier->value;
+
         $catalog->forceFill([
             'price' => $price,
             'currency_id' => $this->fixtureCurrencyId(),
@@ -51,8 +53,20 @@ trait CreatesPlatformSubscriptions
             'available_for_signup' => true,
             'trial_enabled' => $trialDays !== null,
             'trial_days' => $trialDays,
-            'provider_price_id' => 'price_fake_' . $tier->value,
+            'provider_price_id' => $priceId,
         ])->save();
+
+        // §11 — the provider Price must actually exist and match, so the
+        // fixture registers one whose terms agree with the catalog row it just
+        // wrote. A fixture that skipped this would be describing a state the
+        // owner surface would now refuse to create.
+        $this->stripe->definePrice($priceId, [
+            'currency' => 'USD',
+            'unit_amount' => \App\Library\PlatformBilling\CurrencyMinorUnits::toMinor($price, 'USD'),
+            'interval' => 'month',
+            'interval_count' => 1,
+            'livemode' => false,
+        ]);
 
         return $catalog->refresh();
     }
@@ -152,11 +166,19 @@ trait CreatesPlatformSubscriptions
         ?string $customerId = null,
         ?string $eventId = null,
         ?int $createdAt = null,
+        ?string $operationId = null,
     ): array {
         $isSubscriptionEvent = str_starts_with($eventType, 'customer.subscription.');
 
+        // A real subscription event carries the metadata Checkout put on it —
+        // our own local subscription uid — so the fixture carries it too.
         $object = $isSubscriptionEvent
-            ? ['id' => $providerSubscriptionId, 'object' => 'subscription', 'customer' => $customerId]
+            ? [
+                'id' => $providerSubscriptionId,
+                'object' => 'subscription',
+                'customer' => $customerId,
+                'metadata' => $operationId === null ? [] : ['app_operation_id' => $operationId],
+            ]
             : ['id' => 'in_fake_' . Str::random(8), 'object' => 'invoice', 'subscription' => $providerSubscriptionId, 'customer' => $customerId];
 
         $body = json_encode([

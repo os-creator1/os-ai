@@ -11,6 +11,7 @@ use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -82,7 +83,7 @@ final class PlatformSubscriptionManager
             );
         }
 
-        // ---- durable local row, committed, no network --------------------
+        // ---- 1. durable local row, committed, no network -----------------
         $subscription = DB::transaction(function () use ($workspace, $catalog) {
             $existing = PlatformSubscription::query()
                 ->where('workspace_id', $workspace->id)
@@ -93,45 +94,42 @@ final class PlatformSubscriptionManager
                 throw PlatformBillingException::because(PlatformBillingException::ALREADY_SUBSCRIBED);
             }
 
+            if ($existing !== null) {
+                return $existing;
+            }
+
             // A Workspace that never completed checkout, or whose previous
             // subscription ended, re-drives its own row rather than
             // accumulating a second one that could disagree about which is
             // current. `unique(workspace_id)` makes that structural.
-            $row = $existing ?? new PlatformSubscription([
-                'workspace_id' => $workspace->id,
-            ]);
-
-            $row->fill([
-                'workspace_plan_catalog_id' => $catalog->id,
-                // §6/§8 — the commercial terms are SNAPSHOTTED here, so a
-                // later catalog edit cannot rewrite what this customer bought.
-                'price_snapshot' => $catalog->price,
-                'currency_id' => $catalog->currency_id,
-                'currency_code' => $catalog->currency?->code,
-                'billing_cycle_snapshot' => (string) $catalog->billing_cycle,
-                'trial_days_snapshot' => $catalog->configuredTrialDays(),
-            ]);
-
-            if (! $row->exists) {
-                // ONE INSERT carrying the complete durable identity: the UID
-                // is minted here so `local_idempotency_key`, which is derived
-                // from it and is UNIQUE, is part of the same statement.
-                $row->generateUid();
-                $row->local_idempotency_key = PlatformSubscription::idempotencyKeyFor((string) $row->uid);
-                $row->status = PlatformSubscriptionStatus::Pending->value;
-            }
-
-            $row->provider_price_id = $catalog->provider_price_id;
+            //
+            // ONE INSERT carrying the complete durable identity: the UID is
+            // minted here so `local_idempotency_key`, which is derived from it
+            // and is UNIQUE, is part of the same statement.
+            $row = new PlatformSubscription(['workspace_id' => $workspace->id]);
+            $row->generateUid();
+            $row->local_idempotency_key = PlatformSubscription::idempotencyKeyFor((string) $row->uid);
+            $row->status = PlatformSubscriptionStatus::Pending->value;
+            $row->billing_cycle_snapshot = (string) $catalog->billing_cycle;
+            $row->workspace_plan_catalog_id = $catalog->id;
             $row->save();
 
             return $row->refresh();
         });
 
-        // ---- provider call, OUTSIDE every transaction and lock -----------
+        // ---- 2. decide RETRY vs NEW ATTEMPT, outside every transaction ---
+        $subscription = $this->resolveCheckoutAttempt($subscription, $catalog);
+
+        // ---- 3. provider call, OUTSIDE every transaction and lock --------
+        //
+        // The idempotency key is the ATTEMPT's, not the subscription's. Two
+        // calls for the same attempt carry identical parameters, so Stripe
+        // returns the original session; a deliberate new attempt carries a new
+        // key, which is the only way a different Price may legally be sent.
         $result = $this->gateway->createSubscriptionCheckout(
             providerPriceId: (string) $catalog->provider_price_id,
             clientReferenceId: (string) $subscription->uid,
-            idempotencyKey: (string) $subscription->local_idempotency_key,
+            idempotencyKey: (string) $subscription->checkoutAttemptKey(),
             successUrl: $successUrl,
             cancelUrl: $cancelUrl,
             customerEmail: $customerEmail,
@@ -139,12 +137,111 @@ final class PlatformSubscriptionManager
             existingCustomerId: $subscription->provider_customer_id,
         );
 
-        $subscription->forceFill([
-            'provider_checkout_session_id' => $result->sessionId,
-            'provider_customer_id' => $result->customerId ?? $subscription->provider_customer_id,
-        ])->save();
+        // Only the session id is recorded here.
+        //
+        // `provider_customer_id` is DELIBERATELY not taken from the checkout
+        // result: it becomes authoritative when the finalizer reads it off the
+        // confirmed subscription. Writing it here would change the parameters
+        // the next call to this attempt sends — Stripe's idempotency layer
+        // "compares incoming parameters to those of the original request and
+        // errors if they're not the same" — so an honest retry of one uncertain
+        // request would be rejected by the provider. An attempt's parameters
+        // are fixed for the life of the attempt.
+        $subscription->forceFill(['provider_checkout_session_id' => $result->sessionId])->save();
 
         return $result;
+    }
+
+    /**
+     * §7 — CHECKOUT ATTEMPT IDENTITY.
+     *
+     * Stripe's idempotency layer "compares incoming parameters to those of the
+     * original request and errors if they're not the same", and a key may be
+     * pruned after 24 hours. One key per subscription therefore models a RETRY
+     * of one uncertain request correctly and a DELIBERATE SECOND ATTEMPT
+     * incorrectly — a customer who opens Growth checkout, cancels, and picks
+     * Agency would resend one key with a different Price.
+     *
+     * Minting a random key per click is worse: two payable Checkout Sessions
+     * for one Workspace means two possible subscriptions.
+     *
+     * So:
+     *
+     *   A. SAME PRICE, attempt already exists → the SAME attempt key. Identical
+     *      parameters, so Stripe returns the original session. This is the
+     *      uncertain-response retry, and it is free.
+     *
+     *   B. DIFFERENT PRICE (or no attempt yet) → the previous session is first
+     *      proven terminal or EXPIRED at the provider, and only then is a new
+     *      durable attempt minted. At most one payable session exists at any
+     *      moment, by construction rather than by timing.
+     *
+     *   C. PREVIOUS SESSION ALREADY COMPLETE → refuse. The customer has paid;
+     *      starting a second checkout would be a second subscription. The
+     *      webhook or the success endpoint converges that account instead.
+     *
+     * @throws PlatformBillingException
+     */
+    private function resolveCheckoutAttempt(PlatformSubscription $subscription, WorkspacePlanCatalog $catalog): PlatformSubscription
+    {
+        $priceId = (string) $catalog->provider_price_id;
+        $hasAttempt = $subscription->checkout_attempt_uid !== null;
+        $samePrice = (string) $subscription->checkout_attempt_price_id === $priceId;
+
+        if ($subscription->provider_checkout_session_id !== null) {
+            $session = $this->gateway->retrieveCheckoutSession((string) $subscription->provider_checkout_session_id);
+
+            if ($session->status === 'complete') {
+                throw PlatformBillingException::because(PlatformBillingException::CHECKOUT_ALREADY_COMPLETED);
+            }
+
+            // A — the same request, retried. Reuse the attempt as is.
+            if ($hasAttempt && $samePrice && $session->status === 'open') {
+                return $subscription;
+            }
+
+            // B — a deliberate replacement. Retire the old session FIRST, so a
+            // stale tab cannot still pay for the plan the customer just left.
+            if ($session->status === 'open') {
+                $this->gateway->expireCheckoutSession($session->sessionId);
+            }
+        } elseif ($hasAttempt && $samePrice) {
+            // An attempt exists but no session id was ever recorded: the
+            // creation response was lost. Re-drive the SAME key, which is
+            // exactly what Stripe's idempotency is for.
+            return $subscription;
+        }
+
+        return $this->mintCheckoutAttempt($subscription, $catalog);
+    }
+
+    /**
+     * A NEW durable attempt, with the commercial terms SNAPSHOTTED onto it
+     * (§6/§8) so a later catalog edit cannot rewrite what this customer is
+     * about to buy.
+     */
+    private function mintCheckoutAttempt(PlatformSubscription $subscription, WorkspacePlanCatalog $catalog): PlatformSubscription
+    {
+        return DB::transaction(function () use ($subscription, $catalog) {
+            $locked = PlatformSubscription::query()->whereKey($subscription->id)->lockForUpdate()->firstOrFail();
+
+            $locked->forceFill([
+                'checkout_attempt_uid' => (string) Str::uuid(),
+                'checkout_attempt_price_id' => $catalog->provider_price_id,
+                'checkout_attempt_started_at' => now(),
+                // The retired session is no longer this subscription's.
+                'provider_checkout_session_id' => null,
+                'workspace_plan_catalog_id' => $catalog->id,
+                'price_snapshot' => $catalog->price,
+                'currency_id' => $catalog->currency_id,
+                'currency_code' => $catalog->currency?->code,
+                'billing_cycle_snapshot' => (string) $catalog->billing_cycle,
+                'trial_days_snapshot' => $catalog->configuredTrialDays(),
+                'provider_price_id' => $catalog->provider_price_id,
+            ])->save();
+
+            return $locked->refresh();
+        });
     }
 
     /**

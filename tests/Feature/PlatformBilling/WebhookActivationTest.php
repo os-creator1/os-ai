@@ -163,7 +163,13 @@ class WebhookActivationTest extends TestCase
         [$body, $headers] = $this->webhookBody(
             'customer.subscription.created',
             $paid['subscription_id'],
-            (string) $paid['subscription']->provider_customer_id,
+            null,
+            null,
+            null,
+            // The metadata Checkout put on the subscription: our own uid. It is
+            // what lets the very first subscription event find the local row,
+            // before any provider subscription id has been recorded.
+            (string) $paid['subscription']->uid,
         );
         $this->postPlatformWebhook($body, $headers)->assertOk();
 

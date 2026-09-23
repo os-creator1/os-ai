@@ -125,6 +125,45 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         return $this->sessionResult($session);
     }
 
+    public function expireCheckoutSession(string $sessionId): CheckoutSessionResult
+    {
+        try {
+            $session = $this->client()->checkout->sessions->expire($sessionId, []);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        return $this->sessionResult($session);
+    }
+
+    /**
+     * §11 — the PLATFORM account's own Price. No `stripe_account` request
+     * option, deliberately: a Price on a connected account simply is not
+     * retrievable here, which is how a lane-B or lane-C Price is structurally
+     * prevented from being configured as a lane-A Price.
+     */
+    public function retrievePrice(string $providerPriceId): ProviderPriceSnapshot
+    {
+        try {
+            $price = $this->client()->prices->retrieve($providerPriceId, []);
+        } catch (ApiErrorException) {
+            throw PlatformBillingException::because(PlatformBillingException::PRICE_NOT_RETRIEVABLE);
+        }
+
+        $recurring = $price->recurring ?? null;
+
+        return new ProviderPriceSnapshot(
+            id: (string) $price->id,
+            active: (bool) ($price->active ?? false),
+            currency: mb_strtoupper((string) ($price->currency ?? '')),
+            unitAmount: isset($price->unit_amount) ? (int) $price->unit_amount : null,
+            recurring: ((string) ($price->type ?? '')) === 'recurring',
+            interval: $recurring->interval ?? null,
+            intervalCount: isset($recurring->interval_count) ? (int) $recurring->interval_count : null,
+            livemode: (bool) ($price->livemode ?? false),
+        );
+    }
+
     public function retrieveSubscription(string $providerSubscriptionId): PlatformSubscriptionSnapshot
     {
         try {
@@ -230,11 +269,18 @@ final class StripeApiPlatformGateway implements PlatformStripeGateway
         $secret = (string) config('services.stripe.secret');
         $webhookSecret = (string) config('services.stripe.platform_subscription_webhook.secret');
 
+        $configured = $secret !== '' && preg_match('/\Ask_(test|live)_/', $secret) === 1;
+
         // Booleans and a mode word only. No value, no prefix, no length.
+        //
+        // `mode` is NULL when the key is missing or malformed. Reporting
+        // "test" merely because a key does not start `sk_live_` would tell an
+        // operator their integration is safely in test mode when in truth it
+        // is not configured at all — the one thing this panel exists to say.
         return [
-            'configured' => $secret !== '' && preg_match('/\Ask_(test|live)_/', $secret) === 1,
+            'configured' => $configured,
             'webhook_configured' => $webhookSecret !== '',
-            'mode' => str_starts_with($secret, 'sk_live_') ? 'live' : 'test',
+            'mode' => $configured ? (str_starts_with($secret, 'sk_live_') ? 'live' : 'test') : null,
         ];
     }
 

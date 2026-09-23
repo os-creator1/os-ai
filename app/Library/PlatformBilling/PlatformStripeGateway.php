@@ -101,6 +101,34 @@ interface PlatformStripeGateway
     public function setCancelAtPeriodEnd(string $providerSubscriptionId, bool $cancelAtPeriodEnd): PlatformSubscriptionSnapshot;
 
     /**
+     * §7 — retire an OPEN Checkout Session so it can never be paid.
+     *
+     * Verified against the current reference: `POST
+     * /v1/checkout/sessions/{id}/expire` is valid only while the session's
+     * status is `open`, and afterwards "a customer can't complete a Checkout
+     * Session". That is what makes "at most one payable session per Workspace"
+     * true rather than merely hoped for when a customer switches plans
+     * mid-checkout.
+     *
+     * @throws PlatformBillingException
+     */
+    public function expireCheckoutSession(string $sessionId): CheckoutSessionResult;
+
+    /**
+     * §11 — retrieve one Price from the PLATFORM OWNER's own Stripe account,
+     * so the commercial terms in our catalog can be proved to match the terms
+     * Stripe will actually charge.
+     *
+     * NO CONNECTED ACCOUNT. This uses the platform secret alone and never
+     * sends a `Stripe-Account` header, which is exactly what makes a lane-B or
+     * lane-C Price — one that lives on a Business's or an Agency's connected
+     * account — unretrievable here and therefore unusable as a lane-A Price.
+     *
+     * @throws PlatformBillingException when the Price cannot be retrieved
+     */
+    public function retrievePrice(string $providerPriceId): ProviderPriceSnapshot;
+
+    /**
      * §4 — a Stripe-hosted Billing Portal session, which is how an existing
      * subscriber fixes or replaces a payment method.
      *
@@ -138,7 +166,12 @@ interface PlatformStripeGateway
      * Answers a boolean and a mode; it never returns, logs or hints at a
      * secret's value, prefix or length (§5.1).
      *
-     * @return array{configured: bool, webhook_configured: bool, mode: string}
+     * `mode` is `test` or `live` ONLY when it can actually be derived from a
+     * valid configured platform secret, and `null` otherwise. Reporting "test"
+     * for a missing key would tell an operator their integration is in test
+     * mode when in truth it is not configured at all.
+     *
+     * @return array{configured: bool, webhook_configured: bool, mode: 'test'|'live'|null}
      */
     public function configurationStatus(): array;
 }

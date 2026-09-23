@@ -91,6 +91,67 @@ final class V1SignupManager
     }
 
     /**
+     * §7 — RE-ENTRY for an account that already exists.
+     *
+     * THIS MUST NOT PROVISION. `startSubscription()` provisions, and
+     * `provision()` always calls `upsertPrimaryLocation()`, which EDITS the
+     * existing Primary Location when one is present. Routing "resume checkout"
+     * back through it meant a Lithuanian account that abandoned checkout would
+     * have its Primary Location silently rewritten to the resume form's
+     * defaults — country US, timezone from config, industry Other. That is
+     * data corruption, not a retry.
+     *
+     * So this path touches ONLY the pending lane-A checkout state. It never
+     * writes Business identity, never writes a Location, never replaces the
+     * niche, and never invents a country or a timezone: those facts were
+     * decided at signup and are none of a checkout retry's business.
+     *
+     * Initial signup may provision. Resume may not.
+     *
+     * @throws PlatformBillingException
+     */
+    public function restartCheckout(
+        Customer $customer,
+        WorkspacePlanCatalog $catalog,
+        string $successUrl,
+        string $cancelUrl,
+    ): CheckoutSessionResult {
+        if (! $catalog->isSellable()) {
+            throw PlatformBillingException::because(
+                (bool) $catalog->available_for_signup && (bool) $catalog->is_active
+                    ? PlatformBillingException::TIER_NOT_PRICED
+                    : PlatformBillingException::TIER_NOT_AVAILABLE
+            );
+        }
+
+        // The actor's OWN Workspace, resolved from ownership rather than from
+        // anything the request supplied.
+        $workspace = Workspace::query()
+            ->where('owner_user_id', $customer->user_id)
+            ->orderBy('id')
+            ->first();
+
+        if ($workspace === null) {
+            throw PlatformBillingException::because(PlatformBillingException::NO_SUBSCRIPTION);
+        }
+
+        // Only an UNASSIGNED Workspace is resumable. One that already holds a
+        // plan is a subscriber, and changing their plan is §10.2's job, with
+        // its own authorization and its own upgrade/downgrade semantics.
+        if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
+            throw PlatformBillingException::because(PlatformBillingException::ALREADY_SUBSCRIBED);
+        }
+
+        return $this->subscriptions->startCheckout(
+            $workspace,
+            $catalog,
+            (string) $customer->user->email,
+            $successUrl,
+            $cancelUrl,
+        );
+    }
+
+    /**
      * Step 3 — confirm from PROVIDER TRUTH, then assign the plan and install
      * the Blueprint.
      *

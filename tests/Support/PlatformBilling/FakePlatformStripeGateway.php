@@ -35,6 +35,12 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
     /** Session id keyed by idempotency key, mimicking Stripe's own behaviour. */
     public array $sessionsByKey = [];
 
+    /** The parameters each key was FIRST used with, so reuse can be policed. */
+    public array $keyFingerprints = [];
+
+    /** @var array<string, array<string, mixed>> Price id => provider Price facts. */
+    public array $prices = [];
+
     /** @var array<string, array<string, mixed>> */
     public array $sessions = [];
 
@@ -52,7 +58,8 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
 
     public bool $webhookConfigured = true;
 
-    public string $mode = 'test';
+    /** null when the key is missing/invalid — never a fabricated "test". */
+    public ?string $mode = 'test';
 
     public function createSubscriptionCheckout(
         string $providerPriceId,
@@ -73,12 +80,31 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
             'customer' => $existingCustomerId,
         ]);
 
-        // Stripe's own idempotency: the same key returns the ORIGINAL session.
-        $sessionId = $this->sessionsByKey[$idempotencyKey]
-            ?? ('cs_fake' . str_pad((string) (++$this->sequence), 6, '0', STR_PAD_LEFT));
+        // Stripe's own idempotency, modelled faithfully enough to catch
+        // misuse: the same key returns the ORIGINAL result, and the same key
+        // carrying DIFFERENT parameters is an error — "the idempotency layer
+        // compares incoming parameters to those of the original request and
+        // errors if they're not the same to prevent accidental misuse".
+        $fingerprint = md5(json_encode([
+            $providerPriceId, $clientReferenceId, $successUrl, $cancelUrl, $customerEmail, $trialDays, $existingCustomerId,
+        ]));
+
+        if (isset($this->sessionsByKey[$idempotencyKey])) {
+            if (($this->keyFingerprints[$idempotencyKey] ?? null) !== $fingerprint) {
+                throw new RuntimeException(
+                    "Stripe idempotency violated: key [{$idempotencyKey}] was reused with different parameters. "
+                    . 'A deliberate new checkout attempt must carry a NEW durable attempt key.'
+                );
+            }
+
+            return $this->sessionResult($this->sessionsByKey[$idempotencyKey]);
+        }
+
+        $sessionId = 'cs_fake' . str_pad((string) (++$this->sequence), 6, '0', STR_PAD_LEFT);
 
         $this->sessionsByKey[$idempotencyKey] = $sessionId;
-        $this->sessions[$sessionId] ??= [
+        $this->keyFingerprints[$idempotencyKey] = $fingerprint;
+        $this->sessions[$sessionId] = [
             'client_reference_id' => $clientReferenceId,
             'customer' => $existingCustomerId ?? ('cus_fake' . str_pad((string) $this->sequence, 6, '0', STR_PAD_LEFT)),
             'subscription' => null,
@@ -147,6 +173,65 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         $this->record('retrieveCheckoutSession', ['session' => $sessionId]);
 
         return $this->sessionResult($sessionId);
+    }
+
+    public function expireCheckoutSession(string $sessionId): CheckoutSessionResult
+    {
+        $this->record('expireCheckoutSession', ['session' => $sessionId]);
+
+        // Stripe allows expire only from `open`, and the session then becomes
+        // unpayable.
+        if (($this->sessions[$sessionId]['status'] ?? null) !== 'open') {
+            throw PlatformBillingException::because(PlatformBillingException::PROVIDER_FAILED);
+        }
+
+        $this->sessions[$sessionId]['status'] = 'expired';
+
+        return $this->sessionResult($sessionId);
+    }
+
+    /** Registers a provider Price for the parity check to retrieve. */
+    public function definePrice(string $id, array $facts = []): void
+    {
+        $this->prices[$id] = array_merge([
+            'active' => true,
+            'currency' => 'USD',
+            'unit_amount' => 9900,
+            'recurring' => true,
+            'interval' => 'month',
+            'interval_count' => 1,
+            'livemode' => false,
+        ], $facts);
+    }
+
+    public function retrievePrice(string $providerPriceId): \App\Library\PlatformBilling\ProviderPriceSnapshot
+    {
+        $this->record('retrievePrice', ['price' => $providerPriceId]);
+
+        // An unknown Price — including one that lives on a CONNECTED account,
+        // which the platform key cannot see — is simply not retrievable.
+        if (! isset($this->prices[$providerPriceId])) {
+            throw PlatformBillingException::because(PlatformBillingException::PRICE_NOT_RETRIEVABLE);
+        }
+
+        $price = $this->prices[$providerPriceId];
+
+        return new \App\Library\PlatformBilling\ProviderPriceSnapshot(
+            id: $providerPriceId,
+            active: (bool) $price['active'],
+            currency: (string) $price['currency'],
+            unitAmount: $price['unit_amount'] === null ? null : (int) $price['unit_amount'],
+            recurring: (bool) $price['recurring'],
+            interval: $price['interval'],
+            intervalCount: $price['interval_count'] === null ? null : (int) $price['interval_count'],
+            livemode: (bool) $price['livemode'],
+        );
+    }
+
+    /** Whether any session is still payable — the invariant §7 protects. */
+    public function payableSessionIds(): array
+    {
+        return array_keys(array_filter($this->sessions, static fn (array $s): bool => ($s['status'] ?? null) === 'open'));
     }
 
     public function retrieveSubscription(string $providerSubscriptionId): PlatformSubscriptionSnapshot

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
+use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
+use App\Library\PlatformBilling\PlatformPriceVerifier;
 use App\Models\PlatformSubscription;
 use App\Models\PlatformSubscriptionEvent;
 use App\Models\WorkspacePlanAssignment;
@@ -53,6 +55,7 @@ class PlatformBillingController extends Controller
     public function __construct(
         private readonly PlatformPlanPresenter $plans,
         private readonly EntitlementManager $entitlements,
+        private readonly PlatformPriceVerifier $prices,
     ) {
     }
 
@@ -102,6 +105,36 @@ class PlatformBillingController extends Controller
             return back()->withInput()->withErrors([
                 'trial_days' => __('Set how many days the trial lasts, or turn the trial off.'),
             ]);
+        }
+
+        // §11 — THE PARITY CHECK, before a single row changes.
+        //
+        // The regex above proves only that the operator typed something
+        // Price-shaped. This proves the Price actually exists on THIS
+        // platform's Stripe account, is active and recurring, and charges
+        // exactly the amount, currency and interval being saved. Without it
+        // the catalog could say €297/yearly while Stripe charges $99/monthly.
+        //
+        // It runs OUTSIDE any transaction (§5) and BEFORE updateCatalogPricing(),
+        // so a failure leaves zero catalog and zero pricing-history rows
+        // written.
+        if (! blank($data['provider_price_id'] ?? null)) {
+            $currencyCode = (string) DB::table('currencies')->where('id', (int) $data['currency_id'])->value('code');
+
+            try {
+                $mismatches = $this->prices->mismatches(
+                    (string) $data['provider_price_id'],
+                    (string) $data['price'],
+                    $currencyCode,
+                    (string) $data['billing_cycle'],
+                );
+            } catch (PlatformBillingException $e) {
+                return back()->withInput()->withErrors(['provider_price_id' => $e->customerMessage()]);
+            }
+
+            if ($mismatches !== []) {
+                return back()->withInput()->withErrors(['provider_price_id' => $mismatches]);
+            }
         }
 
         // Price + currency: the existing audited authority.

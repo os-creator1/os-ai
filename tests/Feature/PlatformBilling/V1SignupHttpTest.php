@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -171,9 +172,20 @@ class V1SignupHttpTest extends TestCase
         $form = $this->form();
         $this->post(route('register'), $form);
 
+        // Registration signs the new customer in, and /register is guest-only,
+        // so a second anonymous attempt starts from a signed-out session.
+        $this->signOut();
+
         $this->post(route('register'), $form)->assertSessionHasErrors('email');
 
         $this->assertSame(1, User::query()->where('email', $form['email'])->count());
+    }
+
+    /** Back to anonymous, the way a second visitor actually arrives. */
+    private function signOut(): void
+    {
+        Auth::logout();
+        $this->flushSession();
     }
 
     public function test_a_tier_that_is_not_sellable_cannot_be_submitted(): void
@@ -319,6 +331,8 @@ class V1SignupHttpTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Agency, trialDays: null, price: '497.00');
 
         foreach ([['core', 7], ['growth', 21], ['agency', null]] as [$tier, $expected]) {
+            // Each is a separate anonymous visitor.
+            $this->signOut();
             $this->post(route('register'), $this->form(['tier' => $tier, 'email' => $tier . uniqid() . '@example.test']));
 
             $subscription = PlatformSubscription::query()->orderByDesc('id')->firstOrFail();

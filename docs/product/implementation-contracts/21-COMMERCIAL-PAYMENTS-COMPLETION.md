@@ -406,6 +406,17 @@ Name / email / password
 `Auth\V1SignupController`, routed at `register` (GET/POST) plus
 `signup/complete`, `signup/cancelled`, `signup/plan` and `signup/plan` (POST).
 
+**`register` is GUEST ONLY.** An authenticated actor who POSTed there with a
+different email would create a second User and be silently switched into it by
+`Auth::login()`, abandoning their own account mid-session. The routes carry the
+`guest` middleware, and the controller ALSO checks explicitly, because this
+installation's inherited `RedirectIfAuthenticated` computes a home route and
+then falls through to the next middleware anyway — so `guest` alone does not
+actually stop the request here. Fixing that shared middleware would change
+every `guest` route in the application, which is outside this lane, so lane A
+states its own boundary. The authenticated re-entry routes (`signup.plan`,
+`signup.resume`) remain authenticated.
+
 **Ordering, chosen for durability rather than for screen order.** Provision
 first — Workspace + Business + exactly one Primary Location, committed before
 Stripe is contacted — then take the money, then assign the plan. Stashing a
@@ -415,9 +426,57 @@ arrive.
 
 **An abandoned checkout is a known safe state**: a Workspace with no plan
 assignment, which `CustomerAccountAccessResolver` already treats as a distinct
-pre-existing case. `signup/plan` is the resumable screen, and restarting
-checkout re-drives the same Workspace, Business and Location rather than
-creating a second set.
+pre-existing case. `signup/plan` is the resumable screen.
+
+**RESUME MUST NOT PROVISION.** `startSubscription()` provisions, and
+`provision()` always calls `upsertPrimaryLocation()`, which EDITS the existing
+Primary Location when one is present. Routing "resume checkout" back through it
+meant a Lithuanian account that abandoned checkout would have its Primary
+Location silently rewritten to the resume form's defaults — country US,
+timezone from config, niche Other. That is data corruption, not a retry.
+
+Re-entry is therefore a separate operation,
+`V1SignupManager::restartCheckout()`: it resolves the actor's own unassigned
+Workspace, refuses one that already holds a plan (a subscriber changes plan
+through §10.2, with its own authorization), and changes ONLY the pending lane-A
+checkout state. It never writes Business identity, never writes a Location,
+never replaces the niche, and never invents a country or a timezone.
+
+> **Initial signup may provision. Resume may not.**
+
+### 7.3 Checkout attempt identity
+
+`local_idempotency_key` is `platform-subscription:{uid}` and never changes.
+That is correct for RETRYING one uncertain provider request and wrong for a
+DELIBERATE second attempt, because Stripe's idempotency layer "compares
+incoming parameters to those of the original request and errors if they're not
+the same", and a key may be pruned after 24 hours. A customer who opens Growth
+checkout, cancels, and picks Agency would otherwise resend one key with a
+different Price and be rejected by the provider.
+
+Minting a fresh random key per click is worse: two simultaneously payable
+Checkout Sessions for one Workspace means two possible subscriptions.
+
+So an ATTEMPT is modelled durably — `checkout_attempt_uid`,
+`checkout_attempt_price_id`, `checkout_attempt_started_at` — and the provider
+key is `platform-subscription:{uid}:attempt:{attempt_uid}`:
+
+| Situation | Behaviour |
+|---|---|
+| Same Price, session still `open` | SAME attempt key. Identical parameters, so Stripe returns the original session. |
+| Same Price, session id never recorded (lost response) | SAME attempt key, re-driven. |
+| Different Price | The open session is EXPIRED at the provider first (`POST /v1/checkout/sessions/{id}/expire`, valid only from `open`), then a NEW attempt is minted. |
+| Previous session already `expired` | A new attempt is minted. |
+| Previous session already `complete` | Refused — `CHECKOUT_ALREADY_COMPLETED`. The customer has paid; the webhook or the success endpoint converges that account. |
+
+**At most one payable session exists per Workspace at any moment**, by
+construction rather than by timing.
+
+An attempt's creation parameters are FIXED for its life: `provider_customer_id`
+is deliberately not written from the checkout result, because doing so would
+change the parameters the next call sends and make an honest retry fail the
+provider's own idempotency comparison. The customer id becomes authoritative
+when the finalizer reads it off the confirmed subscription.
 
 **Account creation uses `UserRepository::store(..., confirmed: true)`**, not
 `AccountRepository::register()`. `store()` is the same call `register()` makes
@@ -454,6 +513,21 @@ It is:
   convergence;
 - **free of browser and session state** — it takes everything from the durable
   subscription row;
+- **gated on the ROW's state, not on this attempt having changed it.**
+  Activating only on `APPLIED` left a durability hole: if the finalizer
+  succeeded and activation then failed, the retry's finalizer would report
+  nothing new and activation would be skipped forever, stranding a PAID
+  Workspace. Every disposition that is not an IDENTITY FAILURE
+  (`subscription_mismatch`, `customer_mismatch`, `operation_id_mismatch`) now
+  activates, and the seam's own provider-confirmed gate plus its idempotency
+  decide whether anything actually happens;
+- **backed by a bounded retry policy.** `ProcessPlatformSubscriptionEvent`
+  declares `tries = 3` with `[10, 60]` second backoff, overriding `Base`'s
+  single attempt — money events must not be one-shot. The claim's WHERE
+  already admits a `failed` row, so a retry reclaims the same event safely.
+  A duplicate delivery of an event whose row is `failed` also redispatches it,
+  turning Stripe's own retry into our recovery; every other state is left
+  strictly alone;
 - **not the Blueprint installer.** `InstallBlueprintOnFirstPlanAssigned`
   already listens for `WorkspacePlanAssigned`, which the assignment dispatches,
   and `NicheBlueprintInstaller::installForBusiness()` is itself the idempotent
@@ -578,15 +652,56 @@ what is missing if it is not**, and platform-wide: API key configured/missing,
 mode, webhook secret configured/missing, the endpoint URL to paste into Stripe,
 and the exact event list to subscribe.
 
-**Provider Price mapping.** A Stripe Price is immutable in the relevant sense,
-so the workflow is: create a recurring Price on the platform's own Stripe
-account, paste its `price_...` id here. The field is validated against
-`/\Aprice_[A-Za-z0-9]{6,}\z/`, so a Product id, a secret or a stray paste
-cannot be stored as a Price, and the copy states that changing the amount means
-a new Price id and that existing subscribers keep the price they were sold on.
+**Provider Price mapping, and the PARITY CHECK.** A Stripe Price is immutable
+in the relevant sense, so the workflow is: create a recurring Price on the
+platform's own Stripe account, paste its `price_...` id here.
+
+A format check alone is not enough. It proves only that the operator typed
+something Price-shaped; it cannot stop the catalog saying **€297 / yearly**
+while Stripe actually charges **$99 / monthly** — a silently wrong charge on
+every subscriber.
+
+> **THE INVARIANT: the local price / currency / cycle and the Stripe Price MUST
+> represent the same commercial terms.**
+
+So before ANY catalog mutation, `PlatformPriceVerifier` retrieves the Price
+through `PlatformStripeGateway::retrievePrice()` — the platform secret alone,
+never a `Stripe-Account` option — and requires all of:
+
+1. retrievable at all (a lane-B or lane-C Price lives on a CONNECTED account
+   and is simply not visible here, so this step is also the cross-lane
+   boundary);
+2. `active`;
+3. recurring, not one-time;
+4. currency equals the selected V1 currency;
+5. `unit_amount` equals the submitted amount EXACTLY, in the smallest currency
+   unit;
+6. `recurring.interval` is `month` for monthly, `year` for yearly;
+7. `recurring.interval_count` is exactly 1 (an `interval=month,
+   interval_count=3` Price bills quarterly);
+8. `livemode` matches the platform's configured mode.
+
+It runs OUTSIDE any transaction and BEFORE `updateCatalogPricing()`, so a
+failed verification leaves **zero** catalog rows and **zero** pricing-history
+rows written.
+
+**Minor units** are handled by `CurrencyMinorUnits`, using Stripe's own
+zero-decimal list (BIF CLP DJF GNF JPY KMF KRW MGA PYG RWF VND VUV XAF XOF
+XPF) rather than ISO's, with the documented special cases treated as
+two-decimal for CHARGES: ISK and UGX ("represent as a two-decimal value where
+the decimal amount is always 00"), and HUF/TWD (zero-decimal for payouts only).
+The conversion is string arithmetic, never a float, because the result is
+compared for exact equality.
+
 The gateway was deliberately **not** extended to create or version Prices
 itself: that would be the beginning of a general Stripe product-management
 system, which §11 rules out.
+
+**Provider mode is truthful.** `configurationStatus()` reports `test` or `live`
+only when it can be derived from a valid configured secret, and `null`
+otherwise. Reporting "test" for a missing key would tell an operator their
+integration is safely in test mode when in truth it is not configured at all —
+the one thing that panel exists to say.
 
 **Billing & Revenue** reports trialing / active / past-due / canceling /
 canceled / pending counts, Grace and Locked counts taken from the canonical

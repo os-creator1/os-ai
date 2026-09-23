@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Public;
 
+use App\Enums\PlatformBilling\PlatformSubscriptionEventState;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
 use App\Jobs\PlatformBilling\ProcessPlatformSubscriptionEvent;
@@ -90,6 +91,8 @@ class PlatformSubscriptionWebhookController extends Controller
         } catch (QueryException $e) {
             // 2 — duplicate delivery. 200, and nothing re-processed.
             if ($e->getCode() === '23000') {
+                $this->redispatchIfExhausted($providerEventId);
+
                 return response('', 200);
             }
 
@@ -100,6 +103,30 @@ class PlatformSubscriptionWebhookController extends Controller
         ProcessPlatformSubscriptionEvent::dispatch((int) $row->id);
 
         return response('', 200);
+    }
+
+    /**
+     * §12 — a duplicate delivery re-processes nothing, WITH ONE EXCEPTION.
+     *
+     * If the earlier attempts left the row `failed`, the job's bounded retries
+     * are exhausted and nothing else will ever pick it up — so the event would
+     * sit dead while Stripe, which does retry, keeps telling us about it.
+     * Redispatching in exactly that case turns Stripe's own retry into our
+     * recovery. It is safe: the job's claim is one atomic conditional UPDATE
+     * that admits a `failed` row and nothing else can be running on it.
+     *
+     * Every other state — received, processing, processed, ignored — is left
+     * strictly alone, which is what "a duplicate re-processes nothing" means.
+     */
+    private function redispatchIfExhausted(string $providerEventId): void
+    {
+        $row = PlatformSubscriptionEvent::query()
+            ->where('provider_event_id', $providerEventId)
+            ->first();
+
+        if ($row !== null && $row->state === PlatformSubscriptionEventState::Failed) {
+            ProcessPlatformSubscriptionEvent::dispatch((int) $row->id);
+        }
     }
 
     /**

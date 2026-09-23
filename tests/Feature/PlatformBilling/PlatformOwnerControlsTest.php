@@ -87,6 +87,11 @@ class PlatformOwnerControlsTest extends TestCase
     public function test_the_owner_can_put_a_plan_on_sale_end_to_end(): void
     {
         $this->signInAsPlatformOwner();
+        // §11 — the Price must genuinely exist on the platform account and
+        // match the terms being saved.
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
 
         $this->post(route('admin.platform-billing.update', ['growth']), $this->config())
             ->assertRedirect();
@@ -149,6 +154,9 @@ class PlatformOwnerControlsTest extends TestCase
     public function test_turning_off_signup_availability_stops_new_sales_without_deactivating_the_tier(): void
     {
         $this->signInAsPlatformOwner();
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
         $this->post(route('admin.platform-billing.update', ['growth']), $this->config());
 
         $this->post(route('admin.platform-billing.update', ['growth']),

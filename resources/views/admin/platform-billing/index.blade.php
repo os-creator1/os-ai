@@ -44,8 +44,13 @@
                         {{ $provider['configured'] ? 'Configured' : 'Missing' }}
                     </dd>
 
+                    {{--
+                        Truthful: "test" is only reported when it can actually
+                        be derived from a valid configured key. A missing key
+                        is Not configured, not test mode.
+                    --}}
                     <dt class="col-sm-4">Mode</dt>
-                    <dd class="col-sm-8" data-role="provider-mode">{{ $provider['mode'] }}</dd>
+                    <dd class="col-sm-8" data-role="provider-mode">{{ $provider['mode'] ?? 'Not configured' }}</dd>
 
                     <dt class="col-sm-4">Webhook signing secret</dt>
                     <dd class="col-sm-8" data-role="provider-webhook-configured">

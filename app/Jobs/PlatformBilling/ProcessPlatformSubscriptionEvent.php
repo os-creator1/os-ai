@@ -44,6 +44,28 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
     /** How long a claim is held before another worker may take it over. */
     private const LEASE_SECONDS = 120;
 
+    /**
+     * §12 — a BOUNDED retry policy, overriding Base's default of one attempt.
+     *
+     * Money events must not be one-shot. If the finalizer succeeds and then
+     * activation fails on a transient database error, a single attempt would
+     * leave a PAID Workspace unassigned with nothing to fix it. Three attempts
+     * with backoff is the smallest policy that survives a blip without
+     * hammering the provider or the queue.
+     *
+     * The claim's WHERE already admits a `failed` row, so a retry reclaims the
+     * same event safely rather than racing a second worker.
+     */
+    public int $tries = 3;
+
+    public int $maxExceptions = 3;
+
+    /** Seconds between attempts: quick, then patient. */
+    public function backoff(): array
+    {
+        return [10, 60];
+    }
+
     public function __construct(private readonly int $eventId)
     {
     }
@@ -121,12 +143,24 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
         // charged customer with an unassigned Workspace. This is the SAME
         // idempotent seam the success endpoint calls — not a second copy of
         // the plan-assignment logic — and it trusts no session or browser
-        // state, only the durable subscription row the finalizer just updated.
+        // state, only the durable subscription row.
         //
-        // It is called after the finalizer so the row already carries the
-        // provider-confirmed status the seam gates on; an unconfirmed or
-        // foreign state simply activates nothing.
-        if ($disposition === PlatformSubscriptionFinalizer::APPLIED) {
+        // ACTIVATION IS GATED ON THE ROW'S STATE, NOT ON THIS ATTEMPT HAVING
+        // CHANGED IT. Gating on APPLIED alone left a durability hole: if the
+        // finalizer succeeded and activation then failed, the retry's
+        // finalizer would report no change and activation would be skipped
+        // forever, stranding a paid Workspace. So every disposition that is
+        // not an IDENTITY FAILURE activates, and the seam's own
+        // provider-confirmed gate plus its idempotency decide whether anything
+        // actually happens.
+        //
+        // A mismatch never activates: an event we could not prove belongs to
+        // this subscription must not be able to hand it a plan.
+        if (! in_array($disposition, [
+            PlatformSubscriptionFinalizer::SUBSCRIPTION_MISMATCH,
+            PlatformSubscriptionFinalizer::CUSTOMER_MISMATCH,
+            PlatformSubscriptionFinalizer::OPERATION_ID_MISMATCH,
+        ], true)) {
             $signup->activateFromConfirmedSubscription($subscription->refresh());
         }
 
@@ -179,6 +213,23 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
 
             if ($bySubscription !== null) {
                 return $bySubscription;
+            }
+        }
+
+        // OUR OWN DURABLE IDENTITY, echoed back by the provider. Checkout sets
+        // `subscription_data.metadata.app_operation_id` to the local
+        // subscription uid, so a `customer.subscription.*` event carries it on
+        // the subscription object — the same strength of link as
+        // `client_reference_id`, and the one that resolves the very first
+        // subscription event for a brand-new checkout, before any provider
+        // subscription id has been recorded locally.
+        $operationId = $object['metadata']['app_operation_id'] ?? null;
+
+        if (is_string($operationId) && $operationId !== '') {
+            $byOperation = PlatformSubscription::query()->where('uid', $operationId)->first();
+
+            if ($byOperation !== null) {
+                return $byOperation;
             }
         }
 

@@ -27,8 +27,15 @@
                 | deliberately NOT part of V1 signup. V1 takes exactly one
                 | payment route: a hosted lane-A Stripe Checkout Session.
                 */
-                Route::get('register', 'V1SignupController@show')->name('register');
-                Route::post('register', 'V1SignupController@store')->middleware('throttle:10,1');
+                // GUEST ONLY. These are the anonymous signup surface: an
+                // already-authenticated user POSTing here with another email
+                // would create a second User and silently switch Auth::login()
+                // into it, abandoning their own account mid-session. The
+                // authenticated re-entry routes below (signup.plan /
+                // signup.resume) are the supported path for someone who is
+                // already signed in.
+                Route::get('register', 'V1SignupController@show')->middleware('guest')->name('register');
+                Route::post('register', 'V1SignupController@store')->middleware(['guest', 'throttle:10,1']);
 
                 // The Checkout return. `success` trusts provider truth, never a
                 // query flag (§8.5); `cancelled` never deletes the account.

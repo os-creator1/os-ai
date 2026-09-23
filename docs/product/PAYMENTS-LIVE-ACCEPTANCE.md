@@ -72,9 +72,14 @@ database edit is required at any point.
 | 1.3.1 | Sign in as the Platform Owner and open **Platform Billing**. | Core / Growth / Agency each shown with an "On sale / Not on sale" badge and, where not on sale, the exact reasons. | |
 | 1.3.2 | For each tier set price, currency and billing cycle to match §1.1.2, paste that tier's `price_...` id, and enter a reason. Save. | Saved; a `workspace_plan_catalog_pricing_changes` row records each price change with your reason. | |
 | 1.3.3 | Try pasting a Product id (`prod_…`) or a secret into the Stripe Price field. | Rejected with a validation error; nothing is stored. | |
+| 1.3.3a | Paste a **syntactically valid but nonexistent** `price_…` id. | Rejected: "could not be found on this platform's own Stripe account." The catalog and the pricing history are **unchanged**. | |
+| 1.3.3b | Create a Price in Stripe whose amount, currency or interval does NOT match what you are entering, and paste it. | Rejected, naming the exact disagreement (amount / currency / interval). Nothing is written. | |
+| 1.3.3c | Create a Price with `interval_count` 3, or an inactive Price, or a one-time Price, and paste each. | Each rejected. Nothing is written. | |
+| 1.3.3d | If you have a connected account (a Business's or an Agency's), create a Price there and paste its id. | Rejected as not retrievable — a connected-account Price is not visible to the platform key, which is the lane boundary doing its job. | |
 | 1.3.4 | Enable a trial on one tier with a duration; leave another tier with no trial. Try enabling a trial with the length blank. | The blank length is rejected. | |
 | 1.3.5 | Tick "Available to new signups" for the tiers you intend to sell. | Each of those tiers now reads **On sale**. | |
 | 1.3.6 | Check the Stripe panel. | Shows API key Configured/Missing, mode, webhook secret Configured/Missing, the endpoint URL, and the exact event list to subscribe. **No key, no key prefix, no key length.** | |
+| 1.3.6a | Temporarily blank `STRIPE_SECRET` and reload the panel. | Mode reads **Not configured** — never "test". Restore the key afterwards. | |
 | 1.3.7 | View page source of the whole page. | No secret anywhere in the HTML, and no input field that could store one. | |
 
 ### 1.4 Brand-new signup, with trial
@@ -105,6 +110,10 @@ database edit is required at any point.
 | 1.5.3 | **Database:** `platform_subscriptions.status = active`, `current_period_start` / `current_period_end` populated. | Matches. | |
 | 1.5.4 | Start a checkout and click Stripe's **back/cancel** link. | You land on the resumable "Choose a plan" screen. The Workspace exists, there is **no** plan assignment, and `platform_subscriptions.status = pending`. No paid access, and the account is not deleted. | |
 | 1.5.5 | From that screen pick a plan and complete checkout. | It finishes normally, and there is still exactly **one** Workspace, one Business and one Primary Location — retrying created no duplicates. | |
+| 1.5.6 | **Resume must not rewrite identity.** Sign up with a NON-US country and a distinctive niche and time zone, note the Business and Primary Location rows, cancel checkout, then resume — first with the same tier, then with a different one. | Every Business and Location field is unchanged: country, time zone and niche are still the ones chosen at signup. (Before this correction, resuming rewrote them to US / config default / Other.) | |
+| 1.5.7 | **Only one payable checkout.** Start checkout on one tier, leave the Stripe tab open, go back and resume on a DIFFERENT tier, then return to the first tab and try to pay. | The first session shows as expired and cannot be completed. Stripe's Dashboard shows one open session for this customer, carrying the NEW tier's Price. | |
+| 1.5.8 | Complete a checkout, then go back and try to resume. | Refused — "that checkout has already been paid". No second Checkout Session and no second subscription is created. | |
+| 1.5.9 | While signed in, open `/register` directly and try to submit it with a different email. | You are redirected to the plan screen or Home; no second user account is created and you are not switched out of your own account. | |
 
 ### 1.6 Renewal
 

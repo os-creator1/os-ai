@@ -55,6 +55,7 @@ class PlatformSubscription extends Model
         'ended_at' => 'datetime',
         'pending_effective_at' => 'datetime',
         'last_event_at' => 'datetime',
+        'checkout_attempt_started_at' => 'datetime',
     ];
 
     public function generateUid(): void
@@ -91,5 +92,24 @@ class PlatformSubscription extends Model
     public static function idempotencyKeyFor(string $uid): string
     {
         return 'platform-subscription:' . $uid;
+    }
+
+    /**
+     * §7 — the provider idempotency key for ONE checkout attempt.
+     *
+     * Derived from the subscription's durable key PLUS the attempt's own uid,
+     * so it is globally unique, stable for a retry of the same request, and
+     * different for a deliberate new attempt. Stripe's idempotency layer
+     * rejects the same key carrying different parameters, which is precisely
+     * why a plan switch must not reuse the previous attempt's key.
+     *
+     * Comfortably inside Stripe's 255-character limit, and carries no personal
+     * data — both documented requirements for an idempotency key.
+     */
+    public function checkoutAttemptKey(): ?string
+    {
+        return $this->checkout_attempt_uid === null
+            ? null
+            : self::idempotencyKeyFor((string) $this->uid) . ':attempt:' . $this->checkout_attempt_uid;
     }
 }

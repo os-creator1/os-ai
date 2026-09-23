@@ -63,12 +63,49 @@ class V1SignupController extends Controller
      * §7 — the signup page. Plans come from the V1 catalog, filtered to what
      * is genuinely sellable right now.
      */
-    public function show(): View
+    public function show(): View|RedirectResponse
     {
+        if ($this->alreadySignedIn()) {
+            return $this->redirectSignedInActor();
+        }
+
         return view('auth.v1-signup', [
             'plans' => $this->plans->sellablePlans(),
             'industries' => BusinessIndustry::cases(),
         ]);
+    }
+
+    /**
+     * THE GUEST BOUNDARY, enforced here as well as by the route's `guest`
+     * middleware.
+     *
+     * This is not belt-and-braces for its own sake: the inherited
+     * `RedirectIfAuthenticated` computes a home route and then falls through
+     * to the next middleware anyway, so on this installation `guest` does not
+     * actually stop an authenticated request. Without this check, a signed-in
+     * customer could POST /register with a different email, create a second
+     * User, and have Auth::login() silently switch them into it — abandoning
+     * their own account mid-session.
+     *
+     * Fixing that shared middleware would change every `guest` route in the
+     * application, which is well outside this lane; so lane A states its own
+     * boundary explicitly and sends the actor to the authenticated re-entry
+     * path that actually serves them.
+     */
+    private function alreadySignedIn(): bool
+    {
+        return Auth::check();
+    }
+
+    private function redirectSignedInActor(): RedirectResponse
+    {
+        $customer = $this->actingCustomer();
+
+        // A customer who has an account but no plan belongs on the resumable
+        // plan screen; anyone else belongs at home.
+        return $customer === null
+            ? redirect()->route('user.home')
+            : redirect()->route('signup.plan');
     }
 
     /**
@@ -81,6 +118,12 @@ class V1SignupController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
+        // §7 — guest only. An authenticated actor must never be able to create
+        // a second account here and be switched into it.
+        if ($this->alreadySignedIn()) {
+            return $this->redirectSignedInActor();
+        }
+
         $plans = collect($this->plans->sellablePlans());
 
         $validator = Validator::make($request->all(), [
@@ -243,18 +286,17 @@ class V1SignupController extends Controller
             return redirect()->route('signup.plan')->withErrors($validator->errors());
         }
 
-        $workspace = Workspace::query()->where('owner_user_id', $customer->user_id)->orderBy('id')->first();
         $catalog = WorkspacePlanCatalog::query()->where('tier', $validator->validated()['tier'])->firstOrFail();
 
         try {
-            $session = $this->signup->startSubscription(
+            // §7 — RE-ENTRY, not provisioning. This deliberately does NOT call
+            // startSubscription(): that path provisions, and provisioning
+            // upserts the Primary Location, which would silently overwrite the
+            // country, timezone and niche this account already chose with this
+            // form's defaults. Resume changes the pending checkout and nothing
+            // else.
+            $session = $this->signup->restartCheckout(
                 $customer,
-                [
-                    'business_name' => (string) ($workspace?->name ?? $customer->user->displayName()),
-                    'industry' => BusinessIndustry::Other->value,
-                    'country_code' => 'US',
-                    'timezone' => config('app.timezone'),
-                ],
                 $catalog,
                 route('signup.success'),
                 route('signup.cancelled'),

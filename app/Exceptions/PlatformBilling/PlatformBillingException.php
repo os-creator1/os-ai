@@ -45,6 +45,19 @@ final class PlatformBillingException extends RuntimeException
     /** The requested change is not meaningful from the current state. */
     public const CHANGE_NOT_PERMITTED = 'change_not_permitted';
 
+    /**
+     * §11 — the supplied Stripe Price could not be retrieved from the PLATFORM
+     * account. Either it does not exist, or it belongs to a connected account
+     * (lane B or lane C), which is not reachable with the platform key alone.
+     */
+    public const PRICE_NOT_RETRIEVABLE = 'price_not_retrievable';
+
+    /** §11 — the Price exists but does not represent the submitted terms. */
+    public const PRICE_TERMS_MISMATCH = 'price_terms_mismatch';
+
+    /** §7 — the previous checkout session was already completed. */
+    public const CHECKOUT_ALREADY_COMPLETED = 'checkout_already_completed';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -62,6 +75,9 @@ final class PlatformBillingException extends RuntimeException
             self::ALREADY_SUBSCRIBED => 'This account already has a subscription.',
             self::NO_SUBSCRIPTION => 'This account does not have a subscription yet.',
             self::CHANGE_NOT_PERMITTED => 'That change cannot be made from the current plan state.',
+            self::PRICE_NOT_RETRIEVABLE => 'That Stripe Price could not be found on this platform\'s own Stripe account.',
+            self::PRICE_TERMS_MISMATCH => 'That Stripe Price does not match the plan terms you entered.',
+            self::CHECKOUT_ALREADY_COMPLETED => 'That checkout has already been paid.',
             default => 'That could not be completed.',
         });
     }
