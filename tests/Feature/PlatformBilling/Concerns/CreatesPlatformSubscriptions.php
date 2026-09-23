@@ -102,7 +102,14 @@ trait CreatesPlatformSubscriptions
      */
     protected function subscribedWorkspace(WorkspacePlanTier $tier = WorkspacePlanTier::Growth, ?int $trialDays = null): array
     {
-        $catalog = $this->sellableTier($tier, $trialDays);
+        // Make the tier sellable only if it is not already. A test that has
+        // deliberately repriced a tier is asserting what a NEW signup pays, so
+        // the fixture must not silently reset the published price underneath
+        // it.
+        $existing = WorkspacePlanCatalog::query()->where('tier', $tier->value)->firstOrFail();
+        $catalog = $existing->isSellable() && $trialDays === null
+            ? $existing
+            : $this->sellableTier($tier, $trialDays);
         $fixture = $this->unassignedWorkspace();
         $manager = app(\App\Library\PlatformBilling\PlatformSubscriptionManager::class);
 
