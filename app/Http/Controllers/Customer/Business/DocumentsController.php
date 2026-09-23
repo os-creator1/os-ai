@@ -7,11 +7,15 @@ use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Documents\DocumentManager;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Payments\PaymentManager;
 use App\Library\Workspace\LocationAccessGuard;
+use App\Exceptions\Payments\RefundException;
+use App\Exceptions\Payments\StripeConnectException;
 use App\Exceptions\Workspace\LocationAccessDeniedException;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentLineItem;
+use App\Models\BusinessDocumentPayment;
 use App\Models\BusinessLocation;
 use App\Models\CatalogItem;
 use App\Models\Contacts;
@@ -25,7 +29,7 @@ class DocumentsController extends CustomerBaseController
 {
     use ResolvesBusinessTenancy;
 
-    public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations) {}
+    public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments) {}
 
     public function listing(string $workspaceUid, string $businessUid): View
     {
@@ -149,6 +153,42 @@ class DocumentsController extends CustomerBaseController
         $data = $request->validate(['reason' => 'required|string|max:255']);
         $this->manager->void($document, $data['reason']);
         return back();
+    }
+
+    /**
+     * Sub-slice F §7.4/§6.1 — issue a refund against one captured payment.
+     *
+     * THE SAME GATE CHAIN AS EVERY OTHER ACTION HERE, and deliberately no
+     * more: Workspace -> Business -> access -> Active -> `payments_contracts`
+     * -> the PaymentsContracts entitlement -> LocationAccessGuard. §6.1 gives
+     * refunds the SAME single capability as the rest of the document surface
+     * plus an explicit confirmation — so there is no new permission key, no
+     * new matrix entry, and no owner-only rule (that is §6.2's, and it belongs
+     * to connecting and disconnecting Stripe, not to refunding).
+     *
+     * THE CONFIRMATION IS THE EXTRA STEP. `confirm` must be explicitly
+     * accepted, so a refund can never be the result of a stray POST or a
+     * re-submitted form.
+     *
+     * THE BROWSER NEVER NAMES A PROVIDER OBJECT. The payment is addressed by
+     * OUR uid and re-scoped to this document, and the connected account is
+     * read from the payment's own historical connection inside the manager
+     * (§5.7). No Stripe identifier is accepted in any form.
+     */
+    public function refund(Request $request, string $workspaceUid, string $businessUid, string $documentUid, string $paymentUid): RedirectResponse
+    {
+        $document = $this->document($workspaceUid, $businessUid, $documentUid);
+        $data = $request->validate(['confirm' => 'required|accepted', 'amount_minor' => 'required|integer|min:1', 'reason' => 'nullable|string|max:255']);
+        $payment = BusinessDocumentPayment::where('business_document_id', $document->id)->where('uid', $paymentUid)->first() ?? abort(404);
+        try {
+            $this->payments->requestRefund($payment, (int) $data['amount_minor'], $data['reason'] ?? null, (int) Auth::id());
+        } catch (RefundException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        } catch (StripeConnectException $e) {
+            // The provider's own text never reaches the page (§11.8).
+            return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+        return back()->with(['status' => 'success', 'message' => 'Refund requested.']);
     }
 
     private function document(string $workspaceUid, string $businessUid, string $documentUid): BusinessDocument

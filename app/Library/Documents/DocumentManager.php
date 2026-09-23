@@ -6,10 +6,13 @@ use App\Enums\Documents\DocumentSignatureMethod;
 use App\Enums\Documents\DocumentStatus;
 use App\Enums\Documents\DocumentVersionState;
 use App\Enums\Documents\BusinessDocumentPaymentStatus;
+use App\Enums\Documents\PaymentScheduleItemStatus;
+use App\Events\DocumentExpired;
 use App\Events\DocumentSent;
 use App\Events\DocumentSigned;
 use App\Events\DocumentVoided;
 use App\Jobs\Documents\SendDocumentLinkEmail;
+use App\Jobs\Documents\SendDocumentReminderEmail;
 use App\Library\Catalog\PackageSnapshotService;
 use App\Models\Business;
 use App\Models\BusinessDocument;
@@ -24,8 +27,10 @@ use App\Models\CrmOpportunity;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 final class DocumentManager
 {
@@ -477,6 +482,308 @@ final class DocumentManager
         });
         DB::afterCommit(fn () => DocumentVoided::dispatch($result->id));
         return $result;
+    }
+
+    // =================================================================
+    // Sub-slice F — the two bounded document sweeps (§8.6 / §8.4)
+    // =================================================================
+
+    /**
+     * §8.6 — expire OFFERS, and nothing else.
+     *
+     * `expires_at` is an offer / unpaid-document expiry. A document may be
+     * swept only when ALL THREE hold, and they are re-verified under the lock:
+     *
+     *   1. `status = sent` — so a `signed` proposal is structurally out of
+     *      reach, as are the terminal `paid` / `void` / `expired`;
+     *   2. NO signature row exists;
+     *   3. ZERO succeeded payments exist.
+     *
+     * Condition 3 is what keeps a deposit from being stranded: a deposit-paid,
+     * balance-outstanding document stays `sent`, its balance stays due on its
+     * own `due_at`, and reminders continue.
+     *
+     * NO SCHEDULE TRANSITION. §8.6 prescribes exactly one state change — the
+     * document's — and unlike §7.1's void, it does not void the pending
+     * schedule items. Nothing is invented here: an expired document is already
+     * unpayable (assertDocumentPayable refuses `expired`) and already
+     * un-remindable (dispatchDueReminders selects only `sent`/`signed`), so
+     * the pending rows are inert, and the version's content stays exactly as
+     * it was issued.
+     *
+     * BOUNDED, never drain-to-empty; the scheduler's cadence provides eventual
+     * coverage. Each row is its own short transaction, so one failure cannot
+     * abort the batch.
+     */
+    public function expireDue(int $limit): int
+    {
+        $candidates = BusinessDocument::query()
+            ->where('status', DocumentStatus::Sent->value)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->orderBy('id')
+            ->limit($limit)
+            ->pluck('id');
+        $expired = 0;
+        foreach ($candidates as $documentId) {
+            try {
+                $result = DB::transaction(function () use ($documentId) {
+                    $document = BusinessDocument::whereKey($documentId)->lockForUpdate()->first();
+                    if ($document === null || $document->status !== DocumentStatus::Sent) {
+                        return null;
+                    }
+                    if ($document->expires_at === null || $document->expires_at->gt(now())) {
+                        return null;
+                    }
+                    if ($document->signature()->exists()) {
+                        return null;
+                    }
+                    $succeeded = $document->payments()
+                        ->where('status', BusinessDocumentPaymentStatus::Succeeded->value)
+                        ->exists();
+                    if ($succeeded) {
+                        return null;
+                    }
+                    $document->status = DocumentStatus::Expired;
+                    $document->expired_at = now();
+                    $document->save();
+                    return $document->id;
+                });
+                if ($result !== null) {
+                    $expired++;
+                    DB::afterCommit(fn () => DocumentExpired::dispatch($result));
+                }
+            } catch (Throwable $e) {
+                Log::error('DocumentManager::expireDue failed to expire a document', [
+                    'business_document_id' => $documentId,
+                    'exception' => $e,
+                ]);
+            }
+        }
+        return $expired;
+    }
+
+    /**
+     * §8.4 — payment and offer-expiry reminders, deduped by DURABLE MARKERS
+     * this manager writes inside the same locked transaction that selects the
+     * row. The job never writes the table.
+     *
+     * THE WINDOW RULE. `documents.reminder_offsets_days` (e.g. [3, 1]) defines
+     * one window per offset: window N opens at `anchor - offsets[N-1]` days.
+     * For any row we take the LATEST window already open, W, and send only if
+     * `reminder_count < W` — then set the count to W, not W+1. Two
+     * consequences, both deliberate:
+     *
+     *   - a rerun sends NOTHING, because W has not moved and the count now
+     *     equals it. That is what makes the command safe to run every few
+     *     minutes;
+     *   - a document that appears when several windows are already open gets
+     *     ONE reminder, not a backlog of them.
+     *
+     * CURRENT VERSION ONLY (§8.4/§5.9). The schedule is read through
+     * `current_version_id`, so an item belonging to a superseded version is
+     * never reminded — its version is not the payable one, and reminding for
+     * it would ask the recipient to pay terms that no longer apply.
+     *
+     * DEPOSIT / BALANCE SEMANTICS INTACT (§7.2 step 7). Only the CURRENTLY
+     * PAYABLE item — the earliest pending item with every earlier sequence
+     * already paid — is reminded. So an unpaid deposit is reminded and the
+     * balance behind it is not; once the deposit succeeds, the balance becomes
+     * the payable item and starts receiving its own reminders.
+     *
+     * NO STARVATION. Each driving query excludes rows that have already used
+     * every window (`reminder_count < count($offsets)`) and orders
+     * NEVER-REMINDED ROWS FIRST, then least-recently-reminded. Ordering by id
+     * would let the same already-reminded rows fill every bounded batch and
+     * starve everything behind them forever.
+     *
+     * `--limit` bounds EACH of the two candidate sets: outstanding schedule
+     * items, and documents approaching their offer expiry.
+     */
+    public function dispatchDueReminders(int $limit): int
+    {
+        $offsets = $this->reminderOffsets();
+        if ($offsets === []) {
+            return 0;
+        }
+        $now = now();
+        $horizon = $now->copy()->addDays($offsets[0]);
+        $windows = count($offsets);
+        $dispatched = 0;
+        // (a) PAYMENT reminders, driven by the item itself and joined to the
+        // document through current_version_id — which is exactly what makes a
+        // superseded version's item unreachable here (§5.9).
+        $items = BusinessDocumentPaymentScheduleItem::query()
+            ->join('business_documents as reminder_doc', 'reminder_doc.current_version_id', '=', 'business_document_payment_schedule_items.business_document_version_id')
+            ->whereIn('reminder_doc.status', [DocumentStatus::Sent->value, DocumentStatus::Signed->value])
+            ->where('business_document_payment_schedule_items.status', PaymentScheduleItemStatus::Pending->value)
+            ->whereNotNull('business_document_payment_schedule_items.due_at')
+            ->where('business_document_payment_schedule_items.due_at', '<=', $horizon)
+            ->where('business_document_payment_schedule_items.reminder_count', '<', $windows)
+            ->orderByRaw('business_document_payment_schedule_items.reminder_last_sent_at IS NOT NULL')
+            ->orderBy('business_document_payment_schedule_items.reminder_last_sent_at')
+            ->orderBy('business_document_payment_schedule_items.id')
+            ->limit($limit)
+            ->get(['business_document_payment_schedule_items.id as item_id', 'reminder_doc.id as document_id']);
+        foreach ($items as $candidate) {
+            try {
+                $dispatched += $this->remindPayment((int) $candidate->document_id, (int) $candidate->item_id, $offsets);
+            } catch (Throwable $e) {
+                Log::error('DocumentManager::dispatchDueReminders failed for a schedule item', [
+                    'business_document_payment_schedule_item_id' => $candidate->item_id,
+                    'exception' => $e,
+                ]);
+            }
+        }
+        // (b) OFFER-EXPIRY warnings, on the document's own marker.
+        $documents = BusinessDocument::query()
+            ->where('status', DocumentStatus::Sent->value)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '>', $now)
+            ->where('expires_at', '<=', $horizon)
+            ->where('expiry_reminder_count', '<', $windows)
+            ->orderByRaw('expiry_reminder_last_sent_at IS NOT NULL')
+            ->orderBy('expiry_reminder_last_sent_at')
+            ->orderBy('id')
+            ->limit($limit)
+            ->pluck('id');
+        foreach ($documents as $documentId) {
+            try {
+                $dispatched += $this->remindExpiry((int) $documentId, $offsets);
+            } catch (Throwable $e) {
+                Log::error('DocumentManager::dispatchDueReminders failed for a document expiry', [
+                    'business_document_id' => $documentId,
+                    'exception' => $e,
+                ]);
+            }
+        }
+        return $dispatched;
+    }
+
+    /**
+     * One item, one short transaction, §7.0 order: document (tier 1) then the
+     * current version's schedule items (tier 2, ascending sequence).
+     *
+     * Every precondition is RE-VERIFIED under the lock, because the candidate
+     * query ran without one: the document may have been voided, the version
+     * superseded, or the item paid in between.
+     *
+     * @param  array<int, int>  $offsets
+     */
+    private function remindPayment(int $documentId, int $itemId, array $offsets): int
+    {
+        return DB::transaction(function () use ($documentId, $itemId, $offsets) {
+            $now = now();
+            $document = BusinessDocument::whereKey($documentId)->lockForUpdate()->first();
+            if ($document === null
+                || ! in_array($document->status, [DocumentStatus::Sent, DocumentStatus::Signed], true)
+                || $document->current_version_id === null) {
+                return 0;
+            }
+            $schedule = BusinessDocumentPaymentScheduleItem::where('business_document_version_id', $document->current_version_id)
+                ->orderBy('sequence')->lockForUpdate()->get();
+            $payable = $schedule->first(fn ($row) => $row->status === PaymentScheduleItemStatus::Pending);
+            // §7.2 step 7 — only the item that is actually owed NOW is chased:
+            // the earliest pending one, with every earlier sequence settled.
+            if ($payable === null || (int) $payable->id !== $itemId) {
+                return 0;
+            }
+            $blocked = $schedule->contains(fn ($row) => (int) $row->sequence < (int) $payable->sequence
+                && $row->status !== PaymentScheduleItemStatus::Paid);
+            if ($blocked) {
+                return 0;
+            }
+            $window = $this->dueReminderWindow($payable->due_at, $offsets, (int) $payable->reminder_count, $payable->reminder_last_sent_at, $now);
+            if ($window === null) {
+                return 0;
+            }
+            $payable->forceFill(['reminder_last_sent_at' => $now, 'reminder_count' => $window])->save();
+            DB::afterCommit(fn () => SendDocumentReminderEmail::dispatch($documentId, $itemId));
+            return 1;
+        });
+    }
+
+    /**
+     * The offer-expiry warning is only meaningful while the document can still
+     * ACTUALLY expire under §8.6 — `sent`, unsigned, and with nothing captured
+     * against it. Warning about an expiry that will never happen is a lie.
+     *
+     * @param  array<int, int>  $offsets
+     */
+    private function remindExpiry(int $documentId, array $offsets): int
+    {
+        return DB::transaction(function () use ($documentId, $offsets) {
+            $now = now();
+            $document = BusinessDocument::whereKey($documentId)->lockForUpdate()->first();
+            if ($document === null
+                || $document->status !== DocumentStatus::Sent
+                || $document->expires_at === null
+                || $document->expires_at->lte($now)
+                || $document->signature()->exists()
+                || $document->payments()->where('status', BusinessDocumentPaymentStatus::Succeeded->value)->exists()) {
+                return 0;
+            }
+            $window = $this->dueReminderWindow($document->expires_at, $offsets, (int) $document->expiry_reminder_count, $document->expiry_reminder_last_sent_at, $now);
+            if ($window === null) {
+                return 0;
+            }
+            $document->forceFill(['expiry_reminder_last_sent_at' => $now, 'expiry_reminder_count' => $window])->save();
+            DB::afterCommit(fn () => SendDocumentReminderEmail::dispatch($documentId, null));
+            return 1;
+        });
+    }
+
+    /**
+     * The latest OPEN window a row has not been reminded in yet, 1-based, or
+     * null when nothing is due.
+     *
+     * @param  array<int, int>  $offsets  descending days-before-anchor
+     */
+    private function dueReminderWindow(?object $anchor, array $offsets, int $sentCount, ?object $lastSentAt, object $now): ?int
+    {
+        if ($anchor === null) {
+            return null;
+        }
+        $open = null;
+        $openedAt = null;
+        foreach ($offsets as $index => $days) {
+            $opensAt = $anchor->copy()->subDays($days);
+            if ($now->gte($opensAt)) {
+                $open = $index + 1;
+                $openedAt = $opensAt;
+            }
+        }
+        if ($open === null || $sentCount >= $open) {
+            return null;
+        }
+        // Belt and braces: even if a count were ever repaired by hand, one
+        // window still yields at most one reminder.
+        if ($lastSentAt !== null && $lastSentAt->gte($openedAt)) {
+            return null;
+        }
+        return $open;
+    }
+
+    /**
+     * Sanitised, DESCENDING, so index 0 is the widest (earliest) window.
+     *
+     * @return array<int, int>
+     */
+    private function reminderOffsets(): array
+    {
+        $configured = config('documents.reminder_offsets_days', []);
+        if (! is_array($configured)) {
+            return [];
+        }
+        $offsets = [];
+        foreach ($configured as $value) {
+            if ((is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value >= 0) {
+                $offsets[] = (int) $value;
+            }
+        }
+        $offsets = array_values(array_unique($offsets));
+        rsort($offsets);
+        return $offsets;
     }
 
     private function draft(BusinessDocument $document): array

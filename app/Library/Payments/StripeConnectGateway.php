@@ -20,9 +20,10 @@ use App\Exceptions\Payments\StripeConnectException;
  * ConnectedAccountSnapshot and plain strings. No Stripe\* object, no raw
  * payload, no secret key and no provider error text ever reaches a caller.
  *
- * WHAT DOES NOT LIVE HERE. No PaymentIntent, no charge, no refund, no
- * webhook handling: those are Sub-slices E and F. This interface is
- * deliberately three onboarding methods wide.
+ * WHAT DOES NOT LIVE HERE. No dispute handling and no platform fee: disputes
+ * are out of V1 scope, and §11.2 permanently forbids the platform taking a cut
+ * of the Business's revenue. Onboarding (Sub-slice D), payment execution and
+ * webhook verification (E) and refunds (F) are the whole surface.
  */
 interface StripeConnectGateway
 {
@@ -99,4 +100,31 @@ interface StripeConnectGateway
      * @throws StripeConnectException invalid signature
      */
     public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array;
+
+    /**
+     * §7.4 — issue a refund against the ORIGINAL charge, on the payment's own
+     * HISTORICAL connected account (§5.7), never whatever account happens to
+     * be connected now.
+     *
+     * `$idempotencyKey` is always `document-refund:{refund_uid}`, so an
+     * uncertain response re-drives the same refund rather than moving money
+     * twice.
+     *
+     * @throws StripeConnectException
+     */
+    public function createRefund(
+        string $connectedAccountId,
+        string $providerPaymentIntentId,
+        int $amountMinor,
+        string $idempotencyKey,
+        string $operationId,
+    ): RefundSnapshot;
+
+    /**
+     * §7.4 — retrieve that same refund, for the uncertain-response re-drive
+     * and for webhook cross-checking.
+     *
+     * @throws StripeConnectException
+     */
+    public function retrieveRefund(string $connectedAccountId, string $providerRefundId): RefundSnapshot;
 }

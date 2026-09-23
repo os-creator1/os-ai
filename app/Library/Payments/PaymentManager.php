@@ -3,16 +3,21 @@
 namespace App\Library\Payments;
 
 use App\Enums\Documents\BusinessDocumentPaymentStatus;
+use App\Enums\Documents\BusinessDocumentRefundStatus;
 use App\Enums\Documents\DocumentStatus;
 use App\Enums\Documents\PaymentScheduleItemStatus;
 use App\Exceptions\Payments\PaymentStartException;
+use App\Exceptions\Payments\RefundException;
 use App\Library\Documents\PublicDocumentAccess;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPayment;
 use App\Models\BusinessDocumentPaymentScheduleItem;
+use App\Models\BusinessDocumentRefund;
 use App\Models\BusinessDocumentVersion;
 use App\Models\BusinessStripeConnection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Implementation Contract 17 §7.2 — PAY START, implemented as the contract's
@@ -50,6 +55,7 @@ final class PaymentManager
         private readonly StripeConnectGateway $gateway,
         private readonly StripeConnectManager $connections,
         private readonly PaymentFinalizer $finalizer,
+        private readonly RefundFinalizer $refundFinalizer,
     ) {
     }
 
@@ -137,14 +143,25 @@ final class PaymentManager
                 'amount_minor' => (int) $item->amount_minor,
                 'currency_code' => (string) $item->currency_code,
             ]);
-            $payment->save();
 
-            // local_idempotency_key is derived from that durable row's UID and
-            // is what the provider's metadata is cross-checked against (§8.3).
-            $payment->forceFill([
-                'local_idempotency_key' => self::idempotencyKeyFor($payment),
-                'status' => BusinessDocumentPaymentStatus::Created->value,
-            ])->save();
+            // ONE INSERT CARRYING THE COMPLETE DURABLE IDENTITY. The UID is
+            // minted here rather than by the model's creating hook, so
+            // `local_idempotency_key` — which is derived from it and is what
+            // the provider's metadata is cross-checked against (§8.3) — is
+            // part of the same INSERT.
+            //
+            // Saving first and filling the key afterwards would leave the row
+            // momentarily holding an EMPTY key (the column is NOT NULL with no
+            // default, and this connection runs non-strict, so an omitted
+            // value becomes ''). Two unrelated payments being created
+            // concurrently for two documents of the same Business would then
+            // both present ('', business_id) and collide on
+            // unique(business_id, local_idempotency_key) — a raw driver error
+            // on a path that has nothing to do with either payment's identity.
+            $payment->generateUid();
+            $payment->local_idempotency_key = self::idempotencyKeyFor($payment);
+            $payment->status = BusinessDocumentPaymentStatus::Created->value;
+            $payment->save();
 
             return [$payment, (string) $connection->stripe_account_id];
         });
@@ -161,7 +178,7 @@ final class PaymentManager
                 (string) $payment->currency_code,
                 self::idempotencyKeyFor($payment),
                 (string) $payment->local_idempotency_key,
-                'Document ' . $access->document->uid,
+                self::descriptionFor((string) $access->document->uid),
             );
 
         // ---- (15) shared idempotent finalizer ---------------------------
@@ -185,6 +202,293 @@ final class PaymentManager
     public static function idempotencyKeyFor(BusinessDocumentPayment $payment): string
     {
         return 'document-payment:' . $payment->uid;
+    }
+
+    /**
+     * The intent description, in ONE place, because PAY START and §7.5's
+     * reconciliation must produce byte-identical creation arguments when they
+     * re-drive the same attempt under the same idempotency key.
+     */
+    private static function descriptionFor(string $documentUid): string
+    {
+        return 'Document ' . $documentUid;
+    }
+
+    // =================================================================
+    // Sub-slice F — refunds (§7.4 / §8.7)
+    // =================================================================
+
+    /**
+     * §7.4 — ADMIT one refund, then drive it.
+     *
+     * The admission transaction locks the PAYMENT (§7.0 tier 3) and then its
+     * REFUNDS (tier 4) and takes NO OTHER LOCK. In particular it never touches
+     * the document: §7.0 permits a refund path to enter at tier 3 only on the
+     * condition that it does not afterwards reach backwards to tier 1. The
+     * work that does need the document — completing a full return, which
+     * changes the schedule item — happens later in RefundFinalizer, which
+     * restarts cleanly from tier 1.
+     *
+     * §8.7's capacity rule, computed UNDER the payment lock so two concurrent
+     * requests cannot both see the same headroom:
+     *
+     *     available = captured - SUM(pending) - SUM(succeeded)
+     *
+     * A PENDING refund reserves capacity exactly like a succeeded one. That is
+     * the whole point: an in-flight refund has not failed, and treating it as
+     * free headroom is how a payment gets refunded twice. A FAILED refund
+     * reserves nothing, so its capacity returns automatically.
+     *
+     * NO NETWORK UNDER THE LOCK. The row is committed first; only then is
+     * Stripe called, outside every transaction.
+     *
+     * @throws RefundException
+     */
+    public function requestRefund(
+        BusinessDocumentPayment $payment,
+        int $amountMinor,
+        ?string $reason = null,
+        ?int $initiatedByUserId = null,
+    ): BusinessDocumentRefund {
+        if ($amountMinor <= 0) {
+            throw RefundException::because(RefundException::INVALID_AMOUNT);
+        }
+
+        $refund = DB::transaction(function () use ($payment, $amountMinor, $reason, $initiatedByUserId) {
+            // (tier 3) the payment itself.
+            $locked = BusinessDocumentPayment::query()
+                ->whereKey($payment->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($locked->status !== BusinessDocumentPaymentStatus::Succeeded) {
+                throw RefundException::because(RefundException::PAYMENT_NOT_SUCCEEDED);
+            }
+
+            if ($locked->provider_payment_intent_id === null) {
+                throw RefundException::because(RefundException::NO_PROVIDER_PAYMENT);
+            }
+
+            // (tier 4) its refunds, ascending id.
+            $existing = BusinessDocumentRefund::query()
+                ->where('business_document_payment_id', $locked->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $reserved = $existing
+                ->filter(fn ($row) => $row->status !== BusinessDocumentRefundStatus::Failed)
+                ->sum('amount_minor');
+
+            if ($amountMinor > (int) $locked->amount_minor - (int) $reserved) {
+                throw RefundException::because(RefundException::EXCEEDS_REFUNDABLE);
+            }
+
+            $refund = new BusinessDocumentRefund([
+                'business_id' => $locked->business_id,
+                'business_document_payment_id' => $locked->id,
+                'amount_minor' => $amountMinor,
+                'reason' => $reason === null ? null : mb_substr($reason, 0, 255),
+                'initiated_by_user_id' => $initiatedByUserId,
+            ]);
+
+            // The UID is minted HERE rather than by the creating hook, so the
+            // durable key exists in the SAME insert as the row. Saving first
+            // and filling the key afterwards would leave the row momentarily
+            // holding an empty `local_idempotency_key`, and two refunds
+            // admitted concurrently for one Business would then collide on
+            // unique(business_id, local_idempotency_key) with a raw driver
+            // error instead of this method's own clean refusal.
+            $refund->generateUid();
+            $refund->local_idempotency_key = self::refundKeyFor($refund);
+            $refund->status = BusinessDocumentRefundStatus::Pending->value;
+            $refund->save();
+
+            return $refund;
+        });
+
+        return $this->driveRefund($refund);
+    }
+
+    /**
+     * §7.4 — take one already-admitted refund row to the provider and apply
+     * whatever comes back. Separate from admission so an UNCERTAIN response
+     * re-drives THE SAME ROW AND KEY instead of admitting a second refund.
+     *
+     * Two shapes, mirroring §7.2.1:
+     *   Case A — the row already knows its provider refund id: retrieve THAT
+     *            refund on the payment's own historical account.
+     *   Case B — creation returned uncertainly, so there is no id: repeat
+     *            creation with the SAME `document-refund:{uid}` key, and
+     *            Stripe's idempotency returns the original refund rather than
+     *            returning money twice.
+     *
+     * @throws RefundException|\App\Exceptions\Payments\StripeConnectException
+     */
+    public function driveRefund(BusinessDocumentRefund $refund): BusinessDocumentRefund
+    {
+        $payment = BusinessDocumentPayment::query()->findOrFail($refund->business_document_payment_id);
+
+        // §5.7 — the HISTORICAL account this money was taken on. Never the
+        // Business's currently connected account: refunding on a different
+        // account would either fail or return someone else's money.
+        $connection = BusinessStripeConnection::query()->find($payment->business_stripe_connection_id);
+
+        if ($connection === null) {
+            throw RefundException::because(RefundException::CONNECTION_UNAVAILABLE);
+        }
+
+        $account = (string) $connection->stripe_account_id;
+
+        $snapshot = $refund->provider_refund_id !== null
+            ? $this->gateway->retrieveRefund($account, (string) $refund->provider_refund_id)
+            : $this->gateway->createRefund(
+                $account,
+                (string) $payment->provider_payment_intent_id,
+                (int) $refund->amount_minor,
+                self::refundKeyFor($refund),
+                (string) $refund->local_idempotency_key,
+            );
+
+        $this->refundFinalizer->apply($refund, $snapshot);
+
+        return $refund->refresh();
+    }
+
+    /**
+     * §7.4/§8.1 — `document-refund:{refund_uid}`. Derived from the durable
+     * row, so re-driving is structurally the same call.
+     */
+    public static function refundKeyFor(BusinessDocumentRefund $refund): string
+    {
+        return 'document-refund:' . $refund->uid;
+    }
+
+    /**
+     * §7.5 — bounded reconciliation of ABANDONED attempts, introducing NO
+     * second authority.
+     *
+     * A customer who closes the tab mid-Payment-Element leaves a local attempt
+     * in `created` or `requires_action`, still holding
+     * `active_schedule_item_id` and so still blocking its schedule item. This
+     * sweep does exactly two things per row: it ASKS the provider, on the
+     * row's own recorded connection, and it hands the answer to the SAME
+     * shared PaymentFinalizer every other path uses — with the same
+     * amount/currency/account/app_operation_id cross-checks.
+     *
+     * IT DECIDES NOTHING. It never marks an attempt `failed` or `canceled`
+     * because time passed. That prohibition is the entire point of §7.5: a
+     * customer can complete an SCA step late, and a locally invented terminal
+     * state would free `active_schedule_item_id` while a real charge was still
+     * live — inviting a second charge for the same item. Only a
+     * provider-confirmed terminal outcome releases the slot, and it does so
+     * through the finalizer, not here.
+     *
+     * TWO SHAPES, exactly §7.2.1's, because a stale attempt can be stale in
+     * two different ways:
+     *
+     *   Case A — the row knows its intent id: retrieve THAT intent on the
+     *            row's own historical connected account.
+     *   Case B — an earlier creation returned uncertainly, so the row has no
+     *            intent id at all. This is the state that would otherwise hold
+     *            `active_schedule_item_id` forever if nobody ever pressed Pay
+     *            again. It is re-driven on THE SAME durable row with the same
+     *            amount, currency, account, `document-payment:{payment_uid}`
+     *            Stripe key and persisted `local_idempotency_key` metadata —
+     *            so Stripe's own idempotency returns the ORIGINAL intent if
+     *            the first creation really reached it, and no second local row
+     *            and no second charge can exist either way.
+     *
+     * CASE B IS RECONCILIATION, NOT A NEW ATTEMPT. It re-sends the request the
+     * customer already made, under the key that already identifies it. It
+     * never inserts a payment row, never picks a schedule item, and never
+     * chooses an amount.
+     *
+     * NO NETWORK UNDER A LOCK: both provider calls happen outside any
+     * transaction, and the finalizer opens its own.
+     *
+     * THE RETURNED COUNT IS ATTEMPTS THAT REACHED A TERMINAL STATE. An attempt
+     * the provider still reports as in flight is re-observed and left exactly
+     * where it is, and is deliberately not counted as "reconciled" — nothing
+     * about it was resolved.
+     */
+    public function reconcileStalePayments(int $limit): int
+    {
+        $threshold = now()->subMinutes(max(1, (int) config('documents.stale_payment_minutes', 30)));
+
+        $candidates = BusinessDocumentPayment::query()
+            ->whereIn('status', self::activeStatuses())
+            ->where('updated_at', '<=', $threshold)
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        $reconciled = 0;
+
+        foreach ($candidates as $payment) {
+            try {
+                // The HISTORICAL connection recorded on the row (§5.7) — the
+                // account that owns this attempt, not whatever the Business
+                // happens to be connected to now.
+                $connection = BusinessStripeConnection::query()->find($payment->business_stripe_connection_id);
+                $document = BusinessDocument::query()->find($payment->business_document_id);
+
+                if ($connection === null || $document === null) {
+                    continue;
+                }
+
+                $account = (string) $connection->stripe_account_id;
+
+                $snapshot = $payment->provider_payment_intent_id !== null
+                    // Case A — that exact intent, on that exact account.
+                    ? $this->gateway->retrievePaymentIntent($account, (string) $payment->provider_payment_intent_id)
+                    // Case B — the same request, under the same key.
+                    : $this->gateway->createPaymentIntent(
+                        $account,
+                        (int) $payment->amount_minor,
+                        (string) $payment->currency_code,
+                        self::idempotencyKeyFor($payment),
+                        (string) $payment->local_idempotency_key,
+                        self::descriptionFor((string) $document->uid),
+                    );
+
+                $disposition = $this->finalizer->apply($payment, $snapshot);
+
+                if ($disposition === PaymentFinalizer::APPLIED
+                    && ! in_array($payment->refresh()->status->value, self::activeStatuses(), true)) {
+                    $reconciled++;
+                }
+            } catch (Throwable $e) {
+                // One unreachable account or one provider hiccup must not
+                // abort the batch. The reason CODE is kept; no provider
+                // message, account id or amount is logged.
+                Log::error('PaymentManager::reconcileStalePayments failed for a payment', [
+                    'business_document_payment_id' => $payment->id,
+                    'exception' => class_basename($e),
+                ]);
+            }
+        }
+
+        return $reconciled;
+    }
+
+    /**
+     * §8.7 — what is still refundable on a payment, for the confirmation step
+     * to render. Read-only and advisory: the authoritative check is the one
+     * requestRefund() performs under the payment lock.
+     */
+    public function refundableAmount(BusinessDocumentPayment $payment): int
+    {
+        if ($payment->status !== BusinessDocumentPaymentStatus::Succeeded) {
+            return 0;
+        }
+
+        $reserved = (int) BusinessDocumentRefund::query()
+            ->where('business_document_payment_id', $payment->id)
+            ->where('status', '!=', BusinessDocumentRefundStatus::Failed->value)
+            ->sum('amount_minor');
+
+        return max(0, (int) $payment->amount_minor - $reserved);
     }
 
     /**
