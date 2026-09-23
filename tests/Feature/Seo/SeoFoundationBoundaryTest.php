@@ -379,7 +379,18 @@ class SeoFoundationBoundaryTest extends TestCase
             // are the same case: they write only `seo_location_review_links`
             // and `seo_review_requests`, held to the table-scoped and no-send
             // rules in SeoReviewsBoundaryTest.
-            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php'], true)) {
+            //
+            // Sub-slice 18G's SeoAuditRunner is the same case again: it is the
+            // one audit class that writes, and only to `seo_audit_runs` and
+            // `seo_audit_findings`. Note what is NOT excluded — every other
+            // audit class (SeoAuditRuleRegistry, SeoAuditEvaluator,
+            // SeoAuditFindingDraft, SeoAuditPageReader, SeoAuditPage,
+            // SeoAuditFindingView) still faces the blanket no-write, no-HTTP,
+            // no-AI rule below, which is the structural proof that the audit
+            // reads the published snapshot and reports, and cannot fetch a
+            // URL or mutate anything. SeoAuditRunner's own table-scoped rule
+            // is pinned in SeoAuditBoundaryTest.
+            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php', 'SeoAuditRunner.php'], true)) {
                 continue;
             }
 

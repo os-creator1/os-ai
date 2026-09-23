@@ -63,6 +63,25 @@ final class SeoConfig
         return $this->bounded('seo.audit.runs_retained', 5, 1, 20);
     }
 
+    /**
+     * Contract §8.7 — the recommended MAXIMUM SEO title length. Conventional
+     * guidance, not a Google requirement; the finding copy says
+     * "recommended" for exactly that reason.
+     */
+    public function auditSeoTitleMaxRecommended(): int
+    {
+        return $this->bounded('seo.audit.seo_title_max_recommended', 60, 20, 200);
+    }
+
+    /**
+     * Contract §8.7 — the recommended MINIMUM meta description length, same
+     * conventional-guidance caveat.
+     */
+    public function auditMetaDescriptionMinRecommended(): int
+    {
+        return $this->bounded('seo.audit.meta_description_min_recommended', 70, 20, 300);
+    }
+
     private function bounded(string $key, int $default, int $min, int $max): int
     {
         $configured = config($key);

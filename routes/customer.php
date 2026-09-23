@@ -957,6 +957,17 @@
             Route::post('/reviews/locations/{locationUid}/requests', 'Business\SeoReviewsController@recordRequest')->middleware('throttle:30,1')->name('reviews.requests.store');
             Route::post('/reviews/requests/{requestUid}/reviewed', 'Business\SeoReviewsController@markReviewed')->middleware('throttle:30,1')->name('reviews.requests.reviewed');
             Route::post('/reviews/requests/{requestUid}/declined', 'Business\SeoReviewsController@markDeclined')->middleware('throttle:30,1')->name('reviews.requests.declined');
+
+            // Sub-slice 18G — Technical / Website SEO audit. REPORT-ONLY: it
+            // reads the immutable published website_revisions snapshot, never
+            // fetches a URL, never crawls and never writes a Website table
+            // (contract §8.7, §12). Reads need view_seo, the throttled manual
+            // re-run needs manage_seo; both need the SeoModule entitlement
+            // (Planned until Sub-slice H, so 404 today). The re-run takes no
+            // input and names no revision: the server audits whichever
+            // revision is published, and re-auditing one is idempotent.
+            Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
+            Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
         });
 
         /*
