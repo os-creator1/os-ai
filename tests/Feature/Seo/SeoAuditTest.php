@@ -8,6 +8,7 @@ use App\Enums\Seo\SeoAuditSeverity;
 use App\Enums\Seo\SeoIndexabilityState;
 use App\Events\Website\WebsitePublished;
 use App\Jobs\Seo\RunSeoAuditForRevision;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Seo\SeoAuditPageReader;
 use App\Library\Seo\SeoAuditRuleRegistry;
 use App\Library\Seo\SeoAuditRunner;
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use RuntimeException;
 use Tests\Feature\Seo\Concerns\CreatesSeoFixtures;
+use Tests\Support\Seo\EntitlementAllowedSeoAuditJob;
 use Tests\TestCase;
 
 /**
@@ -41,6 +43,18 @@ class SeoAuditTest extends TestCase
     private function runner(): SeoAuditRunner
     {
         return app(SeoAuditRunner::class);
+    }
+
+    /**
+     * A job whose §10.3 FEATURE DECISION is allowed, every other gate still
+     * real. SeoModule is Planned, so the production decision is "not
+     * allowed" — correct, and asserted in SeoAuditAuthorityTest. A test about
+     * other behaviour says so explicitly here rather than depending on the
+     * gate being absent.
+     */
+    private function allowedJob(int $businessId, int $websiteId, int $revisionId): EntitlementAllowedSeoAuditJob
+    {
+        return new EntitlementAllowedSeoAuditJob($businessId, $websiteId, $revisionId);
     }
 
     /**
@@ -383,11 +397,14 @@ class SeoAuditTest extends TestCase
         [, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $website = $this->publishWebsite($business, [$this->snapshotPage('p1', 'Home', ['seo_title' => null])]);
 
-        $job = new RunSeoAuditForRevision((int) $business->id, (int) $website->id, (int) $website->published_revision_id);
+        // §10.3 — the job re-checks entitlement; this test is about the
+        // runner's idempotency, so the feature decision is allowed
+        // explicitly while every other gate stays real.
+        $job = $this->allowedJob((int) $business->id, (int) $website->id, (int) $website->published_revision_id);
 
-        $job->handle($this->runner());
-        $job->handle($this->runner());
-        $job->handle($this->runner());
+        $job->handle($this->runner(), app(EntitlementManager::class));
+        $job->handle($this->runner(), app(EntitlementManager::class));
+        $job->handle($this->runner(), app(EntitlementManager::class));
 
         $this->assertSame(1, SeoAuditRun::query()->count());
     }
@@ -399,10 +416,20 @@ class SeoAuditTest extends TestCase
 
         $event = new WebsitePublished((int) $website->id, (int) $website->published_revision_id, (int) $business->id);
 
-        // The real listener, twice, with the sync queue actually running the job.
+        // The real listener, twice: a duplicate delivery must queue work
+        // twice and never be swallowed at the listener.
+        Queue::fake();
         $listener = app(\App\Listeners\Seo\QueueSeoAuditOnWebsitePublished::class);
         $listener->handle($event);
         $listener->handle($event);
+        Queue::assertPushed(RunSeoAuditForRevision::class, 2);
+
+        // ...and executing that duplicated work converges on ONE run. The
+        // feature decision is allowed explicitly (SeoModule is Planned);
+        // every other job gate is still real.
+        $job = $this->allowedJob((int) $business->id, (int) $website->id, (int) $website->published_revision_id);
+        $job->handle($this->runner(), app(EntitlementManager::class));
+        $job->handle($this->runner(), app(EntitlementManager::class));
 
         $this->assertSame(1, SeoAuditRun::query()->count());
     }

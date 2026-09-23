@@ -49,14 +49,46 @@ final class SeoAuditRunner
     }
 
     /**
-     * Audit the named revision of the named Website.
+     * Audit the named revision of the named Website, for the named Business.
      *
-     * Returns the canonical run for that revision — newly written, or the one
-     * that already existed. Returns null only when the revision is not this
-     * Website's, which is the cross-tenant case and must produce nothing.
+     * THE OWNERSHIP CHAIN IS PROVED FIRST, BEFORE ANYTHING ELSE — including
+     * before the idempotency lookup. Order matters here for a security
+     * reason, not a stylistic one: `seo_audit_runs` is keyed by
+     * `website_revision_id` alone, so looking an existing run up first would
+     * hand a caller that named someone else's revision a real audit row
+     * before any tenancy was checked. The stored `business_id`/`website_id`
+     * on such a row are DATA, never authorization, and are deliberately not
+     * consulted to make that decision.
+     *
+     * So: Business -> Website -> revision, each link re-derived from
+     * persistence, and only then the existing-run short circuit.
+     *
+     * Returns null, having written nothing, whenever any link fails.
      */
     public function runForRevision(int $businessId, int $websiteId, int $revisionId): ?SeoAuditRun
     {
+        // 1. The Website must belong to this Business.
+        $websiteBelongs = Website::query()
+            ->where('id', $websiteId)
+            ->where('business_id', $businessId)
+            ->exists();
+
+        if (! $websiteBelongs) {
+            return null;
+        }
+
+        // 2. The revision must belong to that Website.
+        $revisionBelongs = WebsiteRevision::query()
+            ->where('id', $revisionId)
+            ->where('website_id', $websiteId)
+            ->exists();
+
+        if (! $revisionBelongs) {
+            return null;
+        }
+
+        // 3. Only now may an existing run be returned: the caller has proved
+        //    it is entitled to see this revision's audit.
         $existing = $this->existingRun($revisionId);
 
         if ($existing !== null) {
@@ -66,18 +98,8 @@ final class SeoAuditRunner
         $content = $this->reader->forRevision($websiteId, $revisionId);
 
         if ($content === null) {
-            // Distinguish "not this Website's revision" (write nothing) from
-            // "the revision exists but its snapshot is unusable" (an honest
-            // failed run). The extra read happens only on this rare branch.
-            $revisionExists = WebsiteRevision::query()
-                ->where('website_id', $websiteId)
-                ->where('id', $revisionId)
-                ->exists();
-
-            if (! $revisionExists) {
-                return null;
-            }
-
+            // The revision exists (proved at step 2) but its snapshot is not
+            // a usable document: an honest failed run, not silence.
             return $this->persist($businessId, $websiteId, $revisionId, SeoAuditRunStatus::Failed, 0, []);
         }
 

@@ -68,6 +68,12 @@ return [
         // reader clamps both and falls back to these defaults.
         'seo_title_max_recommended' => env('SEO_AUDIT_SEO_TITLE_MAX_RECOMMENDED'),
         'meta_description_min_recommended' => env('SEO_AUDIT_META_DESCRIPTION_MIN_RECOMMENDED'),
+
+        // Contract §8.7 — the cooldown between MANUAL audit re-runs, per
+        // actor per Business. Request-abuse protection only: audit
+        // correctness rests on the (website_revision_id, rule_set_version)
+        // UNIQUE key, never on this.
+        'manual_rerun_cooldown_seconds' => env('SEO_AUDIT_MANUAL_RERUN_COOLDOWN_SECONDS'),
     ],
 
 ];

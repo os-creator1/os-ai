@@ -2,7 +2,14 @@
 
 namespace App\Jobs\Seo;
 
+use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\PlatformFeature;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Seo\SeoAuditRunner;
+use App\Models\Business;
+use App\Models\Workspace;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -49,12 +56,87 @@ class RunSeoAuditForRevision implements ShouldQueue
     }
 
     /**
-     * §8.7 — one revision-scoped audit. A revision that is not this Website's
-     * produces nothing at all, which is the cross-tenant case.
+     * §8.7 — one revision-scoped audit, but only if the Business may still
+     * have one. A revision that is not this Website's produces nothing at
+     * all, which is the cross-tenant case the runner enforces.
      */
-    public function handle(SeoAuditRunner $runner): void
+    public function handle(SeoAuditRunner $runner, EntitlementManager $entitlements): void
     {
+        if (! $this->stillEntitled($entitlements)) {
+            return;
+        }
+
         $runner->runForRevision($this->businessId, $this->websiteId, $this->websiteRevisionId);
+    }
+
+    /**
+     * Contract 18 §10.3 — "Jobs re-check entitlement and Location access at
+     * execution time (GBP §24.7)." Mirrors
+     * RefreshGoogleBusinessProfileMirror::stillEligible() narrowly, with
+     * PlatformFeature::SeoModule in place of the GBP module.
+     *
+     * WHY IT MATTERS HERE. The publish that queued this job is authoritative
+     * and independent of SEO, so the job can be delivered long after the
+     * event — and, while SeoModule is Planned, for a Business that may never
+     * see the audit at all. Re-checking at execution is what stops an
+     * automatic WebsitePublished delivery from quietly accumulating audit
+     * data for an unentitled Business.
+     *
+     * No LocationAccessGuard: the Website audit is explicitly Business-wide
+     * and G-1 defers page<->Location attribution, so there is no Location to
+     * check and inventing one would be a fabricated authorization claim.
+     *
+     * Failure is SILENT by design — return quietly, create no audit run,
+     * mutate nothing. An unentitled Business is not an error to retry.
+     */
+    private function stillEntitled(EntitlementManager $entitlements): bool
+    {
+        $business = Business::query()->find($this->businessId);
+
+        if ($business === null || $business->status !== BusinessStatus::Active) {
+            return false;
+        }
+
+        if ($business->workspace_id === null) {
+            return false;
+        }
+
+        $workspace = Workspace::query()->find($business->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return false;
+        }
+
+        return $this->featureIsAllowed($entitlements, $workspace, $business);
+    }
+
+    /**
+     * The entitlement decision alone, as its own overridable step.
+     *
+     * EntitlementManager is `final`, so a test cannot replace the decision by
+     * mocking it. This seam exists so a test-only subclass can say "assume
+     * the feature is allowed" WITHOUT also disabling the Business-active and
+     * Workspace-active checks above — those stay real code in every test.
+     * It mirrors the repository's existing "replace exactly and only this
+     * step" idiom (the EntitlementBypass* controllers).
+     */
+    protected function featureIsAllowed(EntitlementManager $entitlements, Workspace $workspace, Business $business): bool
+    {
+        try {
+            // A background run has no human actor; the entitlement
+            // signature's actor argument is audit-only and is never a
+            // tenancy decision (the GBP scheduled-job convention).
+            $decision = $entitlements->decide(
+                $workspace,
+                $business,
+                PlatformFeature::SeoModule->value,
+                0,
+            );
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            return false;
+        }
+
+        return $decision->allowed;
     }
 
     /**

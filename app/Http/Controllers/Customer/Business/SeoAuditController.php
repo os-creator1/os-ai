@@ -8,10 +8,13 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Jobs\Seo\RunSeoAuditForRevision;
 use App\Library\Seo\SeoAuditPageReader;
 use App\Library\Seo\SeoAuditRunner;
+use App\Library\Seo\SeoConfig;
 use App\Models\Business;
 use App\Models\Workspace;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 
 /**
  * Contract 18 Sub-slice G — the Website SEO / technical audit surface.
@@ -40,6 +43,7 @@ class SeoAuditController extends CustomerBaseController
     public function __construct(
         private readonly SeoAuditPageReader $reader,
         private readonly SeoAuditRunner $runner,
+        private readonly SeoConfig $config,
     ) {
     }
 
@@ -66,6 +70,17 @@ class SeoAuditController extends CustomerBaseController
      * already-audited revision converges on the existing run instead of
      * duplicating it — so this button is safe to press repeatedly and cannot
      * inflate history.
+     *
+     * THE THROTTLE IS REQUEST-ABUSE PROTECTION, NOT CORRECTNESS. Correctness
+     * is the database UNIQUE key above; this only stops one actor pushing
+     * repeated queue work for one Business. It is therefore keyed by ACTOR
+     * AND BUSINESS, never globally: one Business (or one impatient user)
+     * must never be able to block another's re-run.
+     *
+     * It is also consumed LAST. Tenancy, entitlement and the capability gate
+     * all run first, so an unauthorized or unentitled request is refused
+     * without ever touching the limiter — otherwise a stranger's 404s could
+     * burn the real customer's cooldown.
      */
     public function rerun(string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -74,6 +89,17 @@ class SeoAuditController extends CustomerBaseController
         $this->authorize('manage_seo');
 
         $back = redirect()->route('customer.workspaces.businesses.seo.audit.index', [$workspaceUid, $businessUid]);
+
+        $limiterKey = $this->rerunLimiterKey((int) Auth::id(), (int) $business->id);
+
+        if (RateLimiter::tooManyAttempts($limiterKey, 1)) {
+            return $back->with([
+                'status' => 'error',
+                'message' => 'We are already checking your website. Try again in a moment.',
+            ]);
+        }
+
+        RateLimiter::hit($limiterKey, $this->config->auditManualRerunCooldownSeconds());
 
         $target = $this->runner->publishedTargetFor((int) $business->id);
 
@@ -90,6 +116,15 @@ class SeoAuditController extends CustomerBaseController
             'status' => 'success',
             'message' => 'Checking your published website. Findings appear here shortly.',
         ]);
+    }
+
+    /**
+     * One cooldown bucket per (actor, Business). Public so a test can assert
+     * the exact key rather than guess it.
+     */
+    public static function rerunLimiterKey(int $actorUserId, int $businessId): string
+    {
+        return 'seo-audit-rerun:' . $actorUserId . ':' . $businessId;
     }
 
     /**

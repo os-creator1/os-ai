@@ -51,9 +51,16 @@ final class SeoAuditPageReader
             return new SeoAuditPage($indexability, null, [], []);
         }
 
+        // Scoped by BOTH the Business and its Website. The Website was
+        // already selected by `business_id`, so the second predicate is
+        // redundant on well-formed data — which is exactly why it is here: a
+        // run row whose `business_id` disagrees with the Website it claims is
+        // corrupt or cross-tenant, and must not render. Authorization is the
+        // conjunction, never the row's own stored ids.
         /** @var array<int, SeoAuditRun> $history */
         $history = SeoAuditRun::query()
             ->where('website_id', $website->id)
+            ->where('business_id', $business->id)
             ->orderByDesc('id')
             ->limit(20)
             ->get()
