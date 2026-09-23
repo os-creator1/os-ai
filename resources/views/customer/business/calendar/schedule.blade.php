@@ -153,7 +153,21 @@
                 slotMaxTime: '24:00:00',
                 scrollTime: '08:00:00',
                 height: 640,
-                expandRows: true,
+
+                // `expandRows: true` is deliberately OMITTED. Reproduced directly:
+                // combined with a fixed pixel `height` inside this theme's
+                // Bootstrap flex `.card-body`, FullCalendar 5.7.2 enters an
+                // infinite resize/reflow loop trying to stretch each timeGrid row
+                // to fill the container — the container's own size depends on
+                // that same reflow, so it never settles and the tab's main thread
+                // never becomes idle again (confirmed: even a trivial JS
+                // evaluation times out afterwards). Isolated by bisection: with
+                // `height: 640` alone the grid renders instantly; re-adding
+                // `expandRows: true` reproduces the freeze every time. A fixed
+                // `height` with no `expandRows` still gives a scrollable
+                // 24-hour grid honouring `scrollTime` — rows simply keep their
+                // natural size instead of stretching to fill empty space, which
+                // is a cosmetic difference only.
                 events: @json($events),
 
                 // An empty slot starts a booking at that Location, date and time.
