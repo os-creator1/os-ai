@@ -595,10 +595,43 @@ Canonical, per Blueprint §27 and Contract 03, using the **existing** writers:
 - Locked is read-only / paid access blocked, **data preserved**.
 - A confirmed successful payment **immediately** restores access
   (`recoverAccess()`) and clears the billing-failure state.
+- A provider-confirmed **trial** on a Workspace that already holds a plan
+  assignment restores access through `startProviderConfirmedTrial()` — see
+  §9.1.
 - Inactive follows the existing retention policy. Suspended stays separate,
   manual and compliance-only.
 - Webhook replay must not double-transition, and out-of-order delivery must
   not move canonical state backwards.
+
+### 9.1 Provider-confirmed trials on an existing assignment
+
+The finalizer's `trialing` arm used to write nothing, and for a first signup
+that was right: the assignment is created afterwards, carrying the same
+provider-confirmed trial end, so there was nothing to converge.
+
+Re-subscribing (§10.4) broke that assumption. A customer who cancels is
+**Locked**. If they come back on a plan that carries a trial, Stripe confirms
+`trialing`, the tier converges — and the stale `locked_at` stayed, so a
+customer holding a valid Stripe trial was told their account was locked. The
+money moved and the access did not.
+
+`EntitlementManager::startProviderConfirmedTrial()` is the narrowest writer for
+that, and EntitlementManager remains the **only** writer of the three lifecycle
+timestamps — nothing in `App\Library\PlatformBilling` touches
+`workspace_plan_assignments` directly.
+
+| Rule | Why |
+|---|---|
+| Sets `trial_ends_at` to the **provider-confirmed** trial end; clears `grace_started_at` and `locked_at` | The provider decides when it starts charging. A local value that disagreed would either cut a trial short or promise one Stripe will not honour. Nothing here reads the catalog, so §8's "a later catalog edit cannot rewrite an existing trial" is untouched. |
+| Not `recoverAccess()` | That means "nothing is outstanding" and clears all three. A trial **is** outstanding; clearing it would hide the account from the expiry sweep forever. |
+| Idempotent — an assignment already on this exact trial, with no grace and no lock, is returned untouched | Every `customer.subscription.updated` for a trialing subscription reaches this writer. Replay must not move the trial end or write a second transition/event. |
+| Reached **only** when provider status is `trialing` | Local pending intent never grants a trial. |
+| `trialing` with **no usable trial end** (absent, or already in the past) → fail closed, lock stays, operator warned | Unlocking on a status alone is the fabricated paid state §7 forbids, and an ended trial is not a trial. A later, complete observation converges it. |
+| Suspended / Inactive still throw, via the shared lifecycle preamble | An administrative suspension outranks any provider event (Contract 03 §5). |
+
+First signup is unaffected: no assignment exists yet, so this arm does nothing
+and signup activation creates the assignment from the same provider-confirmed
+`trial_ends_at`.
 
 ---
 
@@ -953,6 +986,22 @@ never reach this application**. The gateway method takes no card-shaped
 argument and returns only a URL; there is no field anywhere in this lane that
 could accept a PAN. The route is reachable from Plan & subscription and from
 the Grace billing warning.
+
+**A LOCKED ACCOUNT CAN REACH IT TOO.** This is the point at which a lock is
+supposed to end, so gating it made the locked screen's own promise —
+"completing payment restores access right away" — unkeepable: the screen sent
+the customer to Plan & subscription, and the one action there that could
+complete a payment bounced them straight back. `customer.workspaces.plan
+.payment-method` is therefore in `CustomerAccountAccessGate`'s exact
+route-name allowlist, alongside the locked screen, Plan & subscription and the
+two re-subscribe routes (§10.4).
+
+That is the whole locked-account recovery set. `plan.change`, `plan.cancel` and
+`plan.resume` are deliberately **not** allowlisted: they are billing mutations,
+not recovery. The allowlist is exact names, never a prefix, and grants no
+authority of its own — it only lets the request reach the authorization
+boundary already in `PlanSubscriptionController` (owner or active Admin with
+account-frame authority; 404 for Staff and for strangers).
 
 ---
 

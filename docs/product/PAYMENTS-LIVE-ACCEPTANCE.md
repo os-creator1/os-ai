@@ -137,7 +137,10 @@ database edit is required at any point.
 | 1.7.7 | Click **Update your payment method**. | Redirected to Stripe's hosted Billing Portal, straight into the add-a-payment-method flow, and returned to Plan & subscription afterwards. **You never type a card into our application.** | |
 | 1.7.8 | Add a working card there (`4242 4242 4242 4242`) and let Stripe retry, or pay the open invoice from the Dashboard. | `invoice.paid` delivered; `grace_started_at` and `locked_at` both cleared; access restored immediately. | |
 | 1.7.9 | Instead of recovering, advance past the 3-day grace window and let `workspaces:advance-account-lifecycle` run. | `locked_at` set. The product shows the locked screen; data is intact. | |
-| 1.7.10 | From the locked account, recover via the payment-method route and pay. | Access is restored immediately. | |
+| 1.7.10 | From the LOCKED screen, follow **Continue to billing** to Plan & subscription, then click **Update your payment method**. | Both pages open; you reach Stripe's hosted portal. Neither bounces you back to the locked screen — the recovery the locked screen promises is actually reachable. | |
+| 1.7.10a | Still locked, try an ordinary operational page for that Workspace (Team, Settings, the Workspace overview) and the billing **mutations** (change plan / cancel / resume). | All still redirect to the locked screen. Only the recovery set is open. | |
+| 1.7.10b | Still locked, sign in as a **Staff** member of that Workspace and open the payment-method route. | 404. Being reachable is not being authorized. | |
+| 1.7.10c | Add a working card in the portal and pay the open invoice. | Access is restored immediately. | |
 | 1.7.11 | **Owner surface:** check Needs attention during 1.7.3–1.7.9. | The account is listed with its Grace start, and the past-due / grace / locked counts reflect reality. | |
 
 ### 1.8 Cancellation
@@ -176,6 +179,9 @@ database edit is required at any point.
 | 1.9a.5 | Replay the OLD subscription's `customer.subscription.deleted` from the Dashboard. | 200, and the account stays active. A dead subscription cannot lock the one that replaced it. | |
 | 1.9a.6 | Repeat 1.9a.2–1.9a.3 but close the tab instead of returning. | The webhook alone finishes it: access is restored and the tier is correct without the browser ever coming back. | |
 | 1.9a.7 | Reload the return URL and replay the webhook several times. | No duplicate assignment, no duplicate subscription, no change in outcome. | |
+| 1.9a.8 | **Re-subscribe onto a tier that has a trial configured.** Take a locked, cancelled account and restart it on a trial plan. | Stripe confirms `trialing`. The product shows **Trial**, not Locked: `workspace_plan_assignments.locked_at` and `grace_started_at` are null and `trial_ends_at` is exactly Stripe's `trial_end` for the NEW subscription. | |
+| 1.9a.9 | Replay that subscription event several times. | `trial_ends_at` does not move, and no second `access_restored` transition row appears. | |
+| 1.9a.10 | Replay the OLD subscription's events again. | The new trial is untouched and the account stays usable. | |
 
 ### 1.10 Complimentary account
 

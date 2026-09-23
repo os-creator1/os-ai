@@ -1570,6 +1570,88 @@ final class EntitlementManager
     }
 
     /**
+     * Contract 03 §6 / Contract 21 §10.4 — a PROVIDER-CONFIRMED TRIAL begins
+     * on an assignment that already exists.
+     *
+     * WHY THIS IS NOT recoverAccess(). recoverAccess() means "nothing is
+     * outstanding any more" and clears all three timestamps, which is exactly
+     * right for a confirmed PAYMENT and exactly wrong for a confirmed TRIAL: a
+     * trial IS outstanding, and clearing `trial_ends_at` would hide it from
+     * the expiry sweep, so the account would sit on a trial that never ended.
+     *
+     * WHY IT IS NOT assignFirstPlan() EITHER. That path creates the
+     * assignment. This one is for a Workspace that already has a plan
+     * assignment and has just been confirmed onto a new trialing subscription
+     * — a customer who cancelled, was locked, and came back (Contract 21
+     * §10.4). Their old `locked_at` is stale the moment the provider confirms
+     * the new trial, and leaving it there would tell a customer with a valid
+     * Stripe trial that their account is locked.
+     *
+     * So this is the narrowest possible writer: the trial the PROVIDER
+     * confirmed, and the removal of the two timestamps that contradict it.
+     *
+     * `$trialEndsAt` is PROVIDER TRUTH, never a catalog duration. The catalog
+     * says what a new subscriber is offered; only the provider knows when this
+     * subscription's trial actually ends, and it is the provider that decides
+     * when to start charging. A local value that disagreed would either cut a
+     * paid-for trial short or promise one Stripe will not honour. (§8's rule
+     * that a later CATALOG edit cannot rewrite an existing trial is unaffected
+     * — nothing here reads the catalog.)
+     *
+     * IDEMPOTENT, and that matters more here than anywhere else in this
+     * family: every `customer.subscription.updated` delivery for a trialing
+     * subscription reaches this method. An assignment already carrying this
+     * exact trial end, with no grace and no lock, is returned untouched — no
+     * write, no transition row, no event — so replay cannot move the trial
+     * end forward or fabricate a second AccessRestored.
+     *
+     * Suspended and Inactive still throw, through the shared preamble: an
+     * administrative suspension outranks any provider event (§5's precedence),
+     * and failing closed is how that stays true.
+     */
+    public function startProviderConfirmedTrial(
+        Workspace $workspace,
+        CarbonInterface $trialEndsAt,
+        ?int $actorUserId = null,
+        ?string $reason = null,
+    ): WorkspacePlanAssignment {
+        return DB::transaction(function () use ($workspace, $trialEndsAt, $actorUserId, $reason) {
+            $assignment = $this->lockedLifecycleAssignment($workspace, $actorUserId);
+
+            // Second precision, because that is what the column stores: a
+            // provider timestamp carrying microseconds must not read as a
+            // different trial from the one already persisted.
+            $sameTrial = $assignment->trial_ends_at !== null
+                && $assignment->trial_ends_at->getTimestamp() === $trialEndsAt->getTimestamp();
+
+            if ($sameTrial && $assignment->grace_started_at === null && $assignment->locked_at === null) {
+                return $assignment;
+            }
+
+            $updated = $this->assignmentRepository->update($assignment, [
+                'trial_ends_at' => $trialEndsAt,
+                'grace_started_at' => null,
+                'locked_at' => null,
+            ]);
+
+            // AccessRestored rather than a new transition type: what happened
+            // to the ACCOUNT is that access was restored, and WHY travels in
+            // the reason string — the same choice lockForNonPayment() already
+            // makes for a cancellation.
+            $this->transitionRepository->create([
+                'workspace_id' => $assignment->workspace_id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AccessRestored,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+            ]);
+
+            WorkspaceAccessRestored::dispatch($assignment->workspace_id, $actorUserId, $reason);
+
+            return $updated;
+        });
+    }
+
+    /**
      * Contract 03 §7 sweep 1's candidate list: Workspaces whose OUTSTANDING
      * trial has run out and that are not already in Grace or Locked.
      *

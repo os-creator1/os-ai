@@ -143,7 +143,19 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         $subscriptionId = 'sub_fake' . str_pad((string) (++$this->sequence), 6, '0', STR_PAD_LEFT);
         $trialDays = $session['trial_days'];
         $resolved = $status ?? ($trialDays !== null ? PlatformSubscriptionStatus::Trialing : $this->subscriptionStatus);
-        $now = CarbonImmutable::now();
+
+        // WHOLE SECONDS, because that is what Stripe actually sends. Every
+        // date on a Stripe subscription is an integer Unix timestamp, and
+        // StripeApiPlatformGateway builds them with
+        // `CarbonImmutable::createFromTimestampUTC((int) $value)`.
+        //
+        // This is not cosmetic. Our datetime columns hold no fractional
+        // seconds and MySQL ROUNDS when storing one, so a fake value carrying
+        // microseconds reads back up to a second away from the value it was
+        // written from — which would make an exact "is this the same trial
+        // end?" comparison disagree with itself at random, in tests, for a
+        // reason that cannot happen in production.
+        $now = CarbonImmutable::now()->startOfSecond();
 
         $this->subscriptions[$subscriptionId] = [
             'customer' => $session['customer'],
@@ -170,15 +182,15 @@ class FakePlatformStripeGateway implements PlatformStripeGateway
         $this->subscriptions[$subscriptionId]['status'] = $status;
 
         if ($status === PlatformSubscriptionStatus::Canceled) {
-            $this->subscriptions[$subscriptionId]['canceled_at'] ??= CarbonImmutable::now();
-            $this->subscriptions[$subscriptionId]['ended_at'] ??= CarbonImmutable::now();
+            $this->subscriptions[$subscriptionId]['canceled_at'] ??= CarbonImmutable::now()->startOfSecond();
+            $this->subscriptions[$subscriptionId]['ended_at'] ??= CarbonImmutable::now()->startOfSecond();
         }
     }
 
     /** Rolls the billing period forward, as a renewal would. */
     public function advancePeriod(string $subscriptionId): void
     {
-        $end = $this->subscriptions[$subscriptionId]['period_end'] ?? CarbonImmutable::now();
+        $end = $this->subscriptions[$subscriptionId]['period_end'] ?? CarbonImmutable::now()->startOfSecond();
         $this->subscriptions[$subscriptionId]['period_start'] = $end;
         $this->subscriptions[$subscriptionId]['period_end'] = $end->addMonth();
         $this->subscriptions[$subscriptionId]['trial_end'] = null;

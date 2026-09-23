@@ -10,6 +10,7 @@ use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Implementation Contract 21 §9/§12 — THE shared idempotent finalizer for
@@ -28,9 +29,15 @@ use Illuminate\Support\Facades\DB;
  * provider-confirmed subscription state into calls on writers that already
  * exist:
  *
- *   trialing            -> nothing. The trial marker was SNAPSHOTTED at signup
- *                          (§8), and provider drift must not rewrite what the
- *                          customer was promised.
+ *   trialing            -> startProviderConfirmedTrial(): the account is
+ *                          usable, on the trial end the PROVIDER confirmed,
+ *                          with any stale grace/lock cleared. It writes only
+ *                          when something is actually stale, so an ordinary
+ *                          running trial replays as a no-op, and it refuses to
+ *                          unlock at all when the provider gives no usable
+ *                          trial end. (Nothing here reads the catalog: §8's
+ *                          rule that a later catalog edit cannot rewrite an
+ *                          existing trial is untouched.)
  *   active              -> recoverAccess(): a confirmed payment restores
  *                          access immediately (Blueprint §27) and clears the
  *                          trial/grace/lock markers in one idempotent write.
@@ -143,7 +150,7 @@ final class PlatformSubscriptionFinalizer
         // up usable on the tier they just bought, not usable on the old one.
         $this->convergePlanChange($subscription->refresh(), $snapshot);
 
-        return $this->driveLifecycle((int) $workspaceId, $localStatus);
+        return $this->driveLifecycle((int) $workspaceId, $snapshot);
     }
 
     /**
@@ -252,8 +259,9 @@ final class PlatformSubscriptionFinalizer
      * existing writers. Each one is idempotent on its own, so this method is
      * safe to run for every delivery of every event.
      */
-    private function driveLifecycle(int $workspaceId, PlatformSubscriptionStatus $status): string
+    private function driveLifecycle(int $workspaceId, PlatformSubscriptionSnapshot $snapshot): string
     {
+        $status = $snapshot->status;
         $workspace = Workspace::query()->find($workspaceId);
 
         if ($workspace === null) {
@@ -292,11 +300,56 @@ final class PlatformSubscriptionFinalizer
             ], true)
                 => $this->entitlements->lockForNonPayment($workspace, null, $reason),
 
-            // Trialing and Incomplete deliberately write nothing.
+            $status === PlatformSubscriptionStatus::Trialing
+                => $this->convergeProviderTrial($workspace, $snapshot, $reason),
+
+            // Incomplete deliberately writes nothing: §7 forbids fabricating
+            // any state from an attempt the provider has not confirmed.
             default => null,
         };
 
         return self::APPLIED;
+    }
+
+    /**
+     * §10.4 — a PROVIDER-CONFIRMED TRIAL on a Workspace that already holds a
+     * plan assignment.
+     *
+     * WHY THIS ARM EXISTS AT ALL. It used to do nothing, and for an ordinary
+     * first signup that was right: the assignment is created afterwards,
+     * carrying the same provider-confirmed trial end, so there was nothing to
+     * converge. Re-subscribing broke that assumption. A customer who cancels
+     * is LOCKED; if they come back on a plan that carries a trial, the
+     * provider confirms `trialing`, the tier converges — and the stale
+     * `locked_at` stayed, telling a customer with a valid Stripe trial that
+     * their account was locked. The money moved; the access did not.
+     *
+     * FAIL CLOSED WITHOUT A PROVIDER-CONFIRMED TRIAL END. `trialing` with no
+     * usable `trial_end` is a contradiction we cannot resolve, and the
+     * tempting resolution — unlock anyway — would hand out access on the
+     * strength of a status alone, which is precisely what §7 forbids. So the
+     * lock stays, the operator gets a warning, and a later, complete
+     * observation converges it. A trial end already in the past is treated the
+     * same way: an ended trial is not a trial, and unlocking on one would
+     * restore access only for the expiry sweep to take it away again.
+     *
+     * Nothing here reads the catalog, and nothing here writes the assignment
+     * directly — EntitlementManager remains the only lifecycle writer.
+     */
+    private function convergeProviderTrial(Workspace $workspace, PlatformSubscriptionSnapshot $snapshot, string $reason): void
+    {
+        $trialEndsAt = $snapshot->trialEndsAt;
+
+        if ($trialEndsAt === null || ! $trialEndsAt->isFuture()) {
+            Log::warning('Lane A refused to unlock a trialing subscription with no usable provider trial end', [
+                'workspace_id' => $workspace->id,
+                'has_trial_end' => $trialEndsAt !== null,
+            ]);
+
+            return;
+        }
+
+        $this->entitlements->startProviderConfirmedTrial($workspace, $trialEndsAt, null, $reason);
     }
 
     /**
