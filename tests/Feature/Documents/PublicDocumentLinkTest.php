@@ -262,7 +262,8 @@ class PublicDocumentLinkTest extends TestCase
         $routes = collect(Route::getRoutes()->getRoutes())
             ->filter(fn ($route) => str_starts_with((string) $route->getName(), 'public.documents.'));
 
-        $this->assertCount(2, $routes, 'Exactly the view and the sign routes exist — no payment route in Sub-slice C.');
+        // View, sign (Sub-slice C) and pay (Sub-slice E) — the complete set.
+        $this->assertCount(3, $routes);
 
         foreach ($routes as $route) {
             $throttles = array_values(array_filter($route->gatherMiddleware(), fn ($m) => is_string($m) && str_starts_with($m, 'throttle:')));

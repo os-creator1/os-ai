@@ -30,6 +30,10 @@
             'webhooks/prospecting/*',
             'maintenance/notify',
             'stripe/webhook/usage-billing',
+            // Implementation Contract 17 §5.8 — money lane B's own Connect
+            // webhook. Exempt because Stripe signs the raw body; that
+            // signature is verified before anything is inserted (§8.2).
+            'stripe/webhook/business-payments',
         ];
 
     }

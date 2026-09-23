@@ -44,6 +44,16 @@
                 'secret'    => env('STRIPE_WEBHOOK_SECRET'),
                 'tolerance' => env('STRIPE_WEBHOOK_TOLERANCE', 300),
             ],
+            // Implementation Contract 17 §5.8/§12.E — money lane B's OWN
+            // Connect webhook endpoint and secret, deliberately separate from
+            // the lane-D usage-billing webhook above. One platform-level
+            // Connect endpoint receives events for every connected account and
+            // each event carries its own `account` field, so this is a single
+            // secret rather than one per Business.
+            'connect_webhook' => [
+                'secret'    => env('STRIPE_CONNECT_WEBHOOK_SECRET'),
+                'tolerance' => env('STRIPE_CONNECT_WEBHOOK_TOLERANCE', 300),
+            ],
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),

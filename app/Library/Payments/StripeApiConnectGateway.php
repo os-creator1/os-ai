@@ -4,7 +4,10 @@ namespace App\Library\Payments;
 
 use App\Exceptions\Payments\StripeConnectException;
 use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
+use Stripe\Webhook;
+use UnexpectedValueException;
 
 /**
  * Implementation Contract 17 §12.D / §4.2 — the ONLY class in lane B that
@@ -45,24 +48,42 @@ use Stripe\StripeClient;
  */
 final class StripeApiConnectGateway implements StripeConnectGateway
 {
-    private readonly StripeClient $client;
+    private ?StripeClient $client = null;
 
-    public function __construct()
+    /**
+     * Built LAZILY, and fail-closed at the point of use rather than at
+     * construction.
+     *
+     * The distinction is load-bearing: this gateway is a constructor
+     * dependency of PaymentManager, which is itself a dependency of the
+     * PUBLIC document controller. Throwing here would mean a platform with no
+     * Stripe key configured could not even render a document — or its uniform
+     * refusal page — turning a configuration gap into a 500 on an
+     * unauthenticated surface. Refusing when a provider call is actually
+     * attempted is equally closed and far better behaved.
+     *
+     * The key is validated but never echoed: not the value, not a prefix, not
+     * a length.
+     */
+    private function client(): StripeClient
     {
+        if ($this->client !== null) {
+            return $this->client;
+        }
+
         $secret = (string) config('services.stripe.secret');
 
-        // Fail closed, and without echoing the key or any part of it.
         if ($secret === '' || ! preg_match('/\Ask_(test|live)_/', $secret)) {
             throw StripeConnectException::notConfigured();
         }
 
-        $this->client = new StripeClient($secret);
+        return $this->client = new StripeClient($secret);
     }
 
     public function createAccount(string $country, ?string $email, string $businessUid): ConnectedAccountSnapshot
     {
         try {
-            $account = $this->client->accounts->create([
+            $account = $this->client()->accounts->create([
                 'country' => $country,
                 'email' => $email,
                 'controller' => [
@@ -91,7 +112,7 @@ final class StripeApiConnectGateway implements StripeConnectGateway
     public function createOnboardingLink(string $stripeAccountId, string $refreshUrl, string $returnUrl): string
     {
         try {
-            $link = $this->client->accountLinks->create([
+            $link = $this->client()->accountLinks->create([
                 'account' => $stripeAccountId,
                 'refresh_url' => $refreshUrl,
                 'return_url' => $returnUrl,
@@ -107,12 +128,120 @@ final class StripeApiConnectGateway implements StripeConnectGateway
     public function retrieveAccount(string $stripeAccountId): ConnectedAccountSnapshot
     {
         try {
-            $account = $this->client->accounts->retrieve($stripeAccountId, []);
+            $account = $this->client()->accounts->retrieve($stripeAccountId, []);
         } catch (ApiErrorException) {
             throw StripeConnectException::providerFailed();
         }
 
         return $this->snapshot($account);
+    }
+
+    /**
+     * §7.2 / §11.2 — a DIRECT CHARGE on the connected account.
+     *
+     * Verified against the official Stripe direct-charges guide at
+     * implementation time: the connected account is named by the
+     * `Stripe-Account` header (the SDK's `stripe_account` request option),
+     * and `application_fee_amount` is optional — so it is omitted, because
+     * §11.2 forbids the platform taking a cut in V1. No `on_behalf_of` and no
+     * `transfer_data` either: the Business is the merchant of record and the
+     * platform does not intermediate its revenue.
+     *
+     * The Stripe idempotency key is the caller's
+     * `document-payment:{payment_uid}`, so repeating an uncertain creation
+     * returns Stripe's ORIGINAL intent instead of charging twice (§7.2.1
+     * Case B).
+     */
+    public function createPaymentIntent(
+        string $connectedAccountId,
+        int $amountMinor,
+        string $currencyCode,
+        string $idempotencyKey,
+        string $operationId,
+        string $description,
+    ): PaymentIntentSnapshot {
+        try {
+            $intent = $this->client()->paymentIntents->create([
+                'amount' => $amountMinor,
+                'currency' => strtolower($currencyCode),
+                'automatic_payment_methods' => ['enabled' => true],
+                'description' => mb_substr($description, 0, 350),
+                // Read back by the finalizer to prove operation identity (§8.3).
+                'metadata' => ['app_operation_id' => $operationId],
+            ], [
+                'stripe_account' => $connectedAccountId,
+                'idempotency_key' => $idempotencyKey,
+            ]);
+        } catch (ApiErrorException) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->intentSnapshot($intent, $connectedAccountId, withClientSecret: true);
+    }
+
+    public function retrievePaymentIntent(string $connectedAccountId, string $providerPaymentIntentId): PaymentIntentSnapshot
+    {
+        try {
+            $intent = $this->client()->paymentIntents->retrieve($providerPaymentIntentId, [], [
+                'stripe_account' => $connectedAccountId,
+            ]);
+        } catch (ApiErrorException) {
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->intentSnapshot($intent, $connectedAccountId, withClientSecret: true);
+    }
+
+    /**
+     * §8.2 step 1 — signature verification over the raw body, with the
+     * DEDICATED Connect webhook secret. One platform-level Connect endpoint
+     * receives events for every connected account, and each event carries its
+     * own `account` field; that field, never a per-Business secret, is what
+     * routes an event (§5.8).
+     */
+    public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array
+    {
+        $secret = (string) config('services.stripe.connect_webhook.secret');
+
+        if ($secret === '') {
+            throw StripeConnectException::notConfigured();
+        }
+
+        try {
+            $event = Webhook::constructEvent(
+                $rawPayload,
+                $signatureHeader,
+                $secret,
+                (int) config('services.stripe.connect_webhook.tolerance', 300),
+            );
+        } catch (SignatureVerificationException|UnexpectedValueException) {
+            // The provider's own message is never propagated: it echoes header
+            // and payload detail straight into whatever logs the catch.
+            throw StripeConnectException::invalidSignature();
+        }
+
+        return $event->toArray();
+    }
+
+    /**
+     * §11.8 — the provider's status string dies here. Everything past this
+     * point speaks only our six local values.
+     */
+    private function intentSnapshot(object $intent, string $connectedAccountId, bool $withClientSecret): PaymentIntentSnapshot
+    {
+        $charge = $intent->latest_charge ?? null;
+
+        return new PaymentIntentSnapshot(
+            providerPaymentIntentId: (string) $intent->id,
+            status: ProviderStatusMap::forIntentStatus((string) $intent->status),
+            amountMinor: (int) $intent->amount,
+            currencyCode: mb_strtoupper((string) $intent->currency),
+            connectedAccountId: $connectedAccountId,
+            operationId: $intent->metadata->app_operation_id ?? null,
+            providerChargeId: is_string($charge) ? $charge : ($charge->id ?? null),
+            failureCode: $intent->last_payment_error->code ?? null,
+            clientSecret: $withClientSecret ? ($intent->client_secret ?? null) : null,
+        );
     }
 
     /**
