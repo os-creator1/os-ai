@@ -27,6 +27,33 @@ use App\Models\WebsiteRevision;
  */
 final class SeoPublishedContentReader
 {
+    /**
+     * Contract 18 §8.7 (Sub-slice G) — the SAME parse, for ONE NAMED
+     * immutable revision instead of whichever one is published right now.
+     *
+     * The audit needs this because it audits the revision that was actually
+     * published by the event it is reacting to: by the time the queued job
+     * runs, a newer revision may already be live, and auditing that one
+     * instead would silently attribute one revision's findings to another.
+     *
+     * The revision is resolved BY WEBSITE as well as by id, so a revision id
+     * belonging to another Website can never be read through here.
+     * Read-only, like the rest of this class.
+     */
+    public function forRevision(int $websiteId, int $revisionId): ?SeoPublishedContent
+    {
+        $revision = WebsiteRevision::query()
+            ->where('website_id', $websiteId)
+            ->where('id', $revisionId)
+            ->first();
+
+        if ($revision === null) {
+            return null;
+        }
+
+        return $this->parse($websiteId, (int) $revision->id, $revision->snapshot);
+    }
+
     public function forBusiness(Business $business): ?SeoPublishedContent
     {
         $website = Website::query()->where('business_id', $business->id)->first();
@@ -42,8 +69,22 @@ final class SeoPublishedContentReader
             ->where('id', $website->published_revision_id)
             ->first();
 
-        $snapshot = $revision?->snapshot;
+        if ($revision === null) {
+            return null;
+        }
 
+        return $this->parse((int) $website->id, (int) $revision->id, $revision->snapshot);
+    }
+
+    /**
+     * The ONE snapshot parse (§9.1). Both entry points funnel through it, so
+     * `website_revisions.snapshot` is interpreted in exactly one place and the
+     * audit can never drift from what the Overview reports.
+     *
+     * Returns null for anything that is not a usable snapshot document.
+     */
+    private function parse(int $websiteId, int $revisionId, mixed $snapshot): ?SeoPublishedContent
+    {
         if (! is_array($snapshot)) {
             return null;
         }
@@ -80,6 +121,6 @@ final class SeoPublishedContentReader
             }
         }
 
-        return new SeoPublishedContent((int) $website->id, (int) $revision->id, $pages, $assets);
+        return new SeoPublishedContent($websiteId, $revisionId, $pages, $assets);
     }
 }

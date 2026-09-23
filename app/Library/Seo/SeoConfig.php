@@ -63,6 +63,36 @@ final class SeoConfig
         return $this->bounded('seo.audit.runs_retained', 5, 1, 20);
     }
 
+    /**
+     * Contract §8.7 — the recommended MAXIMUM SEO title length. Conventional
+     * guidance, not a Google requirement; the finding copy says
+     * "recommended" for exactly that reason.
+     */
+    public function auditSeoTitleMaxRecommended(): int
+    {
+        return $this->bounded('seo.audit.seo_title_max_recommended', 60, 20, 200);
+    }
+
+    /**
+     * Contract §8.7 — the recommended MINIMUM meta description length, same
+     * conventional-guidance caveat.
+     */
+    public function auditMetaDescriptionMinRecommended(): int
+    {
+        return $this->bounded('seo.audit.meta_description_min_recommended', 70, 20, 300);
+    }
+
+    /**
+     * Contract §8.7 — seconds one actor must wait before manually re-running
+     * the audit for one Business. Conservative 60s default; clamped so a
+     * misconfiguration can neither remove the cooldown nor lock a customer
+     * out for an hour-plus.
+     */
+    public function auditManualRerunCooldownSeconds(): int
+    {
+        return $this->bounded('seo.audit.manual_rerun_cooldown_seconds', 60, 5, 3600);
+    }
+
     private function bounded(string $key, int $default, int $min, int $max): int
     {
         $configured = config($key);

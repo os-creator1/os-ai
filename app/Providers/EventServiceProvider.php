@@ -25,6 +25,7 @@ use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
+use App\Listeners\Seo\QueueSeoAuditOnWebsitePublished;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessCreated;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnFirstPlanAssigned;
 use App\Listeners\Coo\TriggerCooInsightOnWorkFinished;
@@ -157,6 +158,11 @@ class EventServiceProvider extends ServiceProvider
         ],
         WebsitePublished::class => [
             InvalidateCooInsights::class.'@handleWebsitePublished',
+            // Contract 18 §8.7 (Sub-slice G) — additive: queues a
+            // technical SEO audit of the revision just published. It
+            // swallows its own failures so a publish can never fail
+            // because SEO analysis could not be queued.
+            QueueSeoAuditOnWebsitePublished::class,
         ],
         GoogleBusinessProfileConnected::class => [
             InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnected',
