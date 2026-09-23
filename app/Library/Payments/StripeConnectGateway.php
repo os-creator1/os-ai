@@ -55,4 +55,48 @@ interface StripeConnectGateway
      * @throws StripeConnectException
      */
     public function retrieveAccount(string $stripeAccountId): ConnectedAccountSnapshot;
+
+    /**
+     * §7.2 steps 12/14 — create the DIRECT CHARGE PaymentIntent on the
+     * Business's own connected account.
+     *
+     * `$idempotencyKey` is always `document-payment:{payment_uid}` (§7.2), so
+     * a repeat of an uncertain creation returns Stripe's original intent
+     * rather than originating a second charge. `$operationId` is the row's
+     * own `local_idempotency_key`, sent as metadata so the finalizer can
+     * cross-check operation identity (§8.3).
+     *
+     * The returned snapshot carries the transient `client_secret`; it is the
+     * ONLY method here that does.
+     *
+     * @throws StripeConnectException
+     */
+    public function createPaymentIntent(
+        string $connectedAccountId,
+        int $amountMinor,
+        string $currencyCode,
+        string $idempotencyKey,
+        string $operationId,
+        string $description,
+    ): PaymentIntentSnapshot;
+
+    /**
+     * §7.2.1 Case A — retrieve THAT SAME intent on the connection recorded on
+     * the row, so a refresh, a second tab or an SCA step re-drives one
+     * attempt instead of creating another.
+     *
+     * @throws StripeConnectException
+     */
+    public function retrievePaymentIntent(string $connectedAccountId, string $providerPaymentIntentId): PaymentIntentSnapshot;
+
+    /**
+     * §8.2 step 1 — verify the Connect webhook signature over the EXACT RAW
+     * BODY, before anything is inserted or processed. Returns the decoded
+     * event payload.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws StripeConnectException invalid signature
+     */
+    public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array;
 }

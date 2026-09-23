@@ -4,6 +4,7 @@ namespace Tests\Support\Payments;
 
 use App\Exceptions\Payments\StripeConnectException;
 use App\Library\Payments\ConnectedAccountSnapshot;
+use App\Library\Payments\PaymentIntentSnapshot;
 use App\Library\Payments\StripeConnectGateway;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -54,6 +55,127 @@ class FakeStripeConnectGateway implements StripeConnectGateway
         $this->record('createAccount', ['country' => $country, 'business_uid' => $businessUid]);
 
         return $this->snapshot('acct_fake' . str_pad((string) (++$this->accountSequence), 6, '0', STR_PAD_LEFT));
+    }
+
+    // =================================================================
+    // Sub-slice E — payment execution
+    // =================================================================
+
+    /** Intent id keyed by the Stripe idempotency key, mimicking Stripe's own behaviour. */
+    public array $intentsByKey = [];
+
+    /** Intent state keyed by intent id: ['status' => ..., 'amount' => ..., ...]. */
+    public array $intents = [];
+
+    public int $intentSequence = 0;
+
+    /** The local status every newly created intent reports. */
+    public \App\Enums\Documents\BusinessDocumentPaymentStatus $intentStatus = \App\Enums\Documents\BusinessDocumentPaymentStatus::Created;
+
+    /**
+     * Simulates §7.2.1 Case B: Stripe RECEIVED and created the intent, but the
+     * HTTP response was lost. The intent really exists under the idempotency
+     * key, yet the caller sees a failure and the local row never learns the
+     * id — exactly the situation a retry must not turn into a second charge.
+     */
+    public bool $loseNextCreateResponse = false;
+
+    public ?StripeConnectException $failCreateWith = null;
+
+    /** Signature header value this fake treats as verifying. */
+    public string $validSignature = 'v1=fake-valid-signature';
+
+    public function createPaymentIntent(
+        string $connectedAccountId,
+        int $amountMinor,
+        string $currencyCode,
+        string $idempotencyKey,
+        string $operationId,
+        string $description,
+    ): PaymentIntentSnapshot {
+        $this->record('createPaymentIntent', [
+            'account' => $connectedAccountId,
+            'amount' => $amountMinor,
+            'currency' => $currencyCode,
+            'idempotency_key' => $idempotencyKey,
+            'operation_id' => $operationId,
+        ]);
+
+        if ($this->failCreateWith !== null) {
+            throw $this->failCreateWith;
+        }
+
+        // Stripe's own idempotency: the same key returns the ORIGINAL intent.
+        $intentId = $this->intentsByKey[$idempotencyKey]
+            ?? ('pi_fake' . str_pad((string) (++$this->intentSequence), 6, '0', STR_PAD_LEFT));
+
+        $this->intentsByKey[$idempotencyKey] = $intentId;
+        $this->intents[$intentId] ??= [
+            'status' => $this->intentStatus,
+            'amount' => $amountMinor,
+            'currency' => $currencyCode,
+            'account' => $connectedAccountId,
+            'operation_id' => $operationId,
+        ];
+
+        if ($this->loseNextCreateResponse) {
+            $this->loseNextCreateResponse = false;
+
+            // The intent above exists at the provider; the caller never learns it.
+            throw StripeConnectException::providerFailed();
+        }
+
+        return $this->intentSnapshot($intentId);
+    }
+
+    public function retrievePaymentIntent(string $connectedAccountId, string $providerPaymentIntentId): PaymentIntentSnapshot
+    {
+        $this->record('retrievePaymentIntent', [
+            'account' => $connectedAccountId,
+            'intent' => $providerPaymentIntentId,
+        ]);
+
+        return $this->intentSnapshot($providerPaymentIntentId);
+    }
+
+    public function verifyWebhookPayload(string $rawPayload, string $signatureHeader): array
+    {
+        $this->record('verifyWebhookPayload', []);
+
+        if ($signatureHeader !== $this->validSignature) {
+            throw StripeConnectException::invalidSignature();
+        }
+
+        return json_decode($rawPayload, true) ?: [];
+    }
+
+    /** Moves a provider-side intent to a new status, as Stripe would. */
+    public function setIntentStatus(string $intentId, \App\Enums\Documents\BusinessDocumentPaymentStatus $status): void
+    {
+        $this->intents[$intentId]['status'] = $status;
+    }
+
+    public function intentSnapshot(string $intentId): PaymentIntentSnapshot
+    {
+        $intent = $this->intents[$intentId] ?? [];
+
+        return new PaymentIntentSnapshot(
+            providerPaymentIntentId: $intentId,
+            status: $intent['status'] ?? \App\Enums\Documents\BusinessDocumentPaymentStatus::Created,
+            amountMinor: (int) ($intent['amount'] ?? 0),
+            currencyCode: (string) ($intent['currency'] ?? 'USD'),
+            connectedAccountId: (string) ($intent['account'] ?? ''),
+            operationId: $intent['operation_id'] ?? null,
+            providerChargeId: null,
+            failureCode: null,
+            clientSecret: $intentId . '_secret_fake',
+        );
+    }
+
+    /** Every option recorded for provider calls of one kind. */
+    public function callsOf(string $method): array
+    {
+        return array_values(array_filter($this->calls, fn (array $call) => $call['method'] === $method));
     }
 
     public function createOnboardingLink(string $stripeAccountId, string $refreshUrl, string $returnUrl): string

@@ -33,6 +33,12 @@ final class StripeConnectException extends RuntimeException
     /** The platform is not configured for Connect at all. */
     public const NOT_CONFIGURED = 'not_configured';
 
+    /** §11.8 — the provider reported a status this contract does not map. */
+    public const UNMAPPED_PROVIDER_STATUS = 'unmapped_provider_status';
+
+    /** §8.2 — the webhook signature did not verify over the raw body. */
+    public const INVALID_SIGNATURE = 'invalid_signature';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -71,6 +77,21 @@ final class StripeConnectException extends RuntimeException
     public static function notConfigured(): self
     {
         return new self(self::NOT_CONFIGURED, 'Stripe Connect is not configured on this platform.');
+    }
+
+    /**
+     * §11.8 — fail closed. The provider status itself is NOT interpolated:
+     * guessing is the danger, and echoing provider vocabulary into our own
+     * message would put it in a log the moment anyone catches this.
+     */
+    public static function unmappedProviderStatus(): self
+    {
+        return new self(self::UNMAPPED_PROVIDER_STATUS, 'The provider reported an unrecognised payment status.');
+    }
+
+    public static function invalidSignature(): self
+    {
+        return new self(self::INVALID_SIGNATURE, 'The webhook signature did not verify.');
     }
 
     public function customerMessage(): string

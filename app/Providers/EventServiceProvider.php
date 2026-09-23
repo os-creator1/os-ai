@@ -49,6 +49,12 @@ class EventServiceProvider extends ServiceProvider
         Registered::class => [
             SendEmailVerificationNotification::class,
         ],
+        // Implementation Contract 17 §12.E — the payment receipt. The job it
+        // dispatches claims `receipt_sent_at` with a conditional UPDATE, so a
+        // replayed or duplicated event still sends exactly one receipt (§8.4).
+        \App\Events\DocumentPaymentSucceeded::class => [
+            \App\Listeners\BusinessPayments\SendReceiptOnPaymentSucceeded::class,
+        ],
         BusinessCreated::class => [
             InitializeBusinessUsageProfile::class.'@handleBusinessCreated',
             // Contract 20 §9.1 — trigger one of exactly two into the niche

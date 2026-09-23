@@ -570,10 +570,16 @@ class StripeConnectOnboardingTest extends TestCase
             foreach ([
                 'App\\Library\\Usage', 'StripePaymentProviderGateway', 'PaymentProviderGateway',
                 'PayerType', 'EffectivePayer', 'UsageWallet', 'PaymentController',
-                'payment_methods', 'business_payment_instruments', 'business_usage_',
+                'business_payment_instruments', 'business_usage_',
             ] as $forbidden) {
                 $this->assertStringNotContainsString($forbidden, $code, basename($path) . " must not reference [{$forbidden}].");
             }
+
+            // The lane-A/D TABLE `payment_methods` is forbidden; Stripe's own
+            // `automatic_payment_methods` request parameter (Sub-slice E) is
+            // not the same string and must not be caught by it.
+            $this->assertSame(0, preg_match('/(?<!automatic_)\bpayment_methods\b/', $code),
+                basename($path) . ' must not reference the lane-A/D payment_methods table.');
         }
     }
 
@@ -591,23 +597,29 @@ class StripeConnectOnboardingTest extends TestCase
         }
     }
 
-    public function test_sub_slice_d_contains_no_payment_execution_at_all(): void
+    public function test_lane_b_contains_no_refund_dispute_or_platform_fee_machinery(): void
     {
-        // E owns PaymentIntents, charges, webhooks and refunds; F owns
-        // reminders and expiry. None of it may appear here.
+        // Sub-slice E legitimately added PaymentIntents, the Payment Element
+        // and the verified webhook, so those are no longer forbidden here.
+        // What is STILL out of scope is F's refund/dispute surface and any
+        // platform intermediation of the Business's revenue.
         foreach ($this->laneBSources() as $path => $code) {
             foreach ([
-                'PaymentIntent', 'paymentIntents', 'client_secret', 'application_fee', 'on_behalf_of',
-                'transfer_data', 'Refund', 'refunds', 'constructEvent', 'webhook', 'Webhook', 'capture',
+                'application_fee', 'on_behalf_of', 'transfer_data',
+                'Refund', 'refunds', 'dispute', 'Dispute',
+                'reminder', 'Reminder',
             ] as $forbidden) {
                 $this->assertStringNotContainsString($forbidden, $code,
-                    basename($path) . " must not contain [{$forbidden}] — that is Sub-slice E/F.");
+                    basename($path) . " must not contain [{$forbidden}] — that is Sub-slice F.");
             }
         }
 
-        $this->assertSame(0, \Illuminate\Support\Facades\Schema::hasTable('business_document_payments')
-            ? DB::table('business_document_payments')->count() : 0,
-            'Nothing in this slice creates a payment row.');
+        // D's own onboarding path still creates no payment row: that only
+        // happens through E's PaymentManager, which this test never calls.
+        [$customer, $business] = $this->tenantBusiness();
+        $this->manager()->connect($customer->user_id, $business, 'https://app.test/r', 'https://app.test/t');
+
+        $this->assertSame(0, DB::table('business_document_payments')->count());
     }
 
     public function test_no_application_fee_or_platform_intermediation_is_configured(): void
@@ -642,9 +654,18 @@ class StripeConnectOnboardingTest extends TestCase
         }
 
         $gateway = (string) file_get_contents(app_path('Library/Payments/StripeApiConnectGateway.php'));
+
+        // Exactly two secrets are read, both here and nowhere else: the
+        // platform API key (constructor) and the Connect webhook signing
+        // secret (§5.8). Neither is returned, logged or thrown.
         $this->assertSame(1, substr_count($gateway, 'services.stripe.secret'));
-        $this->assertStringNotContainsString('$secret', explode('public function createAccount', $gateway)[1] ?? '',
-            'The key must not survive past the constructor.');
+        $this->assertSame(1, substr_count($gateway, 'services.stripe.connect_webhook.secret'));
+        // The secret is CONSUMED (handed to the SDK client) but never handed
+        // back: returning `new StripeClient($secret)` is fine, returning
+        // `$secret` is not.
+        $this->assertSame(0, preg_match('/return\s+\$secret\b/', $gateway), 'A secret must never be returned.');
+        $this->assertSame(0, preg_match('/(Exception|throw)[^;]*\$secret/', $gateway), 'A secret must never reach an exception.');
+        $this->assertSame(0, preg_match('/Log::[^;]*\$secret/', $gateway), 'A secret must never be logged.');
 
         // Provider error text is swallowed, never propagated: it can carry
         // account identifiers and request detail.

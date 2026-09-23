@@ -311,10 +311,13 @@ class DocumentsRemainInertTest extends TestCase
             foreach ($needles as $needle) {
                 if ((str_contains($uri, $needle) || str_contains($name, $needle))
                     && ! str_contains($name, 'businesses.documents.')
-                    // Sub-slice C §6.3 — the end customer's secure link. It is
-                    // the ONLY public document surface permitted to exist, and
-                    // the next assertion pins its exact shape.
-                    && ! str_starts_with($name, 'public.documents.')) {
+                    // Sub-slice D's owner-only Stripe Connect onboarding.
+                    && ! str_contains($name, 'businesses.payments.connect.')
+                    // Sub-slice C's secure link plus Sub-slice E's payment
+                    // start; the next assertion pins their exact shape.
+                    && ! str_starts_with($name, 'public.documents.')
+                    // Sub-slice E's lane-B Connect webhook.
+                    && $name !== 'public.business-payments.webhook') {
                     $offending[] = ($name !== '' ? $name : $uri) . " [{$needle}]";
                 }
             }
@@ -325,10 +328,12 @@ class DocumentsRemainInertTest extends TestCase
 
     public function test_the_public_document_surface_is_exactly_the_link_and_no_webhook_exists(): void
     {
-        // Sub-slice C adds the secure link — and NOTHING else public. In
-        // particular §6.3.2's payment-start POST and the lane-B webhook are
-        // Sub-slice E's, so their absence is still asserted here.
+        // Sub-slice C added the secure link; Sub-slice E added §6.3.2's
+        // payment-start POST and the lane-B Connect webhook. That is the
+        // COMPLETE public surface — the set is pinned so a later sub-slice
+        // cannot add one without deliberately amending this list.
         $publicDocumentUris = [];
+        $webhookUris = [];
 
         foreach (Route::getRoutes() as $route) {
             $uri = strtolower($route->uri());
@@ -337,26 +342,30 @@ class DocumentsRemainInertTest extends TestCase
                 $publicDocumentUris[] = $uri;
             }
 
-            $this->assertStringNotContainsString('stripe/webhook/business-payments', $uri);
-            $this->assertStringNotContainsString('pay-start', $uri);
-            $this->assertStringNotContainsString('payment-start', $uri);
+            if (str_contains($uri, 'stripe/webhook/')) {
+                $webhookUris[] = $uri;
+            }
         }
 
         sort($publicDocumentUris);
+        sort($webhookUris);
 
         $this->assertSame(
-            ['documents/{uid}/{token}', 'documents/{uid}/{token}/sign'],
+            ['documents/{uid}/{token}', 'documents/{uid}/{token}/pay', 'documents/{uid}/{token}/sign'],
             array_values(array_unique($publicDocumentUris)),
-            'Only the Sub-slice C view and sign routes may be publicly reachable.'
+            'Only the view, pay and sign routes may be publicly reachable.'
         );
+
+        // Lane B's webhook is its OWN path, and lane D's is untouched.
+        $this->assertContains('stripe/webhook/business-payments', $webhookUris);
+        $this->assertContains('stripe/webhook/usage-billing', $webhookUris,
+            'Lane D\'s webhook must still exist, unmodified.');
 
         $except = (new ReflectionClass(VerifyCsrfToken::class))->getDefaultProperties()['except'] ?? [];
 
-        $this->assertNotContains(
-            'stripe/webhook/business-payments',
-            $except,
-            'The lane-B webhook route must not be CSRF-exempted before it exists.'
-        );
+        // Sub-slice E: exempt, because Stripe signs the raw body instead and
+        // that signature is verified before anything is inserted (§8.2).
+        $this->assertContains('stripe/webhook/business-payments', $except);
     }
 
     /**
@@ -367,13 +376,10 @@ class DocumentsRemainInertTest extends TestCase
     public function test_no_manager_gateway_job_or_command_exists_yet(): void
     {
         foreach ([
-            'App\\Library\\Payments\\PaymentManager',                            // Sub-slices E/F
-            'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',          // Sub-slice E
             'App\\Library\\Timeline\\Sources\\DocumentActivitySource',           // Sub-slice G
-            'App\\Events\\DocumentPaymentSucceeded',                             // Sub-slice E
-            'App\\Events\\DocumentFullyPaid',                                    // Sub-slice E
             'App\\Events\\DocumentExpired',                                      // Sub-slice F
             'App\\Events\\DocumentRefunded',                                     // Sub-slice F
+            'App\\Library\\Payments\\RefundManager',                             // Sub-slice F
         ] as $class) {
             $this->assertFalse(class_exists($class), "[{$class}] belongs to a later sub-slice and must not exist yet.");
         }
@@ -388,8 +394,14 @@ class DocumentsRemainInertTest extends TestCase
             'App\\Library\\Documents\\DocumentContentHasher',
             'App\\Library\\Payments\\StripeConnectManager',
             'App\\Library\\Payments\\StripeApiConnectGateway',
+            // Sub-slice E.
+            'App\\Library\\Payments\\PaymentManager',
+            'App\\Library\\Payments\\PaymentFinalizer',
+            'App\\Jobs\\BusinessPayments\\ProcessBusinessPaymentEvent',
+            'App\\Events\\DocumentPaymentSucceeded',
+            'App\\Events\\DocumentFullyPaid',
         ] as $class) {
-            $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's or D's own.");
+            $this->assertTrue(class_exists($class), "[{$class}] is Sub-slice C's, D's or E's own.");
         }
 
         $this->assertTrue(

@@ -37,6 +37,33 @@
     Route::post('documents/{uid}/{token}/sign', 'Public\PublicDocumentController@sign')
         ->middleware('throttle:10,1')->name('public.documents.sign');
 
+    /*
+    | Sub-slice E §6.3.2 — the ONE payment-start endpoint. Same {uid}/{token}
+    | possession, same §6.3.1 rechecks, and §7.2's PAY START behind it. Its
+    | request schema carries no card data and no Stripe account: the connected
+    | account is server-derived from the payment row (§7.2.2).
+    |
+    | Held to the same 10/minute as signing — it is a deliberate human act,
+    | and re-driving an existing attempt is idempotent anyway.
+    */
+    Route::post('documents/{uid}/{token}/pay', 'Public\PublicDocumentController@payStart')
+        ->middleware('throttle:10,1')->name('public.documents.pay');
+
+    /*
+    | Sub-slice E §5.8/§8.2 — money lane B's OWN Connect webhook, at its own
+    | path with its own secret, deliberately separate from lane D's
+    | `stripe/webhook/usage-billing`. CSRF-exempt (VerifyCsrfToken::$except)
+    | because Stripe signs the raw body instead; that signature is verified
+    | before a single row is inserted.
+    |
+    | Generously throttled rather than tightly: Stripe retries on 5xx and one
+    | platform endpoint receives events for every connected account, so the
+    | bound must sit well above real delivery-plus-retry volume while still
+    | refusing a resource-exhaustion attempt.
+    */
+    Route::post('stripe/webhook/business-payments', 'Public\BusinessPaymentWebhookController@handle')
+        ->middleware('throttle:600,1')->name('public.business-payments.webhook');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */
