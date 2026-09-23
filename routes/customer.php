@@ -978,6 +978,34 @@
         });
 
         /*
+        |----------------------------------------------------------------------
+        | Implementation Contract 17 Sub-slice D — Stripe Connect onboarding
+        | for money lane B. The Business's OWN connected account is the
+        | merchant of record; the platform never intermediates its revenue.
+        |
+        | Same gate chain as the documents group above (Workspace -> Business
+        | -> access -> Active -> `payments_contracts` -> the PaymentsContracts
+        | entitlement, which is Planned until Sub-slice G, so every route here
+        | is 404 today). The three mutating actions are additionally
+        | OWNER-ONLY (§6.2), enforced server-side in StripeConnectManager.
+        |
+        | No route takes a connected-account id: the account is always read
+        | from the Business's own row, so a browser can never name or
+        | substitute another Business's Stripe account. There is no payment,
+        | PaymentIntent or webhook route here — those are Sub-slices E and F.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/payments/connect')->name('businesses.payments.connect.')->group(function () {
+            Route::get('/', 'Business\BusinessPaymentsController@show')->name('show');
+            // Each mutating action reaches Stripe, so all three are throttled
+            // at the same rate the other Business write surfaces use.
+            Route::post('/', 'Business\BusinessPaymentsController@connect')->middleware('throttle:30,1')->name('start');
+            Route::get('/resume', 'Business\BusinessPaymentsController@resume')->middleware('throttle:30,1')->name('resume');
+            Route::post('/refresh', 'Business\BusinessPaymentsController@refresh')->middleware('throttle:30,1')->name('refresh');
+            Route::post('/disconnect', 'Business\BusinessPaymentsController@disconnect')->middleware('throttle:30,1')->name('disconnect');
+        });
+
+        /*
         |----------------------------------------------------------------
         | Automations V2-E — visual workflows (contract §20.2)
         |----------------------------------------------------------------

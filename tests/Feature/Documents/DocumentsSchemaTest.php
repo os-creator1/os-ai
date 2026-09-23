@@ -1062,6 +1062,14 @@ class DocumentsSchemaTest extends TestCase
             glob(app_path('Models/BusinessDocument*.php')),
             [app_path('Models/BusinessStripeConnection.php'), app_path('Models/BusinessPaymentEvent.php')],
             glob(app_path('Enums/Documents/*.php')),
+            // Sub-slice D — the lane-B Stripe Connect boundary. §11.1 names
+            // app/Library/Payments/** and **/*BusinessPayment* as this
+            // slice's own surface, so they are held to the same rule. Their
+            // one permitted extra is the Stripe\* SDK itself (§4.2), which is
+            // not on the forbidden list below.
+            glob(app_path('Library/Payments/*.php')),
+            glob(app_path('Exceptions/Payments/*.php')),
+            glob(app_path('Http/Controllers/Customer/Business/BusinessPayments*.php')),
             glob(app_path('Library/Money/*.php')),
             glob(app_path('Library/Money/Exceptions/*.php')),
             glob(database_path('migrations/2026_09_25_1000*business_document*.php')),
