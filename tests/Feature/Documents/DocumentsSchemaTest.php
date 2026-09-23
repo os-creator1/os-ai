@@ -1078,6 +1078,16 @@ class DocumentsSchemaTest extends TestCase
             // Sub-slice G — §11.1 names this file by its exact path as this
             // slice's own surface.
             [app_path('Library/Timeline/Sources/DocumentActivitySource.php')],
+            // Sub-slice G correction — §11.1 names app/Library/Documents/**
+            // as this slice's own surface; the Activity Center reader and
+            // its DTO now live there. App\Library\Search touches the
+            // PaymentsContracts entitlement and document rows directly, so
+            // it is held to the same rule even though it also spans three
+            // other, non-money domains.
+            glob(app_path('Library/Documents/*.php')),
+            glob(app_path('Library/Search/*.php')),
+            glob(app_path('Library/Search/Sources/*.php')),
+            glob(app_path('Library/Search/Contracts/*.php')),
         );
 
         $this->assertNotEmpty($files);

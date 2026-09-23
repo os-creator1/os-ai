@@ -2,12 +2,13 @@
 
 namespace Tests\Feature\Documents;
 
+use App\Library\Documents\DocumentActivityCenterReader;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPayment;
-use App\Models\Notifications;
 use App\Notifications\Documents\DocumentIssuedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Notifications\Events\NotificationSent;
+use Illuminate\Support\Facades\Event;
 use ReflectionProperty;
 use Tests\Feature\Payments\Concerns\CreatesPayableDocuments;
 use Tests\TestCase;
@@ -65,18 +66,20 @@ class PaymentsContractsAcceptanceTest extends TestCase
             'recipient_name_snapshot' => 'Pat Rivera',
         ])->assertRedirect();
 
-        Notification::fake();
+        // Captured off the real send — deliberately NOT Notification::fake(),
+        // which would also swallow the real `database`-channel
+        // DocumentActivityCenterNotification this slice's Activity Center
+        // depends on for every lifecycle step below. MAIL_MAILER=array in
+        // the test environment, so this still sends no live email.
+        $token = null;
+        Event::listen(NotificationSent::class, function (NotificationSent $event) use (&$token): void {
+            if ($event->notification instanceof DocumentIssuedNotification) {
+                $token = (new ReflectionProperty($event->notification, 'plaintextToken'))->getValue($event->notification);
+            }
+        });
+
         $this->post($documentUrl . '/send')->assertRedirect();
 
-        $token = null;
-        Notification::assertSentOnDemand(
-            DocumentIssuedNotification::class,
-            function ($notification) use (&$token): bool {
-                $token = (new ReflectionProperty($notification, 'plaintextToken'))->getValue($notification);
-
-                return true;
-            }
-        );
         $this->assertNotEmpty($token, 'The secure emailed link token must have been minted by send().');
 
         $document = $document->refresh();
@@ -118,11 +121,10 @@ class PaymentsContractsAcceptanceTest extends TestCase
 
         // This slice's own integrations reflect the same real outcome: the
         // timeline (proved separately by DocumentActivityTimelineTest) reads
-        // these same durable rows, and the Activity Center was notified for
-        // every lifecycle step along the way.
-        $this->assertSame(
-            ['document_sent', 'document_signed', 'document_payment_succeeded', 'document_fully_paid'],
-            Notifications::where('user_id', $tenant['business']->customer_id)->pluck('notification_type')->all()
-        );
+        // these same durable rows, and the owner's Activity Center shows an
+        // authorized item for every lifecycle step along the way (the
+        // read-time re-authorization itself is proved by
+        // DocumentActivityCenterTest).
+        $this->assertCount(4, app(DocumentActivityCenterReader::class)->unreadFor($tenant['customer']->user));
     }
 }

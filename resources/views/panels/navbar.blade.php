@@ -89,6 +89,91 @@
                         {{--                            <a class="nav-link nav-link-style"><x-ds-icon name="{{ $configData['theme'] === 'dark' ? 'sun' : 'moon' }}" class="ficon" /></a>--}}
                         {{--                        </li>--}}
 
+                        {{-- Blueprint §7/§24 — Global Search, inside the current selected
+                             Business only. Searches Contacts, Opportunities, Conversations
+                             and Payments & Contracts documents; each result has already been
+                             authorized server-side (GlobalSearchController) before it ever
+                             reaches this markup. --}}
+                        @if($customerContext?->isBusinessFrame() && $customerContext->selectedWorkspace && $customerContext->selectedBusiness)
+                            <li class="nav-item dropdown me-25" data-role="global-search">
+                                <div class="position-relative">
+                                    <x-search-field id="global-search-input" label="Search" placeholder="Search this business" class="me-1" style="width: 220px;" />
+                                    <div class="dropdown-menu dropdown-menu-media" data-role="global-search-results" style="display:none; width: 320px;">
+                                        <div class="scrollable-container media-list" data-role="global-search-results-list"></div>
+                                        <div class="p-2 text-muted small" data-role="global-search-empty" style="display:none;">No results.</div>
+                                    </div>
+                                </div>
+                            </li>
+                            <script>
+                                document.addEventListener('DOMContentLoaded', function () {
+                                    var input = document.getElementById('global-search-input');
+                                    var panel = document.querySelector('[data-role="global-search-results"]');
+                                    var list = document.querySelector('[data-role="global-search-results-list"]');
+                                    var empty = document.querySelector('[data-role="global-search-empty"]');
+                                    if (!input || !panel || !list) { return; }
+
+                                    var searchUrl = @json(route('customer.workspaces.businesses.search', [$customerContext->selectedWorkspace->uid, $customerContext->selectedBusiness->uid]));
+                                    var groupLabels = { contacts: 'Contacts', opportunities: 'Opportunities', conversations: 'Conversations', documents: 'Payments & Contracts' };
+                                    var timer = null;
+                                    var controller = null;
+
+                                    function render(results) {
+                                        list.innerHTML = '';
+                                        var total = 0;
+                                        Object.keys(groupLabels).forEach(function (key) {
+                                            var items = (results && results[key]) || [];
+                                            if (items.length === 0) { return; }
+                                            total += items.length;
+                                            var header = document.createElement('div');
+                                            header.className = 'dropdown-header text-muted small fw-bolder px-1 pt-1';
+                                            header.textContent = groupLabels[key];
+                                            list.appendChild(header);
+                                            items.forEach(function (item) {
+                                                var a = document.createElement('a');
+                                                a.className = 'dropdown-item d-flex flex-column';
+                                                a.href = item.url;
+                                                var title = document.createElement('span');
+                                                title.textContent = item.title;
+                                                a.appendChild(title);
+                                                if (item.subtitle) {
+                                                    var subtitle = document.createElement('small');
+                                                    subtitle.className = 'text-muted';
+                                                    subtitle.textContent = item.subtitle;
+                                                    a.appendChild(subtitle);
+                                                }
+                                                list.appendChild(a);
+                                            });
+                                        });
+                                        empty.style.display = total === 0 ? 'block' : 'none';
+                                        panel.style.display = 'block';
+                                    }
+
+                                    input.addEventListener('input', function () {
+                                        var q = input.value.trim();
+                                        if (timer) { clearTimeout(timer); }
+                                        if (controller) { controller.abort(); }
+                                        if (q === '') { panel.style.display = 'none'; return; }
+                                        timer = setTimeout(function () {
+                                            controller = new AbortController();
+                                            fetch(searchUrl + '?q=' + encodeURIComponent(q), {
+                                                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                                                signal: controller.signal,
+                                            })
+                                                .then(function (response) { return response.json(); })
+                                                .then(function (payload) { render(payload.results); })
+                                                .catch(function () {});
+                                        }, 250);
+                                    });
+
+                                    document.addEventListener('click', function (event) {
+                                        if (!event.target.closest('[data-role="global-search"]')) {
+                                            panel.style.display = 'none';
+                                        }
+                                    });
+                                });
+                            </script>
+                        @endif
+
                         {{--Notification dropdown--}}
                         <li class="nav-item dropdown dropdown-notification me-25">
                             <a class="nav-link" href="javascript:void(0);" data-bs-toggle="dropdown">
@@ -101,7 +186,11 @@
                                     // querying the identical `user_id`/`mark_read` scope
                                     // twice.
                                     $unreadNotifications = Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->latest()->get();
-                                    $count = $unreadNotifications->count();
+                                    // Implementation Contract 17 §12.G — a SEPARATE substrate
+                                    // (platform_database_notifications), already filtered to
+                                    // exactly what this actor is authorized to see right now.
+                                    $documentActivity = app(\App\Library\Documents\DocumentActivityCenterReader::class)->unreadFor(Auth::user());
+                                    $count = $unreadNotifications->count() + $documentActivity->count();
                                 @endphp
                                 @if($count)
                                     <span class="badge rounded-pill bg-danger badge-up">{{ $count }}</span>
@@ -262,43 +351,6 @@
                                                             <small class="notification-text">{{ str_limit($value->message, 60) }}</small>
                                                         </div>
                                                         @break
-
-                                                    {{-- Implementation Contract 17 §12.G — Payments & Contracts document
-                                                         lifecycle activity, written by SurfaceDocumentActivityInActivityCenter. --}}
-                                                    @case('document_sent')
-                                                    @case('document_signed')
-                                                    @case('document_payment_succeeded')
-                                                    @case('document_fully_paid')
-                                                    @case('document_refunded')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-success">
-                                                                <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                                        </div>
-                                                        @break
-
-                                                    @case('document_expired')
-                                                    @case('document_voided')
-                                                        <div class="me-1">
-                                                            <div class="avatar bg-light-warning">
-                                                                <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
-                                                                </div>
-                                                            </div>
-                                                        </div>
-
-                                                        <div class="list-item-body flex-grow-1">
-                                                            <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
-                                                            </p>
-                                                            <small class="notification-text"> {{ str_limit($value->message, 60) }}</small>
-                                                        </div>
-                                                        @break
                                                 @endswitch
                                                 <small>
                                                     <time class="media-meta">{{ Tool::formatHumanTime($value->created_at) }}</time>
@@ -307,6 +359,34 @@
                                             </div>
                                         </a>
 
+                                    @endforeach
+
+                                    {{-- Implementation Contract 17 §12.G, Blueprint §24 — Payments &
+                                         Contracts document/payment activity. A SEPARATE producer
+                                         (platform_database_notifications, via
+                                         DocumentActivityCenterReader) from the legacy list above: each
+                                         row here has already been re-authorized right now, so nothing
+                                         further to check at render time. --}}
+                                    @foreach($documentActivity->take(10) as $activityItem)
+                                        <a class="d-flex" href="{{ $activityItem->url }}">
+                                            <div class="list-item d-flex align-items-start">
+                                                <div class="me-1">
+                                                    <div class="avatar bg-light-success">
+                                                        <div class="avatar-content"><x-ds-icon name="file-text" class="avatar-icon" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="list-item-body flex-grow-1">
+                                                    <p class="media-heading"><span class="fw-bolder">Payments &amp; Contracts</span>
+                                                    </p>
+                                                    <small class="notification-text"> {{ str_limit($activityItem->message, 60) }}</small>
+                                                </div>
+                                                <small>
+                                                    <time class="media-meta">{{ Tool::formatHumanTime($activityItem->createdAt) }}</time>
+                                                </small>
+                                            </div>
+                                        </a>
                                     @endforeach
                                 </li>
                                 <li class="dropdown-menu-footer">

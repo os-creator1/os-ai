@@ -101,13 +101,19 @@ final class PlatformFeatureRegistry
         // unchanged; an unassigned, inactive, suspended or override-denied
         // Workspace is still refused by EntitlementManager exactly as before.
         PlatformFeature::PackagesProducts->value => PlatformFeatureAvailability::Available,
-        // Implementation Contract 17, Sub-slice G — the FINAL flip, Planned ->
-        // Available, meeting the exact evidentiary bar every flip above was
-        // held to: A-F are merged, nav/timeline/Activity Center/Global
-        // Search integration landed, and the end-to-end acceptance path
-        // (PaymentsContractsAcceptanceTest — owner sends a proposal, the
-        // customer signs and pays it via the real public link and the fake
-        // gateway, the owner sees it paid) passes against the real,
+        // Implementation Contract 17, Sub-slice G — the FINAL flip,
+        // Planned -> Available, after a review correction closed the two
+        // gaps the first G pass left: the Global Search foundation
+        // (Blueprint §7/§24 — App\Library\Search, four bounded sources, no
+        // new index/schema) and the Activity Center's READ-TIME
+        // authorization (§12.G — DocumentActivityCenterReader re-derives
+        // tenancy, the payments_contracts capability, the entitlement,
+        // document existence and LocationAccessGuard fresh on every read,
+        // through the existing platform_database_notifications substrate,
+        // never the legacy notifications table). Flipped only once nav,
+        // timeline, the corrected Activity Center and Global Search all
+        // passed their focused tests and the end-to-end acceptance path
+        // (PaymentsContractsAcceptanceTest) passed again against the real,
         // unmocked authenticated and public routes. Plan packaging already
         // existed for Core, Growth and Agency (Sub-slice A,
         // 2026_09_25_100012_seed_payments_contracts_plan_packaging.php) and
