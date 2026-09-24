@@ -18,23 +18,29 @@ use Illuminate\Support\Str;
  * was no other supported way to create the first owner at all.
  *
  * THIS COMMAND IS THE ONLY SUPPORTED WAY TO CREATE A PLATFORM OWNER. It
- * never assumes an email or password: both are required, either as options
- * or via an interactive prompt, and the password is validated the same way
- * every other password in this application is. It is deliberately NOT wired
- * into `DatabaseSeeder`, so no install ever gets an administrator account it
- * did not explicitly ask for.
+ * never assumes an email, and the password is NEVER accepted as a
+ * command-line argument — only through the concealed interactive prompt —
+ * so it can never end up in shell history, a process list, or a CI log. It
+ * is deliberately NOT wired into `DatabaseSeeder`, so no install ever gets
+ * an administrator account it did not explicitly ask for.
  *
  * IT REFUSES TO RUN AGAIN once an administrator already exists, unless
  * `--force` says otherwise. An accidental second run (a re-deploy, a CI
  * script invoked twice, a copy-pasted command) must not silently mint a
  * second owner or fail with a confusing database error — it should say
  * exactly why it stopped.
+ *
+ * IT FAILS CLOSED WHEN THE `administrator` ROLE DOES NOT EXIST YET, before
+ * touching the `users` table at all. An `is_admin` account with no role is a
+ * half-built administrator: `EnsureUserIsAdministrator` would still let it
+ * into every admin route on the `is_admin` flag alone, silently wider than
+ * intended and easy to miss, so the command refuses to create one rather
+ * than create it and hope the operator notices the gap.
  */
 class CreatePlatformOwnerCommand extends Command
 {
     protected $signature = 'platform:create-owner
         {--email= : The new owner\'s email address}
-        {--password= : The new owner\'s password (prompted securely if omitted)}
         {--first-name=Platform : The owner\'s first name}
         {--last-name=Owner : The owner\'s last name}
         {--force : Create another owner even though an administrator already exists}';
@@ -49,8 +55,16 @@ class CreatePlatformOwnerCommand extends Command
             return self::FAILURE;
         }
 
+        $administratorRole = Role::query()->where('name', 'administrator')->first();
+
+        if ($administratorRole === null) {
+            $this->error('The "administrator" role does not exist yet. Run `php artisan db:seed --class=UserSeeder` first, then retry.');
+
+            return self::FAILURE;
+        }
+
         $email = $this->option('email') ?: $this->ask('Owner email address');
-        $password = $this->option('password') ?: $this->secret('Owner password');
+        $password = $this->secret('Owner password');
 
         $validator = Validator::make(
             ['email' => $email, 'password' => $password],
@@ -81,11 +95,7 @@ class CreatePlatformOwnerCommand extends Command
             'active_portal' => 'admin',
         ]);
 
-        $administratorRole = Role::query()->where('name', 'administrator')->first();
-
-        if ($administratorRole !== null) {
-            $owner->roles()->save($administratorRole);
-        }
+        $owner->roles()->save($administratorRole);
 
         $this->info("Platform owner created: {$owner->email} (id {$owner->id}).");
 
