@@ -4,12 +4,29 @@
 
 
     use App\Models\Role;
-    use App\Models\User;
-    use App\Models\Customer;
     use Illuminate\Database\Seeder;
-    use Illuminate\Support\Str;
-    use Illuminate\Support\Facades\DB;
 
+    /**
+     * Seeds the `administrator` role and its permission set — infrastructure
+     * every install needs regardless of who the first owner turns out to be.
+     *
+     * IT NO LONGER CREATES AN ADMINISTRATOR ACCOUNT. It used to insert one
+     * with a hardcoded vendor email and a hardcoded/weak password, which
+     * meant every install of this codebase shipped the same predictable
+     * super-admin credential unless an operator remembered to change it by
+     * hand. `platform:create-owner` (`app/Console/Commands/CreatePlatformOwnerCommand.php`)
+     * is the explicit, authorized replacement — run it once, interactively,
+     * after seeding.
+     *
+     * IT NO LONGER TRUNCATES `users`, `customers`, `roles` OR `role_user`
+     * EITHER. The truncate-then-recreate shape came from the same
+     * fresh-install-only assumption as the hardcoded admin: running `db:seed`
+     * again — a re-deploy, a CI step invoked twice, an operator syncing
+     * permissions after a new one is added to `config('permissions')` — must
+     * never destroy every account and membership the install has accumulated
+     * since. `firstOrCreate` makes the role and each permission idempotent:
+     * present if missing, untouched if already there.
+     */
     class UserSeeder extends Seeder
     {
         /**
@@ -17,54 +34,14 @@
          */
         public function run()
         {
-
-            // Default password
-            $defaultPassword = app()->environment('production') ? Str::random() : '12345678';
-            $this->command->getOutput()->writeln("<info>Default password:</info> $defaultPassword");
-
-            // Create super admin user
-            $user     = new User();
-            $role     = new Role();
-            $customer = new Customer();
-
-            DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-            $user->truncate();
-            $role->truncate();
-            $customer->truncate();
-            DB::table('role_user')->truncate();
-            DB::statement('SET FOREIGN_KEY_CHECKS=1;');
-
-            /*
-             * Create roles
-             */
-
-            $superAdminRole = $role->create([
-                'name'   => 'administrator',
-                'status' => true,
-            ]);
+            $administratorRole = Role::firstOrCreate(
+                ['name' => 'administrator'],
+                ['status' => true],
+            );
 
             foreach (config('permissions') as $key => $name) {
-                $superAdminRole->permissions()->create(['name' => $key]);
+                $administratorRole->permissions()->firstOrCreate(['name' => $key]);
             }
-
-            $superAdmin = $user->create([
-                'first_name'        => 'Super',
-                'last_name'         => 'Admin',
-                'image'             => null,
-                'email'             => 'akasham67@gmail.com',
-                'password'          => bcrypt($defaultPassword),
-                'status'            => true,
-                'is_admin'          => true,
-                'locale'            => app()->getLocale(),
-                'timezone'          => config('app.timezone'),
-                'email_verified_at' => now(),
-            ]);
-
-            $superAdmin->api_token = $superAdmin->createToken('akasham67@gmail.com')->plainTextToken;
-            $superAdmin->save();
-
-            $superAdmin->roles()->save($superAdminRole);
-
         }
 
     }
