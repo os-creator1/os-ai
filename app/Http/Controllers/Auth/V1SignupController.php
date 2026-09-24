@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessIndustry;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
+use App\Library\Business\BusinessLocaleOptions;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\Customer;
@@ -17,6 +18,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 /**
@@ -56,6 +58,7 @@ class V1SignupController extends Controller
         private readonly PlatformPlanPresenter $plans,
         private readonly V1SignupManager $signup,
         private readonly UserRepository $users,
+        private readonly BusinessLocaleOptions $localeOptions,
     ) {
     }
 
@@ -72,6 +75,12 @@ class V1SignupController extends Controller
         return view('auth.v1-signup', [
             'plans' => $this->plans->sellablePlans(),
             'industries' => BusinessIndustry::cases(),
+            // The same canonical country/timezone authority the customer
+            // Business form already uses (BusinessLocaleOptions) — never a
+            // second list, so a signup can never offer a country or timezone
+            // the rest of the product would not also accept.
+            'countries' => $this->localeOptions->countries(),
+            'timezones' => $this->localeOptions->timezones(),
         ]);
     }
 
@@ -135,7 +144,15 @@ class V1SignupController extends Controller
             // The niche. It survives into the Business row and is what the
             // Blueprint installer resolves against.
             'industry' => ['required', 'string', 'in:' . implode(',', array_column(BusinessIndustry::cases(), 'value'))],
-            'country_code' => ['required', 'string', 'size:2'],
+            // §7 correction — `size:2` alone accepted any two characters
+            // (e.g. a forged `country_code=Ne`), select UI or not. The
+            // server rule is now the SAME canonical list the select renders
+            // from, so a forged POST is rejected exactly like a UI choice
+            // that never existed would be.
+            'country_code' => ['required', 'string', Rule::in(array_keys($this->localeOptions->countries()))],
+            // Laravel's own `timezone` rule already checks against PHP's
+            // canonical identifier list — the same source BusinessLocaleOptions
+            // reads — so it was already as strict as the select it now backs.
             'timezone' => ['required', 'timezone'],
             // Only a tier the catalog says is sellable may be submitted.
             'tier' => ['required', 'string', 'in:' . $plans->pluck('tier_value')->implode(',')],

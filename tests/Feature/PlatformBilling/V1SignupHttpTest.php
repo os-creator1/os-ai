@@ -358,4 +358,80 @@ class V1SignupHttpTest extends TestCase
         $this->assertSame(5, (int) $subscription->refresh()->trial_days_snapshot);
         $this->assertEquals($before, $subscription->refresh()->trial_ends_at);
     }
+
+    // =================================================================
+    // §7 correction — canonical country/timezone selection, not free text
+    // =================================================================
+
+    public function test_the_signup_page_renders_country_and_timezone_as_selects(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $response = $this->get(route('register'));
+
+        $response->assertOk()
+            ->assertSee('<select id="country_code" name="country_code"', false)
+            ->assertSee('<select id="timezone" name="timezone"', false)
+            ->assertDontSee('<input id="country_code"', false)
+            ->assertDontSee('<input id="timezone"', false)
+            // The canonical option list from BusinessLocaleOptions, not a
+            // second, page-local one.
+            ->assertSee('value="NZ"', false)
+            ->assertSee('value="Pacific/Auckland"', false);
+    }
+
+    public function test_a_valid_canonical_country_and_timezone_are_accepted(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $response = $this->post(route('register'), $this->form([
+            'country_code' => 'NZ',
+            'timezone' => 'Pacific/Auckland',
+        ]));
+
+        $response->assertSessionDoesntHaveErrors(['country_code', 'timezone']);
+        $this->assertSame(1, Workspace::query()->count());
+    }
+
+    public function test_an_arbitrary_two_letter_country_code_is_rejected(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        // §7 — the exact forged value the acceptance run persisted before
+        // this correction: two characters, `size:2`-valid, not a country.
+        $this->post(route('register'), $this->form(['country_code' => 'Ne']))
+            ->assertSessionHasErrors('country_code');
+
+        $this->assertSame(0, Workspace::query()->count());
+        $this->assertSame(0, User::query()->where('is_customer', true)->count());
+    }
+
+    public function test_an_invalid_timezone_is_rejected(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $this->post(route('register'), $this->form(['timezone' => 'Not/A_Real_Zone']))
+            ->assertSessionHasErrors('timezone');
+
+        $this->assertSame(0, Workspace::query()->count());
+    }
+
+    public function test_old_country_and_timezone_values_remain_selected_after_a_validation_failure(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        // Mismatched password confirmation fails validation; country/timezone
+        // were otherwise valid and must come back selected, not reset.
+        $response = $this->from(route('register'))->post(route('register'), $this->form([
+            'country_code' => 'NZ',
+            'timezone' => 'Pacific/Auckland',
+            'password_confirmation' => 'something-else',
+        ]));
+
+        $response->assertSessionHasErrors('password');
+
+        $redirect = $this->get(route('register'));
+        $redirect->assertSee('value="NZ" selected', false)
+            ->assertSee('value="Pacific/Auckland" selected', false);
+    }
 }
