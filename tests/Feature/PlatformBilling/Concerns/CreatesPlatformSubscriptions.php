@@ -62,7 +62,7 @@ trait CreatesPlatformSubscriptions
         // owner surface would now refuse to create.
         $this->stripe->definePrice($priceId, [
             'currency' => 'USD',
-            'unit_amount' => \App\Library\PlatformBilling\CurrencyMinorUnits::toMinor($price, 'USD'),
+            'unit_amount' => \App\Library\Money\StripeMinorUnits::toMinor($price, 'USD'),
             'interval' => 'month',
             'interval_count' => 1,
             'livemode' => false,

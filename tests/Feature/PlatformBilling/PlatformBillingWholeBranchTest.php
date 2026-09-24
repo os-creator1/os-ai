@@ -7,7 +7,7 @@ use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
-use App\Library\PlatformBilling\CurrencyMinorUnits;
+use App\Library\Money\StripeMinorUnits;
 use App\Library\PlatformBilling\PlatformSubscriptionManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -64,7 +64,7 @@ class PlatformBillingWholeBranchTest extends TestCase
 
         $this->stripe->definePrice($newPriceId, [
             'currency' => 'USD',
-            'unit_amount' => CurrencyMinorUnits::toMinor($price, 'USD'),
+            'unit_amount' => StripeMinorUnits::toMinor($price, 'USD'),
             'interval' => 'month',
             'interval_count' => 1,
             'livemode' => false,
@@ -876,19 +876,19 @@ class PlatformBillingWholeBranchTest extends TestCase
     #[DataProvider('wholeUnitAmounts')]
     public function test_isk_and_ugx_refuse_fractional_amounts(string $amount, string $currency, ?int $expected): void
     {
-        $this->assertSame($expected, CurrencyMinorUnits::toMinor($amount, $currency));
+        $this->assertSame($expected, StripeMinorUnits::toMinor($amount, $currency));
     }
 
     public function test_isk_and_ugx_are_whole_unit_currencies_that_still_carry_two_decimals(): void
     {
         foreach (['ISK', 'UGX', 'isk', ' ugx '] as $code) {
-            $this->assertTrue(CurrencyMinorUnits::isWholeUnitsOnly($code));
-            $this->assertSame(100, CurrencyMinorUnits::factor($code),
+            $this->assertTrue(StripeMinorUnits::isWholeUnitsOnly($code));
+            $this->assertSame(100, StripeMinorUnits::factor($code),
                 'Two decimals at the wire is what Stripe asks for; only the fraction is forbidden.');
         }
 
         foreach (['USD', 'HUF', 'TWD', 'JPY'] as $code) {
-            $this->assertFalse(CurrencyMinorUnits::isWholeUnitsOnly($code));
+            $this->assertFalse(StripeMinorUnits::isWholeUnitsOnly($code));
         }
     }
 
@@ -896,7 +896,7 @@ class PlatformBillingWholeBranchTest extends TestCase
     {
         // A price the provider can never charge must not be accepted as one
         // that matches — that is the §11 failure this rule prevents.
-        $this->assertNull(CurrencyMinorUnits::toMinor('297.50', 'ISK'));
-        $this->assertSame(29700, CurrencyMinorUnits::toMinor('297.00', 'ISK'));
+        $this->assertNull(StripeMinorUnits::toMinor('297.50', 'ISK'));
+        $this->assertSame(29700, StripeMinorUnits::toMinor('297.00', 'ISK'));
     }
 }

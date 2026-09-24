@@ -1099,7 +1099,11 @@ assumed.
 ## 17. Sequencing after this contract
 
 1. **Lane A** — this phase, on `agent/final-payments-a-platform-subscriptions`.
+   Merged as PR #366 (`main` at `236462bf`).
 2. **Lane C** — Agency SaaS plans, only after lane A is reviewed and merged.
+   Its own implementation contract is
+   [`21-LANE-C-AGENCY-SAAS.md`](21-LANE-C-AGENCY-SAAS.md), which extends this
+   one; §§0–17 here remain in force unchanged.
 3. **Four-lane conformance** + real test/live acceptance.
 4. **Freeze.**
 
