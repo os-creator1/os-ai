@@ -437,6 +437,25 @@ authority — never Staff, never the Agency, never View As for the money actions
 
 ---
 
+## C8.1 Deployment prerequisites
+
+Three, and none of them is optional:
+
+1. **`STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET`** must be set, and a Stripe
+   **Connect** webhook endpoint must point at
+   `POST /stripe/webhook/agency-subscriptions` with lane C's closed event set.
+   Without it lane C accepts no provider truth at all.
+2. **The Platform Owner's canonical catalog must have Core and Growth priced.**
+   `EntitlementManager::assignFirstPlan()` asserts base pricing before it will
+   assign a non-complimentary plan, and lane C deliberately does **not** bypass
+   that: the catalog row carries the capacity and slot rules the assignment
+   depends on, so an unpriced tier is an unconfigured tier whoever is paying. A
+   deployment that has not priced them cannot enroll agency clients onto them,
+   and says so rather than assigning something half-configured.
+3. **Each Agency must connect its own Stripe account** and finish Stripe's
+   hosted onboarding before it can publish a plan. Nothing in lane C falls back
+   to the platform account, ever.
+
 ## C9. Exit condition for lane C
 
 Lane C is complete only when an Agency can connect Stripe, publish a plan,
