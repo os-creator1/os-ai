@@ -80,6 +80,28 @@
     Route::post('stripe/webhook/platform-subscriptions', 'Public\PlatformSubscriptionWebhookController@handle')
         ->middleware('throttle:600,1')->name('public.platform-subscriptions.webhook');
 
+    /*
+    |--------------------------------------------------------------------------
+    | Lane C §C4.1 — money lane C's OWN webhook endpoint and signing secret.
+    |
+    | The fourth of four. A client's subscription to an AGENCY is a different
+    | economic relationship from the Agency's own subscription to us (lane A
+    | above), from a Business's customer revenue (lane B) and from usage funding
+    | (lane D). Four lanes, four endpoints, four secrets, so an event for one
+    | can never be verified by, or resolved against, another.
+    |
+    | These are CONNECT events: one endpoint receives them for every Agency's
+    | connected account and each carries its own `account`, which the job proves
+    | belongs to a known Agency connection AND matches the subscription the
+    | event claims to be about.
+    |
+    | CSRF-exempt (VerifyCsrfToken::$except) because Stripe signs the raw body
+    | instead; that signature is verified before a single row is inserted.
+    |--------------------------------------------------------------------------
+    */
+    Route::post('stripe/webhook/agency-subscriptions', 'Public\AgencySubscriptionWebhookController@handle')
+        ->middleware('throttle:600,1')->name('public.agency-subscriptions.webhook');
+
     /**
      * All public routes listed here. No middleware will not affect these routes
      */

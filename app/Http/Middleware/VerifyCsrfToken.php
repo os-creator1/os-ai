@@ -39,6 +39,11 @@
             // the raw body, and that signature is verified before a single row
             // is inserted.
             'stripe/webhook/platform-subscriptions',
+            // Lane C §C4.1 — money lane C's own Agency SaaS subscription
+            // webhook. Exempt for the same reason as the three above: Stripe
+            // signs the raw body, and that signature is verified before a
+            // single row is inserted.
+            'stripe/webhook/agency-subscriptions',
         ];
 
     }
