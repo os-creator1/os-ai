@@ -170,6 +170,105 @@ class PlatformOwnerControlsTest extends TestCase
     }
 
     // =================================================================
+    // Disabling a trial clears its duration, rather than leaving it stale
+    // =================================================================
+
+    public function test_enabling_a_trial_stores_its_configured_length(): void
+    {
+        $this->signInAsPlatformOwner();
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
+
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => '14']));
+
+        $catalog = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+        $this->assertTrue((bool) $catalog->trial_enabled);
+        $this->assertSame(14, (int) $catalog->trial_days);
+    }
+
+    public function test_disabling_a_trial_through_the_owner_surface_clears_its_duration(): void
+    {
+        $this->signInAsPlatformOwner();
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
+
+        // A trial was configured once, exactly like a real operator would.
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => '14']));
+        $this->assertSame(14, (int) WorkspacePlanCatalog::query()->where('tier', 'growth')->value('trial_days'));
+
+        // Then turned off through the same supported action.
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => null, 'trial_days' => null, 'reason' => 'Trial promotion ended.']))
+            ->assertRedirect();
+
+        $catalog = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+        $this->assertFalse((bool) $catalog->trial_enabled);
+        $this->assertNull($catalog->trial_days,
+            'A disabled trial must not leave a stale duration behind — the owner surface is the only supported way to reach this state, and it must be able to say "no trial configured", not just "not offered right now".');
+    }
+
+    public function test_re_enabling_a_trial_after_disabling_it_still_requires_a_length(): void
+    {
+        $this->signInAsPlatformOwner();
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
+
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => '14']));
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => null, 'trial_days' => null, 'reason' => 'Trial promotion ended.']));
+
+        // trial_days is now NULL. Re-enabling without a fresh length must
+        // still be refused — nulling on disable must not weaken the
+        // existing "a trial needs a length" rule on the way back on.
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => null, 'reason' => 'Re-launching the trial.']))
+            ->assertSessionHasErrors('trial_days');
+
+        $catalog = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+        $this->assertFalse((bool) $catalog->trial_enabled, 'The refused request must not have changed anything.');
+        $this->assertNull($catalog->trial_days);
+
+        // A genuine new length re-enables it correctly.
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => '21', 'reason' => 'Re-launching the trial.']))
+            ->assertRedirect();
+
+        $catalog->refresh();
+        $this->assertTrue((bool) $catalog->trial_enabled);
+        $this->assertSame(21, (int) $catalog->trial_days);
+    }
+
+    public function test_disabling_a_trial_changes_nothing_else_beyond_what_was_submitted(): void
+    {
+        $this->signInAsPlatformOwner();
+        $this->stripe->definePrice('price_1AbCdEfGhIjKlMnO', [
+            'currency' => 'USD', 'unit_amount' => 29700, 'interval' => 'month', 'interval_count' => 1,
+        ]);
+        $this->post(route('admin.platform-billing.update', ['growth']),
+            $this->config(['trial_enabled' => '1', 'trial_days' => '14']));
+        $before = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+
+        $this->post(route('admin.platform-billing.update', ['growth']), $this->config([
+            'trial_enabled' => null,
+            'trial_days' => null,
+            'reason' => 'Trial promotion ended.',
+        ]));
+
+        $after = WorkspacePlanCatalog::query()->where('tier', 'growth')->firstOrFail();
+        $this->assertSame((string) $before->price, (string) $after->price);
+        $this->assertSame($before->currency_id, $after->currency_id);
+        $this->assertSame((string) $before->billing_cycle, (string) $after->billing_cycle);
+        $this->assertSame((string) $before->provider_price_id, (string) $after->provider_price_id);
+        $this->assertSame((bool) $before->available_for_signup, (bool) $after->available_for_signup);
+    }
+
+    // =================================================================
     // §5.1 — secrets are never rendered
     // =================================================================
 

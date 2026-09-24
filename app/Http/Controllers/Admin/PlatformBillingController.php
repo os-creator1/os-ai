@@ -153,7 +153,14 @@ class PlatformBillingController extends Controller
         $catalog->refresh()->forceFill([
             'billing_cycle' => $data['billing_cycle'],
             'trial_enabled' => $trialEnabled,
-            'trial_days' => $trialEnabled ? (int) $data['trial_days'] : $catalog->trial_days,
+            // A disabled trial carries no duration. Keeping the prior number
+            // around once the trial is off left the owner surface unable to
+            // express "no trial configured" again after one had ever been
+            // set — the stale value was dead data (every trial read site
+            // checks `trial_enabled` first), but "dead" is not the same as
+            // "correctly nulled", and an operator or an acceptance run
+            // reading the column directly deserves the truth.
+            'trial_days' => $trialEnabled ? (int) $data['trial_days'] : null,
             'available_for_signup' => (bool) ($data['available_for_signup'] ?? false),
             'provider_price_id' => $data['provider_price_id'] ?? null,
         ])->save();
