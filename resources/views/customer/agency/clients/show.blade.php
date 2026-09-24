@@ -76,6 +76,65 @@
                         @endif
                     </p>
                 </x-card>
+
+                {{--
+                    Lane C §C6/§C8 — this client's SaaS subscription with THIS
+                    agency.
+
+                    Offering a plan proposes a charge; it never makes one. The
+                    client reviews the terms on their own billing page and
+                    authorises the payment themselves, because financial consent
+                    belongs to whoever is being charged.
+                --}}
+                <x-card title="SaaS subscription">
+                    @if ($agencySubscription === null)
+                        <p class="mb-0" data-role="agency-saas-client-state">No plan offered yet.</p>
+                    @else
+                        <dl class="row mb-0" data-role="agency-saas-client-facts">
+                            <dt class="col-sm-5">Status</dt>
+                            <dd class="col-sm-7" data-role="agency-saas-client-state">{{ $agencySubscription->status->value }}</dd>
+
+                            @if ($agencySubscription->price_snapshot !== null)
+                                <dt class="col-sm-5">They pay</dt>
+                                <dd class="col-sm-7" data-role="agency-saas-client-price">
+                                    {{ $agencySubscription->price_snapshot }} {{ $agencySubscription->currency_code }}
+                                    / {{ $agencySubscription->billing_cycle_snapshot }}
+                                </dd>
+                            @endif
+                        </dl>
+                    @endif
+
+                    @if ($isAgencyOwner && count($sellablePlans) > 0 && ($agencySubscription === null || $agencySubscription->isOffer()))
+                        <form method="POST"
+                              action="{{ route('customer.workspaces.agency.saas.clients.offer', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                              data-role="agency-saas-offer-form">
+                            @csrf
+                            <label>Plan
+                                <select name="plan_uid" required>
+                                    @foreach ($sellablePlans as $plan)
+                                        <option value="{{ $plan->uid }}">
+                                            {{ $plan->name }} — {{ $plan->price }} {{ $plan->currency_code }} / {{ $plan->billing_cycle }}
+                                        </option>
+                                    @endforeach
+                                </select>
+                            </label>
+                            <label>
+                                <input type="checkbox" name="confirm" value="1" required>
+                                I understand this offers the plan; my client authorises the payment themselves.
+                            </label>
+                            <button type="submit">Offer this plan</button>
+                        </form>
+                    @endif
+
+                    @if ($isAgencyOwner && $agencySubscription !== null && $agencySubscription->isOffer())
+                        <form method="POST"
+                              action="{{ route('customer.workspaces.agency.saas.clients.offer.withdraw', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                              data-role="agency-saas-withdraw-form">
+                            @csrf
+                            <button type="submit">Withdraw offer</button>
+                        </form>
+                    @endif
+                </x-card>
             </div>
         </div>
     </section>

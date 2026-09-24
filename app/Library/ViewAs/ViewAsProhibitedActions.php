@@ -67,6 +67,15 @@ final class ViewAsProhibitedActions
 
     /** Route-name prefixes (everything under them). */
     public const PREFIXES = [
+        // Lane C §C6 — a View As actor may never fabricate a client's
+        // financial consent, nor configure the agency's own revenue. The
+        // domain refuses both outright; naming them here means the request
+        // does not even reach it, and the refusal is visible to an operator
+        // reading this list. The CLIENT's read-only agency-plan page is
+        // allowed below, because seeing what an account is billed is ordinary
+        // support work.
+        'customer.workspaces.agency-plan.',
+        'customer.workspaces.agency.saas.',
         'customer.workspaces.members.',
         'customer.workspaces.additional-business-slots.',
         'customer.workspaces.businesses.locations.allocations.',
@@ -89,6 +98,14 @@ final class ViewAsProhibitedActions
 
     /** GET-only read exceptions inside the prefixes above. */
     public const ALLOWED_READS = [
+        // Lane C — reading what an account is billed by its agency is ordinary
+        // support work. Every action on that page that moves money is a POST,
+        // or the GET that returns from hosted Checkout, and none of those is
+        // listed here.
+        'customer.workspaces.agency-plan.show',
+        'customer.workspaces.agency.saas.stripe',
+        'customer.workspaces.agency.saas.plans',
+        'customer.workspaces.agency.saas.revenue',
         'customer.workspaces.businesses.usage-billing.show',
         'customer.subscriptions.index',
         'customer.numbers.index',
