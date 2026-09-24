@@ -289,7 +289,12 @@ against real Stripe test mode, in a browser, by a human.
 | 2.6.4 | Let a second failure arrive. | The grace window does **not** slide. | |
 | 2.6.5 | Click **Update your payment method** as the client. | Opens the **agency's** hosted Billing Portal, on the agency's account. No card is typed into our application. | |
 | 2.6.6 | Instead of recovering, advance past the grace window and let `workspaces:advance-account-lifecycle` run. | Locked. Data intact. | |
-| 2.6.7 | Pay the open invoice from the agency's Dashboard. | Access restored immediately, on the same tier, with nothing deleted. | |
+| 2.6.7 | While still **Locked**, as the client owner: open the agency plan page, then click **Update your payment method**. | Both open. Neither bounces back to the locked screen — the recovery the locked screen promises is actually reachable, and the portal is the **agency's**. | |
+| 2.6.7a | Still locked, try an ordinary operational page (Team, Settings, the Workspace overview) and the billing **mutations** (change plan / cancel / resume). | All still redirect to the locked screen. Only the recovery set is open. | |
+| 2.6.7b | Still locked, sign in as a **Staff** member of that client, then as an unrelated user, then as the **agency owner**, and open the payment-method route. | 404 for all three. Being reachable is not being authorized. | |
+| 2.6.7c | Pay the open invoice from the agency's Dashboard. | Access restored immediately, on the same tier, with nothing deleted. | |
+| 2.6.8 | Lock the **agency's own** account and open the client's agency plan page. | Reads **Unavailable** and points at the agency's account status. It does **not** say the client's payment failed, and offers no CTA implying the client can fix it. | |
+| 2.6.9 | With the agency still locked, have the client pay again. | The client stays locked with an agency-caused reason, and their own lifecycle timestamps are unchanged. A client cannot buy their way out of their agency's delinquency. | |
 
 ### 2.7 Plan change, cancellation, coming back
 
@@ -302,6 +307,18 @@ against real Stripe test mode, in a browser, by a human.
 | 2.7.5 | Advance past it. | `customer.subscription.deleted` delivered; the client is locked; data intact. | |
 | 2.7.6 | As the client, use **Start again** to re-subscribe. | A new subscription on the agency's account; the same Workspace, Business and Locations; access restored. | |
 | 2.7.7 | Replay the OLD subscription's `deleted` event from the Dashboard. | 200, and the new subscription is untouched. | |
+| 2.7.8 | Take another client to **ended/locked**, then have the agency offer them a **fresh** plan, and pay it as the client. | The offer is payable while still locked, the payment confirms, and the client is activated on the new plan. (Before this correction the stale provider subscription id made the new purchase unconfirmable — the client paid and was never activated.) | |
+
+### 2.7a A disconnected account still owns the subscriptions it created
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.7a.1 | With a client actively subscribed, **disconnect** the agency's Stripe account in the product. | The connection reads Disconnected. **Stripe Dashboard:** the client's subscription is still live — we do not cancel an agency's billing relationships on its behalf. | |
+| 2.7a.2 | Let that still-live subscription fail a renewal (failing card + test clock), or cancel it from the agency's Dashboard. | The event is **processed**, not rejected: the client's own lifecycle keeps updating. Before this correction it failed as "unknown account" and the client's lifecycle silently stopped. | |
+| 2.7a.3 | Check the connection again. | Still Disconnected, still not chargeable. Resolving ownership answers a question; it does not change an answer. | |
+| 2.7a.4 | Try to offer a plan, bind a price or publish for that agency. | All refused. A disconnected account can never sell again. | |
+| 2.7a.5 | Replay an event naming a **different** agency's account, and one naming an account nobody ever connected. | Both refused and recorded failed. | |
+| 2.7a.6 | In the Stripe Dashboard, **revoke** the platform's access to that connected account, then deliver another event for it. | The event is visibly **Failed** with a safe reason code. No renewal, cancellation or Active state is taken from the payload, and the client's subscription is unchanged. | |
 
 ### 2.8 Account and lane isolation
 

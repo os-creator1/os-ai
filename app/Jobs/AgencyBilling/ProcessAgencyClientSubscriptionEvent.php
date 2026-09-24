@@ -3,6 +3,7 @@
 namespace App\Jobs\AgencyBilling;
 
 use App\Enums\AgencyBilling\AgencySubscriptionEventState;
+use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Jobs\Base;
 use App\Library\AgencyBilling\AgencyClientSubscriptionFinalizer;
 use App\Library\AgencyBilling\AgencyClientSubscriptionManager;
@@ -80,7 +81,21 @@ class ProcessAgencyClientSubscriptionEvent extends Base implements ShouldQueue
         try {
             [$state, $reason, $subscriptionId] = $this->process($event, $manager, $connections);
         } catch (Throwable $e) {
-            $this->finish(AgencySubscriptionEventState::Failed, class_basename($e), null);
+            // A lane-C refusal already IS a safe reason code, and it is far
+            // more useful to an operator than the exception's class name. The
+            // case that matters: an agency that disconnected AND revoked our
+            // access at Stripe, so provider truth can no longer be retrieved.
+            // That event stays visibly Failed with `provider_failed` — never
+            // completed from the unverified payload, and never fabricated into
+            // a renewal, a cancellation or an Active state.
+            //
+            // Failed is also RECOVERABLE: the claim's own WHERE admits a failed
+            // row, so the same event can be re-driven once access is restored.
+            $this->finish(
+                AgencySubscriptionEventState::Failed,
+                $e instanceof AgencyBillingException ? $e->reason : class_basename($e),
+                null,
+            );
 
             throw $e;
         }
@@ -113,10 +128,20 @@ class ProcessAgencyClientSubscriptionEvent extends Base implements ShouldQueue
             return [AgencySubscriptionEventState::Failed, 'no_connected_account', null];
         }
 
-        $connection = $connections->findByConnectedAccountId($connectedAccountId);
+        // OWNERSHIP, NOT AUTHORITY TO SELL. A disconnected connection still
+        // owns the subscriptions it created: `disconnect()` deliberately does
+        // not cancel an agency's existing billing relationships, so those keep
+        // renewing, failing and cancelling at the provider and every one of
+        // those events names the retired account. Resolving through the CURRENT
+        // list alone failed them as "unknown account" and each affected
+        // client's independent lifecycle quietly stopped updating.
+        //
+        // This grants nothing: it answers whose the event is, and the checks
+        // below still have to prove the rest.
+        $connection = $connections->findOwningConnectionForEvent($connectedAccountId);
 
         if ($connection === null) {
-            // Not an account any Agency here currently has connected.
+            // Not an account any Agency here has ever connected.
             return [AgencySubscriptionEventState::Failed, 'unknown_connected_account', null];
         }
 

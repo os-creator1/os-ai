@@ -291,6 +291,38 @@ arriving here cannot resolve at all.
   the affected subscriptions to the Agency, and leaves each client's own
   lifecycle untouched until real provider truth arrives.
 
+#### C5.1.1 "May it sell?" and "whose event is this?" are different questions
+
+Because disconnecting leaves existing subscriptions running, they keep renewing,
+failing and cancelling at the provider — and every one of those events names the
+account that has since been disconnected. Resolving event identity through the
+*current* connection list alone failed them as "unknown account", and each
+affected client's independent lifecycle silently stopped updating: a client
+could be charged, or cancelled, and the product would never learn of it.
+
+So the two questions are answered by two methods:
+
+| Question | Method | Scope |
+|---|---|---|
+| May this connection take a **new** charge? | `chargeableConnection()` | Current statuses only, plus `charges_enabled` re-read from the provider. A disconnected account can never sell again. |
+| **Whose** event is this? | `findOwningConnectionForEvent()` | Any connection the Agency has ever held for that account id, **including disconnected**, newest first. |
+
+The historical lookup answers ownership and stops. It does not reconnect,
+re-enable or resurrect anything, it never makes a connection chargeable, and no
+selling path consults it. The webhook still independently proves that the
+event's account matches the stored subscription's account, that the subscription
+belongs to the Agency owning that connection, that the provider identities line
+up, that the event type is in lane C's closed set, and that the subscription is
+not a retired one — so an arbitrary Stripe account named in an event still
+resolves to nothing.
+
+**If access has actually been revoked at Stripe**, provider truth cannot be
+retrieved and the event stays visibly **Failed** with the safe reason code
+`provider_failed`. Nothing is taken from the unverified payload: no renewal, no
+cancellation, no Active state. `Failed` is also recoverable — the claim's own
+`WHERE` admits a failed row — so the same event can be re-driven once access is
+restored.
+
 ### C5.2 Price parity
 
 Before a plan may be published, its `provider_price_id` is retrieved **from that
@@ -436,6 +468,67 @@ authority — never Staff, never the Agency, never View As for the money actions
 - Re-subscribe after termination
 
 ---
+
+### C8.2 A locked client must be able to pay their way out
+
+A Client Workspace reaches **Locked** exactly as any other does: the renewal
+failed, grace elapsed, or the subscription ended. That the money is owed to
+their *agency* rather than to us changes who is paid and nothing about the
+customer's right to reach the one action that ends the lock.
+
+`CustomerAccountAccessGate`'s exact-name allowlist therefore carries five
+lane-C names alongside lane A's five:
+
+| Route | Why |
+|---|---|
+| `customer.workspaces.agency-plan.show` | what they owe, and to whom |
+| `customer.workspaces.agency-plan.payment-method` | the agency-hosted Billing Portal — the action that ends the lock |
+| `customer.workspaces.agency-plan.checkout` | pay a **fresh offer** (see below) |
+| `customer.workspaces.agency-plan.resubscribe` | buy again after it ended |
+| `customer.workspaces.agency-plan.return` | confirm either of the two above |
+
+**`.return` must stay reachable while still Locked.** The browser comes back
+from hosted Checkout *before* provider confirmation has converged, so at that
+instant the account is still locked. A gate that bounced it would strand a
+customer who has just paid.
+
+**`.checkout` is here for a real case, not for symmetry.** A client who was
+locked, and whose agency then offers them a FRESH plan, holds an `offered`
+subscription — so `.resubscribe`, which requires a terminal one, correctly
+refuses them. Paying that offer is their only way out. It is allowlisted only
+because the proofs the gate cannot make are already made elsewhere:
+`AgencyPlanController`'s owner-or-active-Admin rule, and the domain's checks
+that the offer exists, that the managing relationship is active, that the plan
+is sellable, that the agency's account can actually take money, and that the
+actor is not inside a View As session.
+
+**Deliberately NOT allowlisted:** `.change`, `.cancel`, `.resume`. Those are
+ordinary billing mutations, not recovery, and a locked account has no business
+making them.
+
+Allowlisting grants no authority and no operational access: Staff, strangers
+and the managing agency are all still refused by the controller and the domain,
+and every other route on a locked Workspace stays gated.
+
+**A re-offer retires the ended subscription.** One row per client means a
+customer being offered a fresh plan reuses the row that still named the
+provider subscription of the life that ended. Leaving it there made the new
+purchase unconfirmable — the finalizer's cross-check compared the stored id
+against the newly created one, saw a mismatch, and correctly refused, so the
+client would pay and never be activated. `offer()` now moves that id to
+`retired_provider_subscription_ids`, which both keeps the audit trail and keeps
+the guard honest: a late event from the old subscription is still refused,
+now because it is retired rather than because it happens to be current.
+
+### C8.3 An agency's own lapse is never the client's payment failure
+
+When the managing agency's own account is locked, the client's page reads
+**Unavailable**, explains that it is the agency's account status, and shows no
+"we could not take your payment" alert and no CTA implying the client can fix
+it — because they cannot. Paying the agency again does not lift an
+agency-caused lock, and the client's own `locked_at`/`grace_started_at` are
+never written by it. Contract 05's composition, unchanged, is what produces
+this; lane C only translates it.
 
 ## C8.1 Deployment prerequisites
 

@@ -159,9 +159,34 @@ final class AgencyClientSubscriptionManager
                 $row->local_idempotency_key = AgencyClientSubscription::idempotencyKeyFor((string) $row->uid);
             }
 
+            // RE-OFFERING TO A CLIENT WHOSE PREVIOUS SUBSCRIPTION ENDED MUST
+            // RETIRE IT FIRST.
+            //
+            // One row per client means a customer who cancelled and is being
+            // offered a fresh plan reuses it — and the row still names the
+            // provider subscription of the life that ended. Leaving it there
+            // made the new purchase unconfirmable: the finalizer's cross-check
+            // compares the stored subscription id against the one the provider
+            // just created, sees a mismatch, and correctly refuses. The client
+            // would pay and never be activated.
+            //
+            // Retiring it keeps the audit trail AND keeps the guard honest: a
+            // late event from the old subscription is still refused, now
+            // because it is on the retired list rather than because it happens
+            // to be the current id.
+            $retired = $row->retiredProviderSubscriptionIds();
+
+            if ($existing !== null
+                && $existing->status->isTerminal()
+                && $existing->provider_subscription_id !== null) {
+                $retired[] = (string) $existing->provider_subscription_id;
+            }
+
             // A re-offer replaces the TERMS of an unpaid proposal. It never
             // touches a live subscription — that case threw above.
             $row->forceFill([
+                'retired_provider_subscription_ids' => array_values(array_unique($retired)),
+                'provider_subscription_id' => null,
                 'agency_workspace_id' => $agencyWorkspace->id,
                 'agency_saas_plan_id' => $plan->id,
                 'agency_stripe_connection_id' => $connection->id,

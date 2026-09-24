@@ -256,9 +256,12 @@ final class AgencyStripeConnectManager
     }
 
     /**
-     * Resolve the Agency connection that owns one connected account id. Used by
-     * webhook intake (§C4.1) to prove an inbound Connect event belongs to an
-     * Agency we know about, before anything is resolved or applied.
+     * The Agency's CURRENT connection for one account id — the one authorized
+     * to take new charges, subject to its own readiness.
+     *
+     * Deliberately NOT what webhook resolution uses: see
+     * `findOwningConnectionForEvent()` for why those are two different
+     * questions.
      */
     public function findByConnectedAccountId(string $connectedAccountId): ?AgencyStripeConnection
     {
@@ -269,6 +272,55 @@ final class AgencyStripeConnectManager
         return AgencyStripeConnection::query()
             ->where('stripe_account_id', $connectedAccountId)
             ->whereIn('status', self::currentStatuses())
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    /**
+     * §C4.1 — WHICH AGENCY DOES THIS EVENT BELONG TO? Including connections
+     * that have since been disconnected.
+     *
+     * TWO DIFFERENT QUESTIONS, AND CONFLATING THEM BROKE A REAL CUSTOMER.
+     *
+     *   A. "May this connection take a NEW charge?" — `chargeableConnection()`,
+     *      strict, current statuses only, `charges_enabled` re-read from the
+     *      provider. A disconnected account must never sell anything again.
+     *
+     *   B. "Whose is this event?" — this method. `disconnect()` deliberately
+     *      does NOT cancel the agency's existing client subscriptions, because
+     *      ending somebody's billing relationships on their behalf is not ours
+     *      to do. Those subscriptions keep renewing, failing and cancelling at
+     *      the provider, and every one of those events names the account that
+     *      has since been disconnected. Resolving identity through the CURRENT
+     *      list meant those events failed as "unknown account" and each
+     *      affected client's independent lifecycle silently stopped updating —
+     *      a client could be charged, or cancelled, and the product would never
+     *      learn of it.
+     *
+     * THIS GRANTS NOTHING. It answers ownership and stops. It does not
+     * reconnect, re-enable or resurrect the connection, it does not make it
+     * chargeable, and it is not consulted by any path that sells. The job then
+     * proves, independently, that the event's account matches the stored
+     * subscription's account, that the subscription belongs to THIS agency,
+     * that the provider identities line up, and that the subscription is not a
+     * retired one — so an arbitrary Stripe account named in an event still
+     * resolves to nothing.
+     *
+     * A disconnected account that the agency has also revoked at Stripe will
+     * fail later, when provider truth cannot be retrieved, and fails CLOSED
+     * with a reason code rather than being taken from the payload.
+     */
+    public function findOwningConnectionForEvent(string $connectedAccountId): ?AgencyStripeConnection
+    {
+        if (trim($connectedAccountId) === '') {
+            return null;
+        }
+
+        return AgencyStripeConnection::query()
+            ->where('stripe_account_id', $connectedAccountId)
+            // Newest first: if an agency ever reconnected the same account, the
+            // current row wins, and a historical one still answers when it is
+            // all there is.
             ->orderByDesc('id')
             ->first();
     }
