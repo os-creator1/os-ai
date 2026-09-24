@@ -215,7 +215,135 @@ database edit is required at any point.
 
 ## 2. Lane C — Agency SaaS revenue
 
-_To be appended when lane C is built._
+**What is being proved:** a client pays **the Agency**, on the **Agency's own
+connected Stripe account**, and that payment drives the **client's own**
+Workspace plan and lifecycle. If at the end of this section the money is in the
+platform's balance instead of the Agency's, lane C has failed however green the
+test suite is.
+
+**The rules in §0 apply unchanged.** Stripe TEST MODE only. No real charge. A
+passing fake-gateway suite is **not** acceptance — every row below is executed
+against real Stripe test mode, in a browser, by a human.
+
+### 2.1 Prerequisites
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.1.1 | Confirm the deployment has `STRIPE_SECRET` (`sk_test_…`) set and lane C's own signing secret `STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET` configured. | Both set, neither displayed anywhere in the app. | |
+| 2.1.2 | Add a **Connect** webhook endpoint in the Stripe Dashboard pointing at `POST /stripe/webhook/agency-subscriptions`, subscribed to `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`. | Created. Its signing secret is the one in 2.1.1, and it is **not** the lane A, B or D secret. | |
+| 2.1.3 | Confirm the Platform Owner's own catalog has **Core and Growth priced** (Platform Owner → plan catalog). | Priced. This is a real prerequisite: an agency cannot enroll a client onto an unpriced canonical tier, and the product says so rather than assigning something half-configured. | |
+| 2.1.4 | Sign in as an **Agency-tier** Workspace owner with at least one actively managed Client Workspace. | Clients list shows the client. | |
+
+### 2.2 Agency connects the account that receives its revenue
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.2.1 | Open **SaaS → Stripe account**. | Reads "Not connected", and explains the money is the agency's own. | |
+| 2.2.2 | Connect, choosing a country. | Redirected to **Stripe's own hosted onboarding**. No bank detail or identity document is typed into our application at any point. | |
+| 2.2.3 | Complete onboarding as the Stripe test flow allows, return, and refresh status. | Reads "Ready to take payments". The account id is shown **masked**; the full id appears nowhere on the page source. | |
+| 2.2.4 | **Stripe Dashboard:** confirm a connected account now exists under the platform. | It does, and its metadata names the agency workspace. | |
+| 2.2.5 | Sign in as an Agency **Admin** and then an Agency **Staff** member and open the same page. | Both can read it; neither sees connect, disconnect or refresh controls. Posting to those routes directly is refused. | |
+
+### 2.3 Agency publishes a resale plan
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.3.1 | Open **SaaS → Plans** and create a plan: a customer-facing name, a capability tier, a price, a currency, a cycle, and optionally a trial. | Created, and **not** published — it has no verified Stripe price yet. | |
+| 2.3.2 | Confirm the tier choices offered. | **Core and Growth only.** Agency is not offered: reselling it would let a client manage its own clients on somebody else's subscription. | |
+| 2.3.3 | Click **Create or connect price**, leaving the id blank. | A recurring Price is created **on the agency's own connected account** and verified against the typed terms. | |
+| 2.3.4 | **Stripe Dashboard → that connected account → Products.** | The Price exists there, with the exact amount, currency and interval, and does **not** exist on the platform account. | |
+| 2.3.5 | Paste a Price id belonging to the **platform** account (or another agency's) and try to connect it. | Refused: "could not be found on this agency's own Stripe account". Not a permission error — it is genuinely invisible to that account. | |
+| 2.3.6 | Publish the plan. | Published, and the parity check ran again at that moment. | |
+| 2.3.7 | Edit the published plan's price. | It **unpublishes** until a matching price is connected, the change is recorded in pricing history, and the price is re-verified before it can be sold again. | |
+
+### 2.4 Client enrollment — the consent boundary
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.4.1 | On a managed client, offer the published plan. | Recorded as **offered**. **Stripe Dashboard: nothing was created** — no customer, no session, no subscription. Nothing is owed. | |
+| 2.4.2 | As the **agency owner**, try to reach the client's own checkout route directly. | 404. The agency cannot consent on its client's behalf. | |
+| 2.4.3 | Start **View As** on that client and try the same. | Refused. A support session can never fabricate financial consent. | |
+| 2.4.4 | Sign in as the **client owner** and open their plan page. | It names **the agency** as the party charging them, and shows the exact price, currency, cycle and trial they are being asked to agree to. | |
+| 2.4.5 | Confirm and continue to payment. | Stripe **hosted Checkout** opens. Confirm in the URL/session that it is on the **agency's connected account**. | |
+| 2.4.6 | Pay with `4242 4242 4242 4242`. | Payment succeeds. | |
+| 2.4.7 | **Stripe Dashboard → the AGENCY's connected account.** | The customer, subscription and invoice are **there**. | |
+| 2.4.8 | **Stripe Dashboard → the PLATFORM account.** | **Nothing** from this transaction. No charge, no application fee, no transfer. This is the single most important row in this section. | |
+| 2.4.9 | Back in the product as the client. | Status Active (or Trial), the plan is theirs, and the account is usable. | |
+| 2.4.10 | Confirm the client's own Workspace, Business and Locations. | Unchanged — enrollment reused the account, it did not provision a second one. | |
+
+### 2.5 Webhook-only completion
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.5.1 | Repeat 2.4.4–2.4.6 for a second client, but **close the tab** instead of returning. | The webhook alone finishes it: the subscription activates and the client's plan is assigned without the browser ever coming back. | |
+| 2.5.2 | Replay that event from the Dashboard several times. | 200 each time. No duplicate assignment, no duplicate subscription, no second transition. | |
+| 2.5.3 | Send a body with a bad signature. | 400, and nothing is stored. | |
+
+### 2.6 Trial, renewal, failure, recovery
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.6.1 | Enroll a client on a plan **with a trial**, using a Stripe **test clock**. | Status Trial, and the client's canonical trial end equals Stripe's `trial_end` for that subscription. | |
+| 2.6.2 | Advance the clock past the trial and let the first invoice pay. | Renews to Active; the account stays usable throughout. | |
+| 2.6.3 | Switch the card to `4000 0000 0000 0341` and advance to the next renewal. | `invoice.payment_failed` delivered; **one** 3-day grace window opens; the account is **still usable** with a billing prompt naming the agency. | |
+| 2.6.4 | Let a second failure arrive. | The grace window does **not** slide. | |
+| 2.6.5 | Click **Update your payment method** as the client. | Opens the **agency's** hosted Billing Portal, on the agency's account. No card is typed into our application. | |
+| 2.6.6 | Instead of recovering, advance past the grace window and let `workspaces:advance-account-lifecycle` run. | Locked. Data intact. | |
+| 2.6.7 | While still **Locked**, as the client owner: open the agency plan page, then click **Update your payment method**. | Both open. Neither bounces back to the locked screen — the recovery the locked screen promises is actually reachable, and the portal is the **agency's**. | |
+| 2.6.7a | Still locked, try an ordinary operational page (Team, Settings, the Workspace overview) and the billing **mutations** (change plan / cancel / resume). | All still redirect to the locked screen. Only the recovery set is open. | |
+| 2.6.7b | Still locked, sign in as a **Staff** member of that client, then as an unrelated user, then as the **agency owner**, and open the payment-method route. | 404 for all three. Being reachable is not being authorized. | |
+| 2.6.7c | Pay the open invoice from the agency's Dashboard. | Access restored immediately, on the same tier, with nothing deleted. | |
+| 2.6.8 | Lock the **agency's own** account and open the client's agency plan page. | Reads **Unavailable** and points at the agency's account status. It does **not** say the client's payment failed, and offers no CTA implying the client can fix it. | |
+| 2.6.9 | With the agency still locked, have the client pay again. | The client stays locked with an agency-caused reason, and their own lifecycle timestamps are unchanged. A client cannot buy their way out of their agency's delinquency. | |
+
+### 2.7 Plan change, cancellation, coming back
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.7.1 | As the client, upgrade to a higher plan. | Immediate: the agency bills the difference now and the entitlement widens now. | |
+| 2.7.2 | As the client, downgrade. | Nothing changes today; the page shows the scheduled change and its date. | |
+| 2.7.3 | Have the **agency raise that plan's price**, then advance past the boundary and let `agency-subscriptions:apply-due-plan-changes` run. | The client is charged the amount **they agreed to when they requested the change**, not the new one. | |
+| 2.7.4 | Cancel as the client. | Access continues to the end of the paid period; the end date is shown. | |
+| 2.7.5 | Advance past it. | `customer.subscription.deleted` delivered; the client is locked; data intact. | |
+| 2.7.6 | As the client, use **Start again** to re-subscribe. | A new subscription on the agency's account; the same Workspace, Business and Locations; access restored. | |
+| 2.7.7 | Replay the OLD subscription's `deleted` event from the Dashboard. | 200, and the new subscription is untouched. | |
+| 2.7.8 | Take another client to **ended/locked**, then have the agency offer them a **fresh** plan, and pay it as the client. | The offer is payable while still locked, the payment confirms, and the client is activated on the new plan. (Before this correction the stale provider subscription id made the new purchase unconfirmable — the client paid and was never activated.) | |
+
+### 2.7a A disconnected account still owns the subscriptions it created
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.7a.1 | With a client actively subscribed, **disconnect** the agency's Stripe account in the product. | The connection reads Disconnected. **Stripe Dashboard:** the client's subscription is still live — we do not cancel an agency's billing relationships on its behalf. | |
+| 2.7a.2 | Let that still-live subscription fail a renewal (failing card + test clock), or cancel it from the agency's Dashboard. | The event is **processed**, not rejected: the client's own lifecycle keeps updating. Before this correction it failed as "unknown account" and the client's lifecycle silently stopped. | |
+| 2.7a.3 | Check the connection again. | Still Disconnected, still not chargeable. Resolving ownership answers a question; it does not change an answer. | |
+| 2.7a.4 | Try to offer a plan, bind a price or publish for that agency. | All refused. A disconnected account can never sell again. | |
+| 2.7a.5 | Replay an event naming a **different** agency's account, and one naming an account nobody ever connected. | Both refused and recorded failed. | |
+| 2.7a.6 | In the Stripe Dashboard, **revoke** the platform's access to that connected account, then deliver another event for it. | The event is visibly **Failed** with a safe reason code. No renewal, cancellation or Active state is taken from the payload, and the client's subscription is unchanged. | |
+
+### 2.8 Account and lane isolation
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 2.8.1 | With **two** agencies connected, replay one agency's subscription event but re-point it at the other agency's account. | Refused and recorded failed. One agency's account can never speak for another's client. | |
+| 2.8.2 | Confirm one client's non-payment while another client of the same agency is active. | Only the defaulting client is affected. The other client and the **agency's own** account are untouched. | |
+| 2.8.3 | Lock the **agency's own** lane-A account and check a managed client. | The client loses effective access with an agency-caused reason — and their own `locked_at`/`grace_started_at` are **unchanged**. Restore the agency; the client resumes on its own state. | |
+| 2.8.4 | Check `platform_subscriptions`, `platform_subscription_events`. | Untouched by anything in this section. | |
+| 2.8.5 | Check `business_documents`, `business_document_payments`, `business_stripe_connections`, `business_payment_events`. | Untouched. | |
+| 2.8.6 | Check `business_usage_wallets`, `business_usage_ledger_entries`, `payment_provider_events`. | Untouched. AgencyRebill is lane D and is not agency SaaS revenue. | |
+| 2.8.7 | Check the Platform Owner's revenue view. | Lane-A revenue only. The agency's resale revenue is **not** presented as ours. | |
+| 2.8.8 | Check the agency's own revenue page. | Labelled as the agency's own revenue, grouped by currency, never summed across currencies. | |
+
+### 2.9 Sign-off
+
+| Field | Value |
+|---|---|
+| Executed by | |
+| Date | |
+| Deployment / commit | |
+| Stripe account (test) | |
+| Agency connected account (test) | |
+| Result | pass / fail / blocked |
+| Blocked or failed steps | |
 
 ## 3. Lane B — Business revenue
 

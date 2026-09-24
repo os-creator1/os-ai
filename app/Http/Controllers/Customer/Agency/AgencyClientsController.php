@@ -93,6 +93,14 @@ class AgencyClientsController extends Controller
             'locationCount' => $business !== null ? $business->locations()->count() : 0,
             'primaryLocation' => $business?->primaryLocation,
             'accessDecision' => $this->accountAccessResolver->resolve($clientWorkspace),
+            // Lane C §C8 — this client's Agency SaaS subscription, and what the
+            // Agency may offer them. Read-only here: OFFERING is a POST to the
+            // Agency's own SaaS surface, and CHARGING belongs to the client.
+            'agencySubscription' => app(\App\Library\AgencyBilling\AgencyClientSubscriptionManager::class)
+                ->findForClientWorkspace($clientWorkspace),
+            'sellablePlans' => app(\App\Library\AgencyBilling\AgencySaasPlanManager::class)
+                ->sellablePlans($agencyWorkspace),
+            'isAgencyOwner' => (int) $agencyWorkspace->owner_user_id === (int) Auth::id(),
         ]);
     }
 

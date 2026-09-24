@@ -176,6 +176,18 @@
                 \App\Library\PlatformBilling\StripeApiPlatformGateway::class,
             );
 
+            // Lane C §C4 — the Agency SaaS boundary, and the FOURTH gateway.
+            // Lane B charges an end customer on a BUSINESS's connected
+            // account; this charges an Agency's CLIENT on the AGENCY's
+            // connected account. The same provider, a different economic
+            // relationship, and Addendum §12 keeps them apart. Every revenue
+            // call here carries `Stripe-Account`, and none carries a platform
+            // fee.
+            $this->app->bind(
+                \App\Library\AgencyBilling\AgencyStripeGateway::class,
+                \App\Library\AgencyBilling\StripeApiAgencyGateway::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,

@@ -6,7 +6,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformBilling\PlatformSubscriptionEventState;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
-use App\Library\PlatformBilling\CurrencyMinorUnits;
+use App\Library\Money\StripeMinorUnits;
 use App\Library\PlatformBilling\PlatformPriceVerifier;
 use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\Business;
@@ -391,26 +391,26 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_minor_units_follow_stripes_own_zero_decimal_rules(): void
     {
         // Two-decimal, the ordinary case.
-        $this->assertSame(29700, CurrencyMinorUnits::toMinor('297.00', 'USD'));
-        $this->assertSame(9900, CurrencyMinorUnits::toMinor('99', 'EUR'));
+        $this->assertSame(29700, StripeMinorUnits::toMinor('297.00', 'USD'));
+        $this->assertSame(9900, StripeMinorUnits::toMinor('99', 'EUR'));
 
         // Zero-decimal: "to charge 500 JPY, provide an amount value of 500".
-        $this->assertSame(500, CurrencyMinorUnits::toMinor('500', 'JPY'));
-        $this->assertSame(29700, CurrencyMinorUnits::toMinor('29700', 'KRW'));
-        $this->assertTrue(CurrencyMinorUnits::isZeroDecimal('VND'));
+        $this->assertSame(500, StripeMinorUnits::toMinor('500', 'JPY'));
+        $this->assertSame(29700, StripeMinorUnits::toMinor('29700', 'KRW'));
+        $this->assertTrue(StripeMinorUnits::isZeroDecimal('VND'));
 
         // The documented special cases are two-decimal for CHARGES.
-        $this->assertFalse(CurrencyMinorUnits::isZeroDecimal('UGX'));
-        $this->assertFalse(CurrencyMinorUnits::isZeroDecimal('ISK'));
-        $this->assertFalse(CurrencyMinorUnits::isZeroDecimal('HUF'));
+        $this->assertFalse(StripeMinorUnits::isZeroDecimal('UGX'));
+        $this->assertFalse(StripeMinorUnits::isZeroDecimal('ISK'));
+        $this->assertFalse(StripeMinorUnits::isZeroDecimal('HUF'));
 
         // More precision than the currency can carry is a mismatch, not a rounding.
-        $this->assertNull(CurrencyMinorUnits::toMinor('297.005', 'USD'));
-        $this->assertNull(CurrencyMinorUnits::toMinor('500.50', 'JPY'));
-        $this->assertNull(CurrencyMinorUnits::toMinor('not-a-number', 'USD'));
+        $this->assertNull(StripeMinorUnits::toMinor('297.005', 'USD'));
+        $this->assertNull(StripeMinorUnits::toMinor('500.50', 'JPY'));
+        $this->assertNull(StripeMinorUnits::toMinor('not-a-number', 'USD'));
 
         // Float arithmetic would give 296 here.
-        $this->assertSame(297, CurrencyMinorUnits::toMinor('2.97', 'USD'));
+        $this->assertSame(297, StripeMinorUnits::toMinor('2.97', 'USD'));
     }
 
     // =================================================================

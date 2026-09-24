@@ -161,6 +161,12 @@
             // overlapping tick applies nothing twice.
             $schedule->command('platform-subscriptions:apply-due-plan-changes')->hourly();
 
+            // Lane C §C7 — the same sweep for AGENCY SaaS client downgrades,
+            // on the agencies' own connected accounts. Deliberately a separate
+            // command from lane A's above: different money, different accounts,
+            // and one lane's sweep must never touch the other's rows.
+            $schedule->command('agency-subscriptions:apply-due-plan-changes')->hourly();
+
             // RFC-005 Milestone 3 (Correction Round 1, item 110) —
             // without these, both jobs are permanently unreachable
             // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,

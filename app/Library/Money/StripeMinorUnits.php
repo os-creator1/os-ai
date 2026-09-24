@@ -1,10 +1,22 @@
 <?php
 
-namespace App\Library\PlatformBilling;
+namespace App\Library\Money;
 
 /**
- * Implementation Contract 21 §11 — converting a decimal catalog price into the
- * SMALLEST CURRENCY UNIT Stripe charges in.
+ * Implementation Contract 21 §11 and Lane C §C3.6 — converting a decimal
+ * catalog price into the SMALLEST CURRENCY UNIT Stripe charges in.
+ *
+ * SHARED BY LANE A AND LANE C, DELIBERATELY, AND IT LIVES HERE RATHER THAN IN
+ * EITHER LANE. Two lanes holding two copies of Stripe's zero-decimal list and
+ * the ISK/UGX whole-unit rule would eventually disagree about what the provider
+ * is going to charge, and the first symptom would be a parity check passing
+ * that should have failed. This class carries NO commercial identity — no
+ * account, no customer, no record, no money — so sharing it breaks none of §2's
+ * lane isolation, which is about who is paying whom.
+ *
+ * It is deliberately NOT `App\Library\Money\CurrencyExponent`: that one answers
+ * a different question (ISO exponents, three-decimal currencies, minimum and
+ * maximum bounds) for lane D, and throws where this one must answer null.
  *
  * WHY THIS EXISTS. "Multiply by 100" is wrong for roughly a sixth of the
  * currencies Stripe supports, and getting it wrong here would let the catalog
@@ -31,7 +43,7 @@ namespace App\Library\PlatformBilling;
  * Stripe's current currency documentation defines no three-decimal charge
  * currencies, so there is deliberately no three-decimal branch to get wrong.
  */
-final class CurrencyMinorUnits
+final class StripeMinorUnits
 {
     /**
      * Stripe's zero-decimal charge currencies, MINUS UGX, which its own

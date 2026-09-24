@@ -3,6 +3,7 @@
 namespace App\Library\PlatformBilling;
 
 use App\Exceptions\PlatformBilling\PlatformBillingException;
+use App\Library\Money\StripeMinorUnits;
 
 /**
  * Implementation Contract 21 §11 — THE PARITY CHECK.
@@ -80,7 +81,7 @@ final class PlatformPriceVerifier
             );
         }
 
-        $expectedMinor = CurrencyMinorUnits::toMinor($amount, $currencyCode);
+        $expectedMinor = StripeMinorUnits::toMinor($amount, $currencyCode);
 
         if ($expectedMinor === null) {
             $reasons[] = 'That amount cannot be expressed exactly in this currency.';
@@ -143,7 +144,7 @@ final class PlatformPriceVerifier
             return 'no amount';
         }
 
-        $factor = CurrencyMinorUnits::factor($currencyCode);
+        $factor = StripeMinorUnits::factor($currencyCode);
         $major = $factor === 1 ? (string) $minor : number_format($minor / 100, 2, '.', '');
 
         return $major . ' ' . mb_strtoupper($currencyCode);

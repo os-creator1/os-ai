@@ -777,6 +777,80 @@
         Route::get('{workspaceUid}/clients/{clientWorkspaceUid}', 'Agency\AgencyClientsController@show')->name('clients.show');
         Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/view-as', 'Agency\AgencyClientsController@viewAs')->name('clients.view-as');
 
+        /*
+        |----------------------------------------------------------------------
+        | Lane C §C8 — the AGENCY's own SaaS surface: the Stripe account that
+        | receives its resale revenue, its resale plans, the offers it makes to
+        | managed clients, and what it is earning.
+        |
+        | Reading is agency-team work (Blueprint §28). Every WRITE here is the
+        | agency OWNER's alone, asserted inside the managers so no call site can
+        | skip it; the controller answers 404 first so an actor who may not act
+        | never learns the surface exists.
+        |
+        | NOTHING HERE CHARGES A CLIENT. The one action that does lives on the
+        | client's own surface below, because financial consent belongs to
+        | whoever is being charged (§C6).
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/agency/saas')->name('agency.saas.')->group(function () {
+            Route::get('stripe', 'Agency\AgencySaasController@stripe')->name('stripe');
+            Route::post('stripe/connect', 'Agency\AgencySaasController@connect')
+                ->middleware('throttle:30,1')->name('stripe.connect');
+            Route::post('stripe/resume', 'Agency\AgencySaasController@resumeOnboarding')
+                ->middleware('throttle:30,1')->name('stripe.resume');
+            Route::post('stripe/sync', 'Agency\AgencySaasController@syncConnection')
+                ->middleware('throttle:30,1')->name('stripe.sync');
+            Route::post('stripe/disconnect', 'Agency\AgencySaasController@disconnect')
+                ->middleware('throttle:30,1')->name('stripe.disconnect');
+
+            Route::get('plans', 'Agency\AgencySaasController@plans')->name('plans');
+            Route::post('plans', 'Agency\AgencySaasController@storePlan')
+                ->middleware('throttle:30,1')->name('plans.store');
+            Route::post('plans/{planUid}', 'Agency\AgencySaasController@updatePlan')
+                ->middleware('throttle:30,1')->name('plans.update');
+            Route::post('plans/{planUid}/price', 'Agency\AgencySaasController@bindPrice')
+                ->middleware('throttle:30,1')->name('plans.price');
+            Route::post('plans/{planUid}/publish', 'Agency\AgencySaasController@publishPlan')
+                ->middleware('throttle:30,1')->name('plans.publish');
+            Route::post('plans/{planUid}/unpublish', 'Agency\AgencySaasController@unpublishPlan')
+                ->middleware('throttle:30,1')->name('plans.unpublish');
+
+            Route::get('revenue', 'Agency\AgencySaasController@revenue')->name('revenue');
+
+            Route::post('clients/{clientWorkspaceUid}/offer', 'Agency\AgencySaasController@offer')
+                ->middleware('throttle:30,1')->name('clients.offer');
+            Route::post('clients/{clientWorkspaceUid}/offer/withdraw', 'Agency\AgencySaasController@withdrawOffer')
+                ->middleware('throttle:30,1')->name('clients.offer.withdraw');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Lane C §C6/§C8 — the CLIENT's own agency-billing surface.
+        |
+        | THE CONSENT BOUNDARY. `agency-plan.checkout` is the only route in lane
+        | C that can start a charge, and it belongs to the payer: owner or
+        | active Admin of THIS workspace, never the agency, never agency staff,
+        | never a platform administrator, and never through View As. The domain
+        | refuses all four; these routes answer 404 first.
+        |----------------------------------------------------------------------
+        */
+        Route::get('{workspaceUid}/agency-plan', 'Workspace\AgencyPlanController@show')->name('agency-plan.show');
+        Route::post('{workspaceUid}/agency-plan/checkout', 'Workspace\AgencyPlanController@checkout')
+            ->middleware('throttle:30,1')->name('agency-plan.checkout');
+        Route::get('{workspaceUid}/agency-plan/return', 'Workspace\AgencyPlanController@checkoutReturn')
+            ->middleware('throttle:30,1')->name('agency-plan.return');
+        Route::post('{workspaceUid}/agency-plan/change', 'Workspace\AgencyPlanController@changePlan')
+            ->middleware('throttle:30,1')->name('agency-plan.change');
+        Route::post('{workspaceUid}/agency-plan/cancel', 'Workspace\AgencyPlanController@cancel')
+            ->middleware('throttle:30,1')->name('agency-plan.cancel');
+        Route::post('{workspaceUid}/agency-plan/resume', 'Workspace\AgencyPlanController@resume')
+            ->middleware('throttle:30,1')->name('agency-plan.resume');
+        Route::get('{workspaceUid}/agency-plan/payment-method', 'Workspace\AgencyPlanController@paymentMethod')
+            ->middleware('throttle:30,1')->name('agency-plan.payment-method');
+        Route::post('{workspaceUid}/agency-plan/resubscribe', 'Workspace\AgencyPlanController@resubscribe')
+            ->middleware('throttle:30,1')->name('agency-plan.resubscribe');
+
         // RFC-003 Milestone 4 Slice 4E: Business reassignment between Workspaces.
         Route::post('{workspaceUid}/businesses/{businessUid}/reassign', 'Workspace\WorkspaceController@reassignBusiness')->name('businesses.reassign');
 

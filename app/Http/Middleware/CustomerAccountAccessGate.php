@@ -151,19 +151,31 @@ class CustomerAccountAccessGate
      *   - 'customer.workspaces.plan.resubscribe'            buy again
      *   - 'customer.workspaces.plan.resubscribe-return'     …and confirm it
      *
-     * Those five are the whole of it: the screen a locked customer lands on,
-     * the page it sends them to, and the two things that page can actually do
+     * And the SAME five, for a customer whose bill comes from their AGENCY
+     * rather than from us (Lane C §C8):
+     *
+     *   - 'customer.workspaces.agency-plan.show'            what they owe, to whom
+     *   - 'customer.workspaces.agency-plan.payment-method'  fix the card
+     *   - 'customer.workspaces.agency-plan.checkout'        pay a fresh offer
+     *   - 'customer.workspaces.agency-plan.resubscribe'     buy again
+     *   - 'customer.workspaces.agency-plan.return'          …and confirm either
+     *
+     * Those ten are the whole of it: the screen a locked customer lands on,
+     * the pages it sends them to, and the things those pages can actually do
      * about the lock. Every other route on a locked Workspace — settings,
      * team, operational work, and every other billing MUTATION (change plan,
-     * cancel, resume) — stays gated. The remaining names below are the
-     * unrelated STRUCTURAL exceptions documented in the class docblock
+     * cancel, resume, on either lane) — stays gated. The remaining names below
+     * are the unrelated STRUCTURAL exceptions documented in the class docblock
      * (sign-out, the 2FA challenge, ending a View-as session, and claiming a
      * client invitation for a Workspace that does not exist yet).
      *
      * Allowlisting grants no authority of its own. It only lets the request
      * reach the authorization boundary that already exists in
-     * PlanSubscriptionController — owner or active Admin with account-frame
-     * authority, 404 for Staff and for strangers.
+     * PlanSubscriptionController and AgencyPlanController — owner or active
+     * Admin with account-frame authority, 404 for Staff and for strangers —
+     * and, on the lane-C side, the domain's own further proofs: an active
+     * managing relationship, an offer that is genuinely eligible, a chargeable
+     * Agency connection, and a refusal for any View As actor.
      */
     private const ALLOWED_ROUTE_NAMES = [
         'customer.account-locked.show',
@@ -206,6 +218,42 @@ class CustomerAccountAccessGate
         // controller.
         'customer.workspaces.plan.resubscribe',
         'customer.workspaces.plan.resubscribe-return',
+        // Lane C §C8 — THE SAME RECOVERY, for a customer whose bill comes from
+        // their AGENCY rather than from us.
+        //
+        // A client Workspace reaches Locked exactly as any other does: their
+        // renewal failed, grace elapsed, or the subscription ended. The money
+        // that fixes it happens to be owed to their agency, on the agency's own
+        // Stripe account — which changes who is paid, and nothing at all about
+        // the customer's right to reach the one action that ends their lock.
+        // Without these names the lane-C billing page rendered a portal link
+        // and a "start again" form that both bounced straight back to the
+        // locked screen.
+        //
+        // `.checkout` is here for a specific, real case rather than for
+        // symmetry: a client who was locked, whose agency then offers them a
+        // FRESH plan, has an `offered` subscription and so cannot use
+        // `.resubscribe` (which requires a terminal one). Paying that offer is
+        // their way out, and it is gated by proofs the gate could never make
+        // itself — AgencyPlanController's owner-or-active-Admin rule, and the
+        // domain's checks that the offer exists, that the managing
+        // relationship is active, that the plan is sellable, that the agency's
+        // account can actually take money, and that the actor is not inside a
+        // View As session.
+        //
+        // `.return` must stay reachable for the same reason it exists: the
+        // browser comes back from hosted Checkout BEFORE provider confirmation
+        // has converged, so at that instant the account is still Locked. A gate
+        // that bounced it would strand a customer who has just paid.
+        //
+        // Deliberately NOT here: `.change`, `.cancel` and `.resume`. Those are
+        // ordinary billing mutations, not recovery, and a locked account has no
+        // business making them — exactly as on the lane-A side above.
+        'customer.workspaces.agency-plan.show',
+        'customer.workspaces.agency-plan.payment-method',
+        'customer.workspaces.agency-plan.checkout',
+        'customer.workspaces.agency-plan.resubscribe',
+        'customer.workspaces.agency-plan.return',
         // Registered outside the customer.* route group (routes/auth.php)
         // but still runs through this Kernel-level middleware like every
         // other web route — a locked customer must always be able to sign

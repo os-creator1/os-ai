@@ -67,6 +67,26 @@
                 'secret'    => env('STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_SECRET'),
                 'tolerance' => env('STRIPE_PLATFORM_SUBSCRIPTION_WEBHOOK_TOLERANCE', 300),
             ],
+            // Lane C §C4.1 — money lane C's OWN webhook endpoint and signing
+            // secret. Four lanes, four endpoints, four secrets: an Agency SaaS
+            // subscription event must never be verifiable by, or resolvable
+            // against, another lane.
+            //
+            // These are CONNECT events, so one platform-level endpoint receives
+            // them for every Agency's connected account and each event carries
+            // its own `account` field — a single secret, like lane B's, rather
+            // than one per Agency. The `account` is then proven to belong to a
+            // known Agency connection AND to match the subscription the event
+            // claims to be about (§C4.1), which is what stops Agency X's event
+            // from touching Agency Y.
+            //
+            // ENVIRONMENT configuration, always. It is never moved into an
+            // editable database column to make an admin screen convenient, and
+            // it is never rendered back to a browser.
+            'agency_subscription_webhook' => [
+                'secret'    => env('STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET'),
+                'tolerance' => env('STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_TOLERANCE', 300),
+            ],
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),
