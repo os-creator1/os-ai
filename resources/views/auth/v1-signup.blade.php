@@ -75,10 +75,21 @@
                 </select>
 
                 <label for="country_code">{{ __('Country') }}</label>
-                <input id="country_code" name="country_code" type="text" maxlength="2" value="{{ old('country_code', 'US') }}" required>
+                <select id="country_code" name="country_code" required>
+                    <option value="">{{ __('Choose a country') }}</option>
+                    @foreach ($countries as $code => $label)
+                        <option value="{{ $code }}" @selected(old('country_code', 'US') === $code)>{{ $label }}</option>
+                    @endforeach
+                </select>
 
                 <label for="timezone">{{ __('Time zone') }}</label>
-                <input id="timezone" name="timezone" type="text" value="{{ old('timezone', config('app.timezone')) }}" required>
+                <select id="timezone" name="timezone" required data-timezone-select
+                        data-old="{{ old('timezone') }}" data-default="{{ config('app.timezone') }}">
+                    <option value="">{{ __('Choose a timezone') }}</option>
+                    @foreach ($timezones as $identifier)
+                        <option value="{{ $identifier }}" @selected(old('timezone', config('app.timezone')) === $identifier)>{{ $identifier }}</option>
+                    @endforeach
+                </select>
             </fieldset>
 
             <fieldset>
@@ -121,5 +132,38 @@
 
     <p><a href="{{ route('login') }}">{{ __('Already have an account? Sign in') }}</a></p>
 </main>
+<script>
+    // §7 requirement 6 — prefer the browser's own timezone as the initial
+    // selection, but only on a first visit (no `old()` value, i.e. no prior
+    // validation failure to preserve) and only when the browser's timezone is
+    // one of the offered options. Never geolocates; Intl.DateTimeFormat
+    // reads the browser/OS timezone setting only. Any failure leaves the
+    // select on its server-rendered safe default.
+    (function () {
+        var select = document.querySelector('[data-timezone-select]');
+
+        if (! select || select.getAttribute('data-old')) {
+            return;
+        }
+
+        try {
+            var detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+            if (! detected) {
+                return;
+            }
+
+            var exists = Array.prototype.some.call(select.options, function (option) {
+                return option.value === detected;
+            });
+
+            if (exists) {
+                select.value = detected;
+            }
+        } catch (error) {
+            // No usable browser timezone: the server-rendered default stands.
+        }
+    })();
+</script>
 </body>
 </html>
