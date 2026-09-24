@@ -94,6 +94,10 @@ final class ViewAsProhibitedActions
         'user.callback.',
         'user.registers.',
         'customer.gbp.oauth.',
+        // Contract 21 §7 — the authenticated V1 signup re-entry and its hosted
+        // Checkout return buy a lane-A plan for the ACTOR's own account. A View
+        // As session never starts, resumes or confirms a platform purchase.
+        'signup.',
     ];
 
     /** GET-only read exceptions inside the prefixes above. */

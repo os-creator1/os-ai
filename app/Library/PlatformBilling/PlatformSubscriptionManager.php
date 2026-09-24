@@ -2,10 +2,12 @@
 
 namespace App\Library\PlatformBilling;
 
+use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Entitlement\EntitlementManager;
+use App\Models\AgencyClientSubscription;
 use App\Models\PlatformSubscription;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
@@ -182,6 +184,10 @@ final class PlatformSubscriptionManager
         $subscription = $this->findForWorkspace($workspace);
 
         if ($subscription === null || ! self::hasEnded($subscription)) {
+            throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
+        }
+
+        if (self::agencyIsBillingWorkspace($workspace)) {
             throw PlatformBillingException::because(PlatformBillingException::CHANGE_NOT_PERMITTED);
         }
 
@@ -858,6 +864,32 @@ final class PlatformSubscriptionManager
      * again" would be offering them a second checkout for the one they are
      * already in.
      */
+    /**
+     * §2 / Lane C §C6.1 — ONE paid authority per Workspace, in both directions.
+     *
+     * Lane C already refuses to enrol a client whose lane-A subscription is
+     * live. This is the mirror image: a Workspace whose previous platform
+     * subscription ended, and which its managing Agency now bills through lane
+     * C, must not "start again" on lane A as well — the customer would be
+     * charged twice and two lifecycles would drive one canonical assignment.
+     *
+     * A lane-C row is READ here, and only read, purely to refuse. Lane A
+     * creates, mutates and owns nothing of lane C's, and no App\Library\
+     * AgencyBilling code is referenced. An `offered` row (a proposal nobody has
+     * accepted) and an ended one compete with nothing.
+     */
+    public static function agencyIsBillingWorkspace(Workspace $workspace): bool
+    {
+        return AgencyClientSubscription::query()
+            ->where('client_workspace_id', $workspace->id)
+            ->whereNotIn('status', [
+                AgencyClientSubscriptionStatus::Offered->value,
+                AgencyClientSubscriptionStatus::Canceled->value,
+                AgencyClientSubscriptionStatus::IncompleteExpired->value,
+            ])
+            ->exists();
+    }
+
     public static function hasEnded(PlatformSubscription $subscription): bool
     {
         return in_array($subscription->status, [

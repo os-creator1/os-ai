@@ -13,13 +13,16 @@ evidence for anything in this file.
 
 | Lane | Section | Ready to execute |
 |---|---|---|
-| A — Platform SaaS subscription | §1 below — **every step is browser-operable today** | after the Lane-A branch merges |
-| C — Agency SaaS revenue | to be appended | not built yet |
-| B — Business revenue | to be appended | built (Contract 17), not yet live-tested |
-| D — Usage funding | to be appended | built (RFC-005), not yet live-tested |
+| A — Platform SaaS subscription | §1 | built and merged (PR #366); **not yet live-tested** |
+| C — Agency SaaS revenue | §2 | built and merged (PR #367); **not yet live-tested** |
+| B — Business revenue | §3 | built and merged (Contract 17); **not yet live-tested** |
+| D — Usage funding | §4 | built and merged (RFC-005, Contract 09); **not yet live-tested** |
+| Four-lane coexistence | §5 | automated fake-gateway conformance merged with the four-lane conformance branch; **not yet live-tested** |
 
-Sections for C, B and D are appended to **this same document** as those phases
-complete. Do not start a second checklist.
+Every section lives in **this same document**. Do not start a second
+checklist. Real Stripe test-mode execution of §§1–5 is a separate, later
+milestone: until a human records an Observed result against a row, that row is
+**not executed**, whatever the automated suites say.
 
 ---
 
@@ -347,13 +350,270 @@ against real Stripe test mode, in a browser, by a human.
 
 ## 3. Lane B — Business revenue
 
-_To be appended. Contract 17 is implemented but has not been live-tested._
+**What is being proved:** an end customer pays **a Business** for that
+Business's own proposal, contract or invoice, on the **Business's own connected
+Stripe account**, as a direct charge with **no** platform fee (Contract 17
+§11.2). If at the end of this section the money is in the platform's balance,
+lane B has failed however green the test suite is.
+
+**The rules in §0 apply unchanged.** Stripe TEST MODE only; test cards only;
+every row executed in a real browser against a real deployment by a human.
+
+Automated evidence that already exists (fake gateway — **not** acceptance):
+`tests/Feature/Payments/*` (onboarding, payment execution, webhook replay and
+races, refunds, stale-payment reconciliation) and
+`tests/Feature/PaymentsConformance/FourLaneCoexistenceTest.php`.
+
+### 3.1 Prerequisites
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.1.1 | Confirm `STRIPE_SECRET` is `sk_test_…` and lane B's own signing secret `STRIPE_CONNECT_WEBHOOK_SECRET` is configured. | Both set; neither displayed anywhere in the app. | |
+| 3.1.2 | In the Stripe Dashboard add a **Connect** webhook endpoint at `POST /stripe/webhook/business-payments`, subscribed to `payment_intent.succeeded`, `payment_intent.processing`, `payment_intent.payment_failed`, `payment_intent.requires_action`, `payment_intent.canceled`, `refund.created`, `refund.updated`, `refund.failed`, `charge.refund.updated`. | Created. Its signing secret is the one in 3.1.1 and is **not** the lane A, C or D secret. | |
+| 3.1.3 | Confirm `documents:reconcile-stale-payments` is scheduled (every five minutes) and the queue worker is running. | Both running. | |
+| 3.1.4 | Sign in as the owner of a Business on a plan that includes Payments & Contracts. | The Business's Payments & Contracts module is reachable. | |
+
+### 3.2 The Business connects the account that receives its revenue
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.2.1 | Open **Payments → Connect Stripe** (`/workspaces/{workspace}/businesses/{business}/payments/connect`). | Reads not connected, and says the money is the Business's own. | |
+| 3.2.2 | Start the connection. | Redirected to **Stripe's hosted onboarding**. No bank detail or identity document is typed into our application. | |
+| 3.2.3 | Finish the test onboarding, return (`…/payments/connect/resume`) and use **Refresh**. | Charges enabled. The account id is shown masked, never in full in the page source. | |
+| 3.2.4 | **Stripe Dashboard:** confirm a connected account now exists under the platform. | It does. | |
+| 3.2.5 | Sign in as an Admin and then a Staff member of that Workspace and try the connect, refresh and disconnect actions. | Each mutating action answers 404; the read-only status page stays readable. Only the Workspace owner decides where the Business's money goes. | |
+
+### 3.3 A customer pays a document
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.3.1 | Create a proposal with a deposit + balance schedule, send it to a test mailbox you control. | The customer receives a link; nothing is charged. | |
+| 3.3.2 | Open the link as the customer, sign it, and choose **Pay** (`POST /documents/{uid}/{token}/pay`). | Stripe's payment element loads for the **Business's connected account**; there is no card field of our own. | |
+| 3.3.3 | Pay the deposit with `4242 4242 4242 4242`. | Payment succeeds; the document shows the deposit paid and the balance due. | |
+| 3.3.4 | **Stripe Dashboard → the BUSINESS's connected account → Payments.** | The PaymentIntent is **there**, for the exact amount and currency. | |
+| 3.3.5 | **Stripe Dashboard → the PLATFORM account.** | **Nothing** from this payment: no charge, no application fee, no transfer. The single most important row in this section. | |
+| 3.3.6 | Check the customer's receipt email. | One receipt, naming the Business as the payee. | |
+| 3.3.7 | Pay the balance with an authentication-required test card (`4000 0025 0000 3155`) and complete the challenge. | Succeeds after authentication; the document reads fully paid. | |
+| 3.3.8 | Start a payment with a declining card (`4000 0000 0000 0002`). | Declined; the schedule item stays due and payable again; nothing is marked paid. | |
+
+### 3.4 Webhook-only completion, replay and signature
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.4.1 | Pay a document and **close the tab** before returning. | The webhook alone marks the item paid. | |
+| 3.4.2 | Replay that `payment_intent.succeeded` from the Dashboard several times. | 200 each time. One payment row, one receipt, no second transition. | |
+| 3.4.3 | Send a body with a bad signature to `/stripe/webhook/business-payments`. | 400, and nothing is stored. | |
+| 3.4.4 | Stop the queue worker, pay, restart it after the webhook arrived. | The stored event is processed exactly once when the worker returns. | |
+
+### 3.5 Refunds
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.5.1 | As the Business owner, refund part of a captured payment from the document. | Refund created **on the Business's connected account**; the document shows the partial refund. | |
+| 3.5.2 | **Stripe Dashboard → connected account.** | The refund is there, against the original payment. No application-fee refund exists because no fee was taken. | |
+| 3.5.3 | Try to refund more than the remaining captured amount. | Refused; nothing reaches Stripe. | |
+
+### 3.6 Lane isolation
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 3.6.1 | Check `platform_subscriptions`, `platform_subscription_events`. | Untouched by anything in this section. | |
+| 3.6.2 | Check `agency_stripe_connections`, `agency_client_subscriptions`, `agency_client_subscription_events`. | Untouched. | |
+| 3.6.3 | Check `business_usage_wallets`, `business_usage_ledger_entries`, `payment_provider_customers`, `payment_provider_events`. | Untouched. A customer's payment to a Business never funds a usage wallet. | |
+| 3.6.4 | Check the Business owner's Plan & subscription page and the Workspace's access state. | Unchanged. Business revenue is not a SaaS payment and neither unlocks nor extends anything. | |
+| 3.6.5 | Check the Platform Owner's **Billing & Revenue** view. | Lane-A only. This Business's revenue is not shown as platform revenue. | |
+
+### 3.7 Sign-off
+
+| Field | Value |
+|---|---|
+| Executed by | |
+| Date | |
+| Deployment / commit | |
+| Stripe account (test) | |
+| Business connected account (test) | |
+| Result | pass / fail / blocked |
+| Blocked or failed steps | |
+
+---
 
 ## 4. Lane D — Usage funding
 
-_To be appended. RFC-005 is implemented but has not been live-tested._
+**What is being proved:** a Business, Workspace or AgencyRebill payer funds the
+**platform's** usage wallet for a Business, on the **platform's own** Stripe
+account, as **prepaid usage funding** — not as SaaS subscription revenue. A
+wallet credit never unlocks a Workspace, and a SaaS payment never credits a
+wallet (Contract 21 §2).
+
+**The rules in §0 apply unchanged.**
+
+Automated evidence that already exists (fake gateway — **not** acceptance):
+`tests/Feature/Usage/*` (funding attempts, webhook replay/claim/lease recovery,
+refund and dispute outcomes, AgencyRebill authority and effect) and
+`tests/Feature/PaymentsConformance/FourLaneCoexistenceTest.php`.
+
+### 4.1 Prerequisites
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.1.1 | Confirm `STRIPE_SECRET` is `sk_test_…`, `STRIPE_MODE=test`, `STRIPE_API_VERSION` is set, and lane D's own signing secret `STRIPE_WEBHOOK_SECRET` is configured. | All set. The gateway refuses to start if the key does not match the mode. | |
+| 4.1.2 | In the Stripe Dashboard add a **platform** (not Connect) webhook endpoint at `POST /stripe/webhook/usage-billing`, subscribed to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.expired`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated`, `charge.dispute.closed`, `charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`, `refund.created`, `refund.updated`, `refund.failed`, `charge.refund.updated`. | Created. Its signing secret is **not** the lane A, B or C secret. | |
+| 4.1.3 | Confirm the scheduled lane-D jobs run (`ReconcileProviderPendingState`, `RetryStuckPaymentProviderEvents`, `ExpireStaleUsageReservations`) and the queue worker is running. | Running. | |
+
+### 4.2 Payer, payment method and a manual top-up
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.2.1 | As a Workspace owner open **Settings → Usage & billing** (`/workspaces/{workspace}/businesses/{business}/usage-billing`). | Shows the wallet balance, the current payer and no card field of our own. | |
+| 4.2.2 | Add a payment method (`…/usage-billing/payment-method/setup-intent` → Stripe element → `…/confirm`) with `4242 4242 4242 4242`. | Saved; only brand and last four are shown. | |
+| 4.2.3 | Start a top-up (`…/usage-billing/top-up`). | Redirected to Stripe **hosted Checkout** on the **platform** account. | |
+| 4.2.4 | Pay it and return (`…/top-up/{attempt}/confirm`). | The wallet balance rises by exactly the top-up amount; one ledger entry; one receipt. | |
+| 4.2.5 | **Stripe Dashboard → the PLATFORM account.** | The payment is there, as a one-off payment — **not** a subscription and not on any connected account. | |
+| 4.2.6 | Replay the `checkout.session.completed` event several times. | 200 each time; the balance does not change again. | |
+| 4.2.7 | Start a top-up and close the tab before returning. | The webhook alone credits the wallet, exactly once. | |
+| 4.2.8 | Start a top-up and abandon it until the Checkout session expires. | Nothing is credited; the attempt reads failed/expired. | |
+
+### 4.3 Auto-recharge, failure, refund and dispute
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.3.1 | Enable auto-recharge (`…/usage-billing/auto-recharge`) with a threshold, then consume usage below it. | One off-session charge on the platform account; one credit. | |
+| 4.3.2 | Replace the card with `4000 0000 0000 0341` and trigger auto-recharge again. | The charge fails; no credit; the failure is recorded and the owner is notified; auto-recharge does not loop. | |
+| 4.3.3 | Refund a top-up from the Stripe Dashboard. | `charge.refunded` / `refund.*` processed; the wallet is debited by the refunded amount once. | |
+| 4.3.4 | Open a dispute with a dispute test card. | The dispute lifecycle is recorded; funds withdrawn/reinstated adjust the wallet once each. | |
+
+### 4.4 AgencyRebill is lane D, not lane C
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.4.1 | As an Agency owner, make the Agency the **AgencyRebill** payer for a managed client's Business, and top that wallet up. | The charge is on the **platform** account against the Agency's own payment method; the **client's** Business wallet is credited. | |
+| 4.4.2 | Check `agency_client_subscriptions`, `agency_client_subscription_events`, `agency_stripe_connections`. | Untouched. AgencyRebill creates no Agency SaaS subscription and no lane-C record. | |
+| 4.4.3 | Check the Agency's **SaaS → Revenue** page. | The rebill top-up does **not** appear as agency revenue. | |
+
+### 4.5 A wallet credit never unlocks a Workspace
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.5.1 | Take a Workspace to **Locked** (lane A §1.7 or lane C §2.6), then complete a top-up for one of its Businesses (a top-up started before the lock may confirm after it). | The wallet is credited; the Workspace **stays Locked**; its `locked_at` is unchanged. | |
+| 4.5.2 | Check the Workspace's Plan & subscription page. | Still asks for the SaaS payment. Usage funding is not a subscription payment. | |
+
+### 4.6 Lane isolation
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 4.6.1 | Check `platform_subscriptions`, `platform_subscription_events`, `workspace_plan_assignments`. | Untouched by any top-up in this section. | |
+| 4.6.2 | Check `business_document_payments`, `business_payment_events`, `business_stripe_connections`. | Untouched. | |
+| 4.6.3 | Check the Platform Owner's **Billing & Revenue** view. | Lane-A subscription figures unchanged. Usage funding is not counted as SaaS revenue there. | |
+
+### 4.7 Sign-off
+
+| Field | Value |
+|---|---|
+| Executed by | |
+| Date | |
+| Deployment / commit | |
+| Stripe account (test) | |
+| Result | pass / fail / blocked |
+| Blocked or failed steps | |
+
+---
 
 ## 5. Four-lane conformance
 
-_To be appended after lanes A and C merge: one pass proving all four lanes
-coexist on one Stripe account without sharing a commercial identity._
+**What is being proved:** all four lanes run **at the same time, in one
+deployment, on one platform Stripe account**, and still keep their money,
+their records, their customer identities, their webhook authority and their
+entitlement effects apart. The hardest legitimate case is included: an Agency
+that connects **the same underlying Stripe account** for its own Business
+revenue (lane B) and for its resold SaaS subscriptions (lane C). Sharing an
+account is the merchant's business; it must never become sharing a record.
+
+The automated counterpart is
+`tests/Feature/PaymentsConformance/FourLaneCoexistenceTest.php`. It runs every
+provider as a **fake gateway** (except the signature matrix, which uses the
+real gateways' local HMAC verification with placeholder secrets and makes no
+network call). **It is not evidence for any row below.**
+
+**The shared-account case is proven at the record level only.** Both connect
+flows as implemented create a **new** connected account (lane B:
+`StripeApiConnectGateway::createAccount`; lane C:
+`StripeApiAgencyGateway::createAccount`); neither offers "use an account I
+already connected". So a live deployment cannot today make G's lane-B and
+lane-C connections point at one physical account through the product, and this
+section runs them on two accounts, **X** (lane C) and **Y** (lane B). The
+automated suite binds both records to one account id to prove that sharing
+would still keep the records apart. Adding an "existing account" path is a
+product decision, not a conformance defect: Lane C §C1 permits sharing, it does
+not require it.
+
+**Prerequisite:** §§1.1–1.3, 2.1–2.2, 3.1–3.2 and 4.1 completed on the same
+deployment, with all four webhook endpoints registered and four **distinct**
+signing secrets.
+
+### 5.1 One world, four lanes
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.1.1 | Workspace **P** subscribes to the platform directly (lane A, §1.4). | Active; Platform Owner's Stripe account holds the subscription. | |
+| 5.1.2 | Agency **G** connects Stripe account **X** for lane C (§2.2) and enrolls client **K** on a resale plan (§2.4). | K is Active on the Agency's plan; the subscription is on **X**. | |
+| 5.1.3 | Agency **G**'s own Business connects Stripe for lane B (§3.2), creating account **Y**, and a customer pays a G document (§3.3). | The payment is on **Y**. The app holds **one** `agency_stripe_connections` row (X, the Agency Workspace) and **one** `business_stripe_connections` row (Y, the Agency's Business) — each owned by its own commercial identity. | |
+| 5.1.4 | K's Workspace owner tops up K's Business wallet (lane D, §4.2). | Charged on the **platform** account; K's wallet credited once. | |
+
+### 5.2 Financial ownership
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.2.1 | **Stripe Dashboard → platform account.** | Exactly P's subscription payment (lane A) and K's top-up (lane D). **No** charge, fee or transfer from G's document payment or K's agency subscription. | |
+| 5.2.2 | **Stripe Dashboard → accounts X and Y.** | X holds exactly K's agency subscription invoice (lane C); Y holds exactly G's document payment (lane B). Nothing from P, nothing from the top-up, on either. | |
+| 5.2.3 | Search every Dashboard object above for an application fee or transfer. | None anywhere. | |
+
+### 5.3 Identity and webhook isolation
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.3.1 | Compare the Stripe customer ids behind P's subscription, K's agency subscription and K's usage-billing customer (`payment_provider_customers`). | Three different customers. No lane reuses another lane's customer. | |
+| 5.3.2 | A Connect endpoint receives its subscribed event types for **every** connected account. Paying K's agency invoice on X also emits a `payment_intent.succeeded` on X, which lane B's endpoint is subscribed to. In the Dashboard, find that delivery to `/stripe/webhook/business-payments`. | 200, and **nothing changed**: no document payment was created or confirmed, and K's agency subscription is untouched. Lane B may record the event as acknowledged/ignored in its own table; it never resolves it to a lane-C record. | |
+| 5.3.3 | Replay each lane's confirming event (P's `invoice.paid`, G's `payment_intent.succeeded`, K's `invoice.paid`, K's `checkout.session.completed` top-up) three times. | 200 each time; one stored event per lane; no second transition, receipt or credit. | |
+| 5.3.4 | Send one lane's correctly signed body to each of the other three endpoints (resend from the Dashboard to a mis-configured endpoint URL, or re-sign with the other lane's secret in a local tool — never paste a secret into the app). | 400 at every wrong endpoint; nothing stored anywhere. | |
+| 5.3.5 | Cancel K's agency subscription, let K start again (§2.7.6), then replay the OLD subscription's `customer.subscription.deleted`. | K stays active on the new subscription; P, G and the top-up are unaffected. | |
+
+### 5.4 Canonical entitlements
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.4.1 | Fail K's agency renewal (§2.6.3). | K alone enters grace. P, G's own Workspace and G's Business are unchanged. | |
+| 5.4.2 | Fail P's platform renewal (§1.7). | P alone enters grace. K is unchanged. | |
+| 5.4.3 | Let K reach **Locked**, then complete a K top-up and a G document payment. | K stays Locked. Neither usage funding nor Business revenue unlocks a Workspace. | |
+| 5.4.4 | Pay K's open agency invoice. | K is restored on its own plan. | |
+| 5.4.5 | Use a client whose own platform subscription **ended** before its agency started billing it (e.g. run §1.8 on a Workspace, then §2.4 on it as a managed client). Open its Plan & subscription page, then POST the platform re-subscribe form directly. | The page offers no **Start subscription again**; the direct POST is refused ("That change cannot be made from the current plan state.") and no platform Checkout Session is created. One paid authority per Workspace. | |
+| 5.4.6 | As G's owner, offer a plan to a managed client whose platform subscription is `unpaid` or `paused`. | Refused: "client has a platform subscription". | |
+
+### 5.5 Recovery and authority
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.5.1 | With K Locked, open K's recovery routes (agency plan page and payment-method portal) and an ordinary page. | Recovery opens the **agency's** portal on X; ordinary pages still redirect to the locked screen (§2.6.7–2.6.7a). | |
+| 5.5.2 | With P Locked, open P's payment-method recovery. | The **platform's** portal opens; nothing of X is reachable from P. | |
+| 5.5.3 | Start **View As** on K as G's owner and try: K's agency-plan checkout, K's platform plan actions, the signup re-entry (`/signup/plan`, `/signup/complete`) and K's usage-billing top-up. | Every one refused; no Stripe object is created in any account. | |
+
+### 5.6 Reporting
+
+| # | Step | Expected | Observed |
+|---|---|---|---|
+| 5.6.1 | Platform Owner → **Billing & Revenue**. | Active = P only. Grace/Locked count only platform subscribers — K's agency delinquency (5.4.1) is **not** counted. No row names G or K. | |
+| 5.6.2 | G → **SaaS → Revenue**. | K's agency subscription only, labelled as the agency's own revenue, grouped by currency. No lane-A, lane-B or lane-D money. | |
+| 5.6.3 | G's Business → the paid document. | G's document payment only, on Y. | |
+| 5.6.4 | K's Business → **Usage & billing**. | The top-up only, as usage funding. | |
+
+### 5.7 Sign-off
+
+| Field | Value |
+|---|---|
+| Executed by | |
+| Date | |
+| Deployment / commit | |
+| Stripe platform account (test) | |
+| Agency connected account X (test) | |
+| Agency Business connected account Y (test) | |
+| Result | pass / fail / blocked |
+| Blocked or failed steps | |

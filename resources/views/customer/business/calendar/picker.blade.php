@@ -18,6 +18,15 @@
         <p class="text-body mb-0">Choose a location to see its schedule. Each location has its own calendar.</p>
     </section>
 
+    @if ($locations->isEmpty())
+        {{-- Only reachable when the Business has no active Location at all,
+             so this discloses nothing an actor could not already see. --}}
+        <div class="card" data-section="calendar-no-locations">
+            <div class="card-body">
+                <p class="mb-0">This business has no locations yet. Add a location to start using its calendar.</p>
+            </div>
+        </div>
+    @else
     <div class="card" data-section="calendar-location-picker">
         <div class="list-group list-group-flush">
             @foreach ($locations as $location)
@@ -38,4 +47,5 @@
             @endforeach
         </div>
     </div>
+    @endif
 @endsection

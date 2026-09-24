@@ -3,6 +3,7 @@
 namespace App\Library\AgencyBilling;
 
 use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
+use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Library\Entitlement\EntitlementManager;
@@ -909,7 +910,17 @@ final class AgencyClientSubscriptionManager
             ->where('workspace_id', $clientWorkspace->id)
             ->first();
 
-        if ($platform !== null && $platform->status->grantsAccess()) {
+        // §C6.1 names the live lane-A states exactly. `unpaid` and `paused`
+        // grant no access, but the provider subscription is still alive and
+        // can be paid or resumed at any moment — a second authority all the
+        // same.
+        if ($platform !== null && in_array($platform->status, [
+            PlatformSubscriptionStatus::Trialing,
+            PlatformSubscriptionStatus::Active,
+            PlatformSubscriptionStatus::PastDue,
+            PlatformSubscriptionStatus::Unpaid,
+            PlatformSubscriptionStatus::Paused,
+        ], true)) {
             throw AgencyBillingException::because(AgencyBillingException::CLIENT_HAS_PLATFORM_SUBSCRIPTION);
         }
 
