@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\PlatformPriceVerifier;
+use App\Models\AgencyClientSubscription;
 use App\Models\PlatformSubscription;
 use App\Models\PlatformSubscriptionEvent;
 use App\Models\WorkspacePlanAssignment;
@@ -178,8 +180,22 @@ class PlatformBillingController extends Controller
         // Grace and Locked are LIFECYCLE facts, not provider statuses, so they
         // come from the plan assignment — the canonical authority — rather
         // than being guessed from Stripe's vocabulary.
+        //
+        // Only LANE-A accounts: a Workspace with a platform subscription of its
+        // own, and not one its managing Agency now bills through lane C (§2.1 —
+        // an agency client's grace or lock is the Agency's delinquency, never
+        // a platform subscriber's). Reporting may read every lane; it may not
+        // present one lane's accounts as another's.
         $graceOrLocked = WorkspacePlanAssignment::query()
             ->where('is_complimentary', false)
+            ->whereIn('workspace_id', PlatformSubscription::query()->select('workspace_id'))
+            ->whereNotIn('workspace_id', AgencyClientSubscription::query()
+                ->whereNotIn('status', [
+                    AgencyClientSubscriptionStatus::Offered->value,
+                    AgencyClientSubscriptionStatus::Canceled->value,
+                    AgencyClientSubscriptionStatus::IncompleteExpired->value,
+                ])
+                ->select('client_workspace_id'))
             ->selectRaw('sum(case when locked_at is not null then 1 else 0 end) as locked')
             ->selectRaw('sum(case when locked_at is null and grace_started_at is not null then 1 else 0 end) as grace')
             ->first();

@@ -59,6 +59,9 @@ final class CustomerSubscriptionPresenter
         // again by a page that could never succeed. What they actually need is
         // to start a new subscription on the account they already have.
         $hasEnded = $subscription !== null && PlatformSubscriptionManager::hasEnded($subscription);
+        // …and not while the Workspace's Agency bills it (lane C): the manager
+        // refuses that restart, so offering it would be the same dead end.
+        $canResubscribe = $hasEnded && ! PlatformSubscriptionManager::agencyIsBillingWorkspace($workspace);
 
         return [
             'has_subscription' => $subscription !== null
@@ -87,8 +90,8 @@ final class CustomerSubscriptionPresenter
             // Workspace, Business and Locations; a NEW provider subscription
             // through hosted Checkout.
             'has_ended' => $hasEnded,
-            'can_resubscribe' => $hasEnded,
-            'resubscribe_plans' => $hasEnded ? $this->plans->sellablePlans() : [],
+            'can_resubscribe' => $canResubscribe,
+            'resubscribe_plans' => $canResubscribe ? $this->plans->sellablePlans() : [],
             // §10.3 — only offered when the provider model actually supports
             // reversing it, which it does: cancel_at_period_end is a boolean we
             // can set back to false while the period is still running.

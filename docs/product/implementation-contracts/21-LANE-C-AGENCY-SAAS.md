@@ -52,6 +52,18 @@ Lane C code **must not** create, mutate, or read-as-authority:
 
 And the reverse: no lane-A/B/D code may read a lane-C table to decide anything.
 
+**One refusal-only exception, mirroring §C6.1 (four-lane conformance).** Lane C
+reads `platform_subscriptions` purely to refuse an offer to a client that still
+pays us directly. The mirror image is equally necessary: lane A's
+`PlatformSubscriptionManager::startResubscribeCheckout()` reads
+`agency_client_subscriptions` purely to **refuse** "start again" for a
+Workspace its Agency is billing (any row not `offered`, `canceled` or
+`incomplete_expired`). Without it a client whose old platform subscription had
+ended could pay the platform *and* its agency for one Workspace. It creates,
+mutates and resolves nothing of lane C's and references no
+`App\Library\AgencyBilling` code. Platform reporting (Contract 21 §2.1) may
+likewise read lane C to keep an agency client's grace/lock out of lane-A counts.
+
 **A Stripe account may legitimately serve more than one purpose.** An Agency
 that also sells to its own end customers may connect the same Stripe account for
 lane B and lane C. That is the *merchant's* business. What must stay distinct is

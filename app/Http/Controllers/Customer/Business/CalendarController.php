@@ -81,12 +81,25 @@ class CalendarController extends Controller
      * accessible Location gets a 404, exactly as an unreachable Location does.
      * A single accessible Location skips the picker entirely: there is nothing
      * to choose, and showing a one-item list would only add a click.
+     *
+     * A Business with NO active Location at all is different: there is nothing
+     * to withhold, and the Calendar entry the menu offers must still lead
+     * somewhere. That actor — already past the Business tenancy check above —
+     * sees an empty picker that says a Location is needed first.
      */
     public function index(string $workspaceUid, string $businessUid): View|RedirectResponse
     {
         [$workspace, $business] = $this->tenancy($workspaceUid, $businessUid);
 
         $locations = $this->schedule->accessibleLocations($business, (int) Auth::id());
+
+        if ($locations->isEmpty() && ! $business->activeLocations()->exists()) {
+            return view('customer.business.calendar.picker', [
+                'workspace' => $workspace,
+                'business' => $business,
+                'locations' => $locations,
+            ]);
+        }
 
         if ($locations->isEmpty()) {
             abort(404);

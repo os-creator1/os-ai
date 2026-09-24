@@ -1104,7 +1104,61 @@ assumed.
    Its own implementation contract is
    [`21-LANE-C-AGENCY-SAAS.md`](21-LANE-C-AGENCY-SAAS.md), which extends this
    one; §§0–17 here remain in force unchanged.
-3. **Four-lane conformance** + real test/live acceptance.
+3. **Four-lane conformance** + real test/live acceptance. The automated
+   conformance half is §18; real Stripe test-mode acceptance is the separate,
+   subsequent milestone in `docs/product/PAYMENTS-LIVE-ACCEPTANCE.md` §§1–5.
 4. **Freeze.**
 
 No unrelated product work (SEO, COO, or otherwise) between these phases.
+
+---
+
+## 18. Four-lane conformance — as implemented
+
+Proved with fake gateways in
+`tests/Feature/PaymentsConformance/FourLaneCoexistenceTest.php`, with all four
+lanes live in one application at once — including an Agency whose lane-B and
+lane-C connection records name the **same** Stripe account id. This is not
+provider acceptance.
+
+| Boundary | Already proven per lane (other lanes empty) | Added cross-lane proof |
+|---|---|---|
+| Money lands with its owner; no fee/transfer | `PlatformBillingBoundaryTest`, `PaymentExecutionTest`, `AgencySaasSpineTest` | every gateway call of A, B and C in one run: A names no account; B and C only the owner's account; no fee/transfer/on-behalf-of argument anywhere |
+| Distinct customer / subscription / operation identities | per-lane schema uniqueness | lane A, C and D customer ids and A/B/C idempotency keys all distinct in one world |
+| Webhook secret separation | config-value comparison only | real HMAC verification: every lane's signed body sent to all four endpoints — only its own accepts; a refusal stores nothing |
+| Foreign-lane events | foreign *account* within a lane | a lane-B event at lane C's endpoint, lane-C events and a lane-C invoice PaymentIntent at lane B's, A↔C subscription ids swapped, a lane-C event at lane D's — none moves another lane or the client's assignment |
+| Replay / retired subscriptions | per lane | A, B and C confirmations replayed together; a retired lane-C subscription's end cannot move the new life or lane A |
+| Correct subscription drives correct Workspace | per lane | lane-C failure → client only; lane-A failure → subscriber only; agency's own assignment untouched |
+| Wallet / Business revenue never unlocks | not previously tested | a top-up confirming after a lane-C lock, and a lane-B sale, leave the client Locked; only its own lane-C payment recovers it |
+| Legacy subscriptions cannot override V1 | `PlatformBillingBoundaryTest` (structural) | — (existing proof sufficient) |
+| Recovery allowlist; View As | `AgencySaasCorrectionsTest`, `AgencySaasHttpTest`, `ViewAsRouteBoundaryTest` | V1 signup re-entry and Checkout return are now View-As prohibited |
+| Reporting | lane A view is lane-A only (lane C absent) | with all four lanes live: the lane-A view counts one subscriber, and a lane-C client's grace is not counted |
+
+**Defects the conformance tests found and this phase fixed** (each first shown
+by a failing assertion):
+
+1. **Two paid authorities through lane A "start again".** A client whose ended
+   platform subscription preceded agency billing could still open a platform
+   Checkout — double charge, two lifecycles on one assignment. Lane A now
+   refuses (Lane C §C1's refusal-only exception).
+2. **§C6.1 drift.** Lane C's eligibility treated only access-granting lane-A
+   states as live, so an `unpaid` or `paused` platform subscription did not
+   block an agency offer. It now refuses exactly the five live states §C6.1
+   names.
+3. **Lane-A reporting counted agency clients.** The Platform Owner's
+   "Lane A subscriptions" Grace/Locked figures counted every non-complimentary
+   assignment, so an agency client in grace appeared as a platform subscriber in
+   grace. They now count only Workspaces with a platform subscription that their
+   Agency is not billing.
+
+**Security-suite baseline corrected in the same phase.** On merged `main` the
+Security suite had three failures. (1) The four authenticated V1 signup routes
+(`signup.plan`, `signup.resume`, `signup.success`, `signup.cancelled`) were
+unclassified for View As. They buy a lane-A plan for the actor's own account,
+so they are now View-As **prohibited** (`ViewAsProhibitedActions::PREFIXES`,
+`signup.`). At runtime they already answered 404, because an unclassified route
+fails closed. (2, 3) The Calendar menu entry led to a 404 for a Business with no
+active Location, because the Calendar entry point 404s when it has no Location
+to show. A Business with **no active Location at all** now gets an empty picker
+saying a Location is needed first. An actor who cannot reach any of a
+Business's existing Locations still gets 404, exactly as before.
