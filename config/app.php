@@ -388,7 +388,7 @@
         |--------------------------------------------------------------------------
         */
 
-        'super_admin_email' => env('SUPER_ADMIN_EMAIL', 'akasham67@gmail.com'),
+        'super_admin_email' => env('SUPER_ADMIN_EMAIL'),
 
 
         /*
