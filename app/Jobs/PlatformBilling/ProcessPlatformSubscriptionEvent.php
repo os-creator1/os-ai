@@ -162,6 +162,22 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
             PlatformSubscriptionFinalizer::OPERATION_ID_MISMATCH,
         ], true)) {
             $signup->activateFromConfirmedSubscription($subscription->refresh());
+
+            // An out-of-order sibling: Stripe delivered this event (e.g.
+            // `invoice.paid`) for the SAME subscription before whichever
+            // event resolved that subscription's local row was applied, so
+            // it failed closed with `no_matching_local_record` — correctly,
+            // since at that moment no local row carried this subscription's
+            // identity at all. Now that this event has just confirmed it, any
+            // earlier-arrived sibling waiting on the exact same, already
+            // extracted provider_subscription_id is reconsidered immediately,
+            // rather than sitting dead until Stripe happens to redeliver the
+            // same event id (§12.4 — this is NOT a new resolution path: the
+            // match is the identical `provider_subscription_id` the
+            // controller already extracted and stored on that row at intake,
+            // never re-parsed, never guessed, never matched by customer or
+            // email alone).
+            $this->recoverSiblingsAwaitingThisIdentity($event, $providerSubscriptionId);
         }
 
         return match ($disposition) {
@@ -251,6 +267,40 @@ class ProcessPlatformSubscriptionEvent extends Base implements ShouldQueue
         }
 
         return 'no_matching_local_record';
+    }
+
+    /**
+     * §12.4 recovery — an earlier-arrived sibling that failed closed only
+     * because, at the moment IT ran, no local row yet carried this
+     * subscription's identity. `$providerSubscriptionId` here is never
+     * re-derived: it is the exact value this very event resolved with, a
+     * moment ago, in `process()`. A sibling row only qualifies when the
+     * CONTROLLER'S OWN extraction at intake (`provider_subscription_id`,
+     * stored on the row before any resolution was attempted) already equals
+     * that same id — so this reconsiders events this endpoint itself already
+     * proved belong to the subscription, never a foreign or ambiguous one.
+     *
+     * Bounded three ways: only rows still `failed` with this specific reason
+     * qualify (a row that failed for any other cause, or that is
+     * `processing`/`processed`/`ignored`, is left alone); each qualifying
+     * row is dispatched at most once per call, through the SAME atomic claim
+     * every delivery goes through, so a row already reclaimed by a genuine
+     * Stripe redelivery is simply skipped; and the job's own `$tries`/
+     * `$maxExceptions` still cap that row's total attempts regardless of how
+     * many times a sibling's success re-triggers it.
+     */
+    private function recoverSiblingsAwaitingThisIdentity(PlatformSubscriptionEvent $event, string $providerSubscriptionId): void
+    {
+        $waiting = PlatformSubscriptionEvent::query()
+            ->where('id', '!=', $event->id)
+            ->where('provider_subscription_id', $providerSubscriptionId)
+            ->where('state', PlatformSubscriptionEventState::Failed->value)
+            ->where('last_error', 'no_matching_local_record')
+            ->pluck('id');
+
+        foreach ($waiting as $id) {
+            self::dispatch((int) $id);
+        }
     }
 
     /**

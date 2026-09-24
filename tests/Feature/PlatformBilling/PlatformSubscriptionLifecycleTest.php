@@ -278,6 +278,123 @@ class PlatformSubscriptionLifecycleTest extends TestCase
         $this->assertSame(CustomerAccountAccessState::Usable, $this->accessState($fixture['workspace']));
     }
 
+    /**
+     * §12.4 regression — reproduces the EXACT live acceptance failure: Stripe
+     * delivered `invoice.paid` for a brand-new subscription before
+     * `checkout.session.completed`, so at the moment the invoice event ran no
+     * local row carried that subscription's identity yet. It failed closed,
+     * correctly, with `no_matching_local_record`. Before this fix that event
+     * stayed `failed` forever unless Stripe happened to redeliver the exact
+     * same event id. It must instead converge automatically once
+     * `checkout.session.completed` establishes the identity — through the
+     * webhook alone, no redelivery, no second visit to any endpoint.
+     */
+    public function test_an_invoice_paid_that_arrives_before_checkout_completed_converges_once_identity_is_known(): void
+    {
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth);
+        $fixture = $this->unassignedWorkspace();
+        $manager = $this->manager();
+
+        $session = $manager->startCheckout(
+            $fixture['workspace'], $catalog, 'owner@example.test',
+            'https://app.test/done', 'https://app.test/cancel',
+        );
+        $subscription = PlatformSubscription::query()->sole();
+        $this->assertNull($subscription->provider_subscription_id, 'Nothing confirmed yet — the pending row is still identity-less.');
+
+        // The customer finished paying on Stripe's own page — provider truth
+        // now exists — but OUR endpoint has not yet been told by
+        // `checkout.session.completed`. Stripe delivers `invoice.paid` first.
+        $providerSubscriptionId = $this->stripe->completeCheckout($session->sessionId);
+
+        [$earlyBody, $headers] = $this->webhookBody(
+            'invoice.paid', $providerSubscriptionId, 'cus_fake_unrelated_at_this_point', 'evt_early_invoice_paid',
+        );
+        $this->postPlatformWebhook($earlyBody, $headers)->assertOk();
+
+        $early = PlatformSubscriptionEvent::query()->where('provider_event_id', 'evt_early_invoice_paid')->sole();
+        $this->assertSame(PlatformSubscriptionEventState::Failed, $early->state,
+            'At this exact moment no local row could possibly resolve it — correctly fail-closed.');
+        $this->assertSame('no_matching_local_record', $early->last_error);
+        $this->assertSame($providerSubscriptionId, $early->provider_subscription_id,
+            'Intake extraction was already correct; the identity simply did not exist locally yet.');
+        $this->assertSame(0, WorkspacePlanAssignment::query()->count());
+
+        // Now `checkout.session.completed` arrives and establishes identity.
+        $completedBody = json_encode([
+            'id' => 'evt_checkout_completed',
+            'type' => 'checkout.session.completed',
+            'created' => now()->getTimestamp(),
+            'data' => ['object' => [
+                'id' => $session->sessionId,
+                'object' => 'checkout.session',
+                'client_reference_id' => $subscription->uid,
+                'subscription' => $providerSubscriptionId,
+            ]],
+        ]);
+        $this->postPlatformWebhook($completedBody, ['Stripe-Signature' => $this->stripe->validSignature])->assertOk();
+
+        // The earlier event converges automatically — no redelivery, no
+        // second HTTP call naming it.
+        $early->refresh();
+        $this->assertNotSame(PlatformSubscriptionEventState::Failed, $early->state,
+            'The exact same event id is reconsidered once its own already-extracted subscription id resolves — no Stripe redelivery required.');
+        $this->assertNotSame('no_matching_local_record', $early->last_error);
+
+        // Bounded: reconsideration is a normal claim/dispatch, not a loop —
+        // exactly the two delivered events exist, and the recovered row was
+        // not reprocessed more times than the two triggers that could
+        // plausibly claim it (its own delivery, and this one recovery).
+        $this->assertSame(2, PlatformSubscriptionEvent::query()->count());
+        $this->assertLessThanOrEqual(2, (int) $early->attempts);
+
+        // And the commercial outcome is exactly right: one subscription, one
+        // assignment, no duplicate, no cross-lane record.
+        $this->assertSame(PlatformSubscriptionStatus::Active, $subscription->refresh()->status);
+        $this->assertSame($providerSubscriptionId, $subscription->provider_subscription_id);
+        $assignment = WorkspacePlanAssignment::query()->sole();
+        $this->assertFalse((bool) $assignment->is_complimentary);
+        $this->assertSame(1, PlatformSubscription::query()->count());
+    }
+
+    /**
+     * §12.4 — the recovery this fix adds matches ONLY on the exact,
+     * already-extracted `provider_subscription_id` and ONLY events that
+     * failed with `no_matching_local_record`. A genuinely ambiguous event —
+     * two local rows sharing one provider customer, nothing naming which one
+     * — must keep failing closed exactly as before, untouched by recovery.
+     */
+    public function test_a_cross_reference_ambiguity_still_fails_closed_and_is_never_recovered(): void
+    {
+        $fixtureA = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $fixtureB = $this->subscribedWorkspace(WorkspacePlanTier::Core);
+
+        $sharedCustomerId = (string) $fixtureA['subscription']->provider_customer_id;
+        PlatformSubscription::query()->where('id', $fixtureB['subscription']->id)
+            ->update(['provider_customer_id' => $sharedCustomerId]);
+
+        // An event that can only resolve by customer id (no matching
+        // subscription id, no operation id) now names TWO local rows.
+        [$body, $headers] = $this->webhookBody(
+            'invoice.paid', 'sub_unrelated_to_either_row', $sharedCustomerId, 'evt_ambiguous',
+        );
+        $this->postPlatformWebhook($body, $headers)->assertOk();
+
+        $event = PlatformSubscriptionEvent::query()->where('provider_event_id', 'evt_ambiguous')->sole();
+        $this->assertSame(PlatformSubscriptionEventState::Failed, $event->state);
+        $this->assertSame('cross_reference_ambiguity', $event->last_error);
+
+        // A later, unrelated success for fixture A's real subscription must
+        // not sweep the ambiguous row along with it — recovery only ever
+        // looks at `no_matching_local_record` rows.
+        $this->stripe->setSubscriptionStatus($fixtureA['provider_subscription_id'], PlatformSubscriptionStatus::Active);
+        $this->deliver('invoice.paid', $fixtureA)->assertOk();
+
+        $this->assertSame('cross_reference_ambiguity', $event->refresh()->last_error,
+            'Ambiguity is never guessed away by an unrelated sibling succeeding.');
+        $this->assertSame(PlatformSubscriptionEventState::Failed, $event->state);
+    }
+
     // =================================================================
     // §9 — failure, Grace, Locked, recovery
     // =================================================================
