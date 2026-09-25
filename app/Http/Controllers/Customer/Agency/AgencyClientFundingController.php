@@ -7,6 +7,7 @@ use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Customer\Business\InitiateTopUpRequest;
+use App\Library\Usage\PaymentInstrumentManager;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Library\Usage\UsageWalletManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
@@ -58,6 +59,7 @@ class AgencyClientFundingController extends Controller
         private readonly AgencyClientRelationshipManager $relationshipManager,
         private readonly UsageBillingCheckoutManager $checkoutManager,
         private readonly UsageWalletManager $walletManager,
+        private readonly PaymentInstrumentManager $paymentInstrumentManager,
         private readonly BusinessFundingAttemptRepository $attemptRepository,
     ) {
     }
@@ -80,6 +82,22 @@ class AgencyClientFundingController extends Controller
         }
 
         try {
+            // Contract 09 §12 correction — a first-time Agency funder has no
+            // Agency Workspace payment_provider_customers row yet (Lane C's
+            // Connect account is a separate, unrelated Stripe object).
+            // resolveProviderCustomer() is the existing, idempotent,
+            // authorized mechanism for establishing one — the same one the
+            // client's own Usage & Billing page uses for itself. It asserts
+            // assertAuthorizedFundingPayer() (owner-only, no standing
+            // consent required, so this alone can never grant a charge),
+            // resolves to the AGENCY's own Workspace via EffectivePayer
+            // (never the client's), and makes its one outbound provider
+            // call strictly outside any DB transaction/lock, exactly like
+            // every other provider call in this flow. It does not require a
+            // previously saved card — the hosted Checkout Session below
+            // collects payment details directly.
+            $this->paymentInstrumentManager->resolveProviderCustomer($business, $actorUserId);
+
             $result = $this->checkoutManager->initiateTopUp($business, $actorUserId, $amountMicro, [
                 'success_route' => 'customer.workspaces.clients.funding.top-up.confirm',
                 'success_params' => ['workspaceUid' => $agencyWorkspace->uid, 'clientWorkspaceUid' => $clientWorkspace->uid],

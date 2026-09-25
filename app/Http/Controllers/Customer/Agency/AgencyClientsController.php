@@ -15,6 +15,7 @@ use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
+use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -55,6 +56,7 @@ class AgencyClientsController extends Controller
         private readonly ViewAsManager $viewAsManager,
         private readonly CustomerAccountAccessResolver $accountAccessResolver,
         private readonly BillingProfileManager $billingProfileManager,
+        private readonly BusinessUsageWalletRepository $walletRepository,
     ) {
     }
 
@@ -113,6 +115,14 @@ class AgencyClientsController extends Controller
             'billingResponsibility' => $business !== null
                 ? $this->billingProfileManager->billingResponsibilityFor($business, (int) Auth::id())
                 : null,
+            // Contract 09 §12 correction — the actual wallet currency for
+            // the funding-amount field's label, read the same way the
+            // client's own Usage & Billing dashboard reads it
+            // (UsageBillingPresenter::buildDashboardViewModel()'s own
+            // wallet['currency_code']) — never a hardcoded 'USD'.
+            'walletCurrencyCode' => $business !== null
+                ? ($this->walletRepository->findByBusinessId((int) $business->id)?->currency?->code ?? '')
+                : '',
         ]);
     }
 

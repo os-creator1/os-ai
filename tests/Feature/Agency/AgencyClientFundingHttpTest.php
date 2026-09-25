@@ -14,6 +14,7 @@ use App\Models\Business;
 use App\Models\BusinessFundingAttempt;
 use App\Models\User;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
+use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Usage\Concerns\AgencyRebillFixtures;
 use Tests\TestCase;
@@ -218,17 +219,79 @@ class AgencyClientFundingHttpTest extends TestCase
         $this->assertSame($agencyCustomer->provider_customer_id, $call['providerCustomerId']);
     }
 
-    public function test_a_missing_agency_provider_customer_fails_closed_even_though_the_client_has_one(): void
+    /**
+     * Correction — first-time funding. Before this fix, an Agency with no
+     * payment_provider_customers row of its own failed closed with
+     * 'no_provider_customer' even though it was the genuinely-authorized
+     * payer, because nothing ever lazily created one for the Agency
+     * Workspace the way the client's own Usage & Billing page does for
+     * itself. PaymentInstrumentManager::resolveProviderCustomer() is that
+     * same existing, idempotent mechanism, reused unchanged: no previously
+     * saved card is required (asserted below by never registering one) —
+     * the hosted Checkout Session itself collects payment details.
+     */
+    public function test_first_time_funding_with_no_existing_agency_provider_customer_reaches_checkout(): void
+    {
+        $gateway = $this->fakeProvider();
+        $m = $this->rebilledClient();
+        // Deliberately NOT calling workspaceProviderCustomerWithCard($m['agency'], ...)
+        // — no Agency provider customer, and no saved card, exist yet.
+        $this->businessProviderCustomerWithCard($m['business'], '9999');
+
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+
+        $response = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00']);
+
+        $response->assertRedirect();
+        $this->assertStringStartsWith('https://checkout.fake.stripe.test/', (string) $response->headers->get('Location'));
+
+        $agencyCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id);
+        $this->assertNotNull($agencyCustomer, 'resolveProviderCustomer() must have created one for the Agency Workspace.');
+        $this->assertNull($agencyCustomer->business_id, 'The new provider customer belongs to the Agency Workspace, never a Business.');
+
+        $attempt = $this->latestAttempt($m['business']);
+        $this->assertSame((int) $agencyCustomer->id, (int) $attempt->provider_customer_id);
+
+        $call = $gateway->createCheckoutSessionCalls[array_key_last($gateway->createCheckoutSessionCalls)];
+        $this->assertSame($agencyCustomer->provider_customer_id, $call['providerCustomerId']);
+    }
+
+    public function test_first_time_funding_is_still_owner_only_the_lazy_provider_customer_creation_grants_no_new_authority(): void
     {
         $this->fakeProvider();
         $m = $this->rebilledClient();
-        $this->businessProviderCustomerWithCard($m['business'], '9999');
+        $admin = $this->memberOf($m['agency'], WorkspaceMembershipRole::Admin);
 
-        $this->actingAsCustomer($m['agencyOwner']->user)
+        $this->actingAsCustomer($admin->user)
             ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00'])
-            ->assertRedirect($this->showUrl($m['agency']->uid, $m['client']->uid));
+            ->assertNotFound();
 
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
         $this->assertCount(0, app(BusinessFundingAttemptRepository::class)->query()->where('business_id', $m['business']->id)->get());
+    }
+
+    // ------------------------------------------------------------------
+    // The funding-amount label shows the real wallet currency
+    // ------------------------------------------------------------------
+
+    public function test_the_funding_amount_label_shows_the_actual_wallet_currency_not_a_hardcoded_usd(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+
+        // Proves the label is genuinely read from the wallet, not
+        // hardcoded: the fixture's own default is USD, so only a
+        // deliberately different wallet currency can distinguish the two.
+        $eur = \App\Models\Currency::query()->firstOrCreate(['code' => 'EUR'], ['name' => 'Euro', 'format' => '€', 'status' => true]);
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $m['business']->id)->update(['currency_id' => $eur->id]);
+
+        $response = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->get($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $response->assertOk();
+        $response->assertSee('Amount (EUR)');
+        $response->assertDontSee('Amount (USD)');
     }
 
     // ------------------------------------------------------------------

@@ -187,8 +187,8 @@
                                   class="mt-2">
                                 @csrf
                                 <label>
-                                    Amount (USD)
-                                    <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required>
+                                    Amount ({{ $walletCurrencyCode }})
+                                    <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required data-role="agency-rebill-top-up-amount">
                                 </label>
                                 <button type="submit">Fund this Business's wallet now</button>
                             </form>
