@@ -34,6 +34,17 @@
         </div>
     @endforeach
     <strong>Total: {{ $version->total_minor }} {{ $version->currency_code }} (minor units)</strong>
+    <h6>Send</h6>
+    <form method="post" action="{{ route('customer.workspaces.businesses.documents.update', $base) }}">
+        @csrf @method('PATCH')
+        <label>Recipient name <input name="recipient_name_snapshot" value="{{ $document->recipient_name_snapshot }}" maxlength="191"></label>
+        <label>Recipient email <input type="email" name="recipient_email_snapshot" value="{{ $document->recipient_email_snapshot }}" maxlength="255"></label>
+        <button class="btn btn-secondary" type="submit">Save recipient</button>
+    </form>
+    <form method="post" action="{{ route('customer.workspaces.businesses.documents.send', $base) }}">
+        @csrf
+        <button class="btn btn-primary" type="submit">Send document</button>
+    </form>
     <h6>Add catalog package</h6>
     <form method="post" action="{{ route('customer.workspaces.businesses.documents.catalog-lines.store', $base) }}">
         @csrf
