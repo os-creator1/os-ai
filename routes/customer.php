@@ -777,6 +777,14 @@
         Route::get('{workspaceUid}/clients/{clientWorkspaceUid}', 'Agency\AgencyClientsController@show')->name('clients.show');
         Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/view-as', 'Agency\AgencyClientsController@viewAs')->name('clients.view-as');
 
+        // Implementation Contract 09 §6.2/§7 — the Agency owner's own
+        // AgencyRebill consent grant/revoke. Deliberately separate from the
+        // existing Client/legacy payer selector (business/workspace only,
+        // Enums\Usage\PayerType) — authority and the audit trail both live
+        // in BillingProfileManager, never reimplemented here.
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/agency-rebill', 'Agency\AgencyClientsController@assignAgencyRebill')->name('clients.agency-rebill.assign');
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/agency-rebill/revoke', 'Agency\AgencyClientsController@revokeAgencyRebill')->name('clients.agency-rebill.revoke');
+
         /*
         |----------------------------------------------------------------------
         | Lane C §C8 — the AGENCY's own SaaS surface: the Stripe account that

@@ -135,6 +135,68 @@
                         </form>
                     @endif
                 </x-card>
+
+                {{--
+                    Contract 09 §6.2/§7 — AgencyRebill: the Agency funds this
+                    Business's usage wallet, charged on the PLATFORM's Stripe
+                    account with the Agency as payer. Deliberately a separate
+                    card from "SaaS subscription" above: that is the client
+                    paying the Agency for their plan (lane C); this is the
+                    Agency paying for the client's usage (lane D). Never the
+                    same control, never the same consent.
+
+                    Three distinct states, not two: payer_type stays
+                    agency_rebill after a revoke (revokeAgencyRebillConsent()
+                    never falls back to another payer), so payer_type alone
+                    cannot tell "never configured" apart from "revoked."
+                    agency_rebill_consented_at is the tie-breaker.
+                --}}
+                @if ($isAgencyOwner && $business !== null)
+                    @php
+                        $isAgencyRebillPayer = $billingResponsibility['payer_type'] === \App\Enums\Usage\PayerType::AgencyRebill->value;
+                        $consentedAt = $billingResponsibility['agency_rebill_consented_at'];
+                    @endphp
+                    <x-card title="Usage funding (AgencyRebill)">
+                        <dl class="row mb-0" data-role="agency-rebill-facts">
+                            <dt class="col-sm-5">Who pays</dt>
+                            <dd class="col-sm-7" data-role="agency-rebill-payer-type">{{ $billingResponsibility['payer_type'] }}</dd>
+                        </dl>
+
+                        @if ($isAgencyRebillPayer && $consentedAt !== null)
+                            <p class="mb-1" data-role="agency-rebill-active">Your Agency currently funds this Business's usage. Charges are processed on the platform's Stripe account, with your Agency as payer.</p>
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.agency-rebill.revoke', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-revoke-form">
+                                @csrf
+                                <button type="submit">Stop funding this Business</button>
+                            </form>
+                        @elseif ($isAgencyRebillPayer && $consentedAt === null)
+                            <p class="mb-1" data-role="agency-rebill-revoked">Funding is paused. Your Agency previously consented, then stopped — no new usage is being funded until you re-grant consent.</p>
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.agency-rebill.assign', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-assign-form">
+                                @csrf
+                                <label>
+                                    <input type="checkbox" name="confirm" value="1" required>
+                                    I understand my Agency will again fund this Business's usage, charged on the platform's Stripe account with my Agency as payer, until I stop.
+                                </label>
+                                <button type="submit">Resume funding this Business</button>
+                            </form>
+                        @else
+                            <p class="mb-1" data-role="agency-rebill-not-configured">Not configured. This Business is not funded by your Agency.</p>
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.agency-rebill.assign', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-assign-form">
+                                @csrf
+                                <label>
+                                    <input type="checkbox" name="confirm" value="1" required>
+                                    I understand my Agency will fund this Business's usage, charged on the platform's Stripe account with my Agency as payer, until I stop.
+                                </label>
+                                <button type="submit">Fund this Business's usage</button>
+                            </form>
+                        @endif
+                    </x-card>
+                @endif
             </div>
         </div>
     </section>
