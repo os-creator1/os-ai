@@ -170,74 +170,6 @@
                                 @csrf
                                 <button type="submit">Stop funding this Business</button>
                             </form>
-
-                            {{--
-                                RFC-005 Funding Provider-Flow Correction
-                                Contract §9/§11 — honest gating. The actual
-                                funding action requires an Agency provider
-                                customer/payment method to already exist
-                                (initiateTopUp() itself still enforces
-                                this — no lazy creation, no provider call
-                                before the client's own request would have
-                                been denied anyway); when it does not, this
-                                shows the setup surface instead of a top-up
-                                form that would just deny with
-                                'no_provider_customer'.
-                            --}}
-                            @if ($agencyPaymentMethod !== null)
-                                <p class="mb-1" data-role="agency-funding-payment-method">
-                                    {{ ucfirst((string) $agencyPaymentMethod['brand']) }} &bull;&bull;&bull;&bull; {{ $agencyPaymentMethod['last_four'] }} on file for funding.
-                                </p>
-
-                                {{--
-                                    Contract 09 §12 — the actual funding
-                                    action. Posts to
-                                    AgencyClientFundingController, which
-                                    reuses
-                                    UsageBillingCheckoutManager::initiateTopUp()
-                                    unchanged — the redirect that follows is
-                                    Stripe's own hosted Checkout page.
-                                --}}
-                                <form method="POST"
-                                      action="{{ route('customer.workspaces.clients.funding.top-up.initiate', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
-                                      data-role="agency-rebill-top-up-form"
-                                      class="mt-2">
-                                    @csrf
-                                    <label>
-                                        Amount ({{ $walletCurrencyCode }})
-                                        <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required data-role="agency-rebill-top-up-amount">
-                                    </label>
-                                    <button type="submit">Fund this Business's wallet now</button>
-                                </form>
-                            @else
-                                <p class="mb-1" data-role="agency-funding-setup-required">Funding setup required before you can fund this Business. Add a payment method for your Agency below.</p>
-
-                                {{--
-                                    RFC-005 Funding Provider-Flow Correction
-                                    Contract §9/§11 — the separate,
-                                    contract-named surface for establishing
-                                    the Agency's own provider customer,
-                                    mirroring the client's own
-                                    usage-billing/partials/payment-method.blade.php
-                                    exactly (same Stripe.js SetupIntent
-                                    flow, same two-step
-                                    create-then-confirm), scoped to the
-                                    Agency instead of a client Business.
-                                --}}
-                                <div id="agency-funding-payment-method-setup-form" class="mb-2" style="max-width: 360px;">
-                                    <div id="agency-funding-card-element" class="form-control mb-1" style="height: 40px; padding: 10px;"></div>
-                                    <div id="agency-funding-card-errors" class="text-danger small mb-1" role="alert"></div>
-                                    <button type="button"
-                                            id="agency-funding-payment-method-submit"
-                                            class="btn btn-outline-primary"
-                                            data-role="agency-funding-setup-submit"
-                                            data-action-url="{{ route('customer.workspaces.clients.funding.payment-method.setup-intent', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
-                                            data-confirm-url="{{ route('customer.workspaces.clients.funding.payment-method.confirm', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
-                                            data-publishable-key="{{ config('services.stripe.key') }}">
-                                        Set up funding payment method
-                                    </button>
-                                </div>
-                            @endif
                         @elseif ($isAgencyRebillPayer && $consentedAt === null)
                             <p class="mb-1" data-role="agency-rebill-revoked">Funding is paused. Your Agency previously consented, then stopped — no new usage is being funded until you re-grant consent.</p>
                             <form method="POST"
@@ -262,6 +194,102 @@
                                 </label>
                                 <button type="submit">Fund this Business's usage</button>
                             </form>
+                        @endif
+
+                        {{--
+                            RFC-005 Funding Provider-Flow Correction Contract
+                            §9/§11 correction — funding setup and the top-up
+                            action are shown whenever payer_type is
+                            agency_rebill, REGARDLESS of consent state
+                            (active or revoked): Contract 09 deliberately
+                            allows funding CONFIGURATION without standing
+                            consent (PaymentInstrumentManager's own
+                            assertAuthorizedFundingPayer() — configuring
+                            must never deadlock on the very consent it
+                            exists to grant), so an owner whose Agency
+                            revoked consent can still set up or replace a
+                            payment method ahead of re-granting. Never shown
+                            for "not configured" (payer_type isn't even
+                            agency_rebill yet — there is nothing here to
+                            configure funding FOR).
+                        --}}
+                        @if ($isAgencyRebillPayer)
+                            <div class="mt-2" data-role="agency-funding-setup-section">
+                                @if ($agencyPaymentMethod !== null)
+                                    <p class="mb-1" data-role="agency-funding-payment-method">
+                                        {{ ucfirst((string) $agencyPaymentMethod['brand']) }} &bull;&bull;&bull;&bull; {{ $agencyPaymentMethod['last_four'] }} on file for funding.
+                                    </p>
+                                @endif
+
+                                {{--
+                                    RFC-005 Funding Provider-Flow Correction
+                                    Contract §9/§11 — the separate,
+                                    contract-named surface for establishing
+                                    (or replacing) the Agency's own provider
+                                    customer/payment method, mirroring the
+                                    client's own
+                                    usage-billing/partials/payment-method.blade.php
+                                    exactly (same Stripe.js SetupIntent
+                                    flow, same two-step
+                                    create-then-confirm), scoped to the
+                                    Agency instead of a client Business.
+                                    Offered whenever no saved method exists
+                                    yet — never a saved-card prerequisite
+                                    for top-up itself, only an optional,
+                                    separate control.
+                                --}}
+                                @if ($agencyPaymentMethod === null)
+                                    <p class="mb-1" data-role="agency-funding-setup-required">Funding setup required before you can fund this Business. Add a payment method for your Agency below.</p>
+
+                                    <div id="agency-funding-payment-method-setup-form" class="mb-2" style="max-width: 360px;">
+                                        <div id="agency-funding-card-element" class="form-control mb-1" style="height: 40px; padding: 10px;"></div>
+                                        <div id="agency-funding-card-errors" class="text-danger small mb-1" role="alert"></div>
+                                        <button type="button"
+                                                id="agency-funding-payment-method-submit"
+                                                class="btn btn-outline-primary"
+                                                data-role="agency-funding-setup-submit"
+                                                data-action-url="{{ route('customer.workspaces.clients.funding.payment-method.setup-intent', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                                data-confirm-url="{{ route('customer.workspaces.clients.funding.payment-method.confirm', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                                data-publishable-key="{{ config('services.stripe.key') }}">
+                                            Set up funding payment method
+                                        </button>
+                                    </div>
+                                @endif
+
+                                {{--
+                                    RFC-005 Funding Provider-Flow Correction
+                                    Contract §9/§11 — the actual funding
+                                    action's ONLY gates are active standing
+                                    consent and an existing Agency provider
+                                    customer. NEVER a saved payment method:
+                                    the locked contract explicitly drops
+                                    that requirement for ManualTopUp —
+                                    hosted Checkout collects the card.
+                                    initiateTopUp() itself still enforces
+                                    both gates server-side (and denies
+                                    no_provider_customer, unmodified, if
+                                    this fact were ever stale); this is
+                                    presentation only. Posts to
+                                    AgencyClientFundingController, which
+                                    reuses
+                                    UsageBillingCheckoutManager::initiateTopUp()
+                                    unchanged — the redirect that follows is
+                                    Stripe's own hosted Checkout page.
+                                --}}
+                                @if ($consentedAt !== null && $agencyProviderCustomerExists)
+                                    <form method="POST"
+                                          action="{{ route('customer.workspaces.clients.funding.top-up.initiate', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                          data-role="agency-rebill-top-up-form"
+                                          class="mt-2">
+                                        @csrf
+                                        <label>
+                                            Amount ({{ $walletCurrencyCode }})
+                                            <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required data-role="agency-rebill-top-up-amount">
+                                        </label>
+                                        <button type="submit">Fund this Business's wallet now</button>
+                                    </form>
+                                @endif
+                            </div>
                         @endif
                     </x-card>
                 @endif

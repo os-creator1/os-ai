@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
+use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -59,6 +60,7 @@ class AgencyClientsController extends Controller
         private readonly BillingProfileManager $billingProfileManager,
         private readonly BusinessUsageWalletRepository $walletRepository,
         private readonly UsageBillingPresenter $usageBillingPresenter,
+        private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
     ) {
     }
 
@@ -126,19 +128,27 @@ class AgencyClientsController extends Controller
                 ? ($this->walletRepository->findByBusinessId((int) $business->id)?->currency?->code ?? '')
                 : '',
             // RFC-005 Funding Provider-Flow Correction Contract §9/§11 —
-            // whether the Agency's own funding setup (provider customer +
-            // saved payment method) already exists, read the exact same
-            // way the client's own Usage & Billing dashboard resolves
-            // "whose payment method would this Business's payer actually
-            // charge" (UsageBillingPresenter::buildDashboardViewModel()'s
-            // own resolvePaymentMethod(), which for an AgencyRebill payer
+            // two SEPARATE facts, never conflated. The locked contract
+            // requires a pre-existing payment_provider_customers row for
+            // ManualTopUp but explicitly does NOT require a saved
+            // instrument (hosted Checkout collects it) — so the top-up
+            // form's own gate is agencyProviderCustomerExists alone, never
+            // agencyPaymentMethod. agencyPaymentMethod is presentation
+            // only: when present, its safe brand/last-four is shown;
+            // whether or not it exists never hides or shows the top-up
+            // form by itself.
+            //
+            // agencyPaymentMethod is read the exact same way the client's
+            // own Usage & Billing dashboard resolves "whose payment
+            // method would this Business's payer actually charge"
+            // (UsageBillingPresenter::buildDashboardViewModel()'s own
+            // resolvePaymentMethod(), which for an AgencyRebill payer
             // already resolves to the managing Agency Workspace's default
-            // instrument, never the client's — Contract 09). The top-up
-            // form is gated on this being non-null; the setup form is
-            // shown instead when it is null.
+            // instrument, never the client's — Contract 09).
             'agencyPaymentMethod' => $business !== null
                 ? $this->usageBillingPresenter->buildDashboardViewModel($business)->paymentMethod
                 : null,
+            'agencyProviderCustomerExists' => $this->providerCustomerRepository->findActiveByWorkspaceId((int) $agencyWorkspace->id) !== null,
         ]);
     }
 

@@ -253,6 +253,61 @@ class AgencyClientFundingHttpTest extends TestCase
     }
 
     /**
+     * UI-gating correction — the locked contract requires a pre-existing
+     * provider customer for ManualTopUp but explicitly does NOT require a
+     * saved instrument (hosted Checkout collects the card). A provider
+     * customer with no card yet must still show the top-up form and
+     * still reach Checkout — never re-impose a saved-card prerequisite
+     * the contract removed.
+     */
+    public function test_provider_customer_exists_with_no_saved_instrument_shows_top_up_form_and_reaches_checkout(): void
+    {
+        $gateway = $this->fakeProvider();
+        $m = $this->rebilledClient();
+        $agencyCustomer = $this->workspaceProviderCustomerWithoutCard($m['agency']);
+
+        $page = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->get($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $page->assertOk();
+        $page->assertSee('agency-rebill-top-up-form', false);
+        $page->assertSee('agency-funding-setup-submit', false);
+
+        $response = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00']);
+
+        $response->assertRedirect();
+        $this->assertStringStartsWith('https://checkout.fake.stripe.test/', (string) $response->headers->get('Location'));
+
+        $attempt = $this->latestAttempt($m['business']);
+        $this->assertSame((int) $agencyCustomer->id, (int) $attempt->provider_customer_id);
+
+        $call = $gateway->createCheckoutSessionCalls[array_key_last($gateway->createCheckoutSessionCalls)];
+        $this->assertSame($agencyCustomer->provider_customer_id, $call['providerCustomerId']);
+    }
+
+    /**
+     * Contract 09 — funding CONFIGURATION requires no standing consent,
+     * so the setup control must be reachable even while consent is
+     * revoked; the top-up action itself stays hidden until consent is
+     * re-granted.
+     */
+    public function test_revoked_consent_still_shows_the_setup_control_but_hides_the_top_up_form(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+        app(\App\Library\Usage\BillingProfileManager::class)->revokeAgencyRebillConsent($m['business'], (int) $m['agencyOwner']->user_id, 'Test: revoked.');
+
+        $page = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->get($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $page->assertOk();
+        $page->assertSee('agency-rebill-revoked', false);
+        $page->assertSee('agency-funding-setup-submit', false);
+        $page->assertDontSee('agency-rebill-top-up-form', false);
+    }
+
+    /**
      * RFC-005 Funding Provider-Flow Correction Contract §9/§11, LOCKED
      * ORDERING — a first-time Agency with no payment_provider_customers
      * row must be refused 'no_provider_customer' exactly like the
