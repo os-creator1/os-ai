@@ -83,30 +83,47 @@ final class StripeApiConnectGateway implements StripeConnectGateway
     public function createAccount(string $country, ?string $email, string $businessUid): ConnectedAccountSnapshot
     {
         try {
-            $account = $this->client()->accounts->create([
-                'country' => $country,
-                'email' => $email,
-                'controller' => [
-                    'fees' => ['payer' => 'account'],
-                    'losses' => ['payments' => 'stripe'],
-                    'requirement_collection' => 'stripe',
-                    'stripe_dashboard' => ['type' => 'full'],
-                ],
-                // §11.2 — merchant / card-payments configuration required.
-                'capabilities' => [
-                    'card_payments' => ['requested' => true],
-                    'transfers' => ['requested' => true],
-                ],
-                // Our own opaque handle, so an account can be traced back to a
-                // Business without us ever trusting it as an authorization
-                // input. Nothing reads this back to decide access.
-                'metadata' => ['business_uid' => $businessUid],
-            ]);
+            $account = $this->client()->accounts->create(self::accountCreateParams($country, $email, $businessUid));
         } catch (ApiErrorException) {
             throw StripeConnectException::providerFailed();
         }
 
         return $this->snapshot($account);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function accountCreateParams(string $country, ?string $email, string $businessUid): array
+    {
+        $params = [
+            'country' => $country,
+            'controller' => [
+                'fees' => ['payer' => 'account'],
+                'losses' => ['payments' => 'stripe'],
+                'requirement_collection' => 'stripe',
+                'stripe_dashboard' => ['type' => 'full'],
+            ],
+            // §11.2 — merchant / card-payments configuration required.
+            'capabilities' => [
+                'card_payments' => ['requested' => true],
+                'transfers' => ['requested' => true],
+            ],
+            // Our own opaque handle, so an account can be traced back to a
+            // Business without us ever trusting it as an authorization
+            // input. Nothing reads this back to decide access.
+            'metadata' => ['business_uid' => $businessUid],
+        ];
+
+        // Stripe rejects a present-but-empty email ("Invalid email address: ")
+        // rather than treating it as absent. Passing 'email' => null here
+        // serializes to that same empty string over the wire, so the key is
+        // omitted entirely instead when there is no email to send.
+        if ($email !== null) {
+            $params['email'] = $email;
+        }
+
+        return $params;
     }
 
     public function createOnboardingLink(string $stripeAccountId, string $refreshUrl, string $returnUrl): string
