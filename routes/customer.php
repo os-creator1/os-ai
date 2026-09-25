@@ -785,6 +785,30 @@
         Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/agency-rebill', 'Agency\AgencyClientsController@assignAgencyRebill')->name('clients.agency-rebill.assign');
         Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/agency-rebill/revoke', 'Agency\AgencyClientsController@revokeAgencyRebill')->name('clients.agency-rebill.revoke');
 
+        // Contract 09 §12 — the Agency owner's own funding surface for a
+        // linked client's usage wallet. Genuinely needed outside View As
+        // (which deliberately pauses billing/funding, Contract 08A) since
+        // the client's own Usage & Billing route requires real Client
+        // Workspace access the Agency owner does not have.
+        // AgencyClientFundingController delegates every authorization and
+        // financial decision to the same BillingProfileManager/
+        // UsageBillingCheckoutManager the client's own top-up flow uses.
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/funding/top-up', 'Agency\AgencyClientFundingController@initiateTopUp')
+            ->middleware('throttle:30,1')->name('clients.funding.top-up.initiate');
+        Route::get('{workspaceUid}/clients/{clientWorkspaceUid}/funding/top-up/confirm/{attempt}', 'Agency\AgencyClientFundingController@confirmFromReturn')->name('clients.funding.top-up.confirm');
+
+        // RFC-005 Funding Provider-Flow Correction Contract §9/§11 — the
+        // separate, contract-named surface for establishing the Agency's
+        // own provider customer/payment method, never lazily inside
+        // top-up initiation. Mirrors
+        // businesses.usage-billing.payment-method.setup-intent/.confirm
+        // exactly, scoped to the Agency Workspace via
+        // PaymentInstrumentManager, not reimplemented.
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/funding/payment-method/setup-intent', 'Agency\AgencyClientFundingController@createSetupIntent')
+            ->middleware('throttle:30,1')->name('clients.funding.payment-method.setup-intent');
+        Route::post('{workspaceUid}/clients/{clientWorkspaceUid}/funding/payment-method/confirm', 'Agency\AgencyClientFundingController@confirmSetupIntent')
+            ->middleware('throttle:30,1')->name('clients.funding.payment-method.confirm');
+
         /*
         |----------------------------------------------------------------------
         | Lane C §C8 — the AGENCY's own SaaS surface: the Stripe account that

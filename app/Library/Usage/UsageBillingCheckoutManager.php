@@ -153,12 +153,22 @@ class UsageBillingCheckoutManager
      * any provider action (item 1), then charges the Business's current
      * default instrument via an off-session PaymentIntent, strictly
      * outside that transaction (item 3).
+     *
+     * Contract 09 §12 (AgencyRebill funding surface) — $returnUrls lets a
+     * caller outside the client's own Workspace (the managing Agency
+     * owner, who genuinely cannot reach the client's Usage & Billing
+     * route) supply its own hosted-Checkout return path instead of the
+     * client-Workspace-scoped default driveCheckoutSessionCreation()
+     * would otherwise build. The ordinary client self-service caller
+     * passes nothing and gets byte-for-byte the same behavior as before
+     * this parameter existed. See driveCheckoutSessionCreation() for the
+     * exact shape.
      */
-    public function initiateTopUp(Business $business, int $actorUserId, int $amountMicro): FundingAttemptResult
+    public function initiateTopUp(Business $business, int $actorUserId, int $amountMicro, ?array $returnUrls = null): FundingAttemptResult
     {
         $payer = $this->billingProfileManager->assertAuthorizedChargePayer($business, $actorUserId);
 
-        return $this->initiateCharge($business, FundingAttemptPurpose::ManualTopUp, $payer, $amountMicro, $actorUserId);
+        return $this->initiateCharge($business, FundingAttemptPurpose::ManualTopUp, $payer, $amountMicro, $actorUserId, null, null, $returnUrls);
     }
 
     /**
@@ -245,7 +255,7 @@ class UsageBillingCheckoutManager
      * add-on catalog row's own truthful display_name (§7); ManualTopUp
      * always uses the fixed 'Wallet top-up' label.
      */
-    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, EffectivePayer $payer, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null, ?string $lineItemNameOverride = null): FundingAttemptResult
+    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, EffectivePayer $payer, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null, ?string $lineItemNameOverride = null, ?array $returnUrls = null): FundingAttemptResult
     {
         $businessId = (int) $business->id;
         $wallet = $this->walletRepository->findByBusinessId($businessId);
@@ -412,7 +422,7 @@ class UsageBillingCheckoutManager
             return $this->driveOffSessionPaymentIntentAttempt1($attempt, $providerCustomer, $instrument, $amountMicro, $currencyCode, $idempotencyKey);
         }
 
-        return $this->driveCheckoutSessionCreation($business, $attempt, $providerCustomer, $purpose, $amountMicro, $currencyCode, $idempotencyKey, $lineItemNameOverride);
+        return $this->driveCheckoutSessionCreation($business, $attempt, $providerCustomer, $purpose, $amountMicro, $currencyCode, $idempotencyKey, $lineItemNameOverride, $returnUrls);
     }
 
     /**
@@ -478,19 +488,30 @@ class UsageBillingCheckoutManager
      * off-session PaymentIntent which can synchronously succeed at
      * creation.
      */
-    private function driveCheckoutSessionCreation(Business $business, BusinessFundingAttempt $attempt, $providerCustomer, FundingAttemptPurpose $purpose, int $amountMicro, string $currencyCode, string $idempotencyKey, ?string $lineItemNameOverride): FundingAttemptResult
+    private function driveCheckoutSessionCreation(Business $business, BusinessFundingAttempt $attempt, $providerCustomer, FundingAttemptPurpose $purpose, int $amountMicro, string $currencyCode, string $idempotencyKey, ?string $lineItemNameOverride, ?array $returnUrls = null): FundingAttemptResult
     {
         if ($purpose === FundingAttemptPurpose::ManualTopUp) {
             $lineItemName = 'Wallet top-up';
-            $successUrl = route('customer.workspaces.businesses.usage-billing.top-up.confirm', [
-                'workspaceUid' => $business->workspace->uid,
-                'businessUid' => $business->uid,
-                'attempt' => $attempt->id,
-            ]);
-            $cancelUrl = route('customer.workspaces.businesses.usage-billing.show', [
-                'workspaceUid' => $business->workspace->uid,
-                'businessUid' => $business->uid,
-            ]);
+
+            // Contract 09 §12 — $returnUrls (route name + params, minus
+            // 'attempt') lets a caller outside the client's own Workspace
+            // supply its own return path; the attempt id is always appended
+            // here so no caller can forget it. Absent, this is byte-for-byte
+            // the prior client-Workspace-scoped default.
+            if ($returnUrls !== null) {
+                $successUrl = route($returnUrls['success_route'], array_merge($returnUrls['success_params'], ['attempt' => $attempt->id]));
+                $cancelUrl = route($returnUrls['cancel_route'], $returnUrls['cancel_params']);
+            } else {
+                $successUrl = route('customer.workspaces.businesses.usage-billing.top-up.confirm', [
+                    'workspaceUid' => $business->workspace->uid,
+                    'businessUid' => $business->uid,
+                    'attempt' => $attempt->id,
+                ]);
+                $cancelUrl = route('customer.workspaces.businesses.usage-billing.show', [
+                    'workspaceUid' => $business->workspace->uid,
+                    'businessUid' => $business->uid,
+                ]);
+            }
         } else {
             // §7 — AddonPurchase: no add-on-specific HTTP surface exists;
             // the existing dashboard is the only honest landing page,

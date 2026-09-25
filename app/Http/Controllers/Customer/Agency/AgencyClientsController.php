@@ -8,6 +8,7 @@ use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Usage\BillingProfileManager;
+use App\Library\Usage\UsageBillingPresenter;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencyClientWorkspaceRelationship;
@@ -15,6 +16,8 @@ use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
+use App\Repositories\Contracts\BusinessUsageWalletRepository;
+use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -55,6 +58,9 @@ class AgencyClientsController extends Controller
         private readonly ViewAsManager $viewAsManager,
         private readonly CustomerAccountAccessResolver $accountAccessResolver,
         private readonly BillingProfileManager $billingProfileManager,
+        private readonly BusinessUsageWalletRepository $walletRepository,
+        private readonly UsageBillingPresenter $usageBillingPresenter,
+        private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
     ) {
     }
 
@@ -113,6 +119,36 @@ class AgencyClientsController extends Controller
             'billingResponsibility' => $business !== null
                 ? $this->billingProfileManager->billingResponsibilityFor($business, (int) Auth::id())
                 : null,
+            // Contract 09 §12 correction — the actual wallet currency for
+            // the funding-amount field's label, read the same way the
+            // client's own Usage & Billing dashboard reads it
+            // (UsageBillingPresenter::buildDashboardViewModel()'s own
+            // wallet['currency_code']) — never a hardcoded 'USD'.
+            'walletCurrencyCode' => $business !== null
+                ? ($this->walletRepository->findByBusinessId((int) $business->id)?->currency?->code ?? '')
+                : '',
+            // RFC-005 Funding Provider-Flow Correction Contract §9/§11 —
+            // two SEPARATE facts, never conflated. The locked contract
+            // requires a pre-existing payment_provider_customers row for
+            // ManualTopUp but explicitly does NOT require a saved
+            // instrument (hosted Checkout collects it) — so the top-up
+            // form's own gate is agencyProviderCustomerExists alone, never
+            // agencyPaymentMethod. agencyPaymentMethod is presentation
+            // only: when present, its safe brand/last-four is shown;
+            // whether or not it exists never hides or shows the top-up
+            // form by itself.
+            //
+            // agencyPaymentMethod is read the exact same way the client's
+            // own Usage & Billing dashboard resolves "whose payment
+            // method would this Business's payer actually charge"
+            // (UsageBillingPresenter::buildDashboardViewModel()'s own
+            // resolvePaymentMethod(), which for an AgencyRebill payer
+            // already resolves to the managing Agency Workspace's default
+            // instrument, never the client's — Contract 09).
+            'agencyPaymentMethod' => $business !== null
+                ? $this->usageBillingPresenter->buildDashboardViewModel($business)->paymentMethod
+                : null,
+            'agencyProviderCustomerExists' => $this->providerCustomerRepository->findActiveByWorkspaceId((int) $agencyWorkspace->id) !== null,
         ]);
     }
 
