@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers\Customer\Agency;
 
+use App\Enums\Usage\PayerType;
+use App\Exceptions\Usage\UnauthorizedPayerAssignmentException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
+use App\Library\Usage\BillingProfileManager;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencyClientWorkspaceRelationship;
+use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
@@ -50,6 +54,7 @@ class AgencyClientsController extends Controller
         private readonly AgencyClientRelationshipManager $relationshipManager,
         private readonly ViewAsManager $viewAsManager,
         private readonly CustomerAccountAccessResolver $accountAccessResolver,
+        private readonly BillingProfileManager $billingProfileManager,
     ) {
     }
 
@@ -101,7 +106,90 @@ class AgencyClientsController extends Controller
             'sellablePlans' => app(\App\Library\AgencyBilling\AgencySaasPlanManager::class)
                 ->sellablePlans($agencyWorkspace),
             'isAgencyOwner' => (int) $agencyWorkspace->owner_user_id === (int) Auth::id(),
+            // Contract 09 §6.2 — the Agency owner's own AgencyRebill consent
+            // state for this client's Business, read the same way the
+            // client's own Usage & Billing page reads it (never a raw
+            // payer_type column).
+            'billingResponsibility' => $business !== null
+                ? $this->billingProfileManager->billingResponsibilityFor($business, (int) Auth::id())
+                : null,
         ]);
+    }
+
+    /**
+     * Contract 09 §6.2/§7 — the Agency owner grants (or re-affirms) standing
+     * consent for the Agency to fund this client's Business. Deliberately
+     * NOT the existing Client/legacy payer selector
+     * (UpdateBusinessPayerRequest only ever accepts business/workspace,
+     * Enums\Usage\PayerType's own docblock) — AgencyRebill has its own
+     * authority rule (BillingProfileManager::assertBillingResponsibilityAuthority(),
+     * the managing Agency Workspace owner only) and this action asserts
+     * nothing itself: every check, the relationship re-validation and the
+     * audit row all live in BillingProfileManager::assignPayer(), unchanged.
+     */
+    public function assignAgencyRebill(Request $request, string $workspaceUid, string $clientWorkspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->resolveAuthorizedAgencyWorkspace($workspaceUid);
+        [$clientWorkspace] = $this->resolveLinkedClient($agencyWorkspace, $clientWorkspaceUid);
+        $business = $this->resolveSoleBusiness($clientWorkspace);
+
+        $request->validate(['confirm' => ['required', 'accepted']]);
+
+        try {
+            $this->billingProfileManager->assignPayer(
+                $business,
+                PayerType::AgencyRebill,
+                (int) Auth::id(),
+                'Agency owner consent via Client accounts → AgencyRebill.',
+            );
+        } catch (UnauthorizedPayerAssignmentException) {
+            abort(404);
+        }
+
+        return redirect()->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
+            ->with(['status' => 'success', 'message' => 'This Business is now funded by your Agency.']);
+    }
+
+    /**
+     * Contract 09 §6.2 — the Agency owner withdraws standing consent. The
+     * payer stays agency_rebill (BillingProfileManager::
+     * revokeAgencyRebillConsent() never falls back to another payer); every
+     * NEW Agency-funded charge is refused from this commit on.
+     */
+    public function revokeAgencyRebill(Request $request, string $workspaceUid, string $clientWorkspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->resolveAuthorizedAgencyWorkspace($workspaceUid);
+        [$clientWorkspace] = $this->resolveLinkedClient($agencyWorkspace, $clientWorkspaceUid);
+        $business = $this->resolveSoleBusiness($clientWorkspace);
+
+        try {
+            $this->billingProfileManager->revokeAgencyRebillConsent(
+                $business,
+                (int) Auth::id(),
+                'Agency owner revoked consent via Client accounts → AgencyRebill.',
+            );
+        } catch (UnauthorizedPayerAssignmentException) {
+            abort(404);
+        }
+
+        return redirect()->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
+            ->with(['status' => 'success', 'message' => 'Your Agency\'s standing consent to fund this Business has been withdrawn.']);
+    }
+
+    /**
+     * The same "exactly one Business" resolution show() already performs,
+     * as a 404 rather than a nullable — every AgencyRebill action requires
+     * a real target.
+     */
+    private function resolveSoleBusiness(Workspace $clientWorkspace): Business
+    {
+        $businesses = $this->workspaceRepository->businessesForWorkspace($clientWorkspace);
+
+        if ($businesses->count() !== 1) {
+            abort(404);
+        }
+
+        return $businesses->first();
     }
 
     /**

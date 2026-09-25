@@ -135,6 +135,45 @@
                         </form>
                     @endif
                 </x-card>
+
+                {{--
+                    Contract 09 §6.2/§7 — AgencyRebill: the Agency funds this
+                    Business's OWN usage wallet on the platform's Stripe
+                    account. Deliberately a separate card from "SaaS
+                    subscription" above: that is the client paying the
+                    Agency for their plan (lane C); this is the Agency
+                    paying for the client's usage (lane D). Never the same
+                    control, never the same consent.
+                --}}
+                @if ($isAgencyOwner && $business !== null)
+                    <x-card title="Usage funding (AgencyRebill)">
+                        <dl class="row mb-0" data-role="agency-rebill-facts">
+                            <dt class="col-sm-5">Who pays</dt>
+                            <dd class="col-sm-7" data-role="agency-rebill-payer-type">{{ $billingResponsibility['payer_type'] }}</dd>
+                        </dl>
+
+                        @if ($billingResponsibility['payer_type'] === \App\Enums\Usage\PayerType::AgencyRebill->value)
+                            <p class="mb-1" data-role="agency-rebill-active">Your Agency currently funds this Business's usage.</p>
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.agency-rebill.revoke', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-revoke-form">
+                                @csrf
+                                <button type="submit">Stop funding this Business</button>
+                            </form>
+                        @else
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.agency-rebill.assign', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-assign-form">
+                                @csrf
+                                <label>
+                                    <input type="checkbox" name="confirm" value="1" required>
+                                    I understand my Agency will fund this Business's usage on our own Stripe account, until I stop.
+                                </label>
+                                <button type="submit">Fund this Business's usage</button>
+                            </form>
+                        @endif
+                    </x-card>
+                @endif
             </div>
         </div>
     </section>
