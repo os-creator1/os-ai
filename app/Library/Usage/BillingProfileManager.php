@@ -355,7 +355,14 @@ class BillingProfileManager
      * managing Agency), its payer is that Agency's owner, and who_pays says so
      * — it is never presented as client-paid.
      *
-     * @return array{tier: ?string, payer_type: string, is_agency: bool, agency_paid: bool, who_pays: string, actor_is_payer: bool, actor_manages_responsibility: bool, actor_manages_limits: bool, actor_manages_billing_contact: bool, actor_is_workspace_owner: bool}
+     * Contract 09 §6.2/§7 correction — agency_rebill_consented_at surfaces
+     * the standing-consent timestamp alongside payer_type so a caller can
+     * tell "consent granted and active" apart from "payer_type is still
+     * agency_rebill but the owner revoked consent" (revokeAgencyRebillConsent()
+     * never falls back to another payer, so payer_type alone is ambiguous).
+     * Always null when payer_type is not agency_rebill.
+     *
+     * @return array{tier: ?string, payer_type: string, is_agency: bool, agency_paid: bool, who_pays: string, actor_is_payer: bool, actor_manages_responsibility: bool, actor_manages_limits: bool, actor_manages_billing_contact: bool, actor_is_workspace_owner: bool, agency_rebill_consented_at: ?\Illuminate\Support\Carbon}
      */
     public function billingResponsibilityFor(Business $business, int $actorUserId): array
     {
@@ -367,6 +374,10 @@ class BillingProfileManager
         $payerType = $this->effectivePayerResolver->payerTypeOf($business);
 
         $isWorkspaceOwner = (int) $business->workspace->owner_user_id === $actorUserId;
+
+        $assignment = $payerType === PayerType::AgencyRebill
+            ? $this->payerAssignmentRepository->findByBusinessId((int) $business->id)
+            : null;
 
         return [
             'tier' => $summary->tier?->value,
@@ -386,6 +397,7 @@ class BillingProfileManager
             'actor_manages_limits' => $this->actorManagesPayerControls($business, $actorUserId),
             'actor_manages_billing_contact' => $this->canManageBusinessUsageBilling($business, $actorUserId),
             'actor_is_workspace_owner' => $isWorkspaceOwner,
+            'agency_rebill_consented_at' => $assignment?->agency_rebill_consented_at,
         ];
     }
 

@@ -246,6 +246,71 @@ class AgencyClientsAgencyRebillHttpTest extends TestCase
         $this->assertNotNull(BusinessPayerAssignment::where('business_id', $business->id)->firstOrFail()->agency_rebill_consented_at);
     }
 
+    /**
+     * Contract 09 §6.2/§7 correction — the detail page must show three
+     * distinct states, not two: payer_type alone cannot distinguish "never
+     * configured" from "revoked" because revokeAgencyRebillConsent() never
+     * falls back to another payer. This proves the page's own copy tracks
+     * agency_rebill_consented_at through a full grant → revoke → re-grant
+     * cycle, and that re-granting after a revoke writes a fresh, distinct
+     * audited transition (never silently reusing the old one).
+     */
+    public function test_the_detail_page_distinguishes_not_configured_active_and_revoked_then_allows_regranting(): void
+    {
+        [$agency, $owner] = $this->agency();
+        [$client, $business] = $this->clientAccount();
+        $this->link($agency, $owner, $client);
+
+        // Not configured.
+        $this->actingAsCustomer($owner)->get($this->showUrl($agency, $client))
+            ->assertOk()
+            ->assertSee('agency-rebill-not-configured', false)
+            ->assertDontSee('agency-rebill-active', false)
+            ->assertDontSee('agency-rebill-revoked', false);
+
+        // Active.
+        $this->actingAsCustomer($owner)->post($this->assignUrl($agency, $client), ['confirm' => '1'])->assertRedirect();
+        $this->actingAsCustomer($owner)->get($this->showUrl($agency, $client))
+            ->assertOk()
+            ->assertSee('agency-rebill-active', false)
+            ->assertDontSee('agency-rebill-not-configured', false)
+            ->assertDontSee('agency-rebill-revoked', false);
+
+        // Revoked: payer_type stays agency_rebill, consent clears.
+        $this->actingAsCustomer($owner)->post($this->revokeUrl($agency, $client))->assertRedirect();
+        $assignment = BusinessPayerAssignment::where('business_id', $business->id)->firstOrFail();
+        $this->assertSame(PayerType::AgencyRebill, $assignment->payer_type);
+        $this->assertNull($assignment->agency_rebill_consented_at);
+
+        $this->actingAsCustomer($owner)->get($this->showUrl($agency, $client))
+            ->assertOk()
+            ->assertSee('agency-rebill-revoked', false)
+            ->assertDontSee('agency-rebill-not-configured', false)
+            ->assertDontSee('agency-rebill-active', false);
+
+        // Re-granting requires fresh confirmation, same as the first grant.
+        $this->actingAsCustomer($owner)->post($this->assignUrl($agency, $client), [])
+            ->assertSessionHasErrors('confirm');
+
+        // Re-grant.
+        $this->actingAsCustomer($owner)->post($this->assignUrl($agency, $client), ['confirm' => '1'])->assertRedirect();
+
+        $assignment = $assignment->fresh();
+        $this->assertSame(PayerType::AgencyRebill, $assignment->payer_type);
+        $this->assertNotNull($assignment->agency_rebill_consented_at);
+
+        $this->actingAsCustomer($owner)->get($this->showUrl($agency, $client))
+            ->assertOk()
+            ->assertSee('agency-rebill-active', false)
+            ->assertDontSee('agency-rebill-not-configured', false)
+            ->assertDontSee('agency-rebill-revoked', false);
+
+        // Grant, revoke, re-grant is three distinct audited transitions.
+        $this->assertSame(3, BusinessPayerTransition::where('business_id', $business->id)->count());
+        $consents = BusinessPayerTransition::where('business_id', $business->id)->orderBy('id')->pluck('agency_rebill_consent')->all();
+        $this->assertSame(['granted', 'revoked', 'granted'], $consents);
+    }
+
     // ------------------------------------------------------------------
     // ISOLATION FROM LANE C (the SaaS-offer card on the same page)
     // ------------------------------------------------------------------
