@@ -83,27 +83,44 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
     public function createAccount(string $country, ?string $email, string $agencyWorkspaceUid): AgencyAccountSnapshot
     {
         try {
-            // The commercial posture is fixed here and cannot be passed in.
-            // `express` keeps Stripe responsible for the hosted onboarding and
-            // identity collection, and the Agency — not the platform — carries
-            // its own fees and losses, which is what "the Agency's revenue"
-            // means.
-            $account = $this->client()->accounts->create([
-                'type' => 'express',
-                'country' => $country,
-                'email' => $email,
-                'capabilities' => [
-                    'card_payments' => ['requested' => true],
-                    'transfers' => ['requested' => true],
-                ],
-                'business_type' => 'company',
-                'metadata' => ['app_agency_workspace_uid' => $agencyWorkspaceUid],
-            ]);
+            $account = $this->client()->accounts->create(self::accountCreateParams($country, $email, $agencyWorkspaceUid));
         } catch (ApiErrorException) {
             throw AgencyBillingException::because(AgencyBillingException::PROVIDER_FAILED);
         }
 
         return $this->accountSnapshot($account);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function accountCreateParams(string $country, ?string $email, string $agencyWorkspaceUid): array
+    {
+        // The commercial posture is fixed here and cannot be passed in.
+        // `express` keeps Stripe responsible for the hosted onboarding and
+        // identity collection, and the Agency — not the platform — carries
+        // its own fees and losses, which is what "the Agency's revenue"
+        // means.
+        $params = [
+            'type' => 'express',
+            'country' => $country,
+            'capabilities' => [
+                'card_payments' => ['requested' => true],
+                'transfers' => ['requested' => true],
+            ],
+            'business_type' => 'company',
+            'metadata' => ['app_agency_workspace_uid' => $agencyWorkspaceUid],
+        ];
+
+        // Stripe rejects a present-but-empty email ("Invalid email address: ")
+        // rather than treating it as absent. Passing 'email' => null here
+        // serializes to that same empty string over the wire, so the key is
+        // omitted entirely instead when there is no email to send.
+        if ($email !== null) {
+            $params['email'] = $email;
+        }
+
+        return $params;
     }
 
     public function createOnboardingLink(string $connectedAccountId, string $refreshUrl, string $returnUrl): string
