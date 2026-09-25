@@ -90,6 +90,16 @@
                         <option value="{{ $identifier }}" @selected(old('timezone', config('app.timezone')) === $identifier)>{{ $identifier }}</option>
                     @endforeach
                 </select>
+
+                <label for="currency_code">{{ __('Currency') }}</label>
+                <select id="currency_code" name="currency_code" required data-currency-select
+                        data-old="{{ old('currency_code') }}"
+                        data-country-currency="{{ json_encode($countryCurrencyDefaults) }}">
+                    <option value="">{{ __('Choose a currency') }}</option>
+                    @foreach ($currencies as $code => $label)
+                        <option value="{{ $code }}" @selected(old('currency_code') === $code)>{{ $label }}</option>
+                    @endforeach
+                </select>
             </fieldset>
 
             <fieldset>
@@ -163,6 +173,48 @@
         } catch (error) {
             // No usable browser timezone: the server-rendered default stands.
         }
+    })();
+
+    // Same "follow the country until the customer picks their own currency"
+    // default the existing Business locale-fields partial uses
+    // (BusinessLocaleOptions::defaultCurrencyByCountry()) — never overrides
+    // an explicit choice or a value preserved after a validation failure.
+    (function () {
+        var country = document.getElementById('country_code');
+        var currency = document.getElementById('currency_code');
+
+        if (! country || ! currency) {
+            return;
+        }
+
+        var currencyByCountry = {};
+
+        try {
+            currencyByCountry = JSON.parse(currency.getAttribute('data-country-currency') || '{}');
+        } catch (error) {
+            currencyByCountry = {};
+        }
+
+        var currencyChosen = currency.getAttribute('data-old') !== '';
+
+        currency.addEventListener('change', function () {
+            currencyChosen = true;
+        });
+
+        country.addEventListener('change', function () {
+            if (currencyChosen) {
+                return;
+            }
+
+            var suggested = currencyByCountry[country.value];
+            var exists = suggested && Array.prototype.some.call(currency.options, function (option) {
+                return option.value === suggested;
+            });
+
+            if (exists) {
+                currency.value = suggested;
+            }
+        });
     })();
 </script>
 </body>

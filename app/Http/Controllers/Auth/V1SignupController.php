@@ -75,12 +75,18 @@ class V1SignupController extends Controller
         return view('auth.v1-signup', [
             'plans' => $this->plans->sellablePlans(),
             'industries' => BusinessIndustry::cases(),
-            // The same canonical country/timezone authority the customer
-            // Business form already uses (BusinessLocaleOptions) — never a
-            // second list, so a signup can never offer a country or timezone
-            // the rest of the product would not also accept.
+            // The same canonical country/timezone/currency authority the
+            // customer Business form already uses (BusinessLocaleOptions) —
+            // never a second list, so a signup can never offer a country,
+            // timezone or currency the rest of the product would not also
+            // accept.
             'countries' => $this->localeOptions->countries(),
             'timezones' => $this->localeOptions->timezones(),
+            'currencies' => $this->localeOptions->currencies(),
+            // country code => currency code, for the same "follow the
+            // country until the customer picks their own" default the
+            // existing Business locale-fields partial already uses.
+            'countryCurrencyDefaults' => $this->localeOptions->defaultCurrencyByCountry(),
         ]);
     }
 
@@ -154,6 +160,13 @@ class V1SignupController extends Controller
             // canonical identifier list — the same source BusinessLocaleOptions
             // reads — so it was already as strict as the select it now backs.
             'timezone' => ['required', 'timezone'],
+            // The same canonical, active-currencies list the Business
+            // edit form validates against (BusinessLocaleOptions::currencies())
+            // — exactly what UsageWalletManager::resolveCurrencyId() can
+            // resolve. Required, not inferred: a forged or missing value is
+            // refused here rather than left for the wallet subsystem to
+            // silently fail on later.
+            'currency_code' => ['required', 'string', Rule::in(array_keys($this->localeOptions->currencies()))],
             // Only a tier the catalog says is sellable may be submitted.
             'tier' => ['required', 'string', 'in:' . $plans->pluck('tier_value')->implode(',')],
         ]);
@@ -203,6 +216,7 @@ class V1SignupController extends Controller
                     'industry' => $data['industry'],
                     'country_code' => $data['country_code'],
                     'timezone' => $data['timezone'],
+                    'currency_code' => $data['currency_code'],
                 ],
                 $catalog,
                 route('signup.success'),
