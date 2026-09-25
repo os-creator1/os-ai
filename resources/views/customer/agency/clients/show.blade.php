@@ -170,6 +170,28 @@
                                 @csrf
                                 <button type="submit">Stop funding this Business</button>
                             </form>
+
+                            {{--
+                                Contract 09 §12 — the actual funding action.
+                                Only shown once consent is active: a
+                                not-configured or revoked Business must grant
+                                (or re-grant) first, above. Posts to
+                                AgencyClientFundingController, which reuses
+                                UsageBillingCheckoutManager::initiateTopUp()
+                                unchanged — the redirect that follows is
+                                Stripe's own hosted Checkout page.
+                            --}}
+                            <form method="POST"
+                                  action="{{ route('customer.workspaces.clients.funding.top-up.initiate', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                  data-role="agency-rebill-top-up-form"
+                                  class="mt-2">
+                                @csrf
+                                <label>
+                                    Amount (USD)
+                                    <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required>
+                                </label>
+                                <button type="submit">Fund this Business's wallet now</button>
+                            </form>
                         @elseif ($isAgencyRebillPayer && $consentedAt === null)
                             <p class="mb-1" data-role="agency-rebill-revoked">Funding is paused. Your Agency previously consented, then stopped — no new usage is being funded until you re-grant consent.</p>
                             <form method="POST"
