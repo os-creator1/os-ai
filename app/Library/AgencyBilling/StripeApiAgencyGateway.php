@@ -96,14 +96,44 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
      */
     public static function accountCreateParams(string $country, ?string $email, string $agencyWorkspaceUid): array
     {
-        // The commercial posture is fixed here and cannot be passed in.
-        // `express` keeps Stripe responsible for the hosted onboarding and
-        // identity collection, and the Agency — not the platform — carries
-        // its own fees and losses, which is what "the Agency's revenue"
-        // means.
+        // The commercial posture is fixed here and cannot be passed in, and
+        // mirrors Lane B's own account-creation shape exactly
+        // (StripeApiConnectGateway::accountCreateParams()) — the same
+        // `controller` parameters that already work for real direct charges
+        // in this environment. The deprecated `type` parameter is never
+        // set: Stripe refuses direct-charge Checkout Sessions
+        // (self::onAccount()'s `stripe_account` header) against a
+        // type=express/custom account created on a platform created after
+        // Stripe's 2024 policy cutoff ("Creating direct charges with
+        // type=express or type=custom is not supported for new
+        // platforms."), and `controller` is Stripe's documented
+        // replacement — it is not merely a dashboard-styling choice.
+        //
+        //   controller[fees][payer]            = account  -> the connected
+        //                                        Agency pays Stripe's fees
+        //   controller[losses][payments]       = stripe   -> the platform
+        //                                        assumes no liability
+        //   controller[requirement_collection] = stripe   -> Stripe-hosted
+        //                                        onboarding and identity
+        //                                        collection, same as before
+        //   controller[stripe_dashboard][type] = full     -> full
+        //                                        Stripe-hosted dashboard;
+        //                                        the Agency operates its
+        //                                        own payments and refunds
+        //
+        // Together with onAccount()'s `stripe_account` header and the
+        // absence of `application_fee_amount`/`transfer_data`/
+        // `on_behalf_of` anywhere in this class, the Agency's revenue stays
+        // the Agency's and the platform is never a party to the charge —
+        // unchanged from before this correction.
         $params = [
-            'type' => 'express',
             'country' => $country,
+            'controller' => [
+                'fees' => ['payer' => 'account'],
+                'losses' => ['payments' => 'stripe'],
+                'requirement_collection' => 'stripe',
+                'stripe_dashboard' => ['type' => 'full'],
+            ],
             'capabilities' => [
                 'card_payments' => ['requested' => true],
                 'transfers' => ['requested' => true],
