@@ -180,6 +180,39 @@ class AgencyClientFundingHttpTest extends TestCase
         $this->assertCount(0, app(BusinessFundingAttemptRepository::class)->query()->where('business_id', $m['business']->id)->get());
     }
 
+    /**
+     * Ordering correction — resolveProviderCustomer()'s own authorization
+     * rule (assertAuthorizedFundingPayer()) is deliberately broader than
+     * charge origination's (no standing consent required, so funding
+     * configuration never deadlocks on the very consent it exists to
+     * grant). Before this fix, calling it first meant a crafted top-up
+     * POST for a revoked-consent Agency with no provider customer yet
+     * could create a real Stripe customer before the request finally
+     * failed. assertAuthorizedChargePayer() — the SAME canonical
+     * origination check initiateTopUp() already performs — must run
+     * first, so nothing is ever created for a request that was always
+     * going to be refused.
+     */
+    public function test_revoked_consent_with_no_agency_provider_customer_yet_creates_nothing_at_all(): void
+    {
+        $gateway = $this->fakeProvider();
+        $m = $this->rebilledClient();
+        app(\App\Library\Usage\BillingProfileManager::class)->revokeAgencyRebillConsent($m['business'], (int) $m['agencyOwner']->user_id, 'Test: revoked.');
+
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+
+        $this->actingAsCustomer($m['agencyOwner']->user)
+            ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00'])
+            ->assertNotFound();
+
+        $this->assertNull(
+            app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id),
+            'No Stripe provider customer may be created for a request charge-origination would always refuse.',
+        );
+        $this->assertSame([], $gateway->createCheckoutSessionCalls, 'No Checkout Session call may be made.');
+        $this->assertCount(0, app(BusinessFundingAttemptRepository::class)->query()->where('business_id', $m['business']->id)->get());
+    }
+
     public function test_a_business_that_is_not_agency_rebill_funded_refuses_the_agency_owner(): void
     {
         $this->fakeProvider();

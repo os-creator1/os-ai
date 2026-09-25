@@ -7,6 +7,7 @@ use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Customer\Business\InitiateTopUpRequest;
+use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\PaymentInstrumentManager;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Library\Usage\UsageWalletManager;
@@ -60,6 +61,7 @@ class AgencyClientFundingController extends Controller
         private readonly UsageBillingCheckoutManager $checkoutManager,
         private readonly UsageWalletManager $walletManager,
         private readonly PaymentInstrumentManager $paymentInstrumentManager,
+        private readonly BillingProfileManager $billingProfileManager,
         private readonly BusinessFundingAttemptRepository $attemptRepository,
     ) {
     }
@@ -82,20 +84,35 @@ class AgencyClientFundingController extends Controller
         }
 
         try {
-            // Contract 09 §12 correction — a first-time Agency funder has no
-            // Agency Workspace payment_provider_customers row yet (Lane C's
+            // Ordering correction — resolveProviderCustomer() below
+            // deliberately uses the BROADER assertAuthorizedFundingPayer()
+            // rule (owner-only, no standing consent required — funding
+            // configuration must never deadlock on a consent it exists to
+            // grant). Calling it FIRST, before this canonical
+            // charge-origination check, would let a crafted top-up POST
+            // create a real Stripe provider customer for an Agency whose
+            // standing consent was already revoked, before the request
+            // later failed. assertAuthorizedChargePayer() is the SAME
+            // canonical preflight initiateTopUp() below performs itself
+            // (and re-performs, locked, under the wallet lock) — calling it
+            // here first is not a second authority rule, only an earlier
+            // call to the one that already exists, so nothing created
+            // below can ever outlive a request an unrevoked-consent check
+            // would have refused anyway.
+            $this->billingProfileManager->assertAuthorizedChargePayer($business, $actorUserId);
+
+            // Contract 09 §12 — a first-time Agency funder has no Agency
+            // Workspace payment_provider_customers row yet (Lane C's
             // Connect account is a separate, unrelated Stripe object).
-            // resolveProviderCustomer() is the existing, idempotent,
-            // authorized mechanism for establishing one — the same one the
-            // client's own Usage & Billing page uses for itself. It asserts
-            // assertAuthorizedFundingPayer() (owner-only, no standing
-            // consent required, so this alone can never grant a charge),
-            // resolves to the AGENCY's own Workspace via EffectivePayer
-            // (never the client's), and makes its one outbound provider
-            // call strictly outside any DB transaction/lock, exactly like
-            // every other provider call in this flow. It does not require a
-            // previously saved card — the hosted Checkout Session below
-            // collects payment details directly.
+            // resolveProviderCustomer() is the existing, idempotent
+            // mechanism for establishing one — the same one the client's
+            // own Usage & Billing page uses for itself. It resolves to the
+            // AGENCY's own Workspace via EffectivePayer (never the
+            // client's), and makes its one outbound provider call strictly
+            // outside any DB transaction/lock, exactly like every other
+            // provider call in this flow. It does not require a previously
+            // saved card — the hosted Checkout Session below collects
+            // payment details directly.
             $this->paymentInstrumentManager->resolveProviderCustomer($business, $actorUserId);
 
             $result = $this->checkoutManager->initiateTopUp($business, $actorUserId, $amountMicro, [
