@@ -8,6 +8,7 @@ use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Usage\BillingProfileManager;
+use App\Library\Usage\UsageBillingPresenter;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencyClientWorkspaceRelationship;
@@ -57,6 +58,7 @@ class AgencyClientsController extends Controller
         private readonly CustomerAccountAccessResolver $accountAccessResolver,
         private readonly BillingProfileManager $billingProfileManager,
         private readonly BusinessUsageWalletRepository $walletRepository,
+        private readonly UsageBillingPresenter $usageBillingPresenter,
     ) {
     }
 
@@ -123,6 +125,20 @@ class AgencyClientsController extends Controller
             'walletCurrencyCode' => $business !== null
                 ? ($this->walletRepository->findByBusinessId((int) $business->id)?->currency?->code ?? '')
                 : '',
+            // RFC-005 Funding Provider-Flow Correction Contract §9/§11 —
+            // whether the Agency's own funding setup (provider customer +
+            // saved payment method) already exists, read the exact same
+            // way the client's own Usage & Billing dashboard resolves
+            // "whose payment method would this Business's payer actually
+            // charge" (UsageBillingPresenter::buildDashboardViewModel()'s
+            // own resolvePaymentMethod(), which for an AgencyRebill payer
+            // already resolves to the managing Agency Workspace's default
+            // instrument, never the client's — Contract 09). The top-up
+            // form is gated on this being non-null; the setup form is
+            // shown instead when it is null.
+            'agencyPaymentMethod' => $business !== null
+                ? $this->usageBillingPresenter->buildDashboardViewModel($business)->paymentMethod
+                : null,
         ]);
     }
 

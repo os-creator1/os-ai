@@ -172,26 +172,72 @@
                             </form>
 
                             {{--
-                                Contract 09 §12 — the actual funding action.
-                                Only shown once consent is active: a
-                                not-configured or revoked Business must grant
-                                (or re-grant) first, above. Posts to
-                                AgencyClientFundingController, which reuses
-                                UsageBillingCheckoutManager::initiateTopUp()
-                                unchanged — the redirect that follows is
-                                Stripe's own hosted Checkout page.
+                                RFC-005 Funding Provider-Flow Correction
+                                Contract §9/§11 — honest gating. The actual
+                                funding action requires an Agency provider
+                                customer/payment method to already exist
+                                (initiateTopUp() itself still enforces
+                                this — no lazy creation, no provider call
+                                before the client's own request would have
+                                been denied anyway); when it does not, this
+                                shows the setup surface instead of a top-up
+                                form that would just deny with
+                                'no_provider_customer'.
                             --}}
-                            <form method="POST"
-                                  action="{{ route('customer.workspaces.clients.funding.top-up.initiate', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
-                                  data-role="agency-rebill-top-up-form"
-                                  class="mt-2">
-                                @csrf
-                                <label>
-                                    Amount ({{ $walletCurrencyCode }})
-                                    <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required data-role="agency-rebill-top-up-amount">
-                                </label>
-                                <button type="submit">Fund this Business's wallet now</button>
-                            </form>
+                            @if ($agencyPaymentMethod !== null)
+                                <p class="mb-1" data-role="agency-funding-payment-method">
+                                    {{ ucfirst((string) $agencyPaymentMethod['brand']) }} &bull;&bull;&bull;&bull; {{ $agencyPaymentMethod['last_four'] }} on file for funding.
+                                </p>
+
+                                {{--
+                                    Contract 09 §12 — the actual funding
+                                    action. Posts to
+                                    AgencyClientFundingController, which
+                                    reuses
+                                    UsageBillingCheckoutManager::initiateTopUp()
+                                    unchanged — the redirect that follows is
+                                    Stripe's own hosted Checkout page.
+                                --}}
+                                <form method="POST"
+                                      action="{{ route('customer.workspaces.clients.funding.top-up.initiate', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                      data-role="agency-rebill-top-up-form"
+                                      class="mt-2">
+                                    @csrf
+                                    <label>
+                                        Amount ({{ $walletCurrencyCode }})
+                                        <input type="text" name="amount" inputmode="decimal" placeholder="5.00" required data-role="agency-rebill-top-up-amount">
+                                    </label>
+                                    <button type="submit">Fund this Business's wallet now</button>
+                                </form>
+                            @else
+                                <p class="mb-1" data-role="agency-funding-setup-required">Funding setup required before you can fund this Business. Add a payment method for your Agency below.</p>
+
+                                {{--
+                                    RFC-005 Funding Provider-Flow Correction
+                                    Contract §9/§11 — the separate,
+                                    contract-named surface for establishing
+                                    the Agency's own provider customer,
+                                    mirroring the client's own
+                                    usage-billing/partials/payment-method.blade.php
+                                    exactly (same Stripe.js SetupIntent
+                                    flow, same two-step
+                                    create-then-confirm), scoped to the
+                                    Agency instead of a client Business.
+                                --}}
+                                <div id="agency-funding-payment-method-setup-form" class="mb-2" style="max-width: 360px;">
+                                    <div id="agency-funding-card-element" class="form-control mb-1" style="height: 40px; padding: 10px;"></div>
+                                    <div id="agency-funding-card-errors" class="text-danger small mb-1" role="alert"></div>
+                                    <button type="button"
+                                            id="agency-funding-payment-method-submit"
+                                            class="btn btn-outline-primary"
+                                            data-role="agency-funding-setup-submit"
+                                            data-action-url="{{ route('customer.workspaces.clients.funding.payment-method.setup-intent', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                            data-confirm-url="{{ route('customer.workspaces.clients.funding.payment-method.confirm', [$agencyWorkspace->uid, $clientWorkspace->uid]) }}"
+                                            data-publishable-key="{{ config('services.stripe.key') }}">
+                                        Set up funding payment method
+                                    </button>
+                                </div>
+                            @endif
                         @elseif ($isAgencyRebillPayer && $consentedAt === null)
                             <p class="mb-1" data-role="agency-rebill-revoked">Funding is paused. Your Agency previously consented, then stopped — no new usage is being funded until you re-grant consent.</p>
                             <form method="POST"
@@ -222,4 +268,81 @@
             </div>
         </div>
     </section>
+
+    {{--
+        RFC-005 Funding Provider-Flow Correction Contract §9/§11 — the
+        Agency funding-setup SetupIntent flow, mirrored line-for-line from
+        resources/views/customer/business/usage-billing/show.blade.php's
+        own payment-method script, scoped to the agency-funding-* element
+        ids above instead of usage-billing-*. Stripe.js is loaded only
+        when the setup button is actually rendered (i.e. no Agency payment
+        method exists yet). The publishable key is the only Stripe-related
+        value embedded server-side; the client_secret is fetched
+        per-request and never stored.
+    --}}
+    <script>
+        (function () {
+            var agencyFundingButton = document.getElementById('agency-funding-payment-method-submit');
+
+            if (agencyFundingButton) {
+                var stripeScript = document.createElement('script');
+                stripeScript.src = 'https://js.stripe.com/v3/';
+                stripeScript.onload = function () {
+                    var stripe = Stripe(agencyFundingButton.getAttribute('data-publishable-key'));
+                    var elements = stripe.elements();
+                    var card = elements.create('card');
+                    card.mount('#agency-funding-card-element');
+
+                    agencyFundingButton.addEventListener('click', function () {
+                        var errorEl = document.getElementById('agency-funding-card-errors');
+                        errorEl.textContent = '';
+
+                        fetch(agencyFundingButton.getAttribute('data-action-url'), {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]') ? document.querySelector('meta[name="csrf-token"]').getAttribute('content') : '',
+                                'Accept': 'application/json',
+                            },
+                        })
+                            .then(function (response) { return response.json(); })
+                            .then(function (data) {
+                                if (data.error) {
+                                    errorEl.textContent = data.error;
+                                    return;
+                                }
+
+                                return stripe.confirmCardSetup(data.client_secret, {
+                                    payment_method: { card: card },
+                                }).then(function (result) {
+                                    if (result.error) {
+                                        errorEl.textContent = result.error.message;
+                                        return;
+                                    }
+
+                                    var confirmForm = document.createElement('form');
+                                    confirmForm.method = 'POST';
+                                    confirmForm.action = agencyFundingButton.getAttribute('data-confirm-url');
+
+                                    var csrfInput = document.createElement('input');
+                                    csrfInput.type = 'hidden';
+                                    csrfInput.name = '_token';
+                                    csrfInput.value = document.querySelector('meta[name="csrf-token"]') ? document.querySelector('meta[name="csrf-token"]').getAttribute('content') : '';
+                                    confirmForm.appendChild(csrfInput);
+
+                                    var setupIntentInput = document.createElement('input');
+                                    setupIntentInput.type = 'hidden';
+                                    setupIntentInput.name = 'setup_intent';
+                                    setupIntentInput.value = result.setupIntent.id;
+                                    confirmForm.appendChild(setupIntentInput);
+
+                                    document.body.appendChild(confirmForm);
+                                    confirmForm.submit();
+                                });
+                            });
+                    });
+                };
+                document.head.appendChild(stripeScript);
+            }
+        })();
+    </script>
 @endsection

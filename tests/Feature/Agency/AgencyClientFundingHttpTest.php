@@ -253,25 +253,153 @@ class AgencyClientFundingHttpTest extends TestCase
     }
 
     /**
-     * Correction — first-time funding. Before this fix, an Agency with no
-     * payment_provider_customers row of its own failed closed with
-     * 'no_provider_customer' even though it was the genuinely-authorized
-     * payer, because nothing ever lazily created one for the Agency
-     * Workspace the way the client's own Usage & Billing page does for
-     * itself. PaymentInstrumentManager::resolveProviderCustomer() is that
-     * same existing, idempotent mechanism, reused unchanged: no previously
-     * saved card is required (asserted below by never registering one) —
-     * the hosted Checkout Session itself collects payment details.
+     * RFC-005 Funding Provider-Flow Correction Contract §9/§11, LOCKED
+     * ORDERING — a first-time Agency with no payment_provider_customers
+     * row must be refused 'no_provider_customer' exactly like the
+     * client's own top-up flow, unmodified. No lazy creation: initiating
+     * top-up must never itself create a Stripe provider customer, make
+     * any provider call, or create a funding attempt — establishing one
+     * belongs exclusively to the separate createSetupIntent()/
+     * confirmSetupIntent() surface (below). The page itself must be
+     * honest about this: it shows the setup-required state, never a
+     * top-up form that would just deny.
      */
-    public function test_first_time_funding_with_no_existing_agency_provider_customer_reaches_checkout(): void
+    public function test_first_time_agency_top_up_creates_nothing_and_the_page_shows_setup_required(): void
     {
         $gateway = $this->fakeProvider();
         $m = $this->rebilledClient();
         // Deliberately NOT calling workspaceProviderCustomerWithCard($m['agency'], ...)
-        // — no Agency provider customer, and no saved card, exist yet.
+        // and never calling createSetupIntent/confirmSetupIntent — no
+        // Agency provider customer exists yet.
         $this->businessProviderCustomerWithCard($m['business'], '9999');
 
         $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+
+        $this->actingAsCustomer($m['agencyOwner']->user)
+            ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00'])
+            ->assertRedirect($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $this->assertNull(
+            app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id),
+            'initiateTopUp() must never itself create a provider customer.',
+        );
+        $this->assertSame([], $gateway->createCheckoutSessionCalls, 'No provider call of any kind may be made before the local attempt exists.');
+        $this->assertCount(0, app(BusinessFundingAttemptRepository::class)->query()->where('business_id', $m['business']->id)->get());
+
+        $page = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->get($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $page->assertOk();
+        $page->assertSee('agency-funding-setup-required', false);
+        $page->assertDontSee('agency-rebill-top-up-form', false);
+    }
+
+    // ------------------------------------------------------------------
+    // The separate funding-setup surface
+    // ------------------------------------------------------------------
+
+    public function test_the_agency_owner_can_set_up_funding_and_the_provider_customer_belongs_to_the_agency_workspace(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+
+        $setupResponse = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid));
+
+        $setupResponse->assertOk();
+        $setupResponse->assertJsonStructure(['client_secret', 'publishable_key']);
+
+        $agencyCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id);
+        $this->assertNotNull($agencyCustomer, 'createSetupIntent() must establish the Agency Workspace provider customer.');
+        $this->assertNull($agencyCustomer->business_id, 'The provider customer belongs to the Agency Workspace, never a Business.');
+
+        [$setupIntentId, $paymentMethodId] = $this->confirmFundingSetup($m, $agencyCustomer->provider_customer_id);
+
+        $confirmResponse = $this->actingAsCustomer($m['agencyOwner']->user)
+            ->post($this->confirmSetupUrl($m['agency']->uid, $m['client']->uid), ['setup_intent' => $setupIntentId]);
+
+        $confirmResponse->assertRedirect($this->showUrl($m['agency']->uid, $m['client']->uid));
+
+        $instrument = app(\App\Repositories\Contracts\BusinessPaymentInstrumentRepository::class)
+            ->findByProviderPaymentMethodId($paymentMethodId);
+        $this->assertNotNull($instrument);
+        $this->assertSame((int) $agencyCustomer->id, (int) $instrument->provider_customer_id);
+    }
+
+    public function test_the_client_owner_cannot_set_up_agency_funding(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+
+        $this->actingAsCustomer($m['clientOwner']->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid))
+            ->assertNotFound();
+
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+    }
+
+    public function test_an_agency_admin_cannot_set_up_agency_funding_owner_only(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+        $admin = $this->memberOf($m['agency'], WorkspaceMembershipRole::Admin);
+
+        // resolveAuthorizedAgencyWorkspace() lets an admin reach the
+        // controller (the same broad Agency-authority gate show()/viewAs()
+        // use), but PaymentInstrumentManager::createSetupIntent()'s own
+        // assertAuthorizedFundingPayer() is owner-only and refuses inside
+        // the manager, proving the controller adds no separate rule.
+        $this->actingAsCustomer($admin->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid))
+            ->assertStatus(403);
+
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+    }
+
+    public function test_a_stranger_cannot_set_up_agency_funding(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+        [$strangerOwner] = $this->agencyAccount('Stranger Agency');
+
+        $this->actingAsCustomer($strangerOwner->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid))
+            ->assertNotFound();
+
+        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+    }
+
+    /**
+     * Funding setup requires no standing consent (Contract 09 —
+     * configuring funding must never deadlock on the consent it exists to
+     * grant), but does not by itself authorize a charge: consent is still
+     * required, unchanged, before initiateTopUp() will originate one.
+     */
+    public function test_funding_setup_does_not_require_standing_consent(): void
+    {
+        $this->fakeProvider();
+        $m = $this->rebilledClient();
+        app(\App\Library\Usage\BillingProfileManager::class)->revokeAgencyRebillConsent($m['business'], (int) $m['agencyOwner']->user_id, 'Test: revoked.');
+
+        $this->actingAsCustomer($m['agencyOwner']->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid))
+            ->assertOk();
+
+        $this->assertNotNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
+    }
+
+    public function test_after_setup_the_agency_owner_reaches_hosted_checkout_and_it_uses_the_agency_customer_never_the_clients(): void
+    {
+        $gateway = $this->fakeProvider();
+        $m = $this->rebilledClient();
+        [$clientBusinessCustomer] = $this->businessProviderCustomerWithCard($m['business'], '9999');
+
+        $this->actingAsCustomer($m['agencyOwner']->user)
+            ->postJson($this->setupIntentUrl($m['agency']->uid, $m['client']->uid))
+            ->assertOk();
+
+        $agencyCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id);
+        $this->assertNotNull($agencyCustomer);
 
         $response = $this->actingAsCustomer($m['agencyOwner']->user)
             ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00']);
@@ -279,29 +407,50 @@ class AgencyClientFundingHttpTest extends TestCase
         $response->assertRedirect();
         $this->assertStringStartsWith('https://checkout.fake.stripe.test/', (string) $response->headers->get('Location'));
 
-        $agencyCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id);
-        $this->assertNotNull($agencyCustomer, 'resolveProviderCustomer() must have created one for the Agency Workspace.');
-        $this->assertNull($agencyCustomer->business_id, 'The new provider customer belongs to the Agency Workspace, never a Business.');
-
         $attempt = $this->latestAttempt($m['business']);
         $this->assertSame((int) $agencyCustomer->id, (int) $attempt->provider_customer_id);
+        $this->assertNotSame((int) $clientBusinessCustomer->id, (int) $attempt->provider_customer_id);
 
         $call = $gateway->createCheckoutSessionCalls[array_key_last($gateway->createCheckoutSessionCalls)];
         $this->assertSame($agencyCustomer->provider_customer_id, $call['providerCustomerId']);
     }
 
-    public function test_first_time_funding_is_still_owner_only_the_lazy_provider_customer_creation_grants_no_new_authority(): void
+    private function setupIntentUrl(string $agencyUid, string $clientUid): string
     {
-        $this->fakeProvider();
-        $m = $this->rebilledClient();
-        $admin = $this->memberOf($m['agency'], WorkspaceMembershipRole::Admin);
+        return route('customer.workspaces.clients.funding.payment-method.setup-intent', [$agencyUid, $clientUid]);
+    }
 
-        $this->actingAsCustomer($admin->user)
-            ->post($this->initiateUrl($m['agency']->uid, $m['client']->uid), ['amount' => '10.00'])
-            ->assertNotFound();
+    private function confirmSetupUrl(string $agencyUid, string $clientUid): string
+    {
+        return route('customer.workspaces.clients.funding.payment-method.confirm', [$agencyUid, $clientUid]);
+    }
 
-        $this->assertNull(app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $m['agency']->id));
-        $this->assertCount(0, app(BusinessFundingAttemptRepository::class)->query()->where('business_id', $m['business']->id)->get());
+    /**
+     * Real Stripe.js confirmation (stripe.confirmCardSetup()) cannot run
+     * in a Feature test; this mirrors what the browser eventually submits
+     * by calling PaymentInstrumentManager::createSetupIntent() directly
+     * (the identical call the controller's own createSetupIntent() action
+     * already made above) to obtain a real SetupIntent id, then registers
+     * the fake gateway's deterministic derived PaymentMethod
+     * (pm_fake_<suffix of the SetupIntent id>, see
+     * FakePaymentProviderGateway::retrieveSetupIntent()) against the
+     * Agency's own provider_customer_id — never the client's.
+     *
+     * @return array{0: string, 1: string} [setupIntentId, paymentMethodId]
+     */
+    private function confirmFundingSetup(array $m, string $agencyProviderCustomerId): array
+    {
+        $setupIntent = app(\App\Library\Usage\PaymentInstrumentManager::class)
+            ->createSetupIntent($m['business'], (int) $m['agencyOwner']->user_id);
+        $paymentMethodId = 'pm_fake_' . substr($setupIntent->providerSetupIntentId, strlen('seti_fake_'));
+
+        $this->fakeProvider()->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId,
+            $agencyProviderCustomerId,
+            'card', 'visa', '4242', 12, 2030,
+        ));
+
+        return [$setupIntent->providerSetupIntentId, $paymentMethodId];
     }
 
     // ------------------------------------------------------------------
@@ -312,6 +461,9 @@ class AgencyClientFundingHttpTest extends TestCase
     {
         $this->fakeProvider();
         $m = $this->rebilledClient();
+        // The amount field only renders once funding setup exists — see
+        // the setup-required tests above for that gate on its own.
+        $this->workspaceProviderCustomerWithCard($m['agency'], '1111');
 
         // Proves the label is genuinely read from the wallet, not
         // hardcoded: the fixture's own default is USD, so only a

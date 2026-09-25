@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Customer\Agency;
 
+use App\Exceptions\Usage\ProviderApiUnavailableException;
+use App\Exceptions\Usage\ProviderAuthenticationException;
 use App\Exceptions\Usage\UnauthorizedPayerAssignmentException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Customer\Business\CreateSetupIntentRequest;
 use App\Http\Requests\Customer\Business\InitiateTopUpRequest;
-use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\PaymentInstrumentManager;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Library\Usage\UsageWalletManager;
@@ -18,6 +20,7 @@ use App\Models\Workspace;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 
@@ -26,20 +29,35 @@ use Illuminate\Support\Facades\Auth;
  * owner's own route to fund a linked client's Business usage wallet,
  * charged against the Agency's own provider customer on the PLATFORM
  * Stripe account, exactly as AgencyRebill already works everywhere else
- * (BillingProfileManager, EffectivePayerResolver, UsageBillingCheckoutManager
- * — none of it reimplemented here).
+ * (BillingProfileManager, EffectivePayerResolver, UsageBillingCheckoutManager,
+ * PaymentInstrumentManager — none of it reimplemented here).
  *
  * WHY THIS CONTROLLER EXISTS: the client's own Usage & Billing route
- * (UsageBillingTopUpController) requires userCanAccessBusiness() — real
- * Client Workspace access the managing Agency owner deliberately does not
- * have outside an active View As session, and View As itself deliberately
- * pauses billing/funding actions (Contract 08A). This is a second, narrow
- * HTTP entry point onto the SAME UsageBillingCheckoutManager::initiateTopUp()
- * used by the client's own flow — no new wallet, payment engine, or
- * authority rule. Tenancy resolution below mirrors AgencyClientsController's
- * own resolveAuthorizedAgencyWorkspace()/resolveLinkedClient()/
+ * (UsageBillingTopUpController/UsageBillingPaymentMethodController)
+ * requires userCanAccessBusiness() — real Client Workspace access the
+ * managing Agency owner deliberately does not have outside an active View
+ * As session, and View As itself deliberately pauses billing/funding
+ * actions (Contract 08A). This is a second, narrow HTTP entry point onto
+ * the SAME managers the client's own flow uses — no new wallet, payment
+ * engine, or authority rule. Tenancy resolution below mirrors
+ * AgencyClientsController's own
+ * resolveAuthorizedAgencyWorkspace()/resolveLinkedClient()/
  * resolveSoleBusiness() exactly (the same manager/repository calls), not a
  * new authorization concept.
+ *
+ * RFC-005 FUNDING PROVIDER-FLOW CORRECTION CONTRACT §9/§11, LOCKED
+ * ORDERING — initiateTopUp() below never calls PaymentInstrumentManager.
+ * §11's "no Stripe call before the local funding-attempt row exists"
+ * ordering, and §9's Option 1 ("the existing no_provider_customer denial
+ * is preserved unmodified for ManualTopUp; no lazy provider-customer
+ * creation is introduced"), both bind this Agency-owner surface exactly as
+ * they bind the client's own UsageBillingTopUpController. A first-time
+ * Agency funder with no payment_provider_customers row yet is refused
+ * 'no_provider_customer' by UsageBillingCheckoutManager itself, unchanged
+ * — createSetupIntent()/confirmSetupIntent() below are the contract-named
+ * separate surface for establishing one ("Provider-customer establishment
+ * belongs to the separate PaymentInstrumentManager::createSetupIntent()
+ * flow").
  *
  * ORIGINATION AUTHORITY IS BillingProfileManager's, NOT THIS CONTROLLER'S.
  * initiateTopUp() calls assertAuthorizedChargePayer(), which for an
@@ -51,6 +69,17 @@ use Illuminate\Support\Facades\Auth;
  * way. THE CLIENT CAN NEVER REACH THIS ROUTE: it lives under the Agency's
  * own Workspace prefix and resolveAuthorizedAgencyWorkspace() asserts
  * Agency authority over $workspaceUid, never client Workspace membership.
+ *
+ * FUNDING SETUP (createSetupIntent()/confirmSetupIntent()) IS A
+ * GENUINELY SEPARATE AUTHORITY FROM ORIGINATION.
+ * PaymentInstrumentManager's own assertAuthorizedFundingPayer() is
+ * owner-only but requires no standing consent (Contract 09 — configuring
+ * funding must never deadlock on the very consent it exists to grant).
+ * Neither setup action makes a client Business the payer of anything;
+ * both resolve to the Agency's own Workspace via EffectivePayer, never
+ * the client's (proven by PaymentInstrumentManager's own existing
+ * ProviderCustomerOwnershipTest, not reproven here), and neither
+ * interacts with, depends on, or is affected by View As.
  */
 class AgencyClientFundingController extends Controller
 {
@@ -61,7 +90,6 @@ class AgencyClientFundingController extends Controller
         private readonly UsageBillingCheckoutManager $checkoutManager,
         private readonly UsageWalletManager $walletManager,
         private readonly PaymentInstrumentManager $paymentInstrumentManager,
-        private readonly BillingProfileManager $billingProfileManager,
         private readonly BusinessFundingAttemptRepository $attemptRepository,
     ) {
     }
@@ -84,37 +112,12 @@ class AgencyClientFundingController extends Controller
         }
 
         try {
-            // Ordering correction — resolveProviderCustomer() below
-            // deliberately uses the BROADER assertAuthorizedFundingPayer()
-            // rule (owner-only, no standing consent required — funding
-            // configuration must never deadlock on a consent it exists to
-            // grant). Calling it FIRST, before this canonical
-            // charge-origination check, would let a crafted top-up POST
-            // create a real Stripe provider customer for an Agency whose
-            // standing consent was already revoked, before the request
-            // later failed. assertAuthorizedChargePayer() is the SAME
-            // canonical preflight initiateTopUp() below performs itself
-            // (and re-performs, locked, under the wallet lock) — calling it
-            // here first is not a second authority rule, only an earlier
-            // call to the one that already exists, so nothing created
-            // below can ever outlive a request an unrevoked-consent check
-            // would have refused anyway.
-            $this->billingProfileManager->assertAuthorizedChargePayer($business, $actorUserId);
-
-            // Contract 09 §12 — a first-time Agency funder has no Agency
-            // Workspace payment_provider_customers row yet (Lane C's
-            // Connect account is a separate, unrelated Stripe object).
-            // resolveProviderCustomer() is the existing, idempotent
-            // mechanism for establishing one — the same one the client's
-            // own Usage & Billing page uses for itself. It resolves to the
-            // AGENCY's own Workspace via EffectivePayer (never the
-            // client's), and makes its one outbound provider call strictly
-            // outside any DB transaction/lock, exactly like every other
-            // provider call in this flow. It does not require a previously
-            // saved card — the hosted Checkout Session below collects
-            // payment details directly.
-            $this->paymentInstrumentManager->resolveProviderCustomer($business, $actorUserId);
-
+            // No PaymentInstrumentManager call here — see the class
+            // docblock's "LOCKED ORDERING" note. initiateTopUp() performs
+            // its own canonical charge-origination authorization and its
+            // own unmodified no_provider_customer denial; nothing is ever
+            // created, and no provider call is ever made, before the local
+            // funding-attempt row this same call creates.
             $result = $this->checkoutManager->initiateTopUp($business, $actorUserId, $amountMicro, [
                 'success_route' => 'customer.workspaces.clients.funding.top-up.confirm',
                 'success_params' => ['workspaceUid' => $agencyWorkspace->uid, 'clientWorkspaceUid' => $clientWorkspace->uid],
@@ -185,6 +188,68 @@ class AgencyClientFundingController extends Controller
         return redirect()
             ->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
             ->with('flash_success', __('locale.usage_billing.messages.top_up_confirmed'));
+    }
+
+    /**
+     * The separate funding-setup surface the RFC-005 correction contract
+     * names — mirrors UsageBillingPaymentMethodController::createSetupIntent()
+     * exactly (same manager call, same JSON shape), scoped to the Agency
+     * Workspace instead of a client Business. Never exposes a secret key;
+     * the publishable key/client secret are the only Stripe-related values
+     * ever sent to the browser.
+     */
+    public function createSetupIntent(CreateSetupIntentRequest $request, string $workspaceUid, string $clientWorkspaceUid): JsonResponse
+    {
+        $agencyWorkspace = $this->resolveAuthorizedAgencyWorkspace($workspaceUid);
+        [$clientWorkspace] = $this->resolveLinkedClient($agencyWorkspace, $clientWorkspaceUid);
+        $business = $this->resolveSoleBusiness($clientWorkspace);
+        $actorUserId = (int) Auth::id();
+
+        try {
+            $result = $this->paymentInstrumentManager->createSetupIntent($business, $actorUserId);
+        } catch (UnauthorizedPayerAssignmentException) {
+            return response()->json(['error' => 'You are not authorized to set up funding for this Business.'], 403);
+        } catch (ProviderAuthenticationException|ProviderApiUnavailableException) {
+            return response()->json(['error' => 'Payment provider is currently unavailable.'], 503);
+        }
+
+        return response()->json([
+            'client_secret' => $result->clientSecret,
+            'publishable_key' => config('services.stripe.key'),
+        ]);
+    }
+
+    /**
+     * Mirrors UsageBillingPaymentMethodController::confirmSetupIntent()
+     * exactly — confirmSetupIntentAndAttach() never trusts the browser
+     * redirect alone (authoritative provider retrieval), and is idempotent.
+     */
+    public function confirmSetupIntent(CreateSetupIntentRequest $request, string $workspaceUid, string $clientWorkspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->resolveAuthorizedAgencyWorkspace($workspaceUid);
+        [$clientWorkspace] = $this->resolveLinkedClient($agencyWorkspace, $clientWorkspaceUid);
+        $business = $this->resolveSoleBusiness($clientWorkspace);
+        $actorUserId = (int) Auth::id();
+
+        $providerSetupIntentId = (string) $request->input('setup_intent');
+
+        try {
+            $instrument = $this->paymentInstrumentManager->confirmSetupIntentAndAttach($business, $actorUserId, $providerSetupIntentId);
+        } catch (UnauthorizedPayerAssignmentException) {
+            return redirect()
+                ->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
+                ->with('flash_error', 'You are not authorized to set up funding for this Business.');
+        }
+
+        if ($instrument === null) {
+            return redirect()
+                ->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
+                ->with('flash_error', 'Funding setup was not completed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.clients.show', [$agencyWorkspace->uid, $clientWorkspace->uid])
+            ->with('flash_success', 'Funding payment method added.');
     }
 
     /**
