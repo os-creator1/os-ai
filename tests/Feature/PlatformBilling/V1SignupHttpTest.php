@@ -53,6 +53,7 @@ class V1SignupHttpTest extends TestCase
             'industry' => 'photo_booth_service',
             'country_code' => 'US',
             'timezone' => 'UTC',
+            'currency_code' => 'USD',
             'tier' => 'growth',
         ], $overrides);
     }
@@ -121,6 +122,7 @@ class V1SignupHttpTest extends TestCase
         $business = Business::query()->where('workspace_id', $workspace->id)->sole();
         $this->assertSame('Harbor Lane Studios', (string) $business->name);
         $this->assertSame('photo_booth_service', $business->industry->value, 'The niche survives provisioning.');
+        $this->assertSame('USD', $business->currency_code, 'The selected currency survives provisioning.');
         $this->assertCount(1, BusinessLocation::query()->where('business_id', $business->id)->get());
 
         // The selected tier survives onto the durable local subscription.
@@ -286,6 +288,25 @@ class V1SignupHttpTest extends TestCase
         $this->assertSame(1, BusinessLocation::query()->count());
     }
 
+    public function test_resuming_never_rewrites_the_existing_businesss_currency(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency('EUR', 'Euro');
+
+        $this->post(route('register'), $this->form(['currency_code' => 'EUR']));
+        $this->get(route('signup.cancelled'));
+
+        // provision() re-runs on resume, but only creates a Business when
+        // none exists yet; this one already does, so it must be reused
+        // exactly, currency included — never re-derived from whatever
+        // currency the resume form happens to imply.
+        $this->post(route('signup.resume'), ['tier' => 'growth'])->assertRedirectContains('checkout.stripe.test');
+
+        $workspace = Workspace::query()->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $this->assertSame('EUR', $business->currency_code);
+    }
+
     // =================================================================
     // Webhook convergence, through HTTP
     // =================================================================
@@ -433,5 +454,149 @@ class V1SignupHttpTest extends TestCase
         $redirect = $this->get(route('register'));
         $redirect->assertSee('value="NZ" selected', false)
             ->assertSee('value="Pacific/Auckland" selected', false);
+    }
+
+    // =================================================================
+    // Business currency — a new self-service Business must receive a
+    // valid currency_code through signup itself, the same canonical,
+    // active-currencies source BusinessLocaleOptions already offers the
+    // Business edit form, so its usage wallet can resolve without an
+    // operator ever touching it.
+    // =================================================================
+
+    public function test_the_signup_page_renders_currency_as_a_select(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency('EUR', 'Euro');
+
+        $response = $this->get(route('register'));
+
+        $response->assertOk()
+            ->assertSee('<select id="currency_code" name="currency_code"', false)
+            ->assertDontSee('<input id="currency_code"', false)
+            // The canonical option list from BusinessLocaleOptions, not a
+            // hardcoded or inferred value.
+            ->assertSee('value="EUR"', false);
+    }
+
+    public function test_a_valid_currency_is_accepted_and_persisted_on_the_new_business(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency('EUR', 'Euro');
+
+        $response = $this->post(route('register'), $this->form(['currency_code' => 'EUR']));
+
+        $response->assertSessionDoesntHaveErrors('currency_code');
+
+        $workspace = Workspace::query()->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $this->assertSame('EUR', $business->currency_code);
+    }
+
+    public function test_a_currency_not_in_the_active_list_is_rejected(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        // Well-formed (3 letters, real ISO code) but never marked active in
+        // this install's `currencies` table — must still be refused, the
+        // same way an unlisted country or timezone already is.
+        $this->post(route('register'), $this->form(['currency_code' => 'JPY']))
+            ->assertSessionHasErrors('currency_code');
+
+        $this->assertSame(0, Workspace::query()->count());
+        $this->assertSame(0, User::query()->where('is_customer', true)->count());
+    }
+
+    public function test_a_missing_currency_is_rejected(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $form = $this->form();
+        unset($form['currency_code']);
+
+        $this->post(route('register'), $form)->assertSessionHasErrors('currency_code');
+        $this->assertSame(0, Workspace::query()->count());
+    }
+
+    public function test_old_currency_value_remains_selected_after_a_validation_failure(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency('EUR', 'Euro');
+
+        // Mismatched password confirmation fails validation; currency was
+        // otherwise valid and must come back selected, not reset.
+        $response = $this->from(route('register'))->post(route('register'), $this->form([
+            'currency_code' => 'EUR',
+            'password_confirmation' => 'something-else',
+        ]));
+
+        $response->assertSessionHasErrors('password');
+
+        $redirect = $this->get(route('register'));
+        $redirect->assertSee('value="EUR" selected', false);
+    }
+
+    #[DataProvider('supportedCurrencies')]
+    public function test_different_supported_currencies_retain_their_correct_code(string $code, string $name): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency($code, $name);
+
+        $this->post(route('register'), $this->form(['currency_code' => $code]))
+            ->assertSessionDoesntHaveErrors('currency_code');
+
+        $workspace = Workspace::query()->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $this->assertSame($code, $business->currency_code);
+    }
+
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function supportedCurrencies(): array
+    {
+        return [
+            'EUR' => ['EUR', 'Euro'],
+            'GBP' => ['GBP', 'British Pound'],
+            'CAD' => ['CAD', 'Canadian Dollar'],
+        ];
+    }
+
+    public function test_wallet_initialization_resolves_the_new_businesss_currency_without_manual_intervention(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->seedCurrency('EUR', 'Euro');
+
+        $this->post(route('register'), $this->form(['currency_code' => 'EUR']))
+            ->assertSessionDoesntHaveErrors('currency_code');
+
+        $workspace = Workspace::query()->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+
+        // The BusinessCreated listener (InitializeBusinessUsageProfile) runs
+        // synchronously in this suite (QUEUE_CONNECTION=sync): no
+        // usage:backfill-wallets, no operator action, no separate step.
+        $this->assertDatabaseHas('business_usage_wallets', ['business_id' => $business->id]);
+
+        $currencyId = DB::table('currencies')->where('code', 'EUR')->value('id');
+        $this->assertDatabaseHas('business_usage_wallets', [
+            'business_id' => $business->id,
+            'currency_id' => $currencyId,
+        ]);
+    }
+
+    private function seedCurrency(string $code, string $name): void
+    {
+        if (DB::table('currencies')->where('code', $code)->exists()) {
+            return;
+        }
+
+        DB::table('currencies')->insert([
+            'uid' => (string) \Illuminate\Support\Str::uuid(),
+            'name' => $name,
+            'code' => $code,
+            'format' => $code,
+            'status' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

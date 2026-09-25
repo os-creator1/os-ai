@@ -60,7 +60,7 @@ final class V1SignupManager
     /**
      * Steps 1 and 2 — provision, then open checkout.
      *
-     * @param  array{business_name: string, industry: string, timezone?: ?string, country_code?: ?string, location_name?: ?string}  $draft
+     * @param  array{business_name: string, industry: string, timezone?: ?string, country_code?: ?string, currency_code?: ?string, location_name?: ?string}  $draft
      *
      * @throws PlatformBillingException
      */
@@ -272,12 +272,29 @@ final class V1SignupManager
         $business = Business::query()->where('workspace_id', $workspace->id)->first();
 
         if ($business === null) {
-            $business = $this->businesses->createBusinessForNewWorkspace($customer, $workspace, [
+            $attributes = [
                 'name' => (string) $draft['business_name'],
                 'industry' => (string) $draft['industry'],
                 'timezone' => $draft['timezone'] ?? null,
                 'country_code' => $draft['country_code'] ?? null,
-            ]);
+            ];
+
+            // Set only when present: `currency_code` is NOT NULL with no
+            // default at the schema level, so an explicit null here (unlike
+            // simply omitting the key) would fail the insert outright rather
+            // than falling back to anything. Every HTTP caller provides it
+            // (required, validated); a lower-level caller that does not is
+            // left exactly as before this correction.
+            if (! empty($draft['currency_code'])) {
+                // Without this, the Business's usage wallet can never
+                // resolve a currency (UsageWalletManager::resolveCurrencyId()
+                // reads only currency_code, no fallback) and Usage &
+                // Billing stays permanently unusable until an operator
+                // edits it by hand.
+                $attributes['currency_code'] = $draft['currency_code'];
+            }
+
+            $business = $this->businesses->createBusinessForNewWorkspace($customer, $workspace, $attributes);
         }
 
         $this->businesses->upsertPrimaryLocation($customer, $business, [

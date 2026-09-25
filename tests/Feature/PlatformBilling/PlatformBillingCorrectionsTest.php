@@ -60,6 +60,7 @@ class PlatformBillingCorrectionsTest extends TestCase
             // Deliberately NOT the US: the resume defect overwrote exactly this.
             'country_code' => 'LT',
             'timezone' => 'Europe/Vilnius',
+            'currency_code' => 'USD',
             'tier' => 'growth',
         ], $overrides);
     }
