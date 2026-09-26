@@ -3,6 +3,7 @@
 namespace App\Library\Navigation;
 
 use App\Http\Controllers\Customer\Business\CrmOpportunitiesController;
+use App\Library\Support\RequestScopedCache;
 use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
 use Illuminate\Support\Facades\Gate;
@@ -154,7 +155,35 @@ final class CustomerMenuBuilder
     public function __construct(
         private readonly ViewAsRouteClassification $viewAsRoutes,
         private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
+        private readonly RequestScopedCache $requestCache,
     ) {
+    }
+
+    /**
+     * Correction — whether an ACTIVE Agency relationship currently manages
+     * this Workspace, for "Your agency plan"'s own gate. There is no tier
+     * shortcut for this: AgencyClientRelationshipManager::establish() checks
+     * the Agency's own eligibility and an active relationship, but never
+     * requires the Client Workspace itself to carry no plan tier, so a
+     * tiered (Core/Growth) Client Workspace can be a perfectly genuine
+     * Agency-managed client — an earlier version of this fix wrongly
+     * assumed tier === null and hid the link for one.
+     *
+     * Memoized per REQUEST (RequestScopedCache, the same mechanism
+     * CustomerShellComposer's own menu-entitlement snapshot already uses):
+     * accountFrame()/businessFrame() (every page, to decide whether
+     * "Settings" has anything to link to) and the real Settings hub
+     * (settingsSections(), when that hub page is actually open) can both
+     * ask this in the SAME request, and this keeps that at one query
+     * rather than two — never a claim that the query is skipped for an
+     * ordinary Workspace, which review correctly rejected as unsafe.
+     */
+    private function agencyManagesClientWorkspace(int $workspaceId): bool
+    {
+        return $this->requestCache->remember(
+            "customer-menu:agency-client-relationship:{$workspaceId}",
+            fn () => $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspaceId) !== null,
+        );
     }
 
     /**
@@ -435,17 +464,16 @@ final class CustomerMenuBuilder
         // active Admin with account-frame access, AND a genuine active
         // Agency-Client relationship), never the Business's own status.
         //
-        // Review correction — businessFrame() calls this method on EVERY
-        // business-frame page render just to decide whether the top-level
-        // "Settings" entry has anything to link to, so the relationship
-        // query below must not run for every ordinary Business. See
-        // accountSettingsSections()'s identical correction for why
-        // `tier === null` safely skips it for every already-tiered
-        // (Core/Growth/Agency) Workspace before ever reaching the query.
-        if ($workspace->tier === null
-            && $workspace->canManage()
+        // Review correction — a tier shortcut here was wrong: a Client
+        // Workspace can genuinely carry a Core or Growth tier and still be
+        // Agency-managed (AgencyClientRelationshipManager::establish()
+        // never requires the Client Workspace to have no tier), so the
+        // actual relationship is checked, memoized per request
+        // (agencyManagesClientWorkspace()) since businessFrame() calls this
+        // method on every business-frame page render.
+        if ($workspace->canManage()
             && $workspace->seesAccountFrame()
-            && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspace->id) !== null) {
+            && $this->agencyManagesClientWorkspace($workspace->id)) {
             $billingAndTeam[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$workspace->uid], $current, [
                 'customer.workspaces.agency-plan.',
             ]);
@@ -537,22 +565,17 @@ final class CustomerMenuBuilder
         // page never 404s for one (it renders "no agency billing" instead),
         // but this link is scoped to genuine Agency-managed clients only.
         //
-        // Review correction — accountFrame() calls this method on EVERY
-        // account-frame page render (not only the Settings hub itself) just
-        // to decide whether the top-level "Settings" entry has anything to
-        // link to, so the relationship query below must not run for every
-        // ordinary Workspace. A Client Workspace AgencyClientProvisioningManager::
-        // accept() creates is never assigned a plan tier at all (Contract 07
-        // §11 — "no billing in this slice"); tier is null exactly for that
-        // shape and never for a Core, Growth or Agency Workspace, so gating
-        // on `tier === null` first skips the query entirely for every
-        // ordinary, already-tiered Workspace (the common case this
-        // correction targets) while still reaching a genuine Agency-managed
-        // client.
+        // Review correction — a tier shortcut here was wrong: a Client
+        // Workspace can genuinely carry a Core or Growth tier and still be
+        // Agency-managed (AgencyClientRelationshipManager::establish()
+        // never requires the Client Workspace to have no tier), so the
+        // actual relationship is checked, memoized per request
+        // (agencyManagesClientWorkspace()) since accountFrame() calls this
+        // method on every account-frame page render, not only the Settings
+        // hub itself.
         if ($manages
-            && $account->tier === null
             && $account->seesAccountFrame()
-            && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($account->id) !== null) {
+            && $this->agencyManagesClientWorkspace($account->id)) {
             $accountItems[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$account->uid], $current, [
                 'customer.workspaces.agency-plan.',
             ]);

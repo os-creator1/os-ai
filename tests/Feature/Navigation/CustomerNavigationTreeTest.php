@@ -498,15 +498,23 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
-     * Review correction — accountFrame()/businessFrame() call the
-     * Settings-section builders on EVERY page render of that frame, purely
-     * to decide whether the top-level "Settings" entry has anything to
-     * link to, not only when the Settings hub itself is open. The new
-     * AgencyClientWorkspaceRelationshipRepository lookup those builders
-     * added must therefore never run for an ordinary Core/Growth Workspace,
-     * on any page — home included.
+     * Second correction — an earlier version of this fix skipped the
+     * relationship lookup whenever the Workspace already carried a plan
+     * tier, on the (wrong) assumption that a genuine Agency-managed Client
+     * Workspace never has one. AgencyClientRelationshipManager::establish()
+     * checks the Agency's own eligibility and an active relationship, but
+     * never requires the Client Workspace itself to be tier-less, so a
+     * tiered (Core/Growth) account can be a real Agency client too — the
+     * tier shortcut was hiding "Your agency plan" from exactly that case.
+     * The correct relationship check always runs now; what stays cheap is
+     * not skipping it, but never asking it TWICE in one request:
+     * accountFrame()/businessFrame() (every page, to decide whether
+     * "Settings" has anything to link to) and the real Settings hub
+     * (settingsSections(), when that hub page is open) can both ask in the
+     * SAME request, and RequestScopedCache (agencyManagesClientWorkspace())
+     * collapses that to one query.
      */
-    public function test_the_agency_relationship_lookup_is_never_queried_for_an_ordinary_core_or_growth_render(): void
+    public function test_the_agency_relationship_lookup_is_memoized_once_per_request(): void
     {
         [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -531,22 +539,45 @@ class CustomerNavigationTreeTest extends TestCase
 
         // accountFrame()/businessFrame() (via build(), every page) and the
         // real Settings hub (via settingsSections(), the hub page itself)
-        // are the two call sites the correction targets.
+        // both ask the same question about the same Workspace here, inside
+        // ONE request — exactly the case the memoization exists for.
         $menu->build($context, $customer->user, MenuEntitlements::none());
         $menu->settingsSections($context, $customer->user, MenuEntitlements::none());
 
         $this->assertSame(
-            0,
+            1,
             $relationshipQueries,
-            'An ordinary, already-tiered (Core/Growth) Workspace must never trigger the Agency-Client relationship lookup, on any page render or the Settings hub itself.',
+            'The Agency-Client relationship lookup must run — an ordinary tier is never proof an account is not Agency-managed — but only once per request, not once per call site.',
         );
     }
 
     /**
-     * Review correction, other half — the tier-based skip above must never
-     * also skip a GENUINE Agency-managed client, in either the Draft
-     * (account frame) or Active (business frame) state: both keep working,
-     * proven end-to-end (not merely "the query is allowed to run").
+     * The exact case the first correction wrongly excluded: a Client
+     * Workspace that already carries its own Core or Growth tier, on top
+     * of a genuine active Agency relationship. "Your agency plan" must
+     * still be findable — tier is never a substitute for the real check.
+     */
+    public function test_a_tiered_client_workspace_still_finds_its_agency_plan(): void
+    {
+        $managed = $this->createAgencyManagedClient(clientBusinessName: 'Tiered Client', clientWorkspaceName: 'Tiered Client Workspace');
+        $this->assignTier($managed['clientWorkspace'], WorkspacePlanTier::Growth);
+        $this->authenticateAs($managed['clientOwner']);
+
+        $response = $this->get(route('customer.workspaces.businesses.settings.show', [$managed['clientWorkspace']->uid, $managed['clientBusiness']->uid]))->assertOk();
+        $keys = $this->settingsHubModuleKeys($response->getContent());
+
+        $this->assertContains(
+            'agency-plan',
+            $keys,
+            'A tiered (Core/Growth) Client Workspace can be a genuine Agency-managed client too; a plan tier must never hide "Your agency plan".',
+        );
+        $response->assertSee(route('customer.workspaces.agency-plan.show', $managed['clientWorkspace']->uid), false);
+    }
+
+    /**
+     * Proves the managed-client link still works in both the Draft
+     * (account frame) and Active (business frame) states after this
+     * correction — end to end, not merely "the query is allowed to run".
      */
     public function test_the_agency_relationship_lookup_still_finds_a_genuine_managed_client_in_both_states(): void
     {
