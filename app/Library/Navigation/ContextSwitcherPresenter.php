@@ -179,6 +179,11 @@ final class ContextSwitcherPresenter
      * customer-managed object, everything its customer configures is in their
      * Business's Settings, and its account page sends them there.
      *
+     * Agency UI defects correction — "All client accounts" must open the
+     * actual client list (AgencyClientsController::index), not the account
+     * overview page: customer.workspaces.show never listed clients, so this
+     * label pointed at a destination without the content it promised.
+     *
      * @return array<int, ContextSwitcherLink>
      */
     private function links(CustomerContext $context): array
@@ -186,16 +191,26 @@ final class ContextSwitcherPresenter
         $workspace = $context->frameWorkspace();
 
         if ($workspace === null || ! $workspace->isActive || ! $workspace->seesAccountFrame()
-            || in_array($workspace->tier, [WorkspacePlanTier::Core, WorkspacePlanTier::Growth], true)
-            || ! Route::has('customer.workspaces.show')) {
+            || in_array($workspace->tier, [WorkspacePlanTier::Core, WorkspacePlanTier::Growth], true)) {
             return [];
         }
 
-        $label = $context->isAgency()
-            ? 'All ' . strtolower($context->businessesNoun())
-            : 'Account settings';
+        if ($context->isAgency()) {
+            if (! Route::has('customer.workspaces.clients.index')) {
+                return [];
+            }
 
-        return [new ContextSwitcherLink($label, route('customer.workspaces.show', $workspace->uid))];
+            return [new ContextSwitcherLink(
+                'All ' . strtolower($context->businessesNoun()),
+                route('customer.workspaces.clients.index', $workspace->uid),
+            )];
+        }
+
+        if (! Route::has('customer.workspaces.show')) {
+            return [];
+        }
+
+        return [new ContextSwitcherLink('Account settings', route('customer.workspaces.show', $workspace->uid))];
     }
 
     private function frameLabel(CustomerContext $context): string

@@ -250,6 +250,19 @@ final class CustomerContext
     /**
      * Human label for the header: the selected Business, else the agency
      * account, else an honest placeholder.
+     *
+     * Agency UI defects correction — with several Workspaces visible and
+     * none selected (requiresWorkspaceSelection()), frameWorkspace() is
+     * null by construction (only a single visible Workspace, or an
+     * explicit selection, ever names the frame — see its own doc comment),
+     * so isAgency() cannot answer true here even when every candidate is
+     * an Agency account with nothing of its own to call "a Business" yet.
+     * Before this branch existed that state fell straight through to the
+     * generic "No Business yet" fallback below — false for an actor who
+     * has real accounts to choose from, just not yet picked one — instead
+     * of the honest "you have several, pick one" prompt the sidebar's own
+     * "Choose an account" entry (CustomerMenuBuilder::accountFrame())
+     * already uses for the identical state.
      */
     public function headerLabel(): string
     {
@@ -259,6 +272,10 @@ final class CustomerContext
 
         if ($this->isAgency() && $this->frameWorkspace() !== null) {
             return $this->frameWorkspace()->name;
+        }
+
+        if ($this->requiresWorkspaceSelection()) {
+            return 'Choose an account';
         }
 
         if ($this->requiresBusinessSelection()) {

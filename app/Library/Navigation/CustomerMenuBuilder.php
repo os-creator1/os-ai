@@ -281,6 +281,15 @@ final class CustomerMenuBuilder
             $items[] = $this->item($user, 'accounts', $context->hasMultipleWorkspaces() ? 'Choose an account' : $context->businessesNoun(), 'briefcase', ['access_backend'], 'customer.workspaces.index', [], $current, [
                 'customer.workspaces.index', 'customer.workspaces.show', 'customer.workspaces.additional-business-slots.',
             ]);
+        } elseif ($context->isAgency()) {
+            // Agency UI defects correction — "Client accounts" must open the
+            // actual client list (AgencyClientsController::index), not the
+            // account overview page. customer.workspaces.show never listed
+            // clients; that destination is still reachable, unchanged, from
+            // Settings -> "Agency account details" for the actor who wants it.
+            $items[] = $this->item($user, 'accounts', $context->businessesNoun(), 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$workspace->uid], $current, [
+                'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
+            ]);
         } else {
             $items[] = $this->item($user, 'accounts', $context->businessesNoun(), 'briefcase', ['access_backend'], 'customer.workspaces.show', [$workspace->uid], $current, [
                 'customer.workspaces.show', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',

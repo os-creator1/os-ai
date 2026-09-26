@@ -316,6 +316,82 @@ class CustomerNavigationTreeTest extends TestCase
         }
     }
 
+    /**
+     * Agency UI defects correction — the "Client accounts" sidebar entry
+     * (the account-frame "accounts" item, CustomerMenuBuilder::businessesNoun()
+     * for an Agency) must open the actual client list
+     * (AgencyClientsController::index), not customer.workspaces.show, which
+     * has never listed a single client. customer.workspaces.show stays
+     * reachable, unchanged, from Settings -> "Agency account details" for
+     * whoever wants the account overview itself.
+     */
+    public function test_the_agency_account_frame_sends_client_accounts_to_the_client_list(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        $this->switchToAccount($workspace);
+
+        $html = $this->home()->assertOk()->getContent();
+        $links = $this->menuLinks($html);
+
+        $this->assertContains('accounts', $this->menuKeys($html));
+        $this->assertContains(
+            route('customer.workspaces.clients.index', $workspace->uid),
+            $links,
+            '"Client accounts" must open the actual client list.',
+        );
+        $this->assertNotContains(
+            route('customer.workspaces.show', $workspace->uid),
+            $links,
+            'The account overview page is no longer what "Client accounts" points at.',
+        );
+
+        // customer.workspaces.show is still reachable from the Settings hub's
+        // own "Agency account details" module (CustomerMenuBuilder::
+        // accountSettingsSections()) — page content, not the sidebar, so it
+        // is checked against the raw response rather than menuLinks().
+        $this->get(route('customer.workspaces.settings.show', $workspace->uid))
+            ->assertOk()
+            ->assertSee(route('customer.workspaces.show', $workspace->uid), false);
+    }
+
+    /**
+     * Agency UI defects correction — with several Agency Workspaces visible
+     * and none selected, frameWorkspace() is null by construction
+     * (CustomerContext::frameWorkspace()'s own doc comment), so isAgency()
+     * cannot answer true and CustomerContext::headerLabel() used to fall
+     * straight through to its generic "No Business yet" fallback: false for
+     * an actor who has real accounts to choose from, just not yet picked
+     * one. The sidebar's own "accounts" entry already says "Choose an
+     * account" for the identical state (CustomerMenuBuilder::accountFrame());
+     * the context switcher's current-name must say the same honest thing,
+     * never claim there is no business.
+     */
+    public function test_two_unselected_agency_workspaces_never_claim_no_business_yet(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+
+        $customer = $this->createCustomer();
+
+        $first = $this->createWorkspace($customer->user, ['name' => 'First Agency']);
+        $this->addBusiness($customer, $first, 'First Agency Client', \App\Enums\Business\BusinessStatus::Draft);
+        $this->assignTier($first, WorkspacePlanTier::Agency);
+
+        $second = $this->createWorkspace($customer->user, ['name' => 'Second Agency']);
+        $this->addBusiness($customer, $second, 'Second Agency Client', \App\Enums\Business\BusinessStatus::Draft);
+        $this->assignTier($second, WorkspacePlanTier::Agency);
+
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $shell = $this->shellText($html);
+
+        $this->assertStringContainsString('Choose an account', $shell);
+        $this->assertStringNotContainsStringIgnoringCase('no business yet', $shell);
+        $this->assertStringNotContainsStringIgnoringCase('no client account yet', $shell);
+    }
+
     public function test_the_business_frame_offers_no_account_only_entry(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
