@@ -6,10 +6,12 @@ use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
@@ -20,6 +22,14 @@ use Tests\TestCase;
  * proven in AgencyClientsHttpTest; this file proves the activation step's
  * own mechanics: who may reach it, what it actually writes, the Draft
  * guard, and that a refused or invalid attempt changes nothing.
+ *
+ * Review correction — this path is for a genuine Agency-managed Client
+ * Workspace ONLY (an ACTIVE AgencyClientWorkspaceRelationship must name
+ * it), never "any Draft Business the actor owns": the businesses table
+ * itself defaults every row to Draft, so every positive fixture here
+ * (draftClient()) creates a REAL active relationship, and the "ordinary
+ * Draft Business" and "terminated relationship" cases are their own
+ * explicit negative tests below.
  */
 class ClientBusinessActivationTest extends TestCase
 {
@@ -34,28 +44,48 @@ class ClientBusinessActivationTest extends TestCase
         $this->ensureRequiredAppConfigRowsExist();
     }
 
-    /** @return array{customer: Customer, business: Business, workspace: Workspace} */
+    /**
+     * A genuine Agency-managed Client Workspace with a Draft Business
+     * carrying AgencyClientProvisioningManager::accept()'s own placeholder
+     * identity — the actual shape this fix concerns.
+     *
+     * @return array{customer: Customer, business: Business, workspace: Workspace, agencyWorkspace: Workspace, agencyOwner: Customer}
+     */
     private function draftClient(string $name = 'Newly Invited Client'): array
     {
-        $fixture = $this->createIndependentWorkspaceBusiness(
-            businessName: $name . ' Clinic',
-            workspaceName: $name,
-            status: BusinessStatus::Draft,
+        $managed = $this->createAgencyManagedClient(
+            clientBusinessName: $name . ' Clinic',
+            clientWorkspaceName: $name,
         );
 
-        // AgencyClientProvisioningManager::accept()'s own placeholder
-        // identity, so this fixture matches what a real accepted
-        // invitation actually produces.
-        Business::where('id', $fixture['business']->id)->update([
+        DB::table('businesses')->where('id', $managed['clientBusiness']->id)->update([
+            'status' => BusinessStatus::Draft->value,
+            'activated_at' => null,
             'industry' => BusinessIndustry::Other->value,
             'country_code' => 'US',
             'timezone' => 'UTC',
             'currency_code' => 'USD',
         ]);
 
-        $fixture['business'] = $fixture['business']->fresh();
+        return [
+            'customer' => $managed['clientOwner'],
+            'business' => Business::find($managed['clientBusiness']->id),
+            'workspace' => $managed['clientWorkspace'],
+            'agencyWorkspace' => $managed['agencyWorkspace'],
+            'agencyOwner' => $managed['agencyOwner'],
+        ];
+    }
 
-        return $fixture;
+    /**
+     * An ORDINARY Draft Business with no Agency involved at all — the
+     * shape this fix must NOT touch: it keeps its own, unrelated
+     * admin-controlled activation rule.
+     *
+     * @return array{customer: Customer, business: Business, workspace: Workspace}
+     */
+    private function unmanagedDraftClient(): array
+    {
+        return $this->createIndependentWorkspaceBusiness(status: BusinessStatus::Draft);
     }
 
     private function actingAsCustomer(Customer $customer): static
@@ -97,8 +127,19 @@ class ClientBusinessActivationTest extends TestCase
         ], $overrides);
     }
 
+    private function assertUnchangedPlaceholder(Business $business): void
+    {
+        $fresh = $business->fresh();
+        $this->assertSame(BusinessStatus::Draft, $fresh->status, 'A refused or invalid attempt never changes status.');
+        $this->assertNull($fresh->activated_at);
+        $this->assertSame(BusinessIndustry::Other, $fresh->industry, 'A refused or invalid attempt never touches identity.');
+        $this->assertSame('US', $fresh->country_code);
+        $this->assertSame('UTC', $fresh->timezone);
+        $this->assertSame('USD', $fresh->currency_code);
+    }
+
     // ------------------------------------------------------------------
-    // SUCCESSFUL ACTIVATION
+    // SUCCESSFUL ACTIVATION (genuine Agency-managed Client Workspace)
     // ------------------------------------------------------------------
 
     public function test_the_owner_can_open_the_activation_form_prefilled_with_the_placeholder_values(): void
@@ -161,7 +202,8 @@ class ClientBusinessActivationTest extends TestCase
 
     public function test_an_already_active_business_cannot_be_activated_again(): void
     {
-        $fixture = $this->createIndependentWorkspaceBusiness(status: BusinessStatus::Active);
+        $managed = $this->createAgencyManagedClient();
+        $fixture = ['customer' => $managed['clientOwner'], 'business' => $managed['clientBusiness'], 'workspace' => $managed['clientWorkspace']];
 
         $response = $this->actingAsCustomer($fixture['customer'])
             ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload());
@@ -177,11 +219,63 @@ class ClientBusinessActivationTest extends TestCase
 
     public function test_the_activation_form_redirects_away_for_an_already_active_business(): void
     {
-        $fixture = $this->createIndependentWorkspaceBusiness(status: BusinessStatus::Active);
+        $managed = $this->createAgencyManagedClient();
 
-        $response = $this->actingAsCustomer($fixture['customer'])->get($this->showUrl($fixture['workspace'], $fixture['business']));
+        $response = $this->actingAsCustomer($managed['clientOwner'])
+            ->get($this->showUrl($managed['clientWorkspace'], $managed['clientBusiness']));
 
-        $response->assertRedirect(route('customer.workspaces.show', $fixture['workspace']->uid));
+        $response->assertRedirect(route('customer.workspaces.show', $managed['clientWorkspace']->uid));
+    }
+
+    // ------------------------------------------------------------------
+    // REVIEW CORRECTION — GENUINE AGENCY-MANAGED CLIENT WORKSPACES ONLY
+    // ------------------------------------------------------------------
+
+    /**
+     * An ordinary Draft Business with no Agency involved at all must be
+     * refused by both actions, and keeps its own, unrelated
+     * admin-controlled activation rule untouched: owning the Workspace is
+     * not enough on its own.
+     */
+    public function test_an_ordinary_draft_business_with_no_agency_relationship_cannot_be_activated_through_this_path(): void
+    {
+        $fixture = $this->unmanagedDraftClient();
+
+        $this->actingAsCustomer($fixture['customer'])
+            ->get($this->showUrl($fixture['workspace'], $fixture['business']))
+            ->assertNotFound();
+
+        $response = $this->actingAsCustomer($fixture['customer'])
+            ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload());
+
+        $response->assertNotFound();
+        $business = $fixture['business']->fresh();
+        $this->assertSame(BusinessStatus::Draft, $business->status);
+        $this->assertNull($business->activated_at);
+    }
+
+    /**
+     * A relationship that has since been terminated is exactly as refused
+     * as one that never existed — the Client Workspace was genuinely
+     * Agency-managed once, but is not any more.
+     */
+    public function test_a_terminated_relationship_refuses_activation(): void
+    {
+        $fixture = $this->draftClient();
+
+        $relationship = app(AgencyClientRelationshipManager::class)->findActiveForClientWorkspace((int) $fixture['workspace']->id);
+        $this->assertNotNull($relationship);
+        app(AgencyClientRelationshipManager::class)->terminate((int) $fixture['agencyOwner']->user_id, $relationship, 'Test: relationship terminated.');
+
+        $this->actingAsCustomer($fixture['customer'])
+            ->get($this->showUrl($fixture['workspace'], $fixture['business']))
+            ->assertNotFound();
+
+        $response = $this->actingAsCustomer($fixture['customer'])
+            ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload());
+
+        $response->assertNotFound();
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     // ------------------------------------------------------------------
@@ -198,14 +292,35 @@ class ClientBusinessActivationTest extends TestCase
             ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload())
             ->assertNotFound();
 
-        $this->assertSame(BusinessStatus::Draft, $fixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($fixture['business']);
+    }
+
+    /**
+     * The inviting Agency's own owner — not merely an unrelated stranger —
+     * is refused identically: activation is the Client Workspace's own
+     * OWNER's step alone (resolveManagedClientWorkspace() accepts only
+     * that Workspace's own owner_user_id, which is never the Agency's).
+     */
+    public function test_the_inviting_agencys_owner_cannot_activate_the_clients_business(): void
+    {
+        $fixture = $this->draftClient();
+
+        $this->actingAsCustomer($fixture['agencyOwner'])
+            ->get($this->showUrl($fixture['workspace'], $fixture['business']))
+            ->assertNotFound();
+
+        $response = $this->actingAsCustomer($fixture['agencyOwner'])
+            ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload());
+
+        $response->assertNotFound();
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     /**
      * Even an Admin member of the Client Workspace — not only the inviting
      * Agency — is refused: activation is the Workspace OWNER's own step
-     * alone (ClientBusinessActivationController::resolveOwnedWorkspace()
-     * accepts only owner_user_id).
+     * alone (ClientBusinessActivationController::
+     * resolveManagedClientWorkspace() accepts only owner_user_id).
      */
     public function test_an_admin_member_of_the_client_workspace_cannot_activate_it(): void
     {
@@ -220,7 +335,7 @@ class ClientBusinessActivationTest extends TestCase
             ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload());
 
         $response->assertNotFound();
-        $this->assertSame(BusinessStatus::Draft, $fixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     public function test_a_forged_business_uid_from_a_different_workspace_is_refused(): void
@@ -232,7 +347,7 @@ class ClientBusinessActivationTest extends TestCase
             ->post($this->storeUrl($fixture['workspace'], $otherFixture['business']), $this->validPayload());
 
         $response->assertNotFound();
-        $this->assertSame(BusinessStatus::Draft, $otherFixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($otherFixture['business']);
     }
 
     // ------------------------------------------------------------------
@@ -247,7 +362,7 @@ class ClientBusinessActivationTest extends TestCase
             ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload(['confirm' => null]));
 
         $response->assertSessionHasErrors('confirm');
-        $this->assertSame(BusinessStatus::Draft, $fixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     public function test_industry_other_is_required_when_industry_is_other(): void
@@ -260,7 +375,7 @@ class ClientBusinessActivationTest extends TestCase
         );
 
         $response->assertSessionHasErrors('industry_other');
-        $this->assertSame(BusinessStatus::Draft, $fixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     public function test_a_storefront_location_requires_a_real_address(): void
@@ -273,7 +388,7 @@ class ClientBusinessActivationTest extends TestCase
         );
 
         $response->assertSessionHasErrors(['address_line_1', 'city', 'region']);
-        $this->assertSame(BusinessStatus::Draft, $fixture['business']->fresh()->status);
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 
     public function test_a_failed_validation_writes_nothing_and_never_activates(): void
@@ -283,8 +398,6 @@ class ClientBusinessActivationTest extends TestCase
         $this->actingAsCustomer($fixture['customer'])
             ->post($this->storeUrl($fixture['workspace'], $fixture['business']), $this->validPayload(['confirm' => null]));
 
-        $business = $fixture['business']->fresh();
-        $this->assertSame(BusinessStatus::Draft, $business->status);
-        $this->assertSame('US', $business->country_code, 'A refused write never touches the placeholder identity.');
+        $this->assertUnchangedPlaceholder($fixture['business']);
     }
 }

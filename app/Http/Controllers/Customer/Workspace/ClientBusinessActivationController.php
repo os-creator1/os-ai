@@ -10,6 +10,7 @@ use App\Library\Business\BusinessManager;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Workspace;
+use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -42,18 +43,33 @@ use RuntimeException;
  * WorkspaceManager::createWorkspace((int) $authenticatedUser->id, ...), in
  * AgencyClientProvisioningManager::accept()). An Agency actor reaching
  * either route gets the identical 404 an unrelated stranger would.
+ *
+ * CORRECTION (review finding 1) — GENUINE AGENCY-MANAGED CLIENT WORKSPACES
+ * ONLY. Owning the Workspace was never enough on its own: nothing here or
+ * in BusinessManager::activateClientBusiness() checked that this Workspace
+ * is actually a Client Workspace an Agency invited, so an ordinary,
+ * directly-owned Draft Business (unrelated to any Agency) could be posted
+ * to this route and activated outside its existing admin-controlled
+ * activation rule. Both actions now also require an ACTIVE
+ * AgencyClientWorkspaceRelationship naming this Workspace
+ * (resolveManagedClientWorkspace() below) before rendering the form or
+ * accepting a submission; BusinessManager::activateClientBusiness()
+ * independently re-checks the identical fact under a row lock at the
+ * actual mutation boundary, so this controller-level check is a fast
+ * user-facing 404, never the only enforcement.
  */
 class ClientBusinessActivationController extends Controller
 {
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
+        private readonly AgencyClientWorkspaceRelationshipRepository $relationshipRepository,
         private readonly BusinessManager $businessManager,
     ) {
     }
 
     public function show(string $workspaceUid, string $businessUid): View|RedirectResponse
     {
-        $workspace = $this->resolveOwnedWorkspace($workspaceUid, (int) Auth::id());
+        $workspace = $this->resolveManagedClientWorkspace($workspaceUid, (int) Auth::id());
         $business = $this->resolveWorkspaceBusiness($workspace, $businessUid);
 
         if ($business->status !== BusinessStatus::Draft) {
@@ -72,7 +88,7 @@ class ClientBusinessActivationController extends Controller
     public function store(ActivateClientBusinessRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $customer = $this->customer();
-        $workspace = $this->resolveOwnedWorkspace($workspaceUid, (int) Auth::id());
+        $workspace = $this->resolveManagedClientWorkspace($workspaceUid, (int) Auth::id());
         $business = $this->resolveWorkspaceBusiness($workspace, $businessUid);
 
         try {
@@ -102,15 +118,25 @@ class ClientBusinessActivationController extends Controller
 
     /**
      * Resolves a Workspace this exact authenticated user OWNS — never an
-     * Admin/Staff member, and never the Agency that invited them. A
-     * missing, inactive, or not-owned Workspace all fail closed with the
-     * same 404 (contract §5.4 existence-disclosure rule).
+     * Admin/Staff member, and never the Agency that invited them — AND
+     * that is a genuine, currently Agency-managed Client Workspace (an
+     * ACTIVE AgencyClientWorkspaceRelationship names it). A missing,
+     * inactive, not-owned, or not-Agency-managed Workspace all fail closed
+     * identically with 404 (contract §5.4 existence-disclosure rule). This
+     * is a fast, non-locking pre-check for a user-facing 404; the
+     * authoritative, lock-held recheck of the identical fact happens again
+     * inside BusinessManager::activateClientBusiness() at the actual
+     * mutation boundary.
      */
-    private function resolveOwnedWorkspace(string $workspaceUid, int $userId): Workspace
+    private function resolveManagedClientWorkspace(string $workspaceUid, int $userId): Workspace
     {
         $workspace = $this->workspaceRepository->findByUid($workspaceUid);
 
         if ($workspace === null || ! $workspace->is_active || (int) $workspace->owner_user_id !== $userId) {
+            abort(404);
+        }
+
+        if ($this->relationshipRepository->findActiveForClientWorkspace((int) $workspace->id) === null) {
             abort(404);
         }
 

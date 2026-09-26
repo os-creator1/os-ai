@@ -12,10 +12,15 @@
 
 @section('content')
     @php
-        // Newly-invited-client flow correction — Draft is never View-As-able
-        // (ViewAsManager::startAgencyView() requires Active); the button
-        // here must not offer an action the server would 404.
+        // Newly-invited-client flow correction (review finding 2) — Draft
+        // and Inactive are both non-Active (ViewAsManager::
+        // startAgencyView() requires Active either way; the button here
+        // must not offer an action the server would 404), but they are not
+        // the same fact: Draft means "the client has not finished their
+        // own setup yet"; Inactive means the Business was active and is
+        // not any more. Only Draft ever says "waiting for client setup".
         $clientBusinessActive = $business !== null && $business->status === \App\Enums\Business\BusinessStatus::Active;
+        $clientBusinessDraft = $business !== null && $business->status === \App\Enums\Business\BusinessStatus::Draft;
     @endphp
     <section id="agency-client-detail">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
@@ -28,18 +33,24 @@
                     @csrf
                     <x-button type="submit" variant="primary" data-role="view-as-client">View As this client</x-button>
                 </form>
-            @else
+            @elseif ($clientBusinessDraft)
                 <x-badge variant="warning" data-role="view-as-unavailable">Waiting for client setup</x-badge>
+            @else
+                <x-badge variant="secondary" data-role="view-as-unavailable">Unavailable — Business inactive</x-badge>
             @endif
         </div>
 
         <div class="row">
             <div class="col-12 col-lg-8">
                 <x-card title="Client business">
-                    @if ($business !== null && ! $clientBusinessActive)
+                    @if ($clientBusinessDraft)
                         <x-alert variant="warning" class="mb-2" data-role="client-draft-notice">
                             This client has not finished setting up their Business yet. "View As" opens once they
                             review and activate it from their own account.
+                        </x-alert>
+                    @elseif ($business !== null && ! $clientBusinessActive)
+                        <x-alert variant="secondary" class="mb-2" data-role="client-inactive-notice">
+                            This client's Business is currently inactive, so "View As" is unavailable.
                         </x-alert>
                     @endif
 

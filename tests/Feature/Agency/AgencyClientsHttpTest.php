@@ -743,6 +743,35 @@ class AgencyClientsHttpTest extends TestCase
         $this->assertSame(\App\Enums\Business\BusinessStatus::Draft, $business->fresh()->status);
     }
 
+    /**
+     * Review correction (finding 2) — Draft and Inactive are both
+     * non-Active, but they are not the same fact: only Draft means
+     * "waiting for the client to finish setup". An Inactive client's
+     * Business was active and is not any more, so the list and detail
+     * pages must say that truthfully instead, and View As must still be
+     * unavailable and still genuinely 404 (the existing guard, untouched).
+     */
+    public function test_the_list_and_detail_pages_show_a_truthful_inactive_state_and_no_view_as(): void
+    {
+        [$agency, $owner] = $this->agency();
+        [$client, $business] = $this->clientAccount();
+        $this->link($agency, $owner, $client);
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Inactive->value]);
+
+        $listResponse = $this->actingAsCustomer($owner)->get($this->indexUrl($agency));
+        $listResponse->assertOk();
+        $listResponse->assertSee('Inactive');
+        $listResponse->assertDontSee('Waiting for client setup');
+
+        $showResponse = $this->actingAsCustomer($owner)->get($this->showUrl($agency, $client));
+        $showResponse->assertOk();
+        $showResponse->assertDontSee('Waiting for client setup');
+        $showResponse->assertSee('inactive', false);
+
+        $this->actingAsCustomer($owner)->post($this->viewAsUrl($agency, $client))->assertNotFound();
+        $this->assertSame(\App\Enums\Business\BusinessStatus::Inactive, $business->fresh()->status);
+    }
+
     /** Requires Notification::fake() to already be active. */
     private function capturedToken(ClientWorkspaceInvitation $invitation): string
     {

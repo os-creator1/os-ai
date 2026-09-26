@@ -58,21 +58,28 @@
                 <x-table :headers="['Client', 'Business', 'Since', '']" data-role="clients-table">
                     @foreach ($clients as $client)
                         @php
-                            // Newly-invited-client flow correction — Draft
-                            // is never View-As-able (ViewAsManager::
-                            // startAgencyView() requires Active), so a
-                            // Draft row must say "waiting for the client",
-                            // never offer a button that would 404.
+                            // Newly-invited-client flow correction (review
+                            // finding 2) — Draft and Inactive are both
+                            // non-Active (ViewAsManager::startAgencyView()
+                            // requires Active either way), but they are not
+                            // the same fact: Draft means "the client has
+                            // not finished their own setup yet", Inactive
+                            // means the Business was active and is not any
+                            // more. Each gets its own truthful label; only
+                            // Draft ever says "waiting for client setup".
                             $clientBusinessActive = $client['business_status'] === \App\Enums\Business\BusinessStatus::Active->value;
+                            $clientBusinessDraft = $client['business_status'] === \App\Enums\Business\BusinessStatus::Draft->value;
                         @endphp
                         <tr data-role="client-row" data-workspace-uid="{{ $client['workspace_uid'] }}">
                             <td>{{ $client['workspace_name'] }}</td>
                             <td>
                                 @if ($client['business_name'] !== null)
                                     {{ $client['business_name'] }}
-                                    @unless ($clientBusinessActive)
+                                    @if ($clientBusinessDraft)
                                         <x-badge variant="warning" data-role="client-waiting-for-setup">Waiting for client setup</x-badge>
-                                    @endunless
+                                    @elseif (! $clientBusinessActive)
+                                        <x-badge variant="secondary" data-role="client-business-inactive">Inactive</x-badge>
+                                    @endif
                                 @else
                                     <x-badge variant="warning" data-role="business-data-issue">
                                         {{ $client['business_count'] === 0 ? 'No business on file' : 'Multiple businesses' }}
@@ -97,8 +104,10 @@
                                                 View As
                                             </x-button>
                                         </form>
-                                    @else
+                                    @elseif ($clientBusinessDraft)
                                         <x-badge variant="secondary" data-role="view-as-unavailable">Not ready</x-badge>
+                                    @else
+                                        <x-badge variant="secondary" data-role="view-as-unavailable">Unavailable</x-badge>
                                     @endif
                                 </div>
                             </td>
