@@ -835,6 +835,15 @@
                 ->middleware('throttle:30,1')->name('stripe.sync');
             Route::post('stripe/disconnect', 'Agency\AgencySaasController@disconnect')
                 ->middleware('throttle:30,1')->name('stripe.disconnect');
+            // "Connect existing Stripe account" — Stripe's own hosted OAuth
+            // flow. GET on both: the start leg is a plain navigation (an
+            // authenticated link, not a state-changing form — it makes no
+            // provider call and mutates nothing by itself), and the callback
+            // leg's method is Stripe's own, fixed by the OAuth spec.
+            Route::get('stripe/connect-existing', 'Agency\AgencySaasController@connectExistingStart')
+                ->middleware('throttle:30,1')->name('stripe.connect-existing');
+            Route::get('stripe/connect-existing/callback', 'Agency\AgencySaasController@connectExistingCallback')
+                ->name('stripe.connect-existing.callback');
 
             Route::get('plans', 'Agency\AgencySaasController@plans')->name('plans');
             Route::post('plans', 'Agency\AgencySaasController@storePlan')

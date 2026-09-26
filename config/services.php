@@ -87,6 +87,14 @@
                 'secret'    => env('STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_SECRET'),
                 'tolerance' => env('STRIPE_AGENCY_SUBSCRIPTION_WEBHOOK_TOLERANCE', 300),
             ],
+            // Lane C — "Connect existing Stripe account." The platform's own
+            // OAuth `client_id` (never a secret; safe to embed in a redirect
+            // URL), from https://dashboard.stripe.com/settings/connect/onboarding-options/oauth.
+            // Distinct from `secret` above: OAuth token exchange still
+            // authenticates with the platform secret key, this is only the
+            // identifier Stripe uses to show the Agency which platform is
+            // asking to connect.
+            'agency_connect_client_id' => env('STRIPE_AGENCY_CONNECT_CLIENT_ID'),
             // RFC-005 M3 contract §19 — new keys, additive only.
             'mode'         => env('STRIPE_MODE', 'test'),
             'api_version'  => env('STRIPE_API_VERSION'),

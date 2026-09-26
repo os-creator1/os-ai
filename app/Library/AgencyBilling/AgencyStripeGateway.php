@@ -72,6 +72,28 @@ interface AgencyStripeGateway
      */
     public function retrieveAccount(string $connectedAccountId): AgencyAccountSnapshot;
 
+    /**
+     * "Connect existing Stripe account" — the Stripe-hosted OAuth
+     * authorization URL for an Agency that already has a Stripe account and
+     * wants to connect it, rather than create a new one. Pure URL
+     * construction; no provider call.
+     *
+     * @throws AgencyBillingException when OAuth is not configured
+     */
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string;
+
+    /**
+     * Exchanges the one-time OAuth authorization code for the connected
+     * account's real id. Callers must independently `retrieveAccount()` the
+     * returned id to get its normalized, verified state — this method never
+     * fabricates readiness from the token-exchange response alone.
+     *
+     * @return string the connected account id
+     *
+     * @throws AgencyBillingException
+     */
+    public function exchangeOAuthCode(string $authorizationCode): string;
+
     // =====================================================================
     // §C5.2 — the Agency's own Prices
     // =====================================================================

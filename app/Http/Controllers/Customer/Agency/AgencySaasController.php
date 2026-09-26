@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer\Agency;
 
 use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
+use App\Enums\AgencyBilling\AgencyStripeConnectionStatus;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
@@ -148,6 +149,96 @@ class AgencySaasController extends Controller
             'status' => 'success',
             // Honest about what it does and does not do (§C5.1).
             'message' => __('Disconnected. No new client subscriptions can be started, and existing ones were not cancelled on your behalf.'),
+        ]);
+    }
+
+    /**
+     * "Connect existing Stripe account" — starts Stripe's own hosted OAuth
+     * flow (never an account-id text field: that would let an Agency name an
+     * account it does not control, or silently duplicate one). The `state`
+     * value is a fresh random token, bound to THIS Agency Workspace in the
+     * session, and re-checked byte-for-byte when Stripe redirects back —
+     * standard OAuth CSRF protection, so a forged callback for a different
+     * Agency's session can never be replayed here.
+     */
+    public function connectExistingStart(string $workspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->authorizedAgency($workspaceUid);
+
+        $state = bin2hex(random_bytes(20));
+        session(["agency_saas_oauth_state.{$agencyWorkspace->uid}" => $state]);
+
+        try {
+            $url = $this->connections->oauthAuthorizeUrl(
+                (int) Auth::id(),
+                $agencyWorkspace,
+                $state,
+                route('customer.workspaces.agency.saas.stripe.connect-existing.callback', [$workspaceUid]),
+            );
+        } catch (AgencyBillingException $e) {
+            return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+
+        return redirect()->away($url);
+    }
+
+    /**
+     * Stripe's own redirect back from the OAuth flow above. Handles the
+     * three real outcomes explicitly: the Agency owner declined on Stripe's
+     * page (`error`), the `state` does not match what this session issued
+     * (refused, never trusted), or a genuine one-time `code` to exchange.
+     * `connectExisting()` itself re-verifies the account's real readiness —
+     * this action never assumes success from the redirect alone.
+     */
+    public function connectExistingCallback(Request $request, string $workspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->authorizedAgency($workspaceUid);
+        $stripeAccountRoute = route('customer.workspaces.agency.saas.stripe', [$workspaceUid]);
+
+        $sessionKey = "agency_saas_oauth_state.{$agencyWorkspace->uid}";
+        $expectedState = session($sessionKey);
+        session()->forget($sessionKey);
+
+        if ($request->query('error') !== null) {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => __('Stripe account connection was not completed.'),
+            ]);
+        }
+
+        $state = (string) $request->query('state', '');
+        $code = (string) $request->query('code', '');
+
+        if (! is_string($expectedState) || $state === '' || ! hash_equals($expectedState, $state)) {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => AgencyBillingException::because(AgencyBillingException::OAUTH_STATE_MISMATCH)->customerMessage(),
+            ]);
+        }
+
+        if ($code === '') {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => AgencyBillingException::because(AgencyBillingException::OAUTH_FAILED)->customerMessage(),
+            ]);
+        }
+
+        try {
+            $connection = $this->connections->connectExisting((int) Auth::id(), $agencyWorkspace, $code);
+        } catch (AgencyBillingException $e) {
+            return redirect($stripeAccountRoute)->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+
+        if ($connection->status === AgencyStripeConnectionStatus::Incompatible) {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => __('That Stripe account\'s fee, loss-liability, requirement-collection or Dashboard configuration is not compatible with this platform, so it cannot be enabled for client payments. Disconnect it and connect a different account, or create a new one instead.'),
+            ]);
+        }
+
+        return redirect($stripeAccountRoute)->with([
+            'status' => 'success',
+            'message' => __('Stripe account connected.'),
         ]);
     }
 

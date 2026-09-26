@@ -48,6 +48,7 @@ final class AgencyStripeConnectManager
             AgencyStripeConnectionStatus::Onboarding->value,
             AgencyStripeConnectionStatus::Active->value,
             AgencyStripeConnectionStatus::Restricted->value,
+            AgencyStripeConnectionStatus::Incompatible->value,
         ];
     }
 
@@ -124,6 +125,77 @@ final class AgencyStripeConnectManager
         });
 
         return $this->onboardingLink($connection, $refreshUrl, $returnUrl);
+    }
+
+    /**
+     * "Connect existing Stripe account" — the Stripe-hosted OAuth
+     * authorization URL. The account itself is never typed in by hand; the
+     * Agency owner authenticates on Stripe's own page and Stripe redirects
+     * back with a one-time code, which `connectExisting()` below exchanges.
+     *
+     * @throws AgencyBillingException
+     */
+    public function oauthAuthorizeUrl(int $actorUserId, Workspace $agencyWorkspace, string $state, string $redirectUri): string
+    {
+        $this->assertAgencyOwner($actorUserId, $agencyWorkspace);
+
+        if ($this->liveConnection($agencyWorkspace) !== null) {
+            throw AgencyBillingException::because(AgencyBillingException::ALREADY_CONNECTED);
+        }
+
+        return $this->gateway->oauthAuthorizeUrl($state, $redirectUri);
+    }
+
+    /**
+     * "Connect existing Stripe account" — completes the OAuth flow
+     * `oauthAuthorizeUrl()` started. The exchanged account's REAL, current
+     * Stripe state is independently re-read (`retrieveAccount()`, never
+     * trusted from the token-exchange response alone) and judged by the
+     * exact same fail-closed readiness policy `statusFor()` applies to a
+     * brand-new account — an existing account brought in through OAuth can
+     * carry any commercial configuration its own history gave it, so this is
+     * the one place that decides whether it may ever be enabled for Agency
+     * customer payments. An incompatible account is still recorded (for a
+     * truthful history and an explicit reason on screen), but
+     * `AgencyStripeConnectionStatus::Incompatible` can never charge — see
+     * that case's own docblock for why this can never self-heal into Active
+     * the way Restricted can.
+     *
+     * @throws AgencyBillingException
+     */
+    public function connectExisting(int $actorUserId, Workspace $agencyWorkspace, string $authorizationCode): AgencyStripeConnection
+    {
+        $this->assertAgencyOwner($actorUserId, $agencyWorkspace);
+
+        if ($this->liveConnection($agencyWorkspace) !== null) {
+            throw AgencyBillingException::because(AgencyBillingException::ALREADY_CONNECTED);
+        }
+
+        // ---- network, outside every transaction and lock -------------------
+        $connectedAccountId = $this->gateway->exchangeOAuthCode($authorizationCode);
+        $snapshot = $this->gateway->retrieveAccount($connectedAccountId);
+
+        // ---- apply locally ---------------------------------------------------
+        return DB::transaction(function () use ($agencyWorkspace, $connectedAccountId, $snapshot, $actorUserId) {
+            $locked = Workspace::query()->whereKey($agencyWorkspace->id)->lockForUpdate()->firstOrFail();
+
+            if ($this->liveConnection($locked) !== null) {
+                throw AgencyBillingException::because(AgencyBillingException::ALREADY_CONNECTED);
+            }
+
+            $connection = new AgencyStripeConnection([
+                'agency_workspace_id' => $locked->id,
+                'stripe_account_id' => $connectedAccountId,
+            ]);
+
+            $connection->forceFill($this->providerColumns($snapshot, $this->statusFor($snapshot)) + [
+                'connected_by_user_id' => $actorUserId,
+                'connected_at' => now(),
+                'lock_version' => 0,
+            ])->save();
+
+            return $connection;
+        });
     }
 
     /**
@@ -347,10 +419,21 @@ final class AgencyStripeConnectManager
     {
         return [
             'status' => $status->value,
-            'charges_enabled' => $snapshot->chargesEnabled,
+            // An Incompatible account must never read as chargeable through
+            // this column either — canCharge() checks both the status AND
+            // this flag, and a controller mismatch means this platform
+            // cannot safely rely on the provider's own charges_enabled
+            // value for its intended purpose.
+            'charges_enabled' => $status === AgencyStripeConnectionStatus::Incompatible ? false : $snapshot->chargesEnabled,
             'payouts_enabled' => $snapshot->payoutsEnabled,
             'details_submitted' => $snapshot->detailsSubmitted,
-            'requirements_disabled_reason' => $snapshot->requirementsDisabledReason,
+            // Reused for BOTH provider requirement codes AND a controller
+            // incompatibility code — both answer the identical operator
+            // question ("why can't this account charge yet"), and both are
+            // machine codes, never provider prose.
+            'requirements_disabled_reason' => $status === AgencyStripeConnectionStatus::Incompatible
+                ? $snapshot->incompatibilityReason()
+                : $snapshot->requirementsDisabledReason,
             'default_currency' => $snapshot->defaultCurrency,
         ];
     }
@@ -366,6 +449,17 @@ final class AgencyStripeConnectManager
      */
     private function statusFor(AgencyAccountSnapshot $snapshot): AgencyStripeConnectionStatus
     {
+        // Checked FIRST, and unconditionally on `chargesEnabled` — the
+        // objective's own fail-closed policy: an account that CAN charge but
+        // does so on the wrong commercial terms (this platform paying
+        // Stripe's fees, or bearing payment-loss liability, or the Agency
+        // never being handed the full Dashboard) must never read as Active,
+        // and never will on its own, because `stripe_dashboard.type` cannot
+        // change after account creation.
+        if (! $snapshot->isCompatibleController()) {
+            return AgencyStripeConnectionStatus::Incompatible;
+        }
+
         if ($snapshot->chargesEnabled) {
             return AgencyStripeConnectionStatus::Active;
         }

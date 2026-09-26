@@ -42,6 +42,12 @@ final class AgencyBillingException extends RuntimeException
     /** This Agency already has a current (non-disconnected) connection. */
     public const ALREADY_CONNECTED = 'already_connected';
 
+    /** The Stripe OAuth authorization code was invalid, expired, already used, or the exchange otherwise failed. */
+    public const OAUTH_FAILED = 'oauth_failed';
+
+    /** The OAuth state parameter Stripe echoed back did not match what this platform issued — refused as a possible CSRF attempt, never trusted. */
+    public const OAUTH_STATE_MISMATCH = 'oauth_state_mismatch';
+
     // ---- plans ------------------------------------------------------------
 
     /** The plan is not published, or has no usable commercial terms. */
@@ -118,6 +124,8 @@ final class AgencyBillingException extends RuntimeException
             self::NO_CONNECTION => 'This agency has not connected a Stripe account yet.',
             self::CONNECTION_NOT_READY => 'This agency\'s Stripe account cannot take payments yet.',
             self::ALREADY_CONNECTED => 'This agency already has a connected Stripe account.',
+            self::OAUTH_FAILED => 'We could not connect that Stripe account. Please try again.',
+            self::OAUTH_STATE_MISMATCH => 'That connection request could not be verified. Please try again.',
             self::PLAN_NOT_SELLABLE => 'That plan is not ready to be sold yet.',
             self::TIER_NOT_RESELLABLE => 'That plan level cannot be resold.',
             self::PRICE_NOT_RETRIEVABLE => 'That Stripe price could not be found on this agency\'s own Stripe account.',

@@ -26,6 +26,18 @@ enum AgencyStripeConnectionStatus: string
     /** The provider has restricted the account; new charges must not be taken. */
     case Restricted = 'restricted';
 
+    /**
+     * Fail-closed payment-readiness policy — the connected account's real
+     * Stripe `controller` configuration (fee payer, payment-loss liability,
+     * requirement collection, or Dashboard access) does not match what this
+     * platform requires (see `AgencyAccountSnapshot::isCompatibleController()`).
+     * `stripe_dashboard.type` is immutable once an account exists, so unlike
+     * Restricted this can never self-heal through more onboarding — the
+     * Agency must disconnect and connect a different, compatible account.
+     * Never chargeable, regardless of `charges_enabled`.
+     */
+    case Incompatible = 'incompatible';
+
     /** Retired by the Agency. Kept for history, never reused. */
     case Disconnected = 'disconnected';
 
