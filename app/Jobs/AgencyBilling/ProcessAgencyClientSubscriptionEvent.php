@@ -138,6 +138,20 @@ class ProcessAgencyClientSubscriptionEvent extends Base implements ShouldQueue
             return [AgencySubscriptionEventState::Processed, null, null];
         }
 
+        // P1-A — another account-level event, handled the identical way:
+        // before any subscription resolution, and scoped to OUR OWN current
+        // connection for this exact account id
+        // (AgencyStripeConnectManager::refreshFromWebhookAccountId()'s own
+        // docblock covers exactly why this can never resurrect a
+        // disconnected/deauthorized connection or cross into another
+        // Agency's). Never trusts the event's own embedded account
+        // snapshot — re-reads real provider truth before applying anything.
+        if ($eventType === 'account.updated') {
+            $connections->refreshFromWebhookAccountId($connectedAccountId);
+
+            return [AgencySubscriptionEventState::Processed, null, null];
+        }
+
         // Outside lane C's closed set is acknowledged and ignored, never
         // guessed at. This is also what makes a stray lane-B Connect event on
         // this endpoint harmless.

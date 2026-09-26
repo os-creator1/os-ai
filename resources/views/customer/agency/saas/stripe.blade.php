@@ -101,12 +101,6 @@
                         </form>
                     @endif
 
-                    <form method="POST" action="{{ route('customer.workspaces.agency.saas.stripe.sync', [$agencyWorkspace->uid]) }}"
-                          data-role="agency-stripe-sync">
-                        @csrf
-                        <button type="submit">{{ __('Refresh status from Stripe') }}</button>
-                    </form>
-
                     <form method="POST" action="{{ route('customer.workspaces.agency.saas.stripe.disconnect', [$agencyWorkspace->uid]) }}"
                           data-role="agency-stripe-disconnect">
                         @csrf
@@ -130,4 +124,85 @@
             </x-card>
         @endif
     </section>
+
+    {{--
+        P1-C — automatic status polling. No manual "Refresh" button exists
+        on this page any more (Task D): while the connection is in a
+        non-terminal state (pending/onboarding/restricted), this polls
+        AgencySaasController::stripeStatus() — a cheap, LOCAL-only read by
+        default — every few seconds. That endpoint's own server-side
+        throttle (AgencyStripeConnectManager::refreshForStatusPoll(), 15s)
+        decides on its own, independently of this script, when a poll is
+        also allowed to reach Stripe; several open tabs polling
+        simultaneously still cannot exceed that one shared rate. On any
+        status change, OR any change to WHY it is restricted (Stripe can
+        move an account from one outstanding requirement to a different
+        one — or clear it — while the status stays "restricted" the whole
+        time; PR #380 finding 2), the page reloads once to render the
+        exact same server-side Blade state every other flow already
+        produces, rather than duplicating that rendering logic in
+        JavaScript. Polling never
+        starts at all for a non-owner (nothing here would be able to
+        refresh anyway — see stripeStatus()'s own owner-only rule) or once
+        the connection is already in a state that can never change on its
+        own (Active, Incompatible — its Dashboard type is immutable — or no
+        connection at all).
+    --}}
+    @if ($isOwner && $connection !== null && in_array($connection->status->value, ['pending', 'onboarding', 'restricted'], true))
+        <script>
+            (function () {
+                var pollUrl = @json(route('customer.workspaces.agency.saas.stripe.status-poll', [$agencyWorkspace->uid]));
+                var initialStatus = @json($connection->status->value);
+                var initialReason = @json($connection->requirements_disabled_reason);
+                var pollIntervalMs = 5000;
+                var timer = null;
+
+                function csrfToken() {
+                    var meta = document.querySelector('meta[name="csrf-token"]');
+
+                    return meta ? meta.getAttribute('content') : '';
+                }
+
+                function poll() {
+                    fetch(pollUrl, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken(),
+                            'Accept': 'application/json',
+                        },
+                    })
+                        .then(function (response) { return response.json(); })
+                        .then(function (data) {
+                            // PR #380 finding 2 — a status-value change is
+                            // NOT the only visible change worth reloading
+                            // for: `reason` can change (one outstanding
+                            // requirement resolving into a different one,
+                            // or clearing) while `status` stays
+                            // "restricted" throughout, and the page's own
+                            // "Why" text must not go stale in that case.
+                            if (data.status && (data.status !== initialStatus || data.reason !== initialReason)) {
+                                window.clearInterval(timer);
+                                window.location.reload();
+
+                                return;
+                            }
+
+                            // A terminal status the last full page render did
+                            // not yet reflect (e.g. Active reached between
+                            // renders) also stops polling without waiting for
+                            // a change to be detected above.
+                            if (data.status === 'active' || data.status === 'incompatible') {
+                                window.clearInterval(timer);
+                            }
+                        })
+                        .catch(function () {
+                            // A transient network error just waits for the
+                            // next tick — never surfaced as a page error.
+                        });
+                }
+
+                timer = window.setInterval(poll, pollIntervalMs);
+            })();
+        </script>
+    @endif
 @endsection

@@ -407,6 +407,456 @@ class AgencyStripeOwnAccountTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // P1-A — Stripe Connect account.updated, no manual refresh required
+    // ------------------------------------------------------------------
+
+    public function test_account_updated_webhook_moves_a_restricted_account_to_active(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
+
+        // The exact real acceptance scenario: OAuth-connected, initially
+        // restricted pending Stripe's own verification.
+        $this->agencyStripe->restrictAccount($accountId, 'requirements.pending_verification');
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update([
+            'status' => AgencyStripeConnectionStatus::Restricted->value,
+            'charges_enabled' => false,
+            'requirements_disabled_reason' => 'requirements.pending_verification',
+        ]);
+
+        // The Agency finishes verification; Stripe now genuinely reports it ready.
+        $this->agencyStripe->completeOnboarding($accountId);
+
+        $this->deliverAndProcessWebhookEvent('account.updated', $accountId, [
+            'id' => $accountId,
+            'object' => 'account',
+            // Deliberately WRONG: the event's own embedded snapshot must
+            // never be trusted — only a real retrieveAccount() call may
+            // decide this.
+            'charges_enabled' => false,
+        ]);
+
+        $refreshed = $connection->fresh();
+        $this->assertSame(AgencyStripeConnectionStatus::Active, $refreshed->status);
+        $this->assertTrue($this->connections()->isChargeReady($fixture['agencyWorkspace']));
+    }
+
+    public function test_account_updated_for_a_different_account_does_not_affect_this_agency(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        // Fixture setup already performed its own real sync; only calls
+        // made AFTER this point are relevant to the assertion below.
+        $this->agencyStripe->calls = [];
+
+        $this->deliverAndProcessWebhookEvent('account.updated', 'acct_unrelated_elsewhere', [
+            'id' => 'acct_unrelated_elsewhere', 'object' => 'account',
+        ]);
+
+        $this->assertSame($connection->lock_version, $connection->fresh()->lock_version, 'An event for a different account must never write to this connection.');
+        $this->assertSame([], $this->agencyStripe->callsOf('retrieveAccount'), 'An unknown account id must never trigger a provider call at all.');
+    }
+
+    public function test_account_updated_for_a_historical_disconnected_connection_does_not_resurrect_it(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $oldConnection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $oldAccountId = (string) $oldConnection->stripe_account_id;
+
+        $this->connections()->disconnect((int) $fixture['agencyOwner']->user_id, $fixture['agencyWorkspace']);
+
+        // A late account.updated for the NOW-DISCONNECTED account arrives.
+        $this->deliverAndProcessWebhookEvent('account.updated', $oldAccountId, ['id' => $oldAccountId, 'object' => 'account']);
+
+        $this->assertSame(AgencyStripeConnectionStatus::Disconnected, $oldConnection->fresh()->status);
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    }
+
+    public function test_an_account_updated_event_arriving_after_deauthorization_cannot_undo_it(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
+
+        $this->deliverAndProcessWebhookEvent('account.application.deauthorized', $accountId, ['id' => $accountId, 'object' => 'application']);
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+
+        // Out-of-order delivery: a stale account.updated for the same
+        // account arrives only AFTER the deauthorization already committed.
+        $this->deliverAndProcessWebhookEvent('account.updated', $accountId, ['id' => $accountId, 'object' => 'account']);
+
+        $this->assertSame(AgencyStripeConnectionStatus::Disconnected, $connection->fresh()->status);
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    }
+
+    public function test_provider_retrieval_failure_during_account_updated_never_marks_the_account_ready(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
+        $before = $connection->status;
+
+        // A ONE-TIME hook on retrieveAccount specifically (never
+        // verifyWebhookPayload, which intake must still pass) — the queue
+        // connection under test runs the job SYNCHRONOUSLY as part of
+        // handling the POST below (mirrors
+        // AgencySaasCorrectionsTest::test_revoked_provider_access_fails_closed_and_fabricates_nothing()'s
+        // own established pattern for exactly this scenario), so the
+        // exception surfaces through the HTTP call itself.
+        $this->agencyStripe->interleaveOnce('retrieveAccount', function (): void {
+            throw \App\Exceptions\AgencyBilling\AgencyBillingException::because(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED);
+        });
+
+        $payload = json_encode(['id' => 'evt_provider_fail', 'type' => 'account.updated', 'account' => $accountId, 'data' => ['object' => ['id' => $accountId]]]);
+
+        try {
+            $this->call('POST', route('public.agency-subscriptions.webhook'), [], [], [], [
+                'CONTENT_TYPE' => 'application/json', 'HTTP_Stripe-Signature' => $this->agencyStripe->validSignature,
+            ], $payload);
+        } catch (\Throwable) {
+            // Expected: provider truth could not be retrieved. The job's
+            // own bounded retry policy owns what happens next; what
+            // matters here is the durable outcome, asserted below.
+        }
+
+        $event = AgencyClientSubscriptionEvent::query()->where('provider_event_id', 'evt_provider_fail')->first();
+        $this->assertNotNull($event);
+        $this->assertSame(AgencySubscriptionEventState::Failed, $event->state);
+        $this->assertSame(\App\Exceptions\AgencyBilling\AgencyBillingException::PROVIDER_FAILED, $event->last_error);
+        $this->assertSame($before, $connection->fresh()->status, 'A failed provider read must never change local status.');
+    }
+
+    public function test_an_incorrectly_signed_account_updated_event_is_rejected(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $accountId = (string) $this->connections()->liveConnection($fixture['agencyWorkspace'])->stripe_account_id;
+
+        $payload = json_encode(['id' => 'evt_bad_sig', 'type' => 'account.updated', 'account' => $accountId, 'data' => ['object' => ['id' => $accountId]]]);
+
+        $this->call('POST', route('public.agency-subscriptions.webhook'), [], [], [], [
+            'CONTENT_TYPE' => 'application/json', 'HTTP_Stripe-Signature' => 'not-the-real-signature',
+        ], $payload)->assertStatus(400);
+
+        $this->assertSame(0, AgencyClientSubscriptionEvent::query()->where('provider_event_id', 'evt_bad_sig')->count());
+    }
+
+    public function test_a_duplicate_account_updated_delivery_is_idempotent(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $accountId = (string) $this->connections()->liveConnection($fixture['agencyWorkspace'])->stripe_account_id;
+
+        $payload = json_encode(['id' => 'evt_dup_1', 'type' => 'account.updated', 'account' => $accountId, 'data' => ['object' => ['id' => $accountId]]]);
+        $headers = ['CONTENT_TYPE' => 'application/json', 'HTTP_Stripe-Signature' => $this->agencyStripe->validSignature];
+
+        $this->call('POST', route('public.agency-subscriptions.webhook'), [], [], [], $headers, $payload)->assertStatus(200);
+        $this->call('POST', route('public.agency-subscriptions.webhook'), [], [], [], $headers, $payload)->assertStatus(200);
+
+        $this->assertSame(1, AgencyClientSubscriptionEvent::query()->where('provider_event_id', 'evt_dup_1')->count());
+    }
+
+    // ------------------------------------------------------------------
+    // P1-B/D — automatic refresh on return from onboarding, no manual button
+    // ------------------------------------------------------------------
+
+    public function test_returning_from_stripe_onboarding_automatically_syncs_status(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        // The browser lands back on the plain page WITH the return marker
+        // Stripe's own redirect carries — never a button click.
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$uid]) . '?stripe_return=1')
+            ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]));
+
+        $this->assertSame(AgencyStripeConnectionStatus::Active, $connection->fresh()->status);
+
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$uid]))
+            ->assertOk()
+            ->assertSee('Ready to take payments');
+    }
+
+    public function test_an_ordinary_page_view_without_the_return_marker_makes_no_provider_call(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $this->authenticateAs($fixture['agencyOwner']);
+
+        $this->agencyStripe->calls = [];
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$fixture['agencyWorkspace']->uid]))->assertOk();
+
+        $this->assertSame([], $this->agencyStripe->callsOf('retrieveAccount'));
+    }
+
+    public function test_the_manual_refresh_button_no_longer_appears_on_the_page(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $this->authenticateAs($fixture['agencyOwner']);
+
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$fixture['agencyWorkspace']->uid]))
+            ->assertOk()
+            ->assertDontSee('Refresh status from Stripe')
+            ->assertDontSee('data-role="agency-stripe-sync"', false);
+    }
+
+    // ------------------------------------------------------------------
+    // P1-C — browser status polling, server-side throttled
+    // ------------------------------------------------------------------
+
+    public function test_status_poll_reflects_a_change_without_a_manual_refresh_and_is_server_side_throttled(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        $first->assertOk();
+        $this->assertSame('onboarding', $first->json('status'));
+
+        // Finishes at Stripe; the local row does not know yet.
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        // Immediately polling again is throttled server-side: still stale.
+        $this->agencyStripe->calls = [];
+        $throttled = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        $this->assertSame('onboarding', $throttled->json('status'));
+        $this->assertSame([], $this->agencyStripe->callsOf('retrieveAccount'), 'A poll inside the throttle window must never reach the provider.');
+
+        // Past the throttle window, the very next poll performs a real
+        // check and reflects the change automatically.
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+        $fresh = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        $this->assertSame('active', $fresh->json('status'));
+        $this->assertNotEmpty($this->agencyStripe->callsOf('retrieveAccount'));
+    }
+
+    /**
+     * PR #380 review finding 1 — deterministic, single-process proof of
+     * single-flight: real concurrent HTTP requests cannot be simulated in
+     * a PHPUnit test, so this uses the SAME interleaving-hook technique
+     * FakeAgencyStripeGateway already provides for every other
+     * concurrency test in this suite. The hook fires INSIDE the first
+     * poll's retrieveAccount() call — the exact instant a second,
+     * genuinely concurrent tab's poll would arrive while the first is "on
+     * the wire" — and issues that second poll as a real nested HTTP
+     * request. If the single-flight lock works, that second poll must
+     * find the connection still locked, wait up to
+     * REFRESH_LOCK_WAIT_SECONDS, time out, and return the still-stale
+     * local row WITHOUT ever calling retrieveAccount() itself.
+     */
+    public function test_concurrent_status_polls_are_single_flight_only_one_reaches_the_provider(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        $secondPollResult = null;
+
+        $this->agencyStripe->interleaveOnce('retrieveAccount', function () use (&$secondPollResult, $uid) {
+            $secondPollResult = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        });
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+
+        $first->assertOk();
+        $this->assertSame('active', $first->json('status'), 'The poll that actually acquired the lock performs the real refresh.');
+
+        $this->assertNotNull($secondPollResult);
+        $secondPollResult->assertOk();
+        $this->assertSame(
+            'onboarding',
+            $secondPollResult->json('status'),
+            'The concurrent second poll could not acquire the lock, so it must reuse the still-stale local row rather than block indefinitely or fail.',
+        );
+
+        $this->assertCount(
+            1,
+            $this->agencyStripe->callsOf('retrieveAccount'),
+            'Exactly ONE of the two concurrent polls may ever reach the provider.',
+        );
+    }
+
+    /**
+     * PR #380 finding 3 — the lock TTL must be a real arithmetic bound, not
+     * an unjustified magic number: strictly greater than
+     * `StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS` (the
+     * curl-enforced ceiling on the one call it guards), with the waiter
+     * timeout staying well inside it. This is what would have caught the
+     * original bug — TTL (10) < worst case (80) — before it ever shipped,
+     * and it fails loudly if either constant drifts out of sync in future.
+     */
+    public function test_status_poll_lock_ttl_exceeds_the_documented_retrieve_account_worst_case(): void
+    {
+        $ttl = (new \ReflectionClassConstant(
+            \App\Library\AgencyBilling\AgencyStripeConnectManager::class,
+            'REFRESH_LOCK_TTL_SECONDS',
+        ))->getValue();
+        $wait = (new \ReflectionClassConstant(
+            \App\Library\AgencyBilling\AgencyStripeConnectManager::class,
+            'REFRESH_LOCK_WAIT_SECONDS',
+        ))->getValue();
+        $worstCase = \App\Library\AgencyBilling\StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS;
+
+        $this->assertGreaterThan(
+            $worstCase,
+            $ttl,
+            'The lock lease must outlive retrieveAccount()\'s own documented, curl-enforced worst case, or a '
+            . 'still in-flight call can have its lock silently expire and get reused by a concurrent poll.',
+        );
+        $this->assertSame(
+            95,
+            $ttl,
+            'Guards against a silent, undocumented drift between the TTL and the worst-case bound it is derived from.',
+        );
+        $this->assertLessThan(
+            $ttl,
+            $wait,
+            'The waiter timeout must stay well inside the lease so a blocked caller gives up long before the lease itself could expire.',
+        );
+    }
+
+    /**
+     * PR #380 finding 3 — before this fix, REFRESH_LOCK_TTL_SECONDS was a
+     * hardcoded, unjustified 10s: a retrieveAccount() call still genuinely
+     * on the wire past that mark would let its lock silently expire and be
+     * reused by a second, concurrent poll. This sleeps INSIDE the first
+     * poll's retrieveAccount() call — the lock is already held by the time
+     * this fires, exactly as a real in-flight network call would be —
+     * deliberately past that old, unsafe boundary, then proves the second,
+     * concurrent poll still finds the connection locked and reuses the
+     * stale local row rather than reaching the provider itself.
+     */
+    public function test_status_poll_lock_lease_survives_past_the_previously_unsafe_ten_second_boundary(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        $secondPollResult = null;
+
+        $this->agencyStripe->interleaveOnce('retrieveAccount', function () use (&$secondPollResult, $uid) {
+            // Deliberately past the OLD, unsafe 10s TTL, while the lock
+            // from the outer poll is still held.
+            sleep(11);
+
+            $secondPollResult = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        });
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+
+        $first->assertOk();
+        $this->assertSame('active', $first->json('status'), 'The poll that actually acquired the lock performs the real refresh.');
+
+        $this->assertNotNull($secondPollResult);
+        $secondPollResult->assertOk();
+        $this->assertSame(
+            'onboarding',
+            $secondPollResult->json('status'),
+            'Past the OLD, unsafe 10s TTL, the lock must still be held: the concurrent poll must still find the '
+            . 'connection locked and reuse the stale local row, never reach the provider itself.',
+        );
+
+        $this->assertCount(
+            1,
+            $this->agencyStripe->callsOf('retrieveAccount'),
+            'Even after outliving the previously-unsafe 10s lock TTL, exactly one call may reach the provider.',
+        );
+    }
+
+    /**
+     * PR #380 review finding 2 — `status` staying "restricted" the whole
+     * time must not hide a real, visible change: Stripe can move an
+     * account from one outstanding requirement to a different one (or
+     * clear it) without the status value itself ever changing, and the
+     * page's own "Why" text depends on this field, not on `status` alone.
+     */
+    public function test_status_poll_reflects_a_changed_requirement_reason_even_while_status_stays_restricted(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
+        $this->authenticateAs($fixture['agencyOwner']);
+
+        $this->agencyStripe->restrictAccount($accountId, 'requirements.past_due');
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update([
+            'status' => AgencyStripeConnectionStatus::Restricted->value,
+            'charges_enabled' => false,
+            'requirements_disabled_reason' => 'requirements.past_due',
+            'last_synced_at' => now()->subMinute(),
+        ]);
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$fixture['agencyWorkspace']->uid]));
+        $this->assertSame('restricted', $first->json('status'));
+        $this->assertSame('requirements.past_due', $first->json('reason'));
+
+        // Stripe resolves that requirement but immediately surfaces a
+        // DIFFERENT one — status is "restricted" before, during and after.
+        $this->agencyStripe->restrictAccount($accountId, 'requirements.pending_verification');
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+
+        $second = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$fixture['agencyWorkspace']->uid]));
+        $this->assertSame('restricted', $second->json('status'), 'The status value itself genuinely never changes.');
+        $this->assertSame(
+            'requirements.pending_verification',
+            $second->json('reason'),
+            'The poll endpoint must still surface the NEW reason, which is what the page\'s own JS compares to detect a change and reload.',
+        );
+    }
+
+    public function test_status_poll_is_owner_only_and_makes_no_provider_call_for_staff(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $staff = $this->createCustomer();
+        $this->createMembership($fixture['agencyWorkspace'], $staff->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'business_access_scope' => WorkspaceBusinessAccessScope::All,
+            'location_access_scope' => LocationAccessScope::All,
+        ]);
+        $this->authenticateAs($staff);
+
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('agency_workspace_id', $fixture['agencyWorkspace']->id)
+            ->update(['last_synced_at' => now()->subMinute()]);
+        $this->agencyStripe->calls = [];
+
+        $response = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$fixture['agencyWorkspace']->uid]));
+        $response->assertOk();
+        $this->assertNull($response->json('status'));
+        $this->assertSame([], $this->agencyStripe->callsOf('retrieveAccount'));
+    }
+
+    // ------------------------------------------------------------------
     // Authorization — owner only, same rule as every other lane-C write
     // ------------------------------------------------------------------
 

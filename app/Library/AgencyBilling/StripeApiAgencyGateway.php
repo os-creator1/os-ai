@@ -40,6 +40,37 @@ use UnexpectedValueException;
  */
 final class StripeApiAgencyGateway implements AgencyStripeGateway
 {
+    /**
+     * PR #380 finding 3 (lock-lease duration) — the single hard cap
+     * `AgencyStripeConnectManager::REFRESH_LOCK_TTL_SECONDS` is sized
+     * against for `retrieveAccount()`'s own worst case.
+     *
+     * curl enforces `CURLOPT_TIMEOUT` as a ceiling on the WHOLE request,
+     * connect phase included, not additive with `CURLOPT_CONNECTTIMEOUT`
+     * (\Stripe\HttpClient\CurlClient::DEFAULT_TIMEOUT = 80,
+     * vendor/stripe/stripe-php/lib/HttpClient/CurlClient.php:164). Neither
+     * this gateway nor any other Stripe gateway in this codebase calls
+     * `setTimeout()`/`setConnectTimeout()`, so that 80s default governs.
+     *
+     * Retries would multiply that bound — `Stripe::$maxNetworkRetries`
+     * defaults to 0 (lib/Stripe.php:47) and nothing in this codebase raises
+     * it today, but it is a process-wide mutable static, not a per-call
+     * setting, so `retrieveAccount()` below pins it to 0 immediately before
+     * its own call rather than trusting that ambient state stays put.
+     * With that pin in effect, one call is the whole story: no retry
+     * attempt, no backoff sleep, ever follows a first one for this method.
+     *
+     * This is a real, curl-enforced ceiling, not a typical-case estimate —
+     * but only for what this class controls. It does not bound proxying,
+     * DNS, or OS-level network stalls beneath curl's own connect handling.
+     *
+     * `public` so `AgencyStripeConnectManager::REFRESH_LOCK_TTL_SECONDS` can
+     * be defined as a real arithmetic expression against this constant
+     * instead of a second, independently-maintained magic number that could
+     * silently drift out of sync with it.
+     */
+    public const RETRIEVE_ACCOUNT_WORST_CASE_SECONDS = 80;
+
     private ?StripeClient $client = null;
 
     private function client(): StripeClient
@@ -171,6 +202,16 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
 
     public function retrieveAccount(string $connectedAccountId): AgencyAccountSnapshot
     {
+        // Deterministically pin retries to 0 for THIS call, immediately
+        // before making it, rather than trusting the SDK's already-0
+        // default to stay unset for the rest of the request — see
+        // RETRIEVE_ACCOUNT_WORST_CASE_SECONDS above. `Stripe::$maxNetworkRetries`
+        // is a process-wide static; setting it to its own default here costs
+        // nothing and turns "no other code path touches this" from an
+        // assumption into an enforced fact for the one call this codebase's
+        // status-poll lock lease is sized against.
+        \Stripe\Stripe::setMaxNetworkRetries(0);
+
         try {
             $account = $this->client()->accounts->retrieve($connectedAccountId, []);
         } catch (ApiErrorException) {

@@ -6,7 +6,9 @@ use App\Enums\AgencyBilling\AgencyStripeConnectionStatus;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Models\AgencyStripeConnection;
 use App\Models\Workspace;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -45,6 +47,52 @@ final class AgencyStripeConnectManager
      * revoked or gone Incompatible. See chargeableConnection() below.
      */
     private const CHARGE_READINESS_FRESHNESS_SECONDS = 900;
+
+    /**
+     * P1-C — the browser's automatic status-polling fallback has its own,
+     * much shorter freshness window than the financial boundary above: it
+     * exists to let the Agency owner see "Ready to take payments" appear on
+     * its own shortly after finishing Stripe's hosted onboarding, without a
+     * manual click. Still server-side throttled so several open tabs, or
+     * the poll firing faster than intended, cannot turn into repeated
+     * Stripe calls for the same connection.
+     */
+    private const STATUS_POLL_MIN_INTERVAL_SECONDS = 15;
+
+    /**
+     * PR #380 finding 1 — the single-flight lock's own lifetime.
+     *
+     * PR #380 finding 3 — 10s was an unjustified guess: it could expire
+     * while `StripeApiAgencyGateway::retrieveAccount()` was still in
+     * flight, letting a second caller acquire the "same" lock and reach
+     * the provider concurrently. This value is now a real arithmetic bound:
+     *
+     *   StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS (80)
+     *   — curl's own CURLOPT_TIMEOUT ceiling on retrieveAccount(), with
+     *     retries pinned to 0 immediately before that call — see that
+     *     constant's docblock for the full derivation and its caveats.
+     * + 15s margin, covering refreshFromProvider()'s own compare-and-set
+     *   UPDATE (normally single-digit milliseconds locally) plus generous
+     *   headroom for scheduler/GC/lock-clock skew between the process that
+     *   holds the lock and the one checking whether it has expired.
+     *   = 95s.
+     *
+     * This is a real, curl-enforced ceiling on what THIS codebase's own
+     * call does — not a claim that no Stripe account read can ever exceed
+     * it for any reason (a lower-level network stall beneath curl's own
+     * connect handling is not bounded by this application). So: while this
+     * constant is in effect, at most one retrieveAccount() call for a given
+     * connection is in flight at a time under this lock — single-flight is
+     * NOT an absolute guarantee independent of that ceiling holding.
+     */
+    private const REFRESH_LOCK_TTL_SECONDS = StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS + 15;
+
+    /**
+     * How long a concurrent poll waits for an in-flight refresh to finish
+     * before giving up and returning the current local row instead — a
+     * status poll must stay fast and never pile up.
+     */
+    private const REFRESH_LOCK_WAIT_SECONDS = 3;
 
     public function __construct(private readonly AgencyStripeGateway $gateway)
     {
@@ -249,6 +297,78 @@ final class AgencyStripeConnectManager
     }
 
     /**
+     * P1-C — the automatic status-polling fallback JS calls this, not
+     * syncFromProvider() above, so a browser polling every few seconds
+     * cannot turn into a Stripe call every few seconds: within
+     * STATUS_POLL_MIN_INTERVAL_SECONDS of the last real sync, this simply
+     * returns the current local row unchanged. Owner-only, same as every
+     * other lane-C write here — a staff member viewing the status page
+     * never triggers a provider call, only ever reads what is already
+     * stored (AgencySaasController::stripe()).
+     *
+     * PR #380 REVIEW FINDING 1 — SINGLE-FLIGHT. The freshness check alone
+     * is not atomic: several concurrent polls (multiple open tabs, or the
+     * client's own 5s interval racing a slow response) can all observe the
+     * SAME stale `last_synced_at` before any of them writes a fresh one,
+     * each independently deciding to call Stripe. A named
+     * Illuminate\Cache\Lock — a shared, cache-backed mutex, NEVER a
+     * database row/transaction lock — serializes the actual refresh per
+     * connection: only the caller that acquires it ever reaches
+     * refreshFromProvider() (whose own retrieveAccount() call still runs
+     * entirely outside any DB transaction, unchanged). Every other
+     * concurrent caller waits a short, bounded time for the in-flight
+     * refresh to finish, then RE-CHECKS freshness immediately after
+     * acquiring the lock — by then the winner has almost always already
+     * written a fresh row, so the waiter reuses it instead of making its
+     * own redundant call. A caller that cannot acquire the lock within the
+     * bound (an unusually slow or stuck in-flight request) fails OPEN to
+     * the current local row: a status poll must never hang the browser or
+     * error out merely because another poll is in flight.
+     *
+     * @throws AgencyBillingException
+     */
+    public function refreshForStatusPoll(int $actorUserId, Workspace $agencyWorkspace): AgencyStripeConnection
+    {
+        $this->assertAgencyOwner($actorUserId, $agencyWorkspace);
+
+        $connection = $this->liveConnection($agencyWorkspace)
+            ?? throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
+
+        if (! $this->isStaleForStatusPoll($connection)) {
+            return $connection;
+        }
+
+        $lock = Cache::lock(
+            'agency-stripe-connection-refresh:' . $connection->id,
+            self::REFRESH_LOCK_TTL_SECONDS,
+        );
+
+        try {
+            return $lock->block(self::REFRESH_LOCK_WAIT_SECONDS, function () use ($connection, $agencyWorkspace) {
+                // Re-read AND re-check freshness now that the lock is held
+                // — a concurrent caller may have refreshed it while this
+                // one was waiting, in which case its own provider call is
+                // simply skipped.
+                $current = $connection->fresh() ?? $connection;
+
+                if (! $this->isStaleForStatusPoll($current)) {
+                    return $current;
+                }
+
+                return $this->refreshFromProvider($current, $agencyWorkspace);
+            });
+        } catch (LockTimeoutException) {
+            return $connection->fresh() ?? $connection;
+        }
+    }
+
+    private function isStaleForStatusPoll(AgencyStripeConnection $connection): bool
+    {
+        return $connection->last_synced_at === null
+            || $connection->last_synced_at->lt(now()->subSeconds(self::STATUS_POLL_MIN_INTERVAL_SECONDS));
+    }
+
+    /**
      * Task 3 — the shared network-then-compare-and-set step behind BOTH
      * syncFromProvider() (owner-initiated, from the status page) and
      * chargeableConnection()'s own freshness re-check below (financial-
@@ -431,6 +551,46 @@ final class AgencyStripeConnectManager
                 'lock_version' => (int) $connection->lock_version + 1,
             ])->save();
         });
+    }
+
+    /**
+     * P1-A — Stripe Connect `account.updated`: the connected account's
+     * capabilities changed at Stripe (e.g. requirements.pending_verification
+     * resolving, or a restriction being lifted). NEVER trusts the event's
+     * own embedded snapshot — re-reads the account from the provider (the
+     * SAME retrieveAccount() + statusFor() controller-compatibility policy
+     * every other refresh path uses) and applies it through the SAME
+     * optimistic compare-and-set refreshFromProvider() already shares with
+     * syncFromProvider() and chargeableConnection().
+     *
+     * SCOPED TO A CURRENT CONNECTION FOR THIS EXACT ACCOUNT ID, via
+     * findByConnectedAccountId() (current statuses only — Disconnected rows
+     * excluded). This is what makes every one of the following true without
+     * any extra logic: an event for an account no Agency here has ever
+     * connected does nothing; an event for an account whose connection has
+     * since been disconnected or deauthorized does nothing (it can never be
+     * resurrected by this); an event that arrives late, after a NEWER
+     * disconnect already committed, finds nothing — never overwrites it;
+     * and a historical (superseded) row for a reused account id is likewise
+     * invisible here, only the current row for that account is ever
+     * touched, so one Agency's event can never reach another Agency's
+     * active connection.
+     *
+     * A provider-retrieval failure propagates uncaught, exactly like every
+     * other lane-C provider call the job makes — the job's own existing
+     * retry/backoff policy handles it, and because the failure happens
+     * BEFORE any compare-and-set write, nothing here can ever mark an
+     * account ready from a failed read.
+     */
+    public function refreshFromWebhookAccountId(string $connectedAccountId): void
+    {
+        $connection = $this->findByConnectedAccountId($connectedAccountId);
+
+        if ($connection === null) {
+            return;
+        }
+
+        $this->refreshFromProvider($connection, $connection->agencyWorkspace);
     }
 
     /**
