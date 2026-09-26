@@ -60,13 +60,32 @@ final class AgencyStripeConnectManager
     private const STATUS_POLL_MIN_INTERVAL_SECONDS = 15;
 
     /**
-     * PR #380 finding 1 — the single-flight lock's own lifetime: long
-     * enough to cover one real retrieveAccount() round trip plus the
-     * compare-and-set that follows it, short enough that a request that
-     * died mid-refresh (crash, deploy, timeout) cannot wedge every future
-     * poll behind a lock nobody will ever release.
+     * PR #380 finding 1 — the single-flight lock's own lifetime.
+     *
+     * PR #380 finding 3 — 10s was an unjustified guess: it could expire
+     * while `StripeApiAgencyGateway::retrieveAccount()` was still in
+     * flight, letting a second caller acquire the "same" lock and reach
+     * the provider concurrently. This value is now a real arithmetic bound:
+     *
+     *   StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS (80)
+     *   — curl's own CURLOPT_TIMEOUT ceiling on retrieveAccount(), with
+     *     retries pinned to 0 immediately before that call — see that
+     *     constant's docblock for the full derivation and its caveats.
+     * + 15s margin, covering refreshFromProvider()'s own compare-and-set
+     *   UPDATE (normally single-digit milliseconds locally) plus generous
+     *   headroom for scheduler/GC/lock-clock skew between the process that
+     *   holds the lock and the one checking whether it has expired.
+     *   = 95s.
+     *
+     * This is a real, curl-enforced ceiling on what THIS codebase's own
+     * call does — not a claim that no Stripe account read can ever exceed
+     * it for any reason (a lower-level network stall beneath curl's own
+     * connect handling is not bounded by this application). So: while this
+     * constant is in effect, at most one retrieveAccount() call for a given
+     * connection is in flight at a time under this lock — single-flight is
+     * NOT an absolute guarantee independent of that ceiling holding.
      */
-    private const REFRESH_LOCK_TTL_SECONDS = 10;
+    private const REFRESH_LOCK_TTL_SECONDS = StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS + 15;
 
     /**
      * How long a concurrent poll waits for an in-flight refresh to finish

@@ -699,6 +699,102 @@ class AgencyStripeOwnAccountTest extends TestCase
     }
 
     /**
+     * PR #380 finding 3 — the lock TTL must be a real arithmetic bound, not
+     * an unjustified magic number: strictly greater than
+     * `StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS` (the
+     * curl-enforced ceiling on the one call it guards), with the waiter
+     * timeout staying well inside it. This is what would have caught the
+     * original bug — TTL (10) < worst case (80) — before it ever shipped,
+     * and it fails loudly if either constant drifts out of sync in future.
+     */
+    public function test_status_poll_lock_ttl_exceeds_the_documented_retrieve_account_worst_case(): void
+    {
+        $ttl = (new \ReflectionClassConstant(
+            \App\Library\AgencyBilling\AgencyStripeConnectManager::class,
+            'REFRESH_LOCK_TTL_SECONDS',
+        ))->getValue();
+        $wait = (new \ReflectionClassConstant(
+            \App\Library\AgencyBilling\AgencyStripeConnectManager::class,
+            'REFRESH_LOCK_WAIT_SECONDS',
+        ))->getValue();
+        $worstCase = \App\Library\AgencyBilling\StripeApiAgencyGateway::RETRIEVE_ACCOUNT_WORST_CASE_SECONDS;
+
+        $this->assertGreaterThan(
+            $worstCase,
+            $ttl,
+            'The lock lease must outlive retrieveAccount()\'s own documented, curl-enforced worst case, or a '
+            . 'still in-flight call can have its lock silently expire and get reused by a concurrent poll.',
+        );
+        $this->assertSame(
+            95,
+            $ttl,
+            'Guards against a silent, undocumented drift between the TTL and the worst-case bound it is derived from.',
+        );
+        $this->assertLessThan(
+            $ttl,
+            $wait,
+            'The waiter timeout must stay well inside the lease so a blocked caller gives up long before the lease itself could expire.',
+        );
+    }
+
+    /**
+     * PR #380 finding 3 — before this fix, REFRESH_LOCK_TTL_SECONDS was a
+     * hardcoded, unjustified 10s: a retrieveAccount() call still genuinely
+     * on the wire past that mark would let its lock silently expire and be
+     * reused by a second, concurrent poll. This sleeps INSIDE the first
+     * poll's retrieveAccount() call — the lock is already held by the time
+     * this fires, exactly as a real in-flight network call would be —
+     * deliberately past that old, unsafe boundary, then proves the second,
+     * concurrent poll still finds the connection locked and reuses the
+     * stale local row rather than reaching the provider itself.
+     */
+    public function test_status_poll_lock_lease_survives_past_the_previously_unsafe_ten_second_boundary(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        $secondPollResult = null;
+
+        $this->agencyStripe->interleaveOnce('retrieveAccount', function () use (&$secondPollResult, $uid) {
+            // Deliberately past the OLD, unsafe 10s TTL, while the lock
+            // from the outer poll is still held.
+            sleep(11);
+
+            $secondPollResult = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        });
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+
+        $first->assertOk();
+        $this->assertSame('active', $first->json('status'), 'The poll that actually acquired the lock performs the real refresh.');
+
+        $this->assertNotNull($secondPollResult);
+        $secondPollResult->assertOk();
+        $this->assertSame(
+            'onboarding',
+            $secondPollResult->json('status'),
+            'Past the OLD, unsafe 10s TTL, the lock must still be held: the concurrent poll must still find the '
+            . 'connection locked and reuse the stale local row, never reach the provider itself.',
+        );
+
+        $this->assertCount(
+            1,
+            $this->agencyStripe->callsOf('retrieveAccount'),
+            'Even after outliving the previously-unsafe 10s lock TTL, exactly one call may reach the provider.',
+        );
+    }
+
+    /**
      * PR #380 review finding 2 — `status` staying "restricted" the whole
      * time must not hide a real, visible change: Stripe can move an
      * account from one outstanding requirement to a different one (or
