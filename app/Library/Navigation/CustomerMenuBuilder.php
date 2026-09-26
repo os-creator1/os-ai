@@ -3,6 +3,7 @@
 namespace App\Library\Navigation;
 
 use App\Http\Controllers\Customer\Business\CrmOpportunitiesController;
+use App\Library\Support\RequestScopedCache;
 use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
 use Illuminate\Support\Facades\Gate;
@@ -46,6 +47,11 @@ final class CustomerMenuBuilder
         'customer.workspaces.businesses.usage-billing.',
         'customer.workspaces.plan.',
         'customer.workspaces.team.',
+        // Account-billing navigation fix (review correction) — "Your agency
+        // plan" is offered from the Business frame's Settings hub too
+        // (businessSettingsSections()); the top-level "Settings" sidebar
+        // entry must stay active while its own page is open.
+        'customer.workspaces.agency-plan.',
     ];
 
     /** The screens an account's Settings hub leads to (see BUSINESS_SETTINGS_ROUTES). */
@@ -58,6 +64,13 @@ final class CustomerMenuBuilder
         'customer.senderid.',
         'customer.numbers.',
         'customer.keywords.',
+        // Account-billing navigation fix (review correction) — the Agency's
+        // own SaaS surfaces (Stripe account, Resale plans, Agency revenue)
+        // and the client's "Your agency plan", both offered from
+        // accountSettingsSections(); the top-level "Settings" sidebar entry
+        // must stay active while any of their own pages is open.
+        'customer.workspaces.agency.saas.',
+        'customer.workspaces.agency-plan.',
     ];
 
     /**
@@ -76,6 +89,10 @@ final class CustomerMenuBuilder
         'sender-ids' => 'Sender names used on outgoing messages.',
         'numbers' => 'Phone numbers on this account.',
         'keywords' => 'Words people can text in to reach you.',
+        'agency-stripe' => 'The Stripe account that receives your clients\' subscription payments.',
+        'agency-saas-plans' => 'The plans you resell to your clients, and their prices.',
+        'agency-saas-revenue' => 'What your resold plans have earned.',
+        'agency-plan' => 'The plan your agency bills you for — separate from your own subscription and Business billing.',
     ];
 
     /**
@@ -135,8 +152,38 @@ final class CustomerMenuBuilder
      */
     private bool $viewingAsClient = false;
 
-    public function __construct(private readonly ViewAsRouteClassification $viewAsRoutes)
+    public function __construct(
+        private readonly ViewAsRouteClassification $viewAsRoutes,
+        private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
+        private readonly RequestScopedCache $requestCache,
+    ) {
+    }
+
+    /**
+     * Correction — whether an ACTIVE Agency relationship currently manages
+     * this Workspace, for "Your agency plan"'s own gate. There is no tier
+     * shortcut for this: AgencyClientRelationshipManager::establish() checks
+     * the Agency's own eligibility and an active relationship, but never
+     * requires the Client Workspace itself to carry no plan tier, so a
+     * tiered (Core/Growth) Client Workspace can be a perfectly genuine
+     * Agency-managed client — an earlier version of this fix wrongly
+     * assumed tier === null and hid the link for one.
+     *
+     * Memoized per REQUEST (RequestScopedCache, the same mechanism
+     * CustomerShellComposer's own menu-entitlement snapshot already uses):
+     * accountFrame()/businessFrame() (every page, to decide whether
+     * "Settings" has anything to link to) and the real Settings hub
+     * (settingsSections(), when that hub page is actually open) can both
+     * ask this in the SAME request, and this keeps that at one query
+     * rather than two — never a claim that the query is skipped for an
+     * ordinary Workspace, which review correctly rejected as unsafe.
+     */
+    private function agencyManagesClientWorkspace(int $workspaceId): bool
     {
+        return $this->requestCache->remember(
+            "customer-menu:agency-client-relationship:{$workspaceId}",
+            fn () => $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspaceId) !== null,
+        );
     }
 
     /**
@@ -409,6 +456,29 @@ final class CustomerMenuBuilder
             $billingAndTeam[] = $this->teamItem($user, $workspace->uid, $current);
         }
 
+        // Account-billing navigation fix — "Your agency plan", the
+        // Business-frame counterpart of the identical account-frame entry
+        // in accountSettingsSections(): the same Client Workspace, now that
+        // its Business is Active and selected. See that method's docblock
+        // for the full reasoning; the gate is identical (owner, or an
+        // active Admin with account-frame access, AND a genuine active
+        // Agency-Client relationship), never the Business's own status.
+        //
+        // Review correction — a tier shortcut here was wrong: a Client
+        // Workspace can genuinely carry a Core or Growth tier and still be
+        // Agency-managed (AgencyClientRelationshipManager::establish()
+        // never requires the Client Workspace to have no tier), so the
+        // actual relationship is checked, memoized per request
+        // (agencyManagesClientWorkspace()) since businessFrame() calls this
+        // method on every business-frame page render.
+        if ($workspace->canManage()
+            && $workspace->seesAccountFrame()
+            && $this->agencyManagesClientWorkspace($workspace->id)) {
+            $billingAndTeam[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$workspace->uid], $current, [
+                'customer.workspaces.agency-plan.',
+            ]);
+        }
+
         return $this->sections([
             'business-setup' => ['Business setup', $setup],
             'communication' => ['Communication', $communication],
@@ -456,6 +526,59 @@ final class CustomerMenuBuilder
 
         if ($manages) {
             $accountItems[] = $this->teamItem($user, $account->uid, $current);
+        }
+
+        // Account-billing navigation fix — the Agency's own SaaS revenue
+        // surface (AgencySaasController). READING matches that controller's
+        // own rule exactly: any active Agency member with agency authority,
+        // not only owner/admin (hasAgencyAuthority(), broader than
+        // canManage() on purpose) — WRITING anything commercial there stays
+        // owner-only, asserted inside AgencyStripeConnectManager/
+        // AgencySaasPlanManager themselves, never here.
+        if ($account->isAgency() && $account->hasAgencyAuthority()) {
+            $accountItems[] = $this->item($user, 'agency-stripe', 'Stripe account', 'credit-card', ['access_backend'], 'customer.workspaces.agency.saas.stripe', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.',
+            ]);
+            $accountItems[] = $this->item($user, 'agency-saas-plans', 'Resale plans', 'list', ['access_backend'], 'customer.workspaces.agency.saas.plans', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.plans', 'customer.workspaces.agency.saas.plans.',
+            ]);
+            $accountItems[] = $this->item($user, 'agency-saas-revenue', 'Agency revenue', 'dollar-sign', ['access_backend'], 'customer.workspaces.agency.saas.revenue', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.revenue',
+            ]);
+        }
+
+        // Account-billing navigation fix — "Your agency plan": the Client's
+        // OWN subscription to what their managing Agency resells them
+        // (AgencyClientPlanPresenter), findable from the account frame's
+        // Settings hub while the Client's Business is still Draft (it has
+        // no Business frame yet to reach it from). The Business-frame
+        // equivalent is businessSettingsSections() below, once Active.
+        // Deliberately distinct from "Plan & subscription" above (this
+        // account's OWN platform subscription) and from a Business's own
+        // "Billing" (usage wallet) — three separate facts, three separate
+        // entries. GET authorization matches AgencyPlanController::
+        // authorizedWorkspace() exactly: owner, or an active Admin with
+        // account-frame (all-scope) access — canManage() AND
+        // seesAccountFrame() together are exactly that. The relationship
+        // check is the one thing that keeps this from appearing for an
+        // ordinary, non-agency-managed account: AgencyPlanController's own
+        // page never 404s for one (it renders "no agency billing" instead),
+        // but this link is scoped to genuine Agency-managed clients only.
+        //
+        // Review correction — a tier shortcut here was wrong: a Client
+        // Workspace can genuinely carry a Core or Growth tier and still be
+        // Agency-managed (AgencyClientRelationshipManager::establish()
+        // never requires the Client Workspace to have no tier), so the
+        // actual relationship is checked, memoized per request
+        // (agencyManagesClientWorkspace()) since accountFrame() calls this
+        // method on every account-frame page render, not only the Settings
+        // hub itself.
+        if ($manages
+            && $account->seesAccountFrame()
+            && $this->agencyManagesClientWorkspace($account->id)) {
+            $accountItems[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$account->uid], $current, [
+                'customer.workspaces.agency-plan.',
+            ]);
         }
 
         $outreach = [];
