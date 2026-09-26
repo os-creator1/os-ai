@@ -46,6 +46,17 @@ final class AgencyStripeConnectManager
      */
     private const CHARGE_READINESS_FRESHNESS_SECONDS = 900;
 
+    /**
+     * P1-C — the browser's automatic status-polling fallback has its own,
+     * much shorter freshness window than the financial boundary above: it
+     * exists to let the Agency owner see "Ready to take payments" appear on
+     * its own shortly after finishing Stripe's hosted onboarding, without a
+     * manual click. Still server-side throttled so several open tabs, or
+     * the poll firing faster than intended, cannot turn into repeated
+     * Stripe calls for the same connection.
+     */
+    private const STATUS_POLL_MIN_INTERVAL_SECONDS = 15;
+
     public function __construct(private readonly AgencyStripeGateway $gateway)
     {
     }
@@ -249,6 +260,33 @@ final class AgencyStripeConnectManager
     }
 
     /**
+     * P1-C — the automatic status-polling fallback JS calls this, not
+     * syncFromProvider() above, so a browser polling every few seconds
+     * cannot turn into a Stripe call every few seconds: within
+     * STATUS_POLL_MIN_INTERVAL_SECONDS of the last real sync, this simply
+     * returns the current local row unchanged. Owner-only, same as every
+     * other lane-C write here — a staff member viewing the status page
+     * never triggers a provider call, only ever reads what is already
+     * stored (AgencySaasController::stripe()).
+     *
+     * @throws AgencyBillingException
+     */
+    public function refreshForStatusPoll(int $actorUserId, Workspace $agencyWorkspace): AgencyStripeConnection
+    {
+        $this->assertAgencyOwner($actorUserId, $agencyWorkspace);
+
+        $connection = $this->liveConnection($agencyWorkspace)
+            ?? throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
+
+        if ($connection->last_synced_at !== null
+            && $connection->last_synced_at->gt(now()->subSeconds(self::STATUS_POLL_MIN_INTERVAL_SECONDS))) {
+            return $connection;
+        }
+
+        return $this->refreshFromProvider($connection, $agencyWorkspace);
+    }
+
+    /**
      * Task 3 — the shared network-then-compare-and-set step behind BOTH
      * syncFromProvider() (owner-initiated, from the status page) and
      * chargeableConnection()'s own freshness re-check below (financial-
@@ -431,6 +469,46 @@ final class AgencyStripeConnectManager
                 'lock_version' => (int) $connection->lock_version + 1,
             ])->save();
         });
+    }
+
+    /**
+     * P1-A — Stripe Connect `account.updated`: the connected account's
+     * capabilities changed at Stripe (e.g. requirements.pending_verification
+     * resolving, or a restriction being lifted). NEVER trusts the event's
+     * own embedded snapshot — re-reads the account from the provider (the
+     * SAME retrieveAccount() + statusFor() controller-compatibility policy
+     * every other refresh path uses) and applies it through the SAME
+     * optimistic compare-and-set refreshFromProvider() already shares with
+     * syncFromProvider() and chargeableConnection().
+     *
+     * SCOPED TO A CURRENT CONNECTION FOR THIS EXACT ACCOUNT ID, via
+     * findByConnectedAccountId() (current statuses only — Disconnected rows
+     * excluded). This is what makes every one of the following true without
+     * any extra logic: an event for an account no Agency here has ever
+     * connected does nothing; an event for an account whose connection has
+     * since been disconnected or deauthorized does nothing (it can never be
+     * resurrected by this); an event that arrives late, after a NEWER
+     * disconnect already committed, finds nothing — never overwrites it;
+     * and a historical (superseded) row for a reused account id is likewise
+     * invisible here, only the current row for that account is ever
+     * touched, so one Agency's event can never reach another Agency's
+     * active connection.
+     *
+     * A provider-retrieval failure propagates uncaught, exactly like every
+     * other lane-C provider call the job makes — the job's own existing
+     * retry/backoff policy handles it, and because the failure happens
+     * BEFORE any compare-and-set write, nothing here can ever mark an
+     * account ready from a failed read.
+     */
+    public function refreshFromWebhookAccountId(string $connectedAccountId): void
+    {
+        $connection = $this->findByConnectedAccountId($connectedAccountId);
+
+        if ($connection === null) {
+            return;
+        }
+
+        $this->refreshFromProvider($connection, $connection->agencyWorkspace);
     }
 
     /**

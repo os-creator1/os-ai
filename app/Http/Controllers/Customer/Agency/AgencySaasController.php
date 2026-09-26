@@ -61,9 +61,34 @@ class AgencySaasController extends Controller
     // §C5.1 — the account that receives the Agency's revenue
     // =====================================================================
 
-    public function stripe(string $workspaceUid): View
+    /**
+     * P1-B — "automatic refresh on return from hosted onboarding." `connect()`/
+     * `resumeOnboarding()` below build their `return_url` with `stripe_return=1`
+     * (never `refresh_url` — that leg means the link expired or was already
+     * used, not "onboarding finished"). Landing here with that marker
+     * triggers exactly ONE real provider sync, then redirects to the plain
+     * URL — so reloading the page afterward, or an ordinary visit, never
+     * re-triggers it; only a genuine return from Stripe's own flow does.
+     * A transient provider failure here is swallowed: the page below still
+     * renders whatever is already stored, and the automatic polling
+     * fallback (statusPoll()) will keep trying.
+     */
+    public function stripe(Request $request, string $workspaceUid): View|RedirectResponse
     {
         $agencyWorkspace = $this->authorizedAgency($workspaceUid);
+
+        if ($request->boolean('stripe_return')) {
+            try {
+                $this->connections->syncFromProvider((int) Auth::id(), $agencyWorkspace);
+            } catch (AgencyBillingException) {
+                // Owner-only under the hood; a non-owner or a genuine
+                // provider hiccup both simply fall through to the plain
+                // page below with whatever is already stored.
+            }
+
+            return redirect()->route('customer.workspaces.agency.saas.stripe', [$workspaceUid]);
+        }
+
         $connection = $this->connections->liveConnection($agencyWorkspace);
 
         return view('customer.agency.saas.stripe', [
@@ -72,6 +97,35 @@ class AgencySaasController extends Controller
             'isOwner' => $this->isOwner($agencyWorkspace),
             'chargeReady' => $this->connections->isChargeReady($agencyWorkspace),
             'history' => $this->connections->history($agencyWorkspace),
+        ]);
+    }
+
+    /**
+     * P1-C — the automatic status-polling fallback's own endpoint. LOCAL
+     * status only by default; AgencyStripeConnectManager::refreshForStatusPoll()
+     * is what decides, server-side, whether this particular call is also
+     * allowed to reach the provider (throttled — see that method), never the
+     * browser. JSON always, since this exists only to be polled by
+     * JavaScript, never navigated to directly.
+     */
+    public function stripeStatus(string $workspaceUid): \Illuminate\Http\JsonResponse
+    {
+        $agencyWorkspace = $this->authorizedAgency($workspaceUid);
+
+        try {
+            $connection = $this->connections->refreshForStatusPoll((int) Auth::id(), $agencyWorkspace);
+        } catch (AgencyBillingException $e) {
+            // NO_CONNECTION (nothing to poll) or CONSENT_NOT_AUTHORIZED (a
+            // non-owner's poll, which the page's own JS should not even
+            // start — see the Blade) both read the same way to the caller:
+            // no live status available right now.
+            return response()->json(['status' => null, 'charge_ready' => false, 'reason' => $e->reason]);
+        }
+
+        return response()->json([
+            'status' => $connection->status->value,
+            'charge_ready' => $connection->canCharge(),
+            'reason' => $connection->requirements_disabled_reason,
         ]);
     }
 
@@ -91,7 +145,11 @@ class AgencySaasController extends Controller
                 mb_strtoupper($data['country']),
                 $data['email'] ?? null,
                 route('customer.workspaces.agency.saas.stripe', [$workspaceUid]),
-                route('customer.workspaces.agency.saas.stripe', [$workspaceUid]),
+                // P1-B — `stripe_return=1` marks a GENUINE return from
+                // Stripe's own hosted flow, never the refresh_url leg
+                // (expired/already-used/rejected — that one intentionally
+                // still lands on the plain page, unmarked).
+                route('customer.workspaces.agency.saas.stripe', [$workspaceUid]) . '?stripe_return=1',
             );
         } catch (AgencyBillingException $e) {
             return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
@@ -111,7 +169,7 @@ class AgencySaasController extends Controller
                 (int) Auth::id(),
                 $agencyWorkspace,
                 route('customer.workspaces.agency.saas.stripe', [$workspaceUid]),
-                route('customer.workspaces.agency.saas.stripe', [$workspaceUid]),
+                route('customer.workspaces.agency.saas.stripe', [$workspaceUid]) . '?stripe_return=1',
             );
         } catch (AgencyBillingException $e) {
             return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);

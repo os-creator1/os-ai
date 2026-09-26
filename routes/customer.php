@@ -852,6 +852,14 @@
                 ->middleware('throttle:30,1')->name('stripe.resume');
             Route::post('stripe/sync', 'Agency\AgencySaasController@syncConnection')
                 ->middleware('throttle:30,1')->name('stripe.sync');
+            // P1-C — the automatic status-polling fallback's own endpoint.
+            // A higher route-level rate limit than the write actions above:
+            // AgencyStripeConnectManager::refreshForStatusPoll()'s own
+            // server-side freshness window (15s) is what actually bounds
+            // real Stripe calls; this ceiling only guards against a
+            // genuinely runaway client.
+            Route::post('stripe/status-poll', 'Agency\AgencySaasController@stripeStatus')
+                ->middleware('throttle:60,1')->name('stripe.status-poll');
             Route::post('stripe/disconnect', 'Agency\AgencySaasController@disconnect')
                 ->middleware('throttle:30,1')->name('stripe.disconnect');
             // "Connect existing Stripe account" — Stripe's own hosted OAuth
