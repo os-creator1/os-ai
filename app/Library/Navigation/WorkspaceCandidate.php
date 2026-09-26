@@ -54,6 +54,26 @@ final class WorkspaceCandidate
     }
 
     /**
+     * Agency account-billing navigation — the same READING authority
+     * AgencySaasController::authorizeAgencyWorkspace() enforces for its own
+     * GET actions (stripe(), plans(), revenue()): the owner, or any ACTIVE
+     * Admin or Staff member. Deliberately broader than canManage() (which
+     * excludes Staff): "any active Agency member with agency authority may
+     * see" those pages, per that controller's own docblock — WRITING
+     * anything commercial there stays owner-only, asserted inside the
+     * managers themselves, not by this navigation-only check.
+     */
+    public function hasAgencyAuthority(): bool
+    {
+        if ($this->isOwner) {
+            return true;
+        }
+
+        return $this->membershipActive
+            && in_array($this->membershipRole, [WorkspaceMembershipRole::Admin, WorkspaceMembershipRole::Staff], true);
+    }
+
+    /**
      * Whether the actor may stand in this account's own frame — the account
      * home, the account page and the account-level menu.
      *

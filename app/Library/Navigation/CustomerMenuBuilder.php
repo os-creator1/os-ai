@@ -76,6 +76,10 @@ final class CustomerMenuBuilder
         'sender-ids' => 'Sender names used on outgoing messages.',
         'numbers' => 'Phone numbers on this account.',
         'keywords' => 'Words people can text in to reach you.',
+        'agency-stripe' => 'The Stripe account that receives your clients\' subscription payments.',
+        'agency-saas-plans' => 'The plans you resell to your clients, and their prices.',
+        'agency-saas-revenue' => 'What your resold plans have earned.',
+        'agency-plan' => 'The plan your agency bills you for — separate from your own subscription and Business billing.',
     ];
 
     /**
@@ -135,8 +139,10 @@ final class CustomerMenuBuilder
      */
     private bool $viewingAsClient = false;
 
-    public function __construct(private readonly ViewAsRouteClassification $viewAsRoutes)
-    {
+    public function __construct(
+        private readonly ViewAsRouteClassification $viewAsRoutes,
+        private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
+    ) {
     }
 
     /**
@@ -409,6 +415,21 @@ final class CustomerMenuBuilder
             $billingAndTeam[] = $this->teamItem($user, $workspace->uid, $current);
         }
 
+        // Account-billing navigation fix — "Your agency plan", the
+        // Business-frame counterpart of the identical account-frame entry
+        // in accountSettingsSections(): the same Client Workspace, now that
+        // its Business is Active and selected. See that method's docblock
+        // for the full reasoning; the gate is identical (owner, or an
+        // active Admin with account-frame access, AND a genuine active
+        // Agency-Client relationship), never the Business's own status.
+        if ($workspace->canManage()
+            && $workspace->seesAccountFrame()
+            && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspace->id) !== null) {
+            $billingAndTeam[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$workspace->uid], $current, [
+                'customer.workspaces.agency-plan.',
+            ]);
+        }
+
         return $this->sections([
             'business-setup' => ['Business setup', $setup],
             'communication' => ['Communication', $communication],
@@ -456,6 +477,50 @@ final class CustomerMenuBuilder
 
         if ($manages) {
             $accountItems[] = $this->teamItem($user, $account->uid, $current);
+        }
+
+        // Account-billing navigation fix — the Agency's own SaaS revenue
+        // surface (AgencySaasController). READING matches that controller's
+        // own rule exactly: any active Agency member with agency authority,
+        // not only owner/admin (hasAgencyAuthority(), broader than
+        // canManage() on purpose) — WRITING anything commercial there stays
+        // owner-only, asserted inside AgencyStripeConnectManager/
+        // AgencySaasPlanManager themselves, never here.
+        if ($account->isAgency() && $account->hasAgencyAuthority()) {
+            $accountItems[] = $this->item($user, 'agency-stripe', 'Stripe account', 'credit-card', ['access_backend'], 'customer.workspaces.agency.saas.stripe', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.',
+            ]);
+            $accountItems[] = $this->item($user, 'agency-saas-plans', 'Resale plans', 'list', ['access_backend'], 'customer.workspaces.agency.saas.plans', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.plans', 'customer.workspaces.agency.saas.plans.',
+            ]);
+            $accountItems[] = $this->item($user, 'agency-saas-revenue', 'Agency revenue', 'dollar-sign', ['access_backend'], 'customer.workspaces.agency.saas.revenue', [$account->uid], $current, [
+                'customer.workspaces.agency.saas.revenue',
+            ]);
+        }
+
+        // Account-billing navigation fix — "Your agency plan": the Client's
+        // OWN subscription to what their managing Agency resells them
+        // (AgencyClientPlanPresenter), findable from the account frame's
+        // Settings hub while the Client's Business is still Draft (it has
+        // no Business frame yet to reach it from). The Business-frame
+        // equivalent is businessSettingsSections() below, once Active.
+        // Deliberately distinct from "Plan & subscription" above (this
+        // account's OWN platform subscription) and from a Business's own
+        // "Billing" (usage wallet) — three separate facts, three separate
+        // entries. GET authorization matches AgencyPlanController::
+        // authorizedWorkspace() exactly: owner, or an active Admin with
+        // account-frame (all-scope) access — canManage() AND
+        // seesAccountFrame() together are exactly that. The relationship
+        // check is the one thing that keeps this from appearing for an
+        // ordinary, non-agency-managed account: AgencyPlanController's own
+        // page never 404s for one (it renders "no agency billing" instead),
+        // but this link is scoped to genuine Agency-managed clients only.
+        if ($manages
+            && $account->seesAccountFrame()
+            && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($account->id) !== null) {
+            $accountItems[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$account->uid], $current, [
+                'customer.workspaces.agency-plan.',
+            ]);
         }
 
         $outreach = [];

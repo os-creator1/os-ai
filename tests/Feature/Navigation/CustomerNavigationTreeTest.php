@@ -300,6 +300,153 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     // =================================================================
+    // Account-billing navigation fix — Agency SaaS surfaces (Stripe
+    // account, resale plans, Agency revenue) and the client's own "Your
+    // agency plan", made findable from the existing Settings hub.
+    // =================================================================
+
+    public function test_an_agency_owner_finds_stripe_resale_plans_and_revenue_in_settings(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+
+        $response = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk();
+        $keys = $this->settingsHubModuleKeys($response->getContent());
+
+        foreach (['agency-stripe', 'agency-saas-plans', 'agency-saas-revenue'] as $expected) {
+            $this->assertContains($expected, $keys, "An Agency owner must offer [{$expected}].");
+        }
+        $this->assertNotContains('agency-plan', $keys, 'The Agency itself is not a client of any Agency.');
+
+        $response->assertSee(route('customer.workspaces.agency.saas.stripe', $workspace->uid), false);
+        $response->assertSee(route('customer.workspaces.agency.saas.plans', $workspace->uid), false);
+        $response->assertSee(route('customer.workspaces.agency.saas.revenue', $workspace->uid), false);
+    }
+
+    /**
+     * AgencySaasController's own docblock: "READING is Agency-team work.
+     * Any active Agency member with agency authority may see" these
+     * surfaces — Staff included, matching authorizeAgencyWorkspace()
+     * exactly. WRITING stays owner/admin-only, unaffected: Staff still
+     * gets none of the manage-only modules.
+     */
+    public function test_an_active_agency_staff_member_also_finds_the_saas_reading_surfaces_but_not_manage_only_modules(): void
+    {
+        [, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $staffCustomer = $this->createCustomer();
+        $this->member($workspace, $staffCustomer->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
+        $this->authenticateAs($staffCustomer);
+
+        $keys = $this->settingsHubModuleKeys($this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent());
+
+        foreach (['agency-stripe', 'agency-saas-plans', 'agency-saas-revenue'] as $expected) {
+            $this->assertContains($expected, $keys, "An active Agency Staff member may read [{$expected}], matching AgencySaasController's own GET authorization.");
+        }
+
+        foreach (['account-details', 'plan', 'team'] as $manageOnly) {
+            $this->assertNotContains($manageOnly, $keys, "Staff is not the owner or an Admin and must not see [{$manageOnly}].");
+        }
+    }
+
+    public function test_a_non_agency_account_never_offers_the_agency_saas_surfaces(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $keys = $this->settingsHubModuleKeys(
+            $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent(),
+        );
+
+        foreach (['agency-stripe', 'agency-saas-plans', 'agency-saas-revenue', 'agency-plan'] as $unexpected) {
+            $this->assertNotContains($unexpected, $keys, "A non-Agency, non-managed account must never offer [{$unexpected}].");
+        }
+    }
+
+    /**
+     * The Client Workspace this Business belongs to has no plan of its own
+     * (Contract 07 §11) so it never reaches the "first Business" redirect
+     * and stays in the account frame while Draft — this is the exact
+     * newly-invited-client state "Your agency plan" must be findable from.
+     */
+    public function test_a_genuinely_managed_clients_owner_finds_their_agency_plan_while_still_draft(): void
+    {
+        $managed = $this->createAgencyManagedClient();
+        DB::table('businesses')->where('id', $managed['clientBusiness']->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        $this->authenticateAs($managed['clientOwner']);
+
+        $response = $this->get(route('customer.workspaces.settings.show', $managed['clientWorkspace']->uid))->assertOk();
+        $keys = $this->settingsHubModuleKeys($response->getContent());
+
+        $this->assertContains('agency-plan', $keys, 'A genuinely Agency-managed client, even while still Draft, must find "Your agency plan".');
+        $response->assertSee(route('customer.workspaces.agency-plan.show', $managed['clientWorkspace']->uid), false);
+        $response->assertSee('Your agency plan');
+    }
+
+    public function test_a_genuinely_managed_clients_owner_finds_their_agency_plan_once_active(): void
+    {
+        $managed = $this->createAgencyManagedClient();
+        $this->authenticateAs($managed['clientOwner']);
+
+        $response = $this->get(route('customer.workspaces.businesses.settings.show', [$managed['clientWorkspace']->uid, $managed['clientBusiness']->uid]))->assertOk();
+        $keys = $this->settingsHubModuleKeys($response->getContent());
+
+        $this->assertContains('agency-plan', $keys);
+        $response->assertSee(route('customer.workspaces.agency-plan.show', $managed['clientWorkspace']->uid), false);
+    }
+
+    /**
+     * Distinct from the platform subscription and from the Business's own
+     * usage billing — three separate facts, three separate entries, never
+     * merged or mislabeled.
+     */
+    public function test_your_agency_plan_is_never_confused_with_the_platform_subscription_or_usage_billing(): void
+    {
+        $managed = $this->createAgencyManagedClient();
+        $this->authenticateAs($managed['clientOwner']);
+
+        $html = $this->get(route('customer.workspaces.businesses.settings.show', [$managed['clientWorkspace']->uid, $managed['clientBusiness']->uid]))->assertOk()->getContent();
+        $modules = $this->settingsHubModules($html);
+        $billingAndTeam = $modules['billing-team'] ?? [];
+
+        $this->assertContains('agency-plan', $billingAndTeam);
+        $this->assertNotSame(['agency-plan'], $billingAndTeam, 'Usage billing must still be its own, separate entry.');
+    }
+
+    public function test_an_ordinary_unmanaged_owner_never_sees_your_agency_plan(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $keys = $this->settingsHubModuleKeys(
+            $this->get(route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]))->assertOk()->getContent(),
+        );
+
+        $this->assertNotContains('agency-plan', $keys);
+    }
+
+    /**
+     * Contract §5.5 — account-billing navigation stays hidden while
+     * viewing as a client, exactly like every other account-level entry:
+     * ViewAsRouteClassification already denies every bare
+     * `customer.workspaces.*` route with no {businessUid} (agency-plan.show
+     * included), so item()'s own existing View-as gate hides it with no
+     * new classification needed.
+     */
+    public function test_your_agency_plan_is_hidden_from_an_agency_actor_viewing_as_that_client(): void
+    {
+        $managed = $this->createAgencyManagedClient();
+
+        $this->authenticateAs($managed['agencyOwner']);
+        $this->post(route('customer.workspaces.clients.view-as', [$managed['agencyWorkspace']->uid, $managed['clientWorkspace']->uid]))->assertRedirect();
+
+        $keys = $this->settingsHubModuleKeys(
+            $this->get(route('customer.workspaces.businesses.settings.show', [$managed['clientWorkspace']->uid, $managed['clientBusiness']->uid]))->assertOk()->getContent(),
+        );
+
+        $this->assertNotContains('agency-plan', $keys, 'Account-billing links stay hidden while viewing as a client.');
+    }
+
+    // =================================================================
     // §13 #9 — the frames never leak into each other
     // =================================================================
 
