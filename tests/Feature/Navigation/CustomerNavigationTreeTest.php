@@ -446,6 +446,130 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertNotContains('agency-plan', $keys, 'Account-billing links stay hidden while viewing as a client.');
     }
 
+    /**
+     * Review correction — ACCOUNT_SETTINGS_ROUTES must include the Agency's
+     * own SaaS pages, or the top-level "Settings" sidebar entry loses its
+     * active state the instant the actor actually opens one of them (the
+     * entry itself only shows because those pages exist; it must not then
+     * go dark while standing on one).
+     */
+    public function test_the_settings_sidebar_entry_stays_active_on_each_agency_saas_page(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+        // tenant()'s own fixture gives the Agency a Business of its own
+        // (for other tests' convenience), which a real production Agency
+        // never has — without this explicit account-frame choice, the
+        // resolver's "sole selectable Business" rule would auto-select
+        // that fixture Business and land in the Business frame instead,
+        // which is not what this test is proving.
+        $this->switchToAccount($workspace);
+
+        foreach ([
+            'customer.workspaces.agency.saas.stripe',
+            'customer.workspaces.agency.saas.plans',
+            'customer.workspaces.agency.saas.revenue',
+        ] as $routeName) {
+            $html = $this->get(route($routeName, $workspace->uid))->assertOk()->getContent();
+            $this->assertContains('settings', $this->activeMenuKeys($html), "[{$routeName}] must keep the Settings sidebar entry active.");
+        }
+    }
+
+    /**
+     * Review correction — the same active-state requirement for "Your
+     * agency plan", proven in BOTH frames it appears in: the account frame
+     * while the client's Business is Draft, and the Business frame once it
+     * is Active.
+     */
+    public function test_the_settings_sidebar_entry_stays_active_on_the_agency_plan_page_in_both_frames(): void
+    {
+        $draftManaged = $this->createAgencyManagedClient(clientBusinessName: 'Draft Client', clientWorkspaceName: 'Draft Client Workspace');
+        DB::table('businesses')->where('id', $draftManaged['clientBusiness']->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        $this->authenticateAs($draftManaged['clientOwner']);
+
+        $draftHtml = $this->get(route('customer.workspaces.agency-plan.show', $draftManaged['clientWorkspace']->uid))->assertOk()->getContent();
+        $this->assertContains('settings', $this->activeMenuKeys($draftHtml), 'Account frame (Draft Business): agency-plan.show must keep Settings active.');
+
+        $activeManaged = $this->createAgencyManagedClient(clientBusinessName: 'Active Client', clientWorkspaceName: 'Active Client Workspace');
+        $this->authenticateAs($activeManaged['clientOwner']);
+
+        $activeHtml = $this->get(route('customer.workspaces.agency-plan.show', $activeManaged['clientWorkspace']->uid))->assertOk()->getContent();
+        $this->assertContains('settings', $this->activeMenuKeys($activeHtml), 'Business frame (Active Business): agency-plan.show must keep Settings active.');
+    }
+
+    /**
+     * Review correction — accountFrame()/businessFrame() call the
+     * Settings-section builders on EVERY page render of that frame, purely
+     * to decide whether the top-level "Settings" entry has anything to
+     * link to, not only when the Settings hub itself is open. The new
+     * AgencyClientWorkspaceRelationshipRepository lookup those builders
+     * added must therefore never run for an ordinary Core/Growth Workspace,
+     * on any page — home included.
+     */
+    public function test_the_agency_relationship_lookup_is_never_queried_for_an_ordinary_core_or_growth_render(): void
+    {
+        [$customer, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        // CustomerMenuBuilder called directly, the same way CustomerShellComposer
+        // does — bypassing the HTTP kernel entirely, so the assertion below
+        // measures only this class's own queries, never
+        // CustomerAccountAccessGate's unrelated, pre-existing query against
+        // the SAME table (a different, already-necessary lock-state check
+        // that has nothing to do with navigation and is unaffected by this
+        // correction).
+        $context = app(\App\Library\Navigation\CustomerContextResolver::class)->resolve($customer->user, request());
+        $menu = app(CustomerMenuBuilder::class);
+
+        $relationshipQueries = 0;
+
+        DB::listen(function ($query) use (&$relationshipQueries) {
+            if (str_contains($query->sql, 'agency_client_workspace_relationships')) {
+                $relationshipQueries++;
+            }
+        });
+
+        // accountFrame()/businessFrame() (via build(), every page) and the
+        // real Settings hub (via settingsSections(), the hub page itself)
+        // are the two call sites the correction targets.
+        $menu->build($context, $customer->user, MenuEntitlements::none());
+        $menu->settingsSections($context, $customer->user, MenuEntitlements::none());
+
+        $this->assertSame(
+            0,
+            $relationshipQueries,
+            'An ordinary, already-tiered (Core/Growth) Workspace must never trigger the Agency-Client relationship lookup, on any page render or the Settings hub itself.',
+        );
+    }
+
+    /**
+     * Review correction, other half — the tier-based skip above must never
+     * also skip a GENUINE Agency-managed client, in either the Draft
+     * (account frame) or Active (business frame) state: both keep working,
+     * proven end-to-end (not merely "the query is allowed to run").
+     */
+    public function test_the_agency_relationship_lookup_still_finds_a_genuine_managed_client_in_both_states(): void
+    {
+        $draftManaged = $this->createAgencyManagedClient(clientBusinessName: 'Still Querying Draft', clientWorkspaceName: 'Still Querying Draft Workspace');
+        DB::table('businesses')->where('id', $draftManaged['clientBusiness']->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        $this->authenticateAs($draftManaged['clientOwner']);
+
+        $this->assertContains(
+            'agency-plan',
+            $this->settingsHubModuleKeys($this->get(route('customer.workspaces.settings.show', $draftManaged['clientWorkspace']->uid))->assertOk()->getContent()),
+        );
+
+        $activeManaged = $this->createAgencyManagedClient(clientBusinessName: 'Still Querying Active', clientWorkspaceName: 'Still Querying Active Workspace');
+        $this->authenticateAs($activeManaged['clientOwner']);
+
+        $this->assertContains(
+            'agency-plan',
+            $this->settingsHubModuleKeys(
+                $this->get(route('customer.workspaces.businesses.settings.show', [$activeManaged['clientWorkspace']->uid, $activeManaged['clientBusiness']->uid]))->assertOk()->getContent(),
+            ),
+        );
+    }
+
     // =================================================================
     // §13 #9 — the frames never leak into each other
     // =================================================================

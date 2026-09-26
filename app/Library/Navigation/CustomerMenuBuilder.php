@@ -46,6 +46,11 @@ final class CustomerMenuBuilder
         'customer.workspaces.businesses.usage-billing.',
         'customer.workspaces.plan.',
         'customer.workspaces.team.',
+        // Account-billing navigation fix (review correction) — "Your agency
+        // plan" is offered from the Business frame's Settings hub too
+        // (businessSettingsSections()); the top-level "Settings" sidebar
+        // entry must stay active while its own page is open.
+        'customer.workspaces.agency-plan.',
     ];
 
     /** The screens an account's Settings hub leads to (see BUSINESS_SETTINGS_ROUTES). */
@@ -58,6 +63,13 @@ final class CustomerMenuBuilder
         'customer.senderid.',
         'customer.numbers.',
         'customer.keywords.',
+        // Account-billing navigation fix (review correction) — the Agency's
+        // own SaaS surfaces (Stripe account, Resale plans, Agency revenue)
+        // and the client's "Your agency plan", both offered from
+        // accountSettingsSections(); the top-level "Settings" sidebar entry
+        // must stay active while any of their own pages is open.
+        'customer.workspaces.agency.saas.',
+        'customer.workspaces.agency-plan.',
     ];
 
     /**
@@ -422,7 +434,16 @@ final class CustomerMenuBuilder
         // for the full reasoning; the gate is identical (owner, or an
         // active Admin with account-frame access, AND a genuine active
         // Agency-Client relationship), never the Business's own status.
-        if ($workspace->canManage()
+        //
+        // Review correction — businessFrame() calls this method on EVERY
+        // business-frame page render just to decide whether the top-level
+        // "Settings" entry has anything to link to, so the relationship
+        // query below must not run for every ordinary Business. See
+        // accountSettingsSections()'s identical correction for why
+        // `tier === null` safely skips it for every already-tiered
+        // (Core/Growth/Agency) Workspace before ever reaching the query.
+        if ($workspace->tier === null
+            && $workspace->canManage()
             && $workspace->seesAccountFrame()
             && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspace->id) !== null) {
             $billingAndTeam[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$workspace->uid], $current, [
@@ -515,7 +536,21 @@ final class CustomerMenuBuilder
         // ordinary, non-agency-managed account: AgencyPlanController's own
         // page never 404s for one (it renders "no agency billing" instead),
         // but this link is scoped to genuine Agency-managed clients only.
+        //
+        // Review correction — accountFrame() calls this method on EVERY
+        // account-frame page render (not only the Settings hub itself) just
+        // to decide whether the top-level "Settings" entry has anything to
+        // link to, so the relationship query below must not run for every
+        // ordinary Workspace. A Client Workspace AgencyClientProvisioningManager::
+        // accept() creates is never assigned a plan tier at all (Contract 07
+        // §11 — "no billing in this slice"); tier is null exactly for that
+        // shape and never for a Core, Growth or Agency Workspace, so gating
+        // on `tier === null` first skips the query entirely for every
+        // ordinary, already-tiered Workspace (the common case this
+        // correction targets) while still reaching a genuine Agency-managed
+        // client.
         if ($manages
+            && $account->tier === null
             && $account->seesAccountFrame()
             && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($account->id) !== null) {
             $accountItems[] = $this->item($user, 'agency-plan', 'Your agency plan', 'tag', ['access_backend'], 'customer.workspaces.agency-plan.show', [$account->uid], $current, [
