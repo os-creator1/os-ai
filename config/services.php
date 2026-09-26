@@ -100,7 +100,9 @@
             // LIVE mode, at the same Connect OAuth settings page above. It
             // MUST be set to this exact, fixed, workspace-agnostic route:
             // route('customer.agency.stripe.connect-existing.callback')
-            // (routes/customer.php) — e.g. https://<app-host>/customer/agency/stripe/connect-existing/callback.
+            // (routes/customer.php) — e.g. https://<app-host>/agency/stripe/connect-existing/callback.
+            // There is no /customer URL prefix: RouteServiceProvider assigns the
+            // customer. route NAME, but does not prefix its URL path.
             // A mismatch here fails every "Connect existing account"
             // attempt at Stripe, before this application ever sees it.
             'agency_connect_client_id' => env('STRIPE_AGENCY_CONNECT_CLIENT_ID'),
