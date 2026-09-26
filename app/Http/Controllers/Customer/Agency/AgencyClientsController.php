@@ -340,6 +340,12 @@ class AgencyClientsController extends Controller
             'workspace_uid' => $clientWorkspace->uid,
             'workspace_name' => $clientWorkspace->name,
             'business_name' => $businesses->count() === 1 ? $businesses->first()->name : null,
+            // Newly-invited-client flow correction — the ONLY thing that
+            // decides whether "View As" is offered on this row: Draft is
+            // never selectable (never the "single business" the row can
+            // View As), so the list must tell "waiting for the client to
+            // finish setup" apart from "ready".
+            'business_status' => $businesses->count() === 1 ? $businesses->first()->status->value : null,
             'business_count' => $businesses->count(),
             'established_at' => $relationship->established_at,
         ];

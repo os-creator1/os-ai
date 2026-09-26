@@ -3,6 +3,7 @@
 namespace App\Library\Dashboard;
 
 use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Analytics\AnalyticsDateRange;
@@ -70,6 +71,7 @@ final class AccountHomePresenter
         private readonly BusinessAnalyticsQueries $analyticsQueries,
         private readonly BusinessConversationReadModel $conversations,
         private readonly AgencyClientPortfolio $clientPortfolio,
+        private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
     ) {
     }
 
@@ -560,15 +562,27 @@ final class AccountHomePresenter
         $inactive = $context->accessibleButNotActiveBusinesses();
         $primaryUrl = $this->createUrl($context, $user);
 
+        // Contract 07 correction — a newly-invited client landing here has
+        // exactly one Draft Business (AgencyClientProvisioningManager::
+        // accept()'s own placeholder), which the generic createUrl() above
+        // sends to the account overview page rather than the one place
+        // that actually moves it forward. A findable, direct link beats an
+        // extra hop through a page that itself links onward.
+        $draftActivationUrl = $this->draftClientActivationUrl($context, $user, $inactive);
+
         $emptyState = [
             'title' => $inactive === [] ? 'Create your first ' . $noun : 'No active ' . $noun . ' yet',
             'explanation' => $inactive === []
                 ? 'Your home page fills in once you have a ' . $noun . ': what needs attention, what happened in the last 30 days and what to do next.'
-                : '“' . $inactive[0]->name . '” is not active yet. Your home page fills in once a ' . $noun . ' is active.',
+                : ($draftActivationUrl !== null
+                    ? '"' . $inactive[0]->name . '" is waiting for you to review and confirm its details before it can go live.'
+                    : '"' . $inactive[0]->name . '" is not active yet. Your home page fills in once a ' . $noun . ' is active.'),
             'state' => 'empty',
-            'primary' => $primaryUrl !== null
-                ? ['label' => $inactive === [] ? 'Create your first ' . $noun : 'Review your ' . $noun . ($noun === 'business' ? 'es' : 's'), 'url' => $primaryUrl]
-                : null,
+            'primary' => $draftActivationUrl !== null
+                ? ['label' => 'Finish setting up your Business', 'url' => $draftActivationUrl]
+                : ($primaryUrl !== null
+                    ? ['label' => $inactive === [] ? 'Create your first ' . $noun : 'Review your ' . $noun . ($noun === 'business' ? 'es' : 's'), 'url' => $primaryUrl]
+                    : null),
             'secondary' => null,
             'ownerHint' => $primaryUrl === null && $parent === null ? 'Ask your account owner to give you access to a ' . $noun . '.' : null,
             'icon' => 'briefcase',
@@ -621,6 +635,63 @@ final class AccountHomePresenter
         }
 
         return null;
+    }
+
+    /**
+     * Contract 07 correction — a direct link to the client owner's own
+     * draft-activation step (ClientBusinessActivationController), offered
+     * only when EVERY one of these holds, so it can never substitute for
+     * the account page's more general "review your Businesses" link in any
+     * other shape of "not active yet":
+     *
+     *  - exactly one inactive Business is reachable at all (several, or an
+     *    Inactive rather than Draft one, keep the existing generic link —
+     *    this is deliberately not a general Draft-Business finder);
+     *  - that Business is genuinely Draft, not merely Inactive;
+     *  - the actor is that Business's own Workspace OWNER — never an
+     *    Admin, Staff, or the inviting Agency, matching
+     *    ClientBusinessActivationController::resolveOwnedWorkspace()'s own
+     *    owner-only gate exactly, so this link is never shown to someone
+     *    the route itself would 404;
+     *  - the Workspace is a genuine Agency-managed Client Workspace (an
+     *    ACTIVE AgencyClientWorkspaceRelationship names it) — the
+     *    businesses table itself defaults every row to Draft
+     *    (WorkspaceController's own identical scoping correction applies
+     *    here too), so an ordinary, not-yet-provisioned Workspace with no
+     *    Agency involved at all would otherwise also match.
+     *
+     * @param  array<int, BusinessCandidate>  $inactive
+     */
+    private function draftClientActivationUrl(CustomerContext $context, User $user, array $inactive): ?string
+    {
+        if (count($inactive) !== 1 || $inactive[0]->status !== BusinessStatus::Draft->value) {
+            return null;
+        }
+
+        if (! Gate::forUser($user)->allows('access_backend') || ! Route::has('customer.workspaces.businesses.activate.show')) {
+            return null;
+        }
+
+        $business = $inactive[0];
+        $workspace = null;
+
+        foreach ($context->workspaces as $candidate) {
+            if ($candidate->uid === $business->workspaceUid) {
+                $workspace = $candidate;
+
+                break;
+            }
+        }
+
+        if ($workspace === null || ! $workspace->isOwner) {
+            return null;
+        }
+
+        if ($this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspace->id) === null) {
+            return null;
+        }
+
+        return route('customer.workspaces.businesses.activate.show', [$business->workspaceUid, $business->uid]);
     }
 
     private function manageUrl(User $user, WorkspaceCandidate $workspace): ?string

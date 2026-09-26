@@ -341,6 +341,20 @@ Contracts 01 and 04 merged (04 because a newly-provisioned client should
 be immediately View-As-able, and this slice's own tests will want to
 prove that end-to-end).
 
+**Correction (newly-invited-client flow fix).** "Immediately View-As-able"
+above was wrong in one respect: the Business this slice creates is Draft
+(every Business is), with placeholder identity and an address-less primary
+location, and Agency View As requires Active. Acceptance was never changed
+to auto-activate — Agency users must never activate a client's Business.
+Instead the client owner gets their own explicit confirmation step
+(`BusinessManager::activateClientBusiness()`,
+`ClientBusinessActivationController`, owner-only) between acceptance and
+View As eligibility. The end-to-end path this contract's own tests prove is
+therefore: invitation accepted -> Draft -> client-owner activation ->
+Active -> Agency View As succeeds. The Agency Clients UI (Contract 08A)
+shows "Waiting for client setup" for a Draft client and does not offer a
+working View As action until Active.
+
 ## 17. Conflict map
 
 | Other contract | Shared file/table | Posture |

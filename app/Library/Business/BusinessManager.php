@@ -2,6 +2,7 @@
 
 namespace App\Library\Business;
 
+use App\Enums\Business\BusinessStatus;
 use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
@@ -14,6 +15,7 @@ use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Customer;
 use App\Models\Workspace;
+use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
@@ -21,6 +23,7 @@ use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 /**
  * Orchestrates writes to the Business aggregate (identity, primary location,
@@ -47,6 +50,7 @@ class BusinessManager
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
         private readonly ?WorkspaceRepository $workspaceRepository = null,
+        private readonly ?AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository = null,
     ) {
     }
 
@@ -126,6 +130,108 @@ class BusinessManager
 
             return $business;
         });
+    }
+
+    /**
+     * Contract 07 correction — the ONLY way a Client Business
+     * AgencyClientProvisioningManager::accept() created moves from Draft to
+     * Active. accept() deliberately never activates: it writes placeholder
+     * identity (industry Other, country US, timezone UTC, currency USD) and
+     * an address-less storefront primary location so invitation acceptance
+     * stays one bounded transaction with no client-authored input yet. This
+     * is the client owner's own explicit confirmation step for those exact
+     * facts — never callable by the inviting Agency. The controller
+     * enforces Workspace-owner-only and Agency-managed-Client-Workspace
+     * authorization before this is ever reached; this method independently
+     * re-verifies every one of those facts under the appropriate row locks
+     * regardless, the same fail-closed pattern updateOwnBusinessProfile()
+     * already uses, so a stale or forged reference can never activate a
+     * Business this path was never meant to reach.
+     *
+     * CORRECTION (review finding 1) — an ordinary Draft Business that is
+     * NOT part of an active Agency-Client relationship must retain its
+     * existing, unrelated admin-controlled activation rule: this path is
+     * for the newly-invited-client flow specifically, never a general
+     * "activate any Draft Business I own" shortcut. The check is the
+     * relationship repository's own row-locking read
+     * (findActiveForClientWorkspaceForUpdate(), the same one
+     * AgencyClientRelationshipManager::create() uses to see a
+     * just-committed Active row past REPEATABLE READ), taken AFTER the
+     * Workspace lock and BEFORE the Business lock — Workspace-before-
+     * Business is the established order (see updateOwnBusinessProfile()'s
+     * own docblock), and the relationship is itself a fact ABOUT the
+     * Workspace, so it belongs between those two locks, never after them.
+     *
+     * Atomic and fully re-verified under lock, in order: the Workspace is
+     * active and still owned by this customer; an ACTIVE
+     * AgencyClientWorkspaceRelationship still names it; the Business still
+     * belongs to that exact Workspace and to this customer, and is still
+     * Draft. Only then are the real identity facts written, the real
+     * primary location upserted, and the transition to Active made — all
+     * inside the one transaction. Any failure — including a relationship
+     * terminated, or a Business no longer Draft, by the time these locks
+     * are acquired (a genuine race) — fails the whole write; nothing here
+     * is ever partially applied.
+     *
+     * @param  array<string, mixed>  $identityAttributes
+     * @param  array<string, mixed>  $locationAttributes
+     *
+     * @throws WorkspaceAccessDeniedException the Workspace/Business does not belong to $customer, or is not an active Agency-managed Client Workspace
+     * @throws RuntimeException the Business is not currently Draft
+     */
+    public function activateClientBusiness(Customer $customer, Business $business, array $identityAttributes, array $locationAttributes): Business
+    {
+        $this->assertOwnership($customer, $business);
+
+        $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+        $expectedWorkspaceId = $business->workspace_id;
+
+        [$activated, $location] = DB::transaction(function () use ($customer, $business, $identityAttributes, $locationAttributes, $workspaceRepository, $relationshipRepository, $expectedWorkspaceId) {
+            // Workspace lock first (established order).
+            $lockedWorkspace = $expectedWorkspaceId !== null ? $workspaceRepository->findForUpdate((int) $expectedWorkspaceId) : null;
+
+            if ($lockedWorkspace === null
+                || ! $lockedWorkspace->is_active
+                || (int) $lockedWorkspace->owner_user_id !== (int) $customer->user_id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            // A fact about the Workspace, checked between the Workspace and
+            // Business locks: only a genuine, currently active Agency-Client
+            // relationship may activate through this path.
+            $relationship = $relationshipRepository->findActiveForClientWorkspaceForUpdate((int) $lockedWorkspace->id);
+
+            if ($relationship === null) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            // Business lock last.
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null
+                || (int) $locked->customer_id !== (int) $customer->user_id
+                || (int) $locked->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                throw new RuntimeException(
+                    "Business [{$locked->id}] is not Draft (status: {$locked->status->value}); it cannot be activated through this path."
+                );
+            }
+
+            $updated = $this->businessRepository->update($locked, $identityAttributes);
+            $location = app(BusinessLocationManager::class)->upsertPrimaryLocation($updated, $locationAttributes);
+            $activated = $this->businessRepository->updateStatus($updated, BusinessStatus::Active);
+
+            return [$activated, $location];
+        });
+
+        BusinessUpdated::dispatch($activated->id, array_keys($identityAttributes));
+        BusinessPrimaryLocationUpdated::dispatch($activated->id, $location->id);
+
+        return $activated;
     }
 
     /**

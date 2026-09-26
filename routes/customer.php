@@ -922,6 +922,14 @@
         // RFC-003 Milestone 4 Slice 4E: Business reassignment between Workspaces.
         Route::post('{workspaceUid}/businesses/{businessUid}/reassign', 'Workspace\WorkspaceController@reassignBusiness')->name('businesses.reassign');
 
+        // Contract 07 correction — the client owner's own Draft -> Active
+        // activation step for a newly-provisioned Client Business
+        // (ClientBusinessActivationController). Owner-only, by construction
+        // of resolveOwnedWorkspace() there — the inviting Agency can never
+        // reach this, since the Agency is never this Workspace's owner.
+        Route::get('{workspaceUid}/businesses/{businessUid}/activate', 'Workspace\ClientBusinessActivationController@show')->name('businesses.activate.show');
+        Route::post('{workspaceUid}/businesses/{businessUid}/activate', 'Workspace\ClientBusinessActivationController@store')->name('businesses.activate.store');
+
         // RFC-004 Milestone 3: Business-level feature disable-preference toggle.
         Route::post('{workspaceUid}/businesses/{businessUid}/features/{featureKey}/disable', 'Workspace\WorkspaceController@disableBusinessFeature')->name('businesses.features.disable');
         Route::post('{workspaceUid}/businesses/{businessUid}/features/{featureKey}/enable', 'Workspace\WorkspaceController@enableBusinessFeature')->name('businesses.features.enable');

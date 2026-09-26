@@ -605,6 +605,24 @@ class AgencyViewAsTest extends TestCase
         $this->assertStartRefused($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
     }
 
+    /**
+     * Newly-invited-client flow correction — the exact status a Business
+     * genuinely has right after AgencyClientProvisioningManager::accept()
+     * (every Business is created Draft; accept() never activates one). The
+     * guard above already covers "not Active" generically via Inactive;
+     * this proves the specific real-world Draft case the fix concerns
+     * fails exactly the same way, so this guard is never weakened to make
+     * a newly-invited client's "View As" button stop 404ing.
+     */
+    public function test_a_client_workspace_whose_sole_business_is_still_draft_fails_closed(): void
+    {
+        $pair = $this->linkedPair();
+        DB::table('businesses')->where('id', $pair['business']->id)->update(['status' => BusinessStatus::Draft->value]);
+        $this->nextRequest();
+
+        $this->assertStartRefused($pair['owner'], $pair['agency']->uid, $pair['client']->uid);
+    }
+
     public function test_an_agency_no_longer_on_the_agency_tier_cannot_start_a_view(): void
     {
         $pair = $this->linkedPair();
