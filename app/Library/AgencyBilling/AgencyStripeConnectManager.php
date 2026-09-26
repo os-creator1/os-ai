@@ -36,6 +36,16 @@ use Illuminate\Support\Facades\DB;
  */
 final class AgencyStripeConnectManager
 {
+    /**
+     * Task 3 — fail-closed freshness at the actual financial boundary. How
+     * long a chargeable connection's STORED readiness may be trusted before
+     * a real financial operation (checkout, plan-price creation/publish,
+     * upgrade/downgrade) re-verifies it against the provider, rather than
+     * relying on an arbitrarily stale Active row that has since been
+     * revoked or gone Incompatible. See chargeableConnection() below.
+     */
+    private const CHARGE_READINESS_FRESHNESS_SECONDS = 900;
+
     public function __construct(private readonly AgencyStripeGateway $gateway)
     {
     }
@@ -118,6 +128,7 @@ final class AgencyStripeConnectManager
             $connection->forceFill($this->providerColumns($snapshot, AgencyStripeConnectionStatus::Onboarding) + [
                 'connected_by_user_id' => $actorUserId,
                 'connected_at' => now(),
+                'last_synced_at' => now(),
                 'lock_version' => 0,
             ])->save();
 
@@ -191,6 +202,11 @@ final class AgencyStripeConnectManager
             $connection->forceFill($this->providerColumns($snapshot, $this->statusFor($snapshot)) + [
                 'connected_by_user_id' => $actorUserId,
                 'connected_at' => now(),
+                // The snapshot above IS a fresh provider read taken this
+                // instant, so recording it as already-synced avoids an
+                // immediately-redundant re-verification the very next time
+                // chargeableConnection() is asked for this connection.
+                'last_synced_at' => now(),
                 'lock_version' => 0,
             ])->save();
 
@@ -229,6 +245,19 @@ final class AgencyStripeConnectManager
         $connection = $this->liveConnection($agencyWorkspace)
             ?? throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
 
+        return $this->refreshFromProvider($connection, $agencyWorkspace);
+    }
+
+    /**
+     * Task 3 — the shared network-then-compare-and-set step behind BOTH
+     * syncFromProvider() (owner-initiated, from the status page) and
+     * chargeableConnection()'s own freshness re-check below (financial-
+     * boundary-initiated). One implementation, so a controller-compatibility
+     * or status-mapping fix made here is never made in only one of the two
+     * places that need it.
+     */
+    private function refreshFromProvider(AgencyStripeConnection $connection, Workspace $agencyWorkspace): AgencyStripeConnection
+    {
         $observedVersion = (int) $connection->lock_version;
 
         // ---- network, outside every transaction and lock ------------------
@@ -269,6 +298,19 @@ final class AgencyStripeConnectManager
      * client's own lifecycle exactly where it is until real provider truth
      * moves it.
      *
+     * Task 2, REVIEWED FOR OAUTH-CONNECTED ACCOUNTS SPECIFICALLY — this
+     * method is identical regardless of how the connection was made
+     * (createAccount() or the OAuth connectExisting() above), because the
+     * SAFETY property it exists for (canCharge() becomes false immediately)
+     * is identical either way. It intentionally does not also call Stripe's
+     * `oauth/deauthorize` — that would revoke THIS PLATFORM's OAuth grant at
+     * Stripe for an account the Agency may still want reachable from their
+     * own Dashboard, and is a real business decision (not this app's alone)
+     * whether local disconnect should also sever platform-level API access
+     * versus leaving that to the Agency's own Stripe settings or to a
+     * genuine `account.application.deauthorized` event (markRevokedByProvider()
+     * above) if they choose to revoke it themselves.
+     *
      * @throws AgencyBillingException
      */
     public function disconnect(int $actorUserId, Workspace $agencyWorkspace): AgencyStripeConnection
@@ -301,7 +343,10 @@ final class AgencyStripeConnectManager
 
     /**
      * §C5.1 — may a NEW lane-C charge be taken for this Agency right now?
-     * Asked before every checkout and every plan change; never cached.
+     * Deliberately LOCAL-ONLY (no provider call) — this answers page
+     * renders and status displays, which must stay cheap; the boundary that
+     * actually spends money is chargeableConnection() below, which re-
+     * verifies freshness itself.
      */
     public function isChargeReady(Workspace $agencyWorkspace): bool
     {
@@ -311,7 +356,11 @@ final class AgencyStripeConnectManager
     /**
      * The connection a charge must run through, or a refusal that says which
      * of the two problems it is — not connected at all, versus connected but
-     * not yet able to take money.
+     * not yet able to take money. Re-verifies against the provider itself
+     * when the stored readiness is stale (Task 3) — never on every page
+     * render (that stays isChargeReady() above), only at this financial
+     * boundary, and at most once per call here regardless of how many
+     * checks the caller's own operation makes afterwards.
      *
      * @throws AgencyBillingException
      */
@@ -320,11 +369,68 @@ final class AgencyStripeConnectManager
         $connection = $this->liveConnection($agencyWorkspace)
             ?? throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
 
+        if ($this->isStaleForCharging($connection)) {
+            $connection = $this->refreshFromProvider($connection, $agencyWorkspace);
+        }
+
         if (! $connection->canCharge()) {
             throw AgencyBillingException::because(AgencyBillingException::CONNECTION_NOT_READY);
         }
 
         return $connection;
+    }
+
+    private function isStaleForCharging(AgencyStripeConnection $connection): bool
+    {
+        return $connection->last_synced_at === null
+            || $connection->last_synced_at->lt(now()->subSeconds(self::CHARGE_READINESS_FRESHNESS_SECONDS));
+    }
+
+    /**
+     * Task 2 — `account.application.deauthorized`: the Agency revoked THIS
+     * PLATFORM's access to their Stripe account, at Stripe, not from inside
+     * this application. Provider-initiated, so there is no owner actor to
+     * assert and no provider call to make (revoked access means we may no
+     * longer be authorized to make one) — this only updates the local row,
+     * which is what stops any NEW charge from ever being initiated through
+     * it again. Same non-interference posture as disconnect(): existing
+     * client subscriptions are left exactly where they are, and nothing is
+     * deleted — only marked Disconnected, preserving history.
+     *
+     * Idempotent: a second delivery of the same event (or one that arrives
+     * after the Agency has already disconnected locally, or already
+     * reconnected a DIFFERENT account) finds no row to touch and is a no-op
+     * — `stripe_account_id` names the specific account Stripe revoked, and
+     * only a row for THAT exact account, still in a current status, is
+     * ever affected.
+     */
+    public function markRevokedByProvider(string $connectedAccountId): void
+    {
+        if (trim($connectedAccountId) === '') {
+            return;
+        }
+
+        DB::transaction(function () use ($connectedAccountId) {
+            $connection = AgencyStripeConnection::query()
+                ->where('stripe_account_id', $connectedAccountId)
+                ->whereIn('status', self::currentStatuses())
+                ->lockForUpdate()
+                ->first();
+
+            if ($connection === null) {
+                return;
+            }
+
+            $connection->forceFill([
+                'status' => AgencyStripeConnectionStatus::Disconnected->value,
+                'disconnected_by_user_id' => null,
+                'disconnected_at' => now(),
+                'charges_enabled' => false,
+                'payouts_enabled' => false,
+                'requirements_disabled_reason' => 'provider_revoked_access',
+                'lock_version' => (int) $connection->lock_version + 1,
+            ])->save();
+        });
     }
 
     /**

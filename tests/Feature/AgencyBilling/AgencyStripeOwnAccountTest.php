@@ -3,9 +3,12 @@
 namespace Tests\Feature\AgencyBilling;
 
 use App\Enums\AgencyBilling\AgencyStripeConnectionStatus;
+use App\Enums\AgencyBilling\AgencySubscriptionEventState;
 use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Jobs\AgencyBilling\ProcessAgencyClientSubscriptionEvent;
+use App\Models\AgencyClientSubscriptionEvent;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\AgencyBilling\Concerns\CreatesAgencySaasFixtures;
 use Tests\TestCase;
@@ -15,9 +18,13 @@ use Tests\TestCase;
  * Agency must receive its own client payments directly, pay its own Stripe
  * fees, and bear its own payment-loss liability — never the platform. This
  * suite proves the two ways an Agency gets a connected account both enforce
- * that fail-closed, and that the previously-working connect/onboard/sync
- * flow (StripeApiAgencyGateway::accountCreateParams(), unchanged) still
- * reaches Active exactly as before.
+ * that fail-closed, that a fixed, workspace-agnostic OAuth callback resolves
+ * the Agency only from verified server-side state (never a request
+ * parameter), that a provider-side revocation and a stale local status both
+ * fail closed at the actual financial boundary, and that the previously-
+ * working connect/onboard/sync/subscribe flow
+ * (StripeApiAgencyGateway::accountCreateParams(), unchanged) still reaches
+ * Active exactly as before.
  */
 class AgencyStripeOwnAccountTest extends TestCase
 {
@@ -38,9 +45,10 @@ class AgencyStripeOwnAccountTest extends TestCase
         return route('customer.workspaces.agency.saas.stripe.connect-existing', [$agencyUid]);
     }
 
-    private function callbackUrl(string $agencyUid, array $query = []): string
+    /** Task 1 — ONE fixed, workspace-agnostic callback URL, shared by every Agency. */
+    private function callbackUrl(array $query = []): string
     {
-        return route('customer.workspaces.agency.saas.stripe.connect-existing.callback', [$agencyUid])
+        return route('customer.agency.stripe.connect-existing.callback')
             . (empty($query) ? '' : ('?' . http_build_query($query)));
     }
 
@@ -58,11 +66,21 @@ class AgencyStripeOwnAccountTest extends TestCase
         return (string) $query['state'];
     }
 
+    /** @return array{agencyWorkspace: \App\Models\Workspace, agencyOwner: \App\Models\Customer} */
+    private function readyAgencyForRegression(): array
+    {
+        $fixture = $this->agencyWithClient();
+        $this->connectAgencyStripe($fixture['agencyWorkspace'], (int) $fixture['agencyOwner']->user_id);
+
+        return $fixture;
+    }
+
     // ------------------------------------------------------------------
-    // Connecting a compatible existing account
+    // Task 1 — fixed callback, server-side state, connecting a compatible
+    // existing account
     // ------------------------------------------------------------------
 
-    public function test_the_owner_can_connect_a_compatible_existing_account_and_it_becomes_active(): void
+    public function test_the_owner_can_connect_a_compatible_existing_account_through_the_fixed_callback(): void
     {
         $fixture = $this->agencyWithClient();
         $this->authenticateAs($fixture['agencyOwner']);
@@ -71,7 +89,7 @@ class AgencyStripeOwnAccountTest extends TestCase
         $state = $this->startAndCaptureState($uid);
         $this->agencyStripe->registerExistingAccount('ac_test_code_1', 'acct_existing_compatible');
 
-        $this->get($this->callbackUrl($uid, ['state' => $state, 'code' => 'ac_test_code_1']))
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_1']))
             ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]))
             ->assertSessionHas('status', 'success');
 
@@ -84,6 +102,108 @@ class AgencyStripeOwnAccountTest extends TestCase
         $this->get(route('customer.workspaces.agency.saas.stripe', [$uid]))
             ->assertOk()
             ->assertSee('Ready to take payments');
+    }
+
+    public function test_the_same_state_cannot_be_replayed(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $state = $this->startAndCaptureState($uid);
+        $this->agencyStripe->registerExistingAccount('ac_test_code_replay', 'acct_replay');
+
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_replay']))
+            ->assertSessionHas('status', 'success');
+
+        // A second delivery of the identical callback URL — the state was
+        // already consumed and forgotten, so this must find nothing, never
+        // attempt a second exchange or a second connection.
+        $this->agencyStripe->calls = [];
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_replay']))
+            ->assertRedirect(route('user.home'))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertSame([], $this->agencyStripe->callsOf('exchangeOAuthCode'));
+        $this->assertCount(1, $this->connections()->history($fixture['agencyWorkspace']));
+    }
+
+    public function test_an_expired_state_is_refused(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $state = $this->startAndCaptureState($uid);
+        session()->put('agency_stripe_oauth_pending.' . $state, [
+            'agency_workspace_id' => (int) $fixture['agencyWorkspace']->id,
+            'user_id' => (int) $fixture['agencyOwner']->user_id,
+            'expires_at' => now()->subMinute()->timestamp,
+        ]);
+        $this->agencyStripe->registerExistingAccount('ac_test_code_expired', 'acct_expired');
+
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_expired']))
+            ->assertRedirect(route('user.home'))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertSame([], $this->agencyStripe->callsOf('exchangeOAuthCode'));
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    }
+
+    public function test_a_mismatched_state_is_refused_and_creates_no_connection(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->startAndCaptureState($uid);
+        $this->agencyStripe->registerExistingAccount('ac_test_code_3', 'acct_forged');
+
+        $this->get($this->callbackUrl(['state' => 'not-the-real-state', 'code' => 'ac_test_code_3']))
+            ->assertRedirect(route('user.home'))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+        $this->assertSame([], $this->agencyStripe->callsOf('exchangeOAuthCode'), 'A code must never be exchanged against an unverified state.');
+    }
+
+    public function test_a_state_issued_to_a_different_authenticated_user_is_refused(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $state = $this->startAndCaptureState($uid);
+        $this->agencyStripe->registerExistingAccount('ac_test_code_cross_user', 'acct_cross_user');
+
+        // A different authenticated user than the one who started the
+        // attempt somehow submits the same state (a stolen/leaked redirect,
+        // or session confusion) — refused even though the state itself is
+        // otherwise genuine and unexpired.
+        $imposter = $this->createCustomer();
+        $this->authenticateAs($imposter);
+
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_cross_user']))
+            ->assertRedirect(route('user.home'))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertSame([], $this->agencyStripe->callsOf('exchangeOAuthCode'));
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    }
+
+    public function test_stripe_reporting_the_owner_declined_is_handled_without_a_connection(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $state = $this->startAndCaptureState($uid);
+
+        $this->get($this->callbackUrl(['state' => $state, 'error' => 'access_denied', 'error_description' => 'The user denied your request']))
+            ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
     }
 
     // ------------------------------------------------------------------
@@ -117,7 +237,7 @@ class AgencyStripeOwnAccountTest extends TestCase
         // alone (objective #4/#5's own fail-closed requirement).
         $this->agencyStripe->registerExistingAccount('ac_test_code_2', 'acct_existing_incompatible', $facts);
 
-        $this->get($this->callbackUrl($uid, ['state' => $state, 'code' => 'ac_test_code_2']))
+        $this->get($this->callbackUrl(['state' => $state, 'code' => 'ac_test_code_2']))
             ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]))
             ->assertSessionHas('status', 'error');
 
@@ -156,49 +276,134 @@ class AgencyStripeOwnAccountTest extends TestCase
         $this->assertFalse($this->connections()->isChargeReady($fixture['agencyWorkspace']));
     }
 
-    /** @return array{agencyWorkspace: \App\Models\Workspace, agencyOwner: \App\Models\Customer} */
-    private function readyAgencyForRegression(): array
-    {
-        $fixture = $this->agencyWithClient();
-        $this->connectAgencyStripe($fixture['agencyWorkspace'], (int) $fixture['agencyOwner']->user_id);
+    // ------------------------------------------------------------------
+    // Task 3 — fail-closed freshness at the actual financial boundary
+    // ------------------------------------------------------------------
 
-        return $fixture;
+    public function test_a_stale_connection_is_reverified_before_a_new_financial_operation_and_refused_if_now_bad(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $agencyWorkspace = $fixture['agencyWorkspace'];
+        $connection = $this->connections()->liveConnection($agencyWorkspace);
+
+        // The provider's own state changed AFTER our last sync — Stripe
+        // restricted the account — but nothing has locally re-synced yet.
+        $this->agencyStripe->restrictAccount((string) $connection->stripe_account_id);
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)
+            ->update(['last_synced_at' => now()->subMinutes(20)]);
+
+        $this->expectException(\App\Exceptions\AgencyBilling\AgencyBillingException::class);
+
+        try {
+            $this->connections()->chargeableConnection($agencyWorkspace);
+        } finally {
+            $this->assertNotEmpty($this->agencyStripe->callsOf('retrieveAccount'), 'A stale connection must be re-verified against the provider before a new financial operation.');
+        }
+    }
+
+    public function test_a_fresh_connection_is_not_reverified_on_every_call(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $agencyWorkspace = $fixture['agencyWorkspace'];
+
+        $this->agencyStripe->calls = [];
+        $this->connections()->chargeableConnection($agencyWorkspace);
+
+        $this->assertSame([], $this->agencyStripe->callsOf('retrieveAccount'), 'A recently-synced connection must not trigger a redundant provider call.');
+    }
+
+    public function test_a_compatible_account_still_reaches_checkout_after_the_freshness_reverification(): void
+    {
+        // Preserves the working subscription flow end to end, through the
+        // Task 3 freshness path specifically (last_synced_at forced stale).
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)
+            ->update(['last_synced_at' => now()->subMinutes(20)]);
+
+        $this->ensureCanonicalTierPriced(\App\Enums\Entitlement\WorkspacePlanTier::Growth);
+        $plan = $this->publishedPlan($fixture['agencyWorkspace'], (int) $fixture['agencyOwner']->user_id, price: '349.00');
+
+        $this->authenticateAs($fixture['agencyOwner']);
+        $this->post(route('customer.workspaces.agency.saas.clients.offer', [$fixture['agencyWorkspace']->uid, $fixture['clientWorkspace']->uid]), [
+            'plan_uid' => $plan->uid, 'confirm' => '1',
+        ])->assertRedirect();
+
+        $this->assertNotEmpty($this->agencyStripe->callsOf('retrieveAccount'));
+        $this->assertSame(\App\Enums\AgencyBilling\AgencyClientSubscriptionStatus::Offered, $this->statusOf($fixture['clientWorkspace']));
     }
 
     // ------------------------------------------------------------------
-    // OAuth CSRF / denial handling
+    // Task 2 — account.application.deauthorized
     // ------------------------------------------------------------------
 
-    public function test_a_mismatched_state_is_refused_and_creates_no_connection(): void
+    public function test_a_provider_side_revocation_disconnects_the_connection_and_refuses_new_charges(): void
     {
-        $fixture = $this->agencyWithClient();
-        $this->authenticateAs($fixture['agencyOwner']);
-        $uid = $fixture['agencyWorkspace']->uid;
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
 
-        $this->startAndCaptureState($uid);
-        $this->agencyStripe->registerExistingAccount('ac_test_code_3', 'acct_forged');
-
-        $this->get($this->callbackUrl($uid, ['state' => 'not-the-real-state', 'code' => 'ac_test_code_3']))
-            ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]))
-            ->assertSessionHas('status', 'error');
+        $this->deliverAndProcessWebhookEvent('account.application.deauthorized', $accountId, [
+            'id' => $accountId,
+            'object' => 'application',
+        ]);
 
         $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
-        $this->assertSame([], $this->agencyStripe->callsOf('exchangeOAuthCode'), 'A code must never be exchanged against an unverified state.');
+        $this->assertFalse($this->connections()->isChargeReady($fixture['agencyWorkspace']));
+
+        $refreshed = $connection->fresh();
+        $this->assertSame(AgencyStripeConnectionStatus::Disconnected, $refreshed->status);
+        $this->assertFalse((bool) $refreshed->charges_enabled);
+
+        // Never interferes with the provider's own subscription lifecycle
+        // or deletes history.
+        $this->assertCount(1, $this->connections()->history($fixture['agencyWorkspace']));
+
+        // The UI accurately shows "not connected" — the same honest state a
+        // never-connected Agency sees.
+        $this->authenticateAs($fixture['agencyOwner']);
+        $this->get(route('customer.workspaces.agency.saas.stripe', [$fixture['agencyWorkspace']->uid]))
+            ->assertOk()
+            ->assertSee('Not connected');
     }
 
-    public function test_stripe_reporting_the_owner_declined_is_handled_without_a_connection(): void
+    public function test_revocation_for_an_unknown_account_is_a_safe_no_op(): void
     {
-        $fixture = $this->agencyWithClient();
-        $this->authenticateAs($fixture['agencyOwner']);
-        $uid = $fixture['agencyWorkspace']->uid;
+        $fixture = $this->readyAgencyForRegression();
 
-        $this->startAndCaptureState($uid);
+        $this->deliverAndProcessWebhookEvent('account.application.deauthorized', 'acct_never_connected_here', [
+            'id' => 'acct_never_connected_here',
+            'object' => 'application',
+        ]);
 
-        $this->get($this->callbackUrl($uid, ['error' => 'access_denied', 'error_description' => 'The user denied your request']))
-            ->assertRedirect(route('customer.workspaces.agency.saas.stripe', [$uid]))
-            ->assertSessionHas('status', 'error');
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $this->assertNotNull($connection, 'An event naming a different, unrelated account must not touch this Agency\'s own connection.');
+        $this->assertSame(AgencyStripeConnectionStatus::Active, $connection->status);
+    }
 
-        $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
+    /** Intake -> job, exactly as production delivery works, using the real signature-verified fake gateway. */
+    private function deliverAndProcessWebhookEvent(string $eventType, string $connectedAccountId, array $object): void
+    {
+        $payload = json_encode([
+            'id' => 'evt_' . uniqid(),
+            'type' => $eventType,
+            'account' => $connectedAccountId,
+            'data' => ['object' => $object],
+        ]);
+
+        $this->call('POST', route('public.agency-subscriptions.webhook'), [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_Stripe-Signature' => $this->agencyStripe->validSignature,
+        ], $payload)->assertStatus(200);
+
+        $event = AgencyClientSubscriptionEvent::query()->where('provider_event_id', 'like', 'evt_%')->latest('id')->first();
+        $this->assertNotNull($event);
+
+        ProcessAgencyClientSubscriptionEvent::dispatchSync((int) $event->id);
+
+        $this->assertSame(AgencySubscriptionEventState::Processed, $event->fresh()->state);
     }
 
     // ------------------------------------------------------------------
@@ -223,14 +428,13 @@ class AgencyStripeOwnAccountTest extends TestCase
         $this->assertNull($this->connections()->liveConnection($fixture['agencyWorkspace']));
     }
 
-    public function test_an_unrelated_actor_cannot_reach_the_connect_existing_routes(): void
+    public function test_an_unrelated_actor_cannot_start_connecting_an_existing_account(): void
     {
         $fixture = $this->agencyWithClient();
         $stranger = $this->createCustomer();
         $this->authenticateAs($stranger);
 
         $this->get($this->startUrl($fixture['agencyWorkspace']->uid))->assertNotFound();
-        $this->get($this->callbackUrl($fixture['agencyWorkspace']->uid, ['state' => 'x', 'code' => 'y']))->assertNotFound();
     }
 
     public function test_an_agency_that_already_has_a_connection_cannot_start_connecting_a_second_one(): void

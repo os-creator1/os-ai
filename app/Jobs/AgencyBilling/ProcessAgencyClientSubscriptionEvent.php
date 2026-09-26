@@ -113,19 +113,36 @@ class ProcessAgencyClientSubscriptionEvent extends Base implements ShouldQueue
     ): array {
         $eventType = (string) $event->event_type;
 
-        // Outside lane C's closed set is acknowledged and ignored, never
-        // guessed at. This is also what makes a stray lane-B Connect event on
-        // this endpoint harmless.
-        if (! AgencyProviderStatusMap::handlesEventType($eventType)) {
-            return [AgencySubscriptionEventState::Ignored, 'unhandled_event_type', null];
-        }
-
         // ---- THE ACCOUNT, BEFORE ANYTHING ELSE --------------------------
         $connectedAccountId = (string) $event->connected_account_id;
 
         if ($connectedAccountId === '') {
             // A Connect event with no account is not one we can place safely.
             return [AgencySubscriptionEventState::Failed, 'no_connected_account', null];
+        }
+
+        // Task 2 — an account-level event, never a subscription-shaped one:
+        // handled BEFORE the subscription closed-set check below and before
+        // any subscription resolution, because there is no subscription to
+        // resolve. The intake endpoint already verified the webhook
+        // signature and captured `connected_account_id` from the verified
+        // payload — this reuses that same durable evidence, never an
+        // unverified request parameter, to find OUR OWN stored connection
+        // for that exact account and mark it Disconnected so no new charge
+        // can be initiated through it again. See
+        // AgencyStripeConnectManager::markRevokedByProvider() for why
+        // existing client subscriptions are deliberately left untouched.
+        if ($eventType === 'account.application.deauthorized') {
+            $connections->markRevokedByProvider($connectedAccountId);
+
+            return [AgencySubscriptionEventState::Processed, null, null];
+        }
+
+        // Outside lane C's closed set is acknowledged and ignored, never
+        // guessed at. This is also what makes a stray lane-B Connect event on
+        // this endpoint harmless.
+        if (! AgencyProviderStatusMap::handlesEventType($eventType)) {
+            return [AgencySubscriptionEventState::Ignored, 'unhandled_event_type', null];
         }
 
         // OWNERSHIP, NOT AUTHORITY TO SELL. A disconnected connection still
