@@ -57,11 +57,22 @@
             @else
                 <x-table :headers="['Client', 'Business', 'Since', '']" data-role="clients-table">
                     @foreach ($clients as $client)
+                        @php
+                            // Newly-invited-client flow correction — Draft
+                            // is never View-As-able (ViewAsManager::
+                            // startAgencyView() requires Active), so a
+                            // Draft row must say "waiting for the client",
+                            // never offer a button that would 404.
+                            $clientBusinessActive = $client['business_status'] === \App\Enums\Business\BusinessStatus::Active->value;
+                        @endphp
                         <tr data-role="client-row" data-workspace-uid="{{ $client['workspace_uid'] }}">
                             <td>{{ $client['workspace_name'] }}</td>
                             <td>
                                 @if ($client['business_name'] !== null)
                                     {{ $client['business_name'] }}
+                                    @unless ($clientBusinessActive)
+                                        <x-badge variant="warning" data-role="client-waiting-for-setup">Waiting for client setup</x-badge>
+                                    @endunless
                                 @else
                                     <x-badge variant="warning" data-role="business-data-issue">
                                         {{ $client['business_count'] === 0 ? 'No business on file' : 'Multiple businesses' }}
@@ -79,12 +90,16 @@
                                     >
                                         Open
                                     </x-button>
-                                    <form method="POST" action="{{ route('customer.workspaces.clients.view-as', [$agencyWorkspace->uid, $client['workspace_uid']]) }}" data-role="view-as-form">
-                                        @csrf
-                                        <x-button type="submit" variant="ghost" size="sm" data-role="view-as-client">
-                                            View As
-                                        </x-button>
-                                    </form>
+                                    @if ($clientBusinessActive)
+                                        <form method="POST" action="{{ route('customer.workspaces.clients.view-as', [$agencyWorkspace->uid, $client['workspace_uid']]) }}" data-role="view-as-form">
+                                            @csrf
+                                            <x-button type="submit" variant="ghost" size="sm" data-role="view-as-client">
+                                                View As
+                                            </x-button>
+                                        </form>
+                                    @else
+                                        <x-badge variant="secondary" data-role="view-as-unavailable">Not ready</x-badge>
+                                    @endif
                                 </div>
                             </td>
                         </tr>

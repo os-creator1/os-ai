@@ -172,6 +172,38 @@ class AgencyClientsHttpTest extends TestCase
         return route('customer.workspaces.client-invitations.store', $agency->uid);
     }
 
+    private function activateUrl(Workspace $client, Business $business): string
+    {
+        return route('customer.workspaces.businesses.activate.store', [$client->uid, $business->uid]);
+    }
+
+    /**
+     * A real client owner submitting real values for the exact facts
+     * AgencyClientProvisioningManager::accept() placeholdered — none of
+     * industry Other / country US / timezone UTC / currency USD / the
+     * address-less storefront location survive this payload unchanged.
+     *
+     * @return array<string, mixed>
+     */
+    private function validActivationPayload(): array
+    {
+        return [
+            'industry' => \App\Enums\Business\BusinessIndustry::ProfessionalServices->value,
+            'country_code' => 'ca',
+            'timezone' => 'America/Toronto',
+            'currency_code' => 'cad',
+            'location_name' => 'Main Office',
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Toronto',
+            'region' => 'ON',
+            'postal_code' => 'M5V 2T6',
+            'location_country_code' => 'ca',
+            'public_address' => '1',
+            'confirm' => '1',
+        ];
+    }
+
     // ------------------------------------------------------------------
     // AUTHORITY
     // ------------------------------------------------------------------
@@ -606,7 +638,15 @@ class AgencyClientsHttpTest extends TestCase
     // CONTRACT 07 INTEGRATION — accepted invitation appears in the list
     // ------------------------------------------------------------------
 
-    public function test_an_accepted_contract_07_invitation_appears_in_the_agency_clients_list_and_is_immediately_view_as_able(): void
+    /**
+     * Newly-invited-client flow fix — the corrected full path this task
+     * exists to prove: invitation accepted -> Draft -> the Agency's list
+     * shows "waiting", View As genuinely 404s while Draft (the existing
+     * guard, untouched) -> the CLIENT OWNER (never the Agency) reviews and
+     * confirms the real details themselves -> Active -> the Agency's list
+     * shows a real button -> Agency View As succeeds.
+     */
+    public function test_the_full_path_from_accepted_invitation_through_client_activation_to_agency_view_as(): void
     {
         [$agency, $owner] = $this->agency();
         $email = 'accepted-client' . uniqid('', true) . '@example.test';
@@ -628,20 +668,38 @@ class AgencyClientsHttpTest extends TestCase
 
         $accepted = app(AgencyClientProvisioningManager::class)->accept($newUser->fresh(), $invitation->uid, $plaintextToken);
         $clientWorkspace = Workspace::find($accepted->created_client_workspace_id);
-
-        // Every Business created through acceptance starts Draft, exactly
-        // like every other Business creation path in this codebase — not a
-        // Contract 07/08A limitation (see AgencyClientProvisioningTest's
-        // own activateBusiness() precedent for the identical reasoning).
         $business = Business::where('workspace_id', $clientWorkspace->id)->firstOrFail();
-        DB::table('businesses')->where('id', $business->id)->update([
-            'status' => \App\Enums\Business\BusinessStatus::Active->value,
-            'activated_at' => now(),
-        ]);
 
+        $this->assertSame(
+            \App\Enums\Business\BusinessStatus::Draft,
+            $business->status,
+            'Acceptance creates the Business Draft and never activates it (Agency users must never activate a client\'s Business).',
+        );
+
+        // The list surfaces the wait honestly, never a button that 404s.
         $listResponse = $this->actingAsCustomer($owner)->get($this->indexUrl($agency));
         $listResponse->assertOk();
         $listResponse->assertSee($clientWorkspace->name);
+        $listResponse->assertSee('Waiting for client setup');
+
+        // The existing View As eligibility check and its 404 are untouched.
+        $this->actingAsCustomer($owner)->post($this->viewAsUrl($agency, $clientWorkspace))->assertNotFound();
+
+        // The client owner — not the Agency — reviews and confirms the
+        // real details themselves.
+        $activateResponse = $this->actingAsCustomer($newUser->fresh())
+            ->post($this->activateUrl($clientWorkspace, $business), $this->validActivationPayload());
+        $activateResponse->assertRedirect(route('customer.workspaces.show', $clientWorkspace->uid));
+
+        $business->refresh();
+        $this->assertSame(\App\Enums\Business\BusinessStatus::Active, $business->status);
+        $this->assertNotNull($business->activated_at);
+        $this->assertSame('CA', $business->country_code);
+        $this->assertSame('CAD', $business->currency_code);
+
+        $listAfter = $this->actingAsCustomer($owner)->get($this->indexUrl($agency));
+        $listAfter->assertOk();
+        $listAfter->assertDontSee('Waiting for client setup');
 
         $viewAsResponse = $this->actingAsCustomer($owner)->post($this->viewAsUrl($agency, $clientWorkspace));
         $viewAsResponse->assertRedirect(route('user.home'));
@@ -649,6 +707,40 @@ class AgencyClientsHttpTest extends TestCase
         $session = app(ViewAsManager::class)->current($owner->fresh());
         $this->assertNotNull($session);
         $this->assertSame((int) $clientWorkspace->id, (int) $session->workspaceId);
+    }
+
+    /**
+     * Agency users must never activate a client's Business — the Agency
+     * owner is never that Client Workspace's own owner_user_id
+     * (WorkspaceManager::createWorkspace((int) $authenticatedUser->id, ...)
+     * in AgencyClientProvisioningManager::accept() gives it to the
+     * accepting client alone), so
+     * ClientBusinessActivationController::resolveOwnedWorkspace() refuses
+     * identically to an unrelated stranger.
+     */
+    public function test_the_inviting_agency_cannot_activate_the_clients_business(): void
+    {
+        [$agency, $owner] = $this->agency();
+        [$client, $business] = $this->clientAccount();
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        $this->link($agency, $owner, $client);
+
+        $response = $this->actingAsCustomer($owner)->post($this->activateUrl($client, $business), $this->validActivationPayload());
+
+        $response->assertNotFound();
+        $this->assertSame(\App\Enums\Business\BusinessStatus::Draft, $business->fresh()->status, 'A refused attempt never changes status.');
+    }
+
+    public function test_an_unrelated_actor_cannot_activate_a_clients_business(): void
+    {
+        [$client, $business] = $this->clientAccount();
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Draft->value]);
+        $stranger = $this->outsider();
+
+        $response = $this->actingAsCustomer($stranger)->post($this->activateUrl($client, $business), $this->validActivationPayload());
+
+        $response->assertNotFound();
+        $this->assertSame(\App\Enums\Business\BusinessStatus::Draft, $business->fresh()->status);
     }
 
     /** Requires Notification::fake() to already be active. */

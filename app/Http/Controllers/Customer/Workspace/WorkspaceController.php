@@ -96,6 +96,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
         private readonly BillingProfileManager $billingProfileManager,
+        private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
     ) {
     }
 
@@ -331,6 +332,28 @@ class WorkspaceController extends CustomerBaseController
 
             if ($billingResponsibility !== null) {
                 $viewData['billingResponsibility'] = $billingResponsibility;
+            }
+
+            // Contract 07 correction — a findable link to the client
+            // owner's own draft-activation step (ClientBusinessActivationController).
+            // Owner-only: an Admin sees nothing here to act on, since
+            // activation is deliberately the Workspace OWNER's step alone
+            // (never an Agency actor, and never a delegated Admin).
+            //
+            // Scoped to a genuine Agency-managed Client Workspace (an
+            // ACTIVE AgencyClientWorkspaceRelationship naming it) rather
+            // than "any owner viewing any unassigned-tier Workspace with a
+            // Draft Business": the businesses table itself defaults every
+            // row to Draft, so an ordinary, not-yet-provisioned Workspace
+            // with no Agency involved at all would otherwise also match,
+            // which is not what this link is for.
+            if ($roleKey === 'owner' && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace((int) $workspace->id) !== null) {
+                $draftBusiness = $this->accessibleBusinesses($workspace, $userId)
+                    ->first(fn (Business $business) => $business->status === BusinessStatus::Draft);
+
+                if ($draftBusiness !== null) {
+                    $viewData['draftClientBusiness'] = ['uid' => $draftBusiness->uid, 'name' => $draftBusiness->name];
+                }
             }
         }
 

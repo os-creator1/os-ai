@@ -145,6 +145,32 @@
             </div>
             @endif
 
+            {{--
+                Contract 07 correction — the client owner's findable setup
+                link. AgencyClientProvisioningManager::accept() creates this
+                Business Draft with placeholder identity and an
+                address-less location, and never activates it; the account
+                page is where the owner who just accepted an invitation is
+                sent, so this is the natural place for the one link that
+                starts real setup.
+            --}}
+            @isset($draftClientBusiness)
+                <div class="col-12">
+                    <x-alert variant="warning" data-role="draft-business-setup-notice">
+                        <p class="mb-1">
+                            <strong>{{ $draftClientBusiness['name'] }}</strong> still needs setup before it can go
+                            live: review and confirm its country, timezone, currency, industry and primary
+                            location.
+                        </p>
+                        <a href="{{ route('customer.workspaces.businesses.activate.show', [request()->route('workspaceUid'), $draftClientBusiness['uid']]) }}"
+                           class="btn btn-outline-warning btn-sm"
+                           data-role="draft-business-setup-link">
+                            Finish setting up this Business
+                        </a>
+                    </x-alert>
+                </div>
+            @endisset
+
             @if (in_array($section, ['account', 'first-business'], true))
             <div class="col-12">
                 <div class="card">

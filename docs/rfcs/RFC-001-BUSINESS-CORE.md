@@ -227,6 +227,18 @@ enum BusinessStatus: string
 }
 ```
 
+**Correction (newly-invited-client flow fix).** Every Business is created
+Draft, including the one `AgencyClientProvisioningManager::accept()` creates
+for a newly-accepted Agency client invitation (with placeholder identity —
+industry Other, country US, timezone UTC, currency USD — and an
+address-less storefront primary location). Agency "View As"
+(`ViewAsManager::startAgencyView()`) requires Active, and invitation
+acceptance never activates a Business itself. The only path from Draft to
+Active for that Business is the client owner's own explicit confirmation,
+`BusinessManager::activateClientBusiness()`
+(`ClientBusinessActivationController`, owner-only) — never automatic on
+acceptance, and never callable by the inviting Agency.
+
 ### 7.2 `BusinessIndustry`
 
 ```php
@@ -642,6 +654,7 @@ public function createOrUpdateOnboardingBusiness(Customer $customer, ?Business $
 public function updateBusiness(Customer $customer, Business $business, array $attributes): Business;
 public function upsertPrimaryLocation(Customer $customer, Business $business, array $attributes): BusinessLocation;
 public function syncServices(Customer $customer, Business $business, array $services): Collection;
+public function activateClientBusiness(Customer $customer, Business $business, array $identityAttributes, array $locationAttributes): Business;
 ```
 
 Every method re-checks ownership even when the controller already authorized the request.

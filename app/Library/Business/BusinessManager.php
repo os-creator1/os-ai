@@ -2,6 +2,7 @@
 
 namespace App\Library\Business;
 
+use App\Enums\Business\BusinessStatus;
 use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
@@ -21,6 +22,7 @@ use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 /**
  * Orchestrates writes to the Business aggregate (identity, primary location,
@@ -126,6 +128,66 @@ class BusinessManager
 
             return $business;
         });
+    }
+
+    /**
+     * Contract 07 correction — the ONLY way a Client Business
+     * AgencyClientProvisioningManager::accept() created moves from Draft to
+     * Active. accept() deliberately never activates: it writes placeholder
+     * identity (industry Other, country US, timezone UTC, currency USD) and
+     * an address-less storefront primary location so invitation acceptance
+     * stays one bounded transaction with no client-authored input yet. This
+     * is the client owner's own explicit confirmation step for those exact
+     * facts — never callable by the inviting Agency. The controller
+     * enforces Workspace-owner-only authorization before this is ever
+     * reached; this method independently re-verifies Business ownership
+     * under the row lock regardless, the same fail-closed pattern
+     * updateOwnBusinessProfile() already uses, so a stale or forged
+     * Business reference can never activate a Business that is not this
+     * customer's own.
+     *
+     * Atomic: re-verify ownership and Draft status under the Business row
+     * lock, write the real identity facts, upsert the real primary
+     * location, and transition Draft -> Active, all inside one
+     * transaction. A Business that is no longer Draft by the time the lock
+     * is acquired (already activated in another tab, a genuine race) fails
+     * the whole write rather than silently re-activating or re-writing an
+     * already-live Business.
+     *
+     * @param  array<string, mixed>  $identityAttributes
+     * @param  array<string, mixed>  $locationAttributes
+     *
+     * @throws WorkspaceAccessDeniedException the Business does not belong to $customer
+     * @throws RuntimeException the Business is not currently Draft
+     */
+    public function activateClientBusiness(Customer $customer, Business $business, array $identityAttributes, array $locationAttributes): Business
+    {
+        $this->assertOwnership($customer, $business);
+
+        [$activated, $location] = DB::transaction(function () use ($customer, $business, $identityAttributes, $locationAttributes) {
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null || (int) $locked->customer_id !== (int) $customer->user_id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                throw new RuntimeException(
+                    "Business [{$locked->id}] is not Draft (status: {$locked->status->value}); it cannot be activated through this path."
+                );
+            }
+
+            $updated = $this->businessRepository->update($locked, $identityAttributes);
+            $location = app(BusinessLocationManager::class)->upsertPrimaryLocation($updated, $locationAttributes);
+            $activated = $this->businessRepository->updateStatus($updated, BusinessStatus::Active);
+
+            return [$activated, $location];
+        });
+
+        BusinessUpdated::dispatch($activated->id, array_keys($identityAttributes));
+        BusinessPrimaryLocationUpdated::dispatch($activated->id, $location->id);
+
+        return $activated;
     }
 
     /**
