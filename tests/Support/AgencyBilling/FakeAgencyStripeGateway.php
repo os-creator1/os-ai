@@ -50,6 +50,9 @@ class FakeAgencyStripeGateway implements AgencyStripeGateway
     /** @var array<string, array<string, mixed>> account id => account facts. */
     public array $accounts = [];
 
+    /** @var array<string, string> OAuth authorization code => connected account id. */
+    public array $oauthCodes = [];
+
     /** @var array<string, array<string, mixed>> price id => price facts (incl. its account). */
     public array $prices = [];
 
@@ -99,9 +102,56 @@ class FakeAgencyStripeGateway implements AgencyStripeGateway
             'requirements_disabled_reason' => null,
             'default_currency' => 'USD',
             'agency_workspace_uid' => $agencyWorkspaceUid,
+            // Mirrors StripeApiAgencyGateway::accountCreateParams() exactly —
+            // every account THIS gateway creates is compatible by
+            // construction, same as the real one.
+            'fees_payer' => 'account',
+            'losses_payer' => 'stripe',
+            'requirement_collection' => 'stripe',
+            'dashboard_type' => 'full',
         ];
 
         return $this->accountSnapshot($id);
+    }
+
+    /**
+     * "Connect existing Stripe account" — registers a fake pre-existing
+     * account an OAuth authorization code will resolve to, with the same
+     * facts shape as `$accounts` above. Defaults to a COMPATIBLE, fully
+     * onboarded account; pass `$facts` (e.g. `['fees_payer' => 'application']`)
+     * to simulate one this platform must fail closed on.
+     */
+    public function registerExistingAccount(string $authorizationCode, string $connectedAccountId, array $facts = []): void
+    {
+        $this->oauthCodes[$authorizationCode] = $connectedAccountId;
+
+        $this->accounts[$connectedAccountId] = array_merge([
+            'charges_enabled' => true,
+            'payouts_enabled' => true,
+            'details_submitted' => true,
+            'requirements_disabled_reason' => null,
+            'default_currency' => 'USD',
+            'fees_payer' => 'account',
+            'losses_payer' => 'stripe',
+            'requirement_collection' => 'stripe',
+            'dashboard_type' => 'full',
+        ], $facts);
+    }
+
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string
+    {
+        $this->record('oauthAuthorizeUrl', ['state' => $state, 'redirect_uri' => $redirectUri]);
+
+        return 'https://connect.stripe.test/oauth/authorize?state=' . urlencode($state)
+            . '&redirect_uri=' . urlencode($redirectUri);
+    }
+
+    public function exchangeOAuthCode(string $authorizationCode): string
+    {
+        $this->record('exchangeOAuthCode', ['code' => $authorizationCode]);
+
+        return $this->oauthCodes[$authorizationCode]
+            ?? throw AgencyBillingException::because(AgencyBillingException::OAUTH_FAILED);
     }
 
     public function createOnboardingLink(string $connectedAccountId, string $refreshUrl, string $returnUrl): string
@@ -536,6 +586,10 @@ class FakeAgencyStripeGateway implements AgencyStripeGateway
             detailsSubmitted: (bool) ($account['details_submitted'] ?? false),
             requirementsDisabledReason: $account['requirements_disabled_reason'] ?? null,
             defaultCurrency: $account['default_currency'] ?? null,
+            controllerFeesPayer: $account['fees_payer'] ?? null,
+            controllerLossesPayer: $account['losses_payer'] ?? null,
+            controllerRequirementCollection: $account['requirement_collection'] ?? null,
+            controllerDashboardType: $account['dashboard_type'] ?? null,
         );
     }
 

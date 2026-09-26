@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer\Agency;
 
 use App\Enums\AgencyBilling\AgencyClientSubscriptionStatus;
+use App\Enums\AgencyBilling\AgencyStripeConnectionStatus;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Exceptions\Workspace\AgencyWorkspaceNotEligibleException;
 use App\Http\Controllers\Controller;
@@ -149,6 +150,173 @@ class AgencySaasController extends Controller
             // Honest about what it does and does not do (§C5.1).
             'message' => __('Disconnected. No new client subscriptions can be started, and existing ones were not cancelled on your behalf.'),
         ]);
+    }
+
+    /**
+     * The server-side session key one pending OAuth attempt lives under,
+     * namespaced so it can never collide with anything else in the session.
+     */
+    private const OAUTH_SESSION_PREFIX = 'agency_stripe_oauth_pending.';
+
+    /** How long a started-but-not-completed OAuth attempt stays valid. */
+    private const OAUTH_STATE_TTL_MINUTES = 10;
+
+    /**
+     * "Connect existing Stripe account" — starts Stripe's own hosted OAuth
+     * flow (never an account-id text field: that would let an Agency name an
+     * account it does not control, or silently duplicate one).
+     *
+     * TASK 1 — ONE FIXED, PLATFORM-WIDE CALLBACK URL. Stripe's own OAuth
+     * settings register exactly one `redirect_uri` per platform; a URL that
+     * varied per Agency Workspace (the previous `{workspaceUid}/.../callback`
+     * shape) could never be registered there. The fixed callback below
+     * carries no workspace in its own URL at all — which Agency Workspace,
+     * which user, and when this attempt expires are instead bound
+     * server-side, keyed by the random `state` value, in THIS SAME
+     * authenticated session (Laravel's own session store — no new
+     * infrastructure). The callback resolves the Agency exclusively from
+     * that stored record, never from any request parameter.
+     */
+    public function connectExistingStart(string $workspaceUid): RedirectResponse
+    {
+        $agencyWorkspace = $this->authorizedAgency($workspaceUid);
+
+        $state = bin2hex(random_bytes(20));
+
+        session()->put(self::OAUTH_SESSION_PREFIX . $state, [
+            'agency_workspace_id' => (int) $agencyWorkspace->id,
+            'user_id' => (int) Auth::id(),
+            'expires_at' => now()->addMinutes(self::OAUTH_STATE_TTL_MINUTES)->timestamp,
+        ]);
+
+        try {
+            $url = $this->connections->oauthAuthorizeUrl(
+                (int) Auth::id(),
+                $agencyWorkspace,
+                $state,
+                route('customer.agency.stripe.connect-existing.callback'),
+            );
+        } catch (AgencyBillingException $e) {
+            session()->forget(self::OAUTH_SESSION_PREFIX . $state);
+
+            return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
+        }
+
+        return redirect()->away($url);
+    }
+
+    /**
+     * Stripe's own redirect back from the OAuth flow above, at the ONE fixed
+     * URL every Agency shares (Task 1) — this action deliberately takes no
+     * `{workspaceUid}` route parameter at all, so there is nothing here an
+     * attacker could substitute. The Agency, the initiating user and this
+     * attempt's freshness all come from the server-side record
+     * `connectExistingStart()` stored under this exact `state` — never from
+     * `$request`. The record is consumed (forgotten) UNCONDITIONALLY and
+     * FIRST, before any of it is trusted, so a replay of the same `state`
+     * (a resubmission, or an attacker who observed one redirect) always
+     * finds nothing on a second attempt.
+     *
+     * Every rejection path below redirects to a SAFE, workspace-agnostic
+     * destination (the customer home) with an honest, non-disclosing
+     * message — never the Agency's own Stripe page, since an unverified
+     * request must never be trusted enough to know which Agency to show.
+     */
+    public function connectExistingCallback(Request $request): RedirectResponse
+    {
+        $state = (string) $request->query('state', '');
+        $sessionKey = self::OAUTH_SESSION_PREFIX . $state;
+        $pending = $state !== '' ? session($sessionKey) : null;
+        session()->forget($sessionKey);
+
+        if (
+            ! is_array($pending)
+            || ! isset($pending['agency_workspace_id'], $pending['user_id'], $pending['expires_at'])
+            || (int) $pending['expires_at'] < now()->timestamp
+        ) {
+            // Covers all of: no state given, unknown/already-consumed state
+            // (replay), and an expired attempt — every one of them is
+            // "this attempt cannot be trusted", answered identically.
+            return $this->oauthFailureRedirect(AgencyBillingException::because(AgencyBillingException::OAUTH_STATE_MISMATCH)->customerMessage());
+        }
+
+        // CROSS-USER PROTECTION. The session cookie alone is not proof
+        // enough — the record names the exact authenticated user who
+        // started this attempt, and only that user may complete it.
+        if ((int) $pending['user_id'] !== (int) Auth::id()) {
+            return $this->oauthFailureRedirect(AgencyBillingException::because(AgencyBillingException::OAUTH_STATE_MISMATCH)->customerMessage());
+        }
+
+        $agencyWorkspace = $this->workspaces->findById((int) $pending['agency_workspace_id']);
+
+        if ($agencyWorkspace === null) {
+            return $this->oauthFailureRedirect(AgencyBillingException::because(AgencyBillingException::OAUTH_STATE_MISMATCH)->customerMessage());
+        }
+
+        // Re-asserted against the RESOLVED workspace, not merely trusted
+        // from having been stored — the same 404-first rule every other
+        // action on this controller applies, in case eligibility changed
+        // between starting and completing this attempt.
+        $agencyWorkspace = $this->authorizeAgencyWorkspace($agencyWorkspace);
+        $stripeAccountRoute = route('customer.workspaces.agency.saas.stripe', [$agencyWorkspace->uid]);
+
+        // The state is now genuinely verified, so it is safe to send the
+        // user back to THEIR OWN Agency's page for every outcome from here
+        // on, including a plain decline on Stripe's own page.
+        if ($request->query('error') !== null) {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => __('Stripe account connection was not completed.'),
+            ]);
+        }
+
+        $code = (string) $request->query('code', '');
+
+        if ($code === '') {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => AgencyBillingException::because(AgencyBillingException::OAUTH_FAILED)->customerMessage(),
+            ]);
+        }
+
+        try {
+            $connection = $this->connections->connectExisting((int) Auth::id(), $agencyWorkspace, $code);
+        } catch (AgencyBillingException $e) {
+            // TASK 4 — a real, useful message: Stripe genuinely refuses some
+            // existing accounts (for example one already controlled by
+            // another platform), and the honest answer is "try a different
+            // account, or create a new one" — never a promise that every
+            // existing account is eligible.
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => $e->reason === AgencyBillingException::OAUTH_FAILED
+                    ? __('That Stripe account could not be connected. It may already be controlled by another platform, or the authorization may have expired. You can try a different existing account, or create a new Stripe account instead.')
+                    : $e->customerMessage(),
+            ]);
+        }
+
+        if ($connection->status === AgencyStripeConnectionStatus::Incompatible) {
+            return redirect($stripeAccountRoute)->with([
+                'status' => 'error',
+                'message' => __('That Stripe account\'s fee, loss-liability, requirement-collection or Dashboard configuration is not compatible with this platform, so it cannot be enabled for client payments. Disconnect it and connect a different account, or create a new one instead.'),
+            ]);
+        }
+
+        return redirect($stripeAccountRoute)->with([
+            'status' => 'success',
+            'message' => __('Stripe account connected.'),
+        ]);
+    }
+
+    /**
+     * A rejection before the Agency can be safely resolved (missing,
+     * expired, replayed, or cross-user state) never has a trustworthy
+     * "this Agency's own page" to return to — it goes to the ordinary
+     * customer home instead, with an honest error, never silently ignored.
+     */
+    private function oauthFailureRedirect(string $message): RedirectResponse
+    {
+        return redirect()->route('user.home')->with(['status' => 'error', 'message' => $message]);
     }
 
     // =====================================================================
@@ -409,6 +577,18 @@ class AgencySaasController extends Controller
     {
         $agencyWorkspace = $this->workspaces->findByUid($workspaceUid) ?? abort(404);
 
+        return $this->authorizeAgencyWorkspace($agencyWorkspace);
+    }
+
+    /**
+     * The same authority/eligibility check as authorizedAgency() above,
+     * factored out so a Workspace already resolved another way (Task 1's
+     * OAuth callback resolves one from verified server-side state, never a
+     * uid in the request) is asserted through the identical rule rather
+     * than a second copy of it.
+     */
+    private function authorizeAgencyWorkspace(Workspace $agencyWorkspace): Workspace
+    {
         if (! $this->relationships->actorHasAgencyAuthority((int) Auth::id(), $agencyWorkspace)) {
             abort(404);
         }

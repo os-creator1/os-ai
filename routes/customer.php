@@ -18,6 +18,25 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Lane C, Task 1 — the ONE fixed, platform-wide Stripe OAuth callback for
+    | "Connect existing Stripe account."
+    |--------------------------------------------------------------------------
+    |
+    | Stripe's own OAuth settings (dashboard.stripe.com/settings/connect/
+    | onboarding-options/oauth) register exactly one redirect_uri per
+    | platform client_id — this route's full resolved URL (customer.
+    | agency.stripe.connect-existing.callback) is the exact value that must
+    | be registered there, for both the TEST and LIVE client_id. It carries
+    | no {workspaceUid}: which Agency, which user and this attempt's
+    | expiry are bound server-side by AgencySaasController::
+    | connectExistingStart(), keyed by the OAuth `state` value, and the
+    | callback resolves the Agency exclusively from that record.
+    */
+    Route::get('agency/stripe/connect-existing/callback', 'Agency\AgencySaasController@connectExistingCallback')
+        ->name('agency.stripe.connect-existing.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | Contact Module
     |--------------------------------------------------------------------------
     */
@@ -835,6 +854,15 @@
                 ->middleware('throttle:30,1')->name('stripe.sync');
             Route::post('stripe/disconnect', 'Agency\AgencySaasController@disconnect')
                 ->middleware('throttle:30,1')->name('stripe.disconnect');
+            // "Connect existing Stripe account" — Stripe's own hosted OAuth
+            // flow. GET: a plain navigation (an authenticated link, not a
+            // state-changing form — it makes no provider call and mutates
+            // nothing by itself beyond recording the pending attempt). The
+            // CALLBACK is deliberately NOT here — see the single fixed
+            // route below (Task 1: Stripe's OAuth settings register exactly
+            // one redirect_uri per platform, so it cannot vary by Agency).
+            Route::get('stripe/connect-existing', 'Agency\AgencySaasController@connectExistingStart')
+                ->middleware('throttle:30,1')->name('stripe.connect-existing');
 
             Route::get('plans', 'Agency\AgencySaasController@plans')->name('plans');
             Route::post('plans', 'Agency\AgencySaasController@storePlan')

@@ -180,6 +180,77 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
         return $this->accountSnapshot($account);
     }
 
+    /**
+     * "Connect existing Stripe account" — Stripe's own documented OAuth
+     * connection flow (https://docs.stripe.com/connect/oauth-standard-accounts),
+     * which is explicitly still the supported path for "an application that
+     * needs access to an EXISTING account" (as opposed to onboarding a brand
+     * new one, which stays createAccount() above). No account id is ever
+     * typed into this application: Stripe authenticates the Agency owner on
+     * its own hosted page and hands back a one-time authorization code.
+     */
+    public function oauthAuthorizeUrl(string $state, string $redirectUri): string
+    {
+        $clientId = (string) config('services.stripe.agency_connect_client_id');
+
+        if ($clientId === '') {
+            throw AgencyBillingException::because(AgencyBillingException::NOT_CONFIGURED);
+        }
+
+        // Pure URL construction — no network call, so no ApiErrorException
+        // path exists here.
+        return \Stripe\OAuth::authorizeUrl([
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'state' => $state,
+            'scope' => 'read_write',
+        ]);
+    }
+
+    /**
+     * Exchanges the one-time authorization code Stripe returned to the OAuth
+     * `redirect_uri` for the connected account's real id. Never returns or
+     * stores the `access_token`/`refresh_token` Stripe also returns in this
+     * response — lane C authenticates every subsequent call the same way it
+     * always has, with the platform's own secret key plus the `Stripe-Account`
+     * header (`onAccount()`), never a per-Agency OAuth token, so there is no
+     * additional credential for this class to protect or leak.
+     *
+     * @throws AgencyBillingException
+     */
+    public function exchangeOAuthCode(string $authorizationCode): string
+    {
+        // \Stripe\OAuth::token() is the one legacy call in this class with no
+        // per-request api-key parameter (unlike every other call here, scoped
+        // through $this->client()) — it authenticates through the SDK's own
+        // global key, so client() is still called first, purely to fail
+        // closed identically to every other method when unconfigured, and
+        // the global key is set immediately before the one call that needs it.
+        $this->client();
+        \Stripe\Stripe::setApiKey((string) config('services.stripe.secret'));
+
+        try {
+            $response = \Stripe\OAuth::token([
+                'grant_type' => 'authorization_code',
+                'code' => $authorizationCode,
+            ]);
+        } catch (\Throwable) {
+            // Covers Stripe\Exception\OAuth\OAuthErrorException (an invalid,
+            // expired or already-used code) and any other transport failure
+            // identically — the provider's own error text still never
+            // reaches a caller.
+            throw AgencyBillingException::because(AgencyBillingException::OAUTH_FAILED);
+        }
+
+        $accountId = isset($response->stripe_user_id) ? (string) $response->stripe_user_id : '';
+
+        if ($accountId === '') {
+            throw AgencyBillingException::because(AgencyBillingException::OAUTH_FAILED);
+        }
+
+        return $accountId;
+    }
+
     // =====================================================================
     // §C5.2 — Prices on the Agency's own account
     // =====================================================================
@@ -457,6 +528,23 @@ final class StripeApiAgencyGateway implements AgencyStripeGateway
                 : null,
             defaultCurrency: isset($account->default_currency)
                 ? mb_strtoupper((string) $account->default_currency)
+                : null,
+            // Fail-closed readiness — read straight from the provider's own
+            // `controller` object (never inferred from the deprecated `type`
+            // field), so an account connected any way at all (new onboarding
+            // here, or an existing account brought in through OAuth) is
+            // judged by the exact same real Stripe state.
+            controllerFeesPayer: isset($account->controller->fees->payer)
+                ? (string) $account->controller->fees->payer
+                : null,
+            controllerLossesPayer: isset($account->controller->losses->payments)
+                ? (string) $account->controller->losses->payments
+                : null,
+            controllerRequirementCollection: isset($account->controller->requirement_collection)
+                ? (string) $account->controller->requirement_collection
+                : null,
+            controllerDashboardType: isset($account->controller->stripe_dashboard->type)
+                ? (string) $account->controller->stripe_dashboard->type
                 : null,
         );
     }
