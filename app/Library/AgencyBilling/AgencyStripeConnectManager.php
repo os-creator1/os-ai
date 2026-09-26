@@ -6,7 +6,9 @@ use App\Enums\AgencyBilling\AgencyStripeConnectionStatus;
 use App\Exceptions\AgencyBilling\AgencyBillingException;
 use App\Models\AgencyStripeConnection;
 use App\Models\Workspace;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -56,6 +58,22 @@ final class AgencyStripeConnectManager
      * Stripe calls for the same connection.
      */
     private const STATUS_POLL_MIN_INTERVAL_SECONDS = 15;
+
+    /**
+     * PR #380 finding 1 — the single-flight lock's own lifetime: long
+     * enough to cover one real retrieveAccount() round trip plus the
+     * compare-and-set that follows it, short enough that a request that
+     * died mid-refresh (crash, deploy, timeout) cannot wedge every future
+     * poll behind a lock nobody will ever release.
+     */
+    private const REFRESH_LOCK_TTL_SECONDS = 10;
+
+    /**
+     * How long a concurrent poll waits for an in-flight refresh to finish
+     * before giving up and returning the current local row instead — a
+     * status poll must stay fast and never pile up.
+     */
+    private const REFRESH_LOCK_WAIT_SECONDS = 3;
 
     public function __construct(private readonly AgencyStripeGateway $gateway)
     {
@@ -269,6 +287,25 @@ final class AgencyStripeConnectManager
      * never triggers a provider call, only ever reads what is already
      * stored (AgencySaasController::stripe()).
      *
+     * PR #380 REVIEW FINDING 1 — SINGLE-FLIGHT. The freshness check alone
+     * is not atomic: several concurrent polls (multiple open tabs, or the
+     * client's own 5s interval racing a slow response) can all observe the
+     * SAME stale `last_synced_at` before any of them writes a fresh one,
+     * each independently deciding to call Stripe. A named
+     * Illuminate\Cache\Lock — a shared, cache-backed mutex, NEVER a
+     * database row/transaction lock — serializes the actual refresh per
+     * connection: only the caller that acquires it ever reaches
+     * refreshFromProvider() (whose own retrieveAccount() call still runs
+     * entirely outside any DB transaction, unchanged). Every other
+     * concurrent caller waits a short, bounded time for the in-flight
+     * refresh to finish, then RE-CHECKS freshness immediately after
+     * acquiring the lock — by then the winner has almost always already
+     * written a fresh row, so the waiter reuses it instead of making its
+     * own redundant call. A caller that cannot acquire the lock within the
+     * bound (an unusually slow or stuck in-flight request) fails OPEN to
+     * the current local row: a status poll must never hang the browser or
+     * error out merely because another poll is in flight.
+     *
      * @throws AgencyBillingException
      */
     public function refreshForStatusPoll(int $actorUserId, Workspace $agencyWorkspace): AgencyStripeConnection
@@ -278,12 +315,38 @@ final class AgencyStripeConnectManager
         $connection = $this->liveConnection($agencyWorkspace)
             ?? throw AgencyBillingException::because(AgencyBillingException::NO_CONNECTION);
 
-        if ($connection->last_synced_at !== null
-            && $connection->last_synced_at->gt(now()->subSeconds(self::STATUS_POLL_MIN_INTERVAL_SECONDS))) {
+        if (! $this->isStaleForStatusPoll($connection)) {
             return $connection;
         }
 
-        return $this->refreshFromProvider($connection, $agencyWorkspace);
+        $lock = Cache::lock(
+            'agency-stripe-connection-refresh:' . $connection->id,
+            self::REFRESH_LOCK_TTL_SECONDS,
+        );
+
+        try {
+            return $lock->block(self::REFRESH_LOCK_WAIT_SECONDS, function () use ($connection, $agencyWorkspace) {
+                // Re-read AND re-check freshness now that the lock is held
+                // — a concurrent caller may have refreshed it while this
+                // one was waiting, in which case its own provider call is
+                // simply skipped.
+                $current = $connection->fresh() ?? $connection;
+
+                if (! $this->isStaleForStatusPoll($current)) {
+                    return $current;
+                }
+
+                return $this->refreshFromProvider($current, $agencyWorkspace);
+            });
+        } catch (LockTimeoutException) {
+            return $connection->fresh() ?? $connection;
+        }
+    }
+
+    private function isStaleForStatusPoll(AgencyStripeConnection $connection): bool
+    {
+        return $connection->last_synced_at === null
+            || $connection->last_synced_at->lt(now()->subSeconds(self::STATUS_POLL_MIN_INTERVAL_SECONDS));
     }
 
     /**

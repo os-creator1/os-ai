@@ -135,9 +135,13 @@
         decides on its own, independently of this script, when a poll is
         also allowed to reach Stripe; several open tabs polling
         simultaneously still cannot exceed that one shared rate. On any
-        status change, the page reloads once to render the exact same
-        server-side Blade state every other flow already produces, rather
-        than duplicating that rendering logic in JavaScript. Polling never
+        status change, OR any change to WHY it is restricted (Stripe can
+        move an account from one outstanding requirement to a different
+        one — or clear it — while the status stays "restricted" the whole
+        time; PR #380 finding 2), the page reloads once to render the
+        exact same server-side Blade state every other flow already
+        produces, rather than duplicating that rendering logic in
+        JavaScript. Polling never
         starts at all for a non-owner (nothing here would be able to
         refresh anyway — see stripeStatus()'s own owner-only rule) or once
         the connection is already in a state that can never change on its
@@ -149,6 +153,7 @@
             (function () {
                 var pollUrl = @json(route('customer.workspaces.agency.saas.stripe.status-poll', [$agencyWorkspace->uid]));
                 var initialStatus = @json($connection->status->value);
+                var initialReason = @json($connection->requirements_disabled_reason);
                 var pollIntervalMs = 5000;
                 var timer = null;
 
@@ -168,7 +173,14 @@
                     })
                         .then(function (response) { return response.json(); })
                         .then(function (data) {
-                            if (data.status && data.status !== initialStatus) {
+                            // PR #380 finding 2 — a status-value change is
+                            // NOT the only visible change worth reloading
+                            // for: `reason` can change (one outstanding
+                            // requirement resolving into a different one,
+                            // or clearing) while `status` stays
+                            // "restricted" throughout, and the page's own
+                            // "Why" text must not go stale in that case.
+                            if (data.status && (data.status !== initialStatus || data.reason !== initialReason)) {
                                 window.clearInterval(timer);
                                 window.location.reload();
 

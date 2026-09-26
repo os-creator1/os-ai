@@ -643,6 +643,101 @@ class AgencyStripeOwnAccountTest extends TestCase
         $this->assertNotEmpty($this->agencyStripe->callsOf('retrieveAccount'));
     }
 
+    /**
+     * PR #380 review finding 1 — deterministic, single-process proof of
+     * single-flight: real concurrent HTTP requests cannot be simulated in
+     * a PHPUnit test, so this uses the SAME interleaving-hook technique
+     * FakeAgencyStripeGateway already provides for every other
+     * concurrency test in this suite. The hook fires INSIDE the first
+     * poll's retrieveAccount() call — the exact instant a second,
+     * genuinely concurrent tab's poll would arrive while the first is "on
+     * the wire" — and issues that second poll as a real nested HTTP
+     * request. If the single-flight lock works, that second poll must
+     * find the connection still locked, wait up to
+     * REFRESH_LOCK_WAIT_SECONDS, time out, and return the still-stale
+     * local row WITHOUT ever calling retrieveAccount() itself.
+     */
+    public function test_concurrent_status_polls_are_single_flight_only_one_reaches_the_provider(): void
+    {
+        $fixture = $this->agencyWithClient();
+        $this->authenticateAs($fixture['agencyOwner']);
+        $uid = $fixture['agencyWorkspace']->uid;
+
+        $this->post(route('customer.workspaces.agency.saas.stripe.connect', [$uid]), [
+            'country' => 'US', 'email' => 'agency@example.test',
+        ])->assertRedirect();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')
+            ->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+        $this->agencyStripe->completeOnboarding((string) $connection->stripe_account_id);
+
+        $secondPollResult = null;
+
+        $this->agencyStripe->interleaveOnce('retrieveAccount', function () use (&$secondPollResult, $uid) {
+            $secondPollResult = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+        });
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$uid]));
+
+        $first->assertOk();
+        $this->assertSame('active', $first->json('status'), 'The poll that actually acquired the lock performs the real refresh.');
+
+        $this->assertNotNull($secondPollResult);
+        $secondPollResult->assertOk();
+        $this->assertSame(
+            'onboarding',
+            $secondPollResult->json('status'),
+            'The concurrent second poll could not acquire the lock, so it must reuse the still-stale local row rather than block indefinitely or fail.',
+        );
+
+        $this->assertCount(
+            1,
+            $this->agencyStripe->callsOf('retrieveAccount'),
+            'Exactly ONE of the two concurrent polls may ever reach the provider.',
+        );
+    }
+
+    /**
+     * PR #380 review finding 2 — `status` staying "restricted" the whole
+     * time must not hide a real, visible change: Stripe can move an
+     * account from one outstanding requirement to a different one (or
+     * clear it) without the status value itself ever changing, and the
+     * page's own "Why" text depends on this field, not on `status` alone.
+     */
+    public function test_status_poll_reflects_a_changed_requirement_reason_even_while_status_stays_restricted(): void
+    {
+        $fixture = $this->readyAgencyForRegression();
+        $connection = $this->connections()->liveConnection($fixture['agencyWorkspace']);
+        $accountId = (string) $connection->stripe_account_id;
+        $this->authenticateAs($fixture['agencyOwner']);
+
+        $this->agencyStripe->restrictAccount($accountId, 'requirements.past_due');
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update([
+            'status' => AgencyStripeConnectionStatus::Restricted->value,
+            'charges_enabled' => false,
+            'requirements_disabled_reason' => 'requirements.past_due',
+            'last_synced_at' => now()->subMinute(),
+        ]);
+
+        $first = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$fixture['agencyWorkspace']->uid]));
+        $this->assertSame('restricted', $first->json('status'));
+        $this->assertSame('requirements.past_due', $first->json('reason'));
+
+        // Stripe resolves that requirement but immediately surfaces a
+        // DIFFERENT one — status is "restricted" before, during and after.
+        $this->agencyStripe->restrictAccount($accountId, 'requirements.pending_verification');
+        \Illuminate\Support\Facades\DB::table('agency_stripe_connections')->where('id', $connection->id)->update(['last_synced_at' => now()->subMinute()]);
+
+        $second = $this->postJson(route('customer.workspaces.agency.saas.stripe.status-poll', [$fixture['agencyWorkspace']->uid]));
+        $this->assertSame('restricted', $second->json('status'), 'The status value itself genuinely never changes.');
+        $this->assertSame(
+            'requirements.pending_verification',
+            $second->json('reason'),
+            'The poll endpoint must still surface the NEW reason, which is what the page\'s own JS compares to detect a change and reload.',
+        );
+    }
+
     public function test_status_poll_is_owner_only_and_makes_no_provider_call_for_staff(): void
     {
         $fixture = $this->readyAgencyForRegression();
