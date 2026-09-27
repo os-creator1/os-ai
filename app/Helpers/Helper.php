@@ -942,6 +942,20 @@
                                 'icon'       => 'arrow-right-circle',
                             ],
                             [
+                                // Phone Numbers + A2P lane — messaging
+                                // contract §13.2/§13.3's suspended-number
+                                // release surface. Same 'admin_only'
+                                // boundary as its two siblings above, for
+                                // the same reason.
+                                'url'        => url(config('app.admin_path') . '/messaging-number-lifecycle'),
+                                'slug'       => config('app.admin_path') . '/messaging-number-lifecycle',
+                                'name'       => 'Messaging Number Lifecycle',
+                                'i18n'       => 'Messaging Number Lifecycle',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'pause-circle',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
                                 'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
                                 'name'   => 'Additional Slot Agreements',

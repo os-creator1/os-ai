@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\PhoneNumberType;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -22,6 +23,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * `number_type` (text messaging setup/compliance hub) decides which
  * carrier registration regime applies to this number — 10DLC for
  * `local`, toll-free verification for `toll_free` — never both.
+ *
+ * Phone Numbers + A2P lane — the five lifecycle columns (next_renewal_at,
+ * renewal_warning_sent_at, suspended_at, grace_expires_at,
+ * release_notice_sent_at) are deliberately absent from $fillable:
+ * NumberLifecycleManager is the single writer for all of them, exactly
+ * the same discipline ProvisioningIncidentRecorder and
+ * PortOutRequestManager already apply to their own resolution/cancellation
+ * columns.
  */
 class BusinessMessagingNumber extends Model
 {
@@ -45,6 +54,11 @@ class BusinessMessagingNumber extends Model
         'is_primary' => 'boolean',
         'activated_at' => 'datetime',
         'released_at' => 'datetime',
+        'next_renewal_at' => 'datetime',
+        'renewal_warning_sent_at' => 'datetime',
+        'suspended_at' => 'datetime',
+        'grace_expires_at' => 'datetime',
+        'release_notice_sent_at' => 'datetime',
     ];
 
     public function identity(): BelongsTo
@@ -55,5 +69,25 @@ class BusinessMessagingNumber extends Model
     public function isActive(): bool
     {
         return $this->status === BusinessMessagingNumberStatus::Active;
+    }
+
+    public function isSuspended(): bool
+    {
+        return $this->status === BusinessMessagingNumberStatus::Suspended;
+    }
+
+    public function isInGracePeriod(): bool
+    {
+        return $this->isSuspended() && $this->grace_expires_at !== null && $this->grace_expires_at->isFuture();
+    }
+
+    public function graceHasExpired(): bool
+    {
+        return $this->isSuspended() && $this->grace_expires_at !== null && ! $this->grace_expires_at->isFuture();
+    }
+
+    public function scopeSuspended(Builder $query): Builder
+    {
+        return $query->where('status', BusinessMessagingNumberStatus::Suspended->value);
     }
 }

@@ -54,8 +54,24 @@ class MessagingSchemaInvariantsTest extends TestCase
      * Naming the exact files here, and rolling back by `--path` instead of
      * `--step` (see test_the_slice_three_schema_survives_forward_rollback_and_replay()),
      * means this test keeps exercising precisely Slice 3 + Lane E's own
-     * migrations no matter how many further migrations land after them —
-     * this slice's, or any later one's.
+     * migrations regardless of how many UNRELATED migrations land after
+     * them.
+     *
+     * Phone Numbers + A2P lane correction — "unrelated" was too strong a
+     * claim. A later migration that adds its own foreign key ONTO
+     * business_messaging_identities or business_messaging_numbers (found by
+     * `grep -rl "on('business_messaging_numbers')\|on('business_messaging_identities')" database/migrations/`)
+     * is not unrelated: MySQL refuses to DROP TABLE business_messaging_numbers
+     * while such a row still references it, so that migration's own table
+     * must be rolled back first too, or this test's own rollback step fails
+     * with a foreign-key error — exactly what happened here once the
+     * Phone Numbers + A2P lane's port-out-requests and lifecycle-events
+     * tables started referencing it. Both are listed below for that reason.
+     * Laravel's own rollback ordering (by migration batch/timestamp, not by
+     * this array's order) already rolls a later-dated migration back before
+     * an earlier one, so simply including these two suffices — no manual
+     * reordering is required. The next migration that adds a new foreign
+     * key onto either of these two tables must be added here too.
      */
     private const SLICE_THREE_AND_LANE_E_MIGRATIONS = [
         'database/migrations/2026_09_12_100001_create_business_messaging_identities_table.php',
@@ -64,6 +80,8 @@ class MessagingSchemaInvariantsTest extends TestCase
         'database/migrations/2026_09_12_100004_create_business_usage_measurements_table.php',
         'database/migrations/2026_09_12_100005_create_messaging_webhook_rejections_table.php',
         'database/migrations/2026_09_12_100006_complete_legacy_ai_messaging_schema.php',
+        'database/migrations/2026_10_08_120000_create_business_messaging_number_port_out_requests_table.php',
+        'database/migrations/2026_10_09_120001_create_business_messaging_number_lifecycle_events_table.php',
     ];
 
     private function business(): Business
@@ -726,6 +744,8 @@ class MessagingSchemaInvariantsTest extends TestCase
                 'business_usage_measurements',
                 'messaging_webhook_rejections',
                 'ai_box_campaign_map',
+                'business_messaging_number_port_out_requests',
+                'business_messaging_number_lifecycle_events',
             ] as $table) {
                 $this->assertFalse(
                     Schema::connection($target)->hasTable($table),

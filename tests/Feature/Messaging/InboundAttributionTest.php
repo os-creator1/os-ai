@@ -181,12 +181,21 @@ class InboundAttributionTest extends TestCase
      * rescue any of them. The identity's own non-active states are covered
      * here too, since the same requirement reads on both sides of the
      * mapping.
+     *
+     * Messaging contract §13.2 correction (Phone Numbers + A2P lane,
+     * number-lifecycle slice) — Suspended is deliberately no longer in
+     * this list. "Inbound handling required by law or compliance is
+     * preserved through the grace period" means a Suspended number must
+     * still attribute; see test_a_suspended_number_still_attributes_inbound_during_grace()
+     * below for that corrected, opposite expectation. Pending and
+     * Released are unaffected by that correction and still fail closed
+     * here: a Pending number is not yet a real, confirmed mapping, and a
+     * Released one no longer belongs to anyone.
      */
     public function test_every_non_active_number_state_fails_closed(): void
     {
         foreach ([
             BusinessMessagingNumberStatus::Released,
-            BusinessMessagingNumberStatus::Suspended,
             BusinessMessagingNumberStatus::Pending,
         ] as $state) {
             DB::table('messaging_webhook_rejections')->delete();
@@ -207,6 +216,28 @@ class InboundAttributionTest extends TestCase
             );
             $this->assertGreaterThan(0, $this->rejectionCount('unknown_mapping'));
         }
+    }
+
+    /**
+     * Messaging contract §13.2 correction — a Suspended number "stops new
+     * paid outbound while retaining the number" (§13.3); it must keep
+     * accepting inbound (STOP/HELP and any other law- or
+     * compliance-required handling) throughout its grace period. Fixed in
+     * BusinessMessagingIdentityResolver::resolveByPhoneNumber(). The
+     * identity itself stays Active in this scenario — only the number is
+     * Suspended, exactly how NumberLifecycleManager::suspend() leaves it.
+     */
+    public function test_a_suspended_number_still_attributes_inbound_during_grace(): void
+    {
+        $business = $this->makeBusiness();
+        $identity = $this->attachIdentity($business);
+        $number = $this->attachNumber($identity, $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Suspended);
+
+        $this->postEvent($this->messageReceived($identity->messaging_profile_id, $number->phone_number, 'pm_suspended_inbound'))
+            ->assertOk()
+            ->assertJson(['status' => 'accepted']);
+
+        $this->assertSame(1, DB::table('business_messaging_operations')->count(), 'A Suspended number must still accept compliance-required inbound.');
     }
 
     public function test_every_non_active_identity_state_fails_closed_on_inbound(): void

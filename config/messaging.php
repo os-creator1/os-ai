@@ -38,4 +38,18 @@ return [
     'default_provider' => 'telnyx',
 
     'webhook_rejection_retention_days' => env('MESSAGING_WEBHOOK_REJECTION_RETENTION_DAYS', 30),
+
+    /*
+    | Phone Numbers + A2P lane — messaging contract §13.2/§28.2. The grace
+    | period is deliberately non-zero and never automatic-release: it only
+    | bounds how long a Suspended number may sit before an explicit,
+    | audited release decision becomes eligible (NumberLifecycleManager::release()
+    | still refuses before this elapses; nothing releases a number on its
+    | own). The advance-warning window is how far ahead of next_renewal_at
+    | this platform alerts a Business whose projected balance looks
+    | insufficient — a look-ahead notice, not the renewal attempt itself.
+    */
+    'number_renewal_grace_days' => env('MESSAGING_NUMBER_RENEWAL_GRACE_DAYS', 14),
+
+    'number_renewal_advance_warning_days' => env('MESSAGING_NUMBER_RENEWAL_ADVANCE_WARNING_DAYS', 7),
 ];
