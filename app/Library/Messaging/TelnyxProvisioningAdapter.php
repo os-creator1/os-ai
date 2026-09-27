@@ -44,15 +44,26 @@ use Illuminate\Support\Str;
  *   - POST /messaging_profiles                        CONFIRMED path.
  *   - POST /number_orders                              CONFIRMED path.
  *   - POST /10dlc/brand                                CONFIRMED path (10DLC endpoints
- *   - POST /10dlc/campaign                             live under the /10dlc/ prefix,
- *   - GET  /10dlc/campaign/{campaignId}                which the original Implementation
- *                                                      Round 1 code omitted — corrected
- *                                                      here). Response field
- *                                                      `campaignStatus` confirmed by
- *                                                      Telnyx's own "Get My Campaign"
- *                                                      API page; exact non-ACTIVE status
- *                                                      vocabulary beyond ACTIVE/FAILED is
- *                                                      NOT independently confirmed field-
+ *   - POST /10dlc/campaignBuilder                      live under the /10dlc/ prefix).
+ *   - GET  /10dlc/campaign/{campaignId}                Phone Numbers + A2P lane
+ *                                                      correction — campaign CREATION
+ *                                                      is a distinct resource,
+ *                                                      `campaignBuilder`, from campaign
+ *                                                      RETRIEVAL/management, `campaign/
+ *                                                      {campaignId}`; the original
+ *                                                      Implementation Round 1 code
+ *                                                      posted creation to the retrieval
+ *                                                      path, which is not how Telnyx's
+ *                                                      API is shaped. Verified directly
+ *                                                      against developers.telnyx.com's
+ *                                                      "Campaign Builder" and "Get My
+ *                                                      Campaign" API reference pages.
+ *                                                      Response field `campaignStatus`
+ *                                                      confirmed by Telnyx's own "Get
+ *                                                      My Campaign" API page; exact
+ *                                                      non-ACTIVE status vocabulary
+ *                                                      beyond ACTIVE/FAILED is NOT
+ *                                                      independently confirmed field-
  *                                                      by-field — mapped conservatively
  *                                                      (unrecognised values stay Pending,
  *                                                      never guessed Approved).
@@ -270,7 +281,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
             $brandId = (string) $brandResponse->json('data.brandId', $brandResponse->json('data.id'));
 
-            $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaign', [
+            $campaignResponse = $this->client()->post(self::API_BASE . '/10dlc/campaignBuilder', [
                 'brandId' => $brandId,
                 'usecase' => $submission->useCase,
                 'description' => $submission->useCase,
