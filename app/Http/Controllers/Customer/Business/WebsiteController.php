@@ -461,6 +461,64 @@ class WebsiteController extends CustomerBaseController
     }
 
     /**
+     * Reuses the SAME photos already selected onto the Gallery page —
+     * never a second selection UI, and never a photo the owner has not
+     * already chosen — onto any other page of this Website (typically
+     * the Photo Booth Services or Packages page). Idempotent: replaces
+     * an existing `gallery` section on the target page in place, or
+     * appends one, leaving every other section on that page untouched,
+     * mirroring storeGallery()'s own upsert exactly.
+     */
+    public function copyGalleryPhotosToPage(string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+        $page = $this->resolvePage($website, $pageUid);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        $galleryPage = $website->pages()->where('slug', 'gallery')->first();
+        $gallerySection = $galleryPage !== null
+            ? collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')
+            : null;
+        $items = $gallerySection['data']['items'] ?? [];
+
+        if (empty($items)) {
+            return redirect()->back()->with([
+                'status' => 'error',
+                'message' => 'Select photos for your Gallery page first, then reuse them here.',
+            ]);
+        }
+
+        $newSection = ['type' => 'gallery', 'data' => [
+            'heading' => $gallerySection['data']['heading'] ?? 'Photos',
+            'items' => $items,
+        ]];
+
+        $sections = collect($page->sections ?? []);
+        $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
+        $index === false ? $sections->push($newSection) : $sections->put($index, $newSection);
+
+        $this->draftPages->updatePage($website, $page, [
+            'title' => $page->title,
+            'slug' => $page->slug,
+            'is_home' => $page->is_home,
+            'sections' => $sections->values()->all(),
+            'seo_title' => $page->seo_title,
+            'meta_description' => $page->meta_description,
+            'noindex' => $page->noindex,
+        ]);
+
+        return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
+            'status' => 'success',
+            'message' => 'Gallery photos added to this page.',
+        ]);
+    }
+
+    /**
      * Creates the Gallery page the first time, or updates only its
      * `gallery` section thereafter — every other section already on that
      * page (if the owner added any) is left untouched. Every uid must

@@ -19,6 +19,12 @@
         </x-alert>
     @endif
 
+    @if ($page && in_array($page->slug, ['photo-booth-services', 'photo-booth-packages'], true))
+        <x-alert variant="accent" class="mb-3">
+            This page shows your saved {{ $page->slug === 'photo-booth-services' ? 'services' : 'packages' }} list. Edit an item's Description in the sections below, or add a Text section, for page-specific booth types, backdrops, props, and extras{{ $page->slug === 'photo-booth-packages' ? ", or what's included in each package" : '' }}. Edits here apply only to this page — they never change Home or your saved Business service/catalog records.
+        </x-alert>
+    @endif
+
     @if ($page)
         <x-card title="Photos for this site" class="mb-3">
             <p class="text-caption">Upload your own photos, then choose them in a section below. Describe what each photo shows for accessibility. Building a multi-photo Gallery page? <a href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Use the Photos screen</a> instead.</p>
