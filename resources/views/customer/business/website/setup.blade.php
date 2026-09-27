@@ -57,11 +57,11 @@
                     @endif
                 </li>
                 <li>
-                    @if ($reusable['location'] && $reusable['location']->city)
-                        <strong>Location</strong>: {{ $reusable['location']->city }} will appear in your contact details.
+                    @if ($reusable['location'])
+                        <strong>Location</strong>: Your public location @if ($reusable['location']->city) in {{ $reusable['location']->city }} @endif will appear in your contact details.
                     @else
-                        <strong>Location</strong>: no address saved yet.
-                        <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Add your location</a>.
+                        <strong>Location</strong>: no active public location is available.
+                        <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Review your locations</a>.
                     @endif
                 </li>
             </ul>

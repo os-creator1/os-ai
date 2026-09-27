@@ -23,13 +23,13 @@
         <x-card title="Photo Booth checklist" class="mb-3">
             <ul class="mb-2">
                 <li>
-                    Services: @if ($reusable['services']->isNotEmpty()) reused on your Services page ({{ $reusable['services']->pluck('name')->implode(', ') }}). @else none saved — add one during setup or from your business details. @endif
+                    Services: @if ($reusable['services']->isNotEmpty()) reused on your Services page ({{ $reusable['services']->pluck('name')->implode(', ') }}). @else none saved — describe your booth options in the page editor. @endif
                 </li>
                 <li>
                     Packages: @if ($reusable['catalog']->isNotEmpty()) reused on your Packages page ({{ $reusable['catalog']->pluck('name')->implode(', ') }}). @else none saved. <a href="{{ route('customer.workspaces.businesses.catalog.create', [$workspaceUid, $businessUid]) }}">Add a package</a>. @endif
                 </li>
                 <li>
-                    Location: @if ($reusable['location'] && $reusable['location']->city) {{ $reusable['location']->city }} is reused in your contact details. @else not saved. <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Add your location</a>. @endif
+                    Location: @if ($reusable['location']) Your public location{{ $reusable['location']->city ? ' in ' . $reusable['location']->city : '' }} is reused in your contact details. @else no active public location is available. <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Review your locations</a>. @endif
                 </li>
                 <li>
                     Photos: {{ $photoCount }} {{ $photoCount === 1 ? 'photo' : 'photos' }} uploaded.

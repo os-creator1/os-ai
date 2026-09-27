@@ -41,13 +41,17 @@ final class WebsiteStarterDraftService
      */
     public function reusableContent(Business $business): array
     {
+        $location = $business->primaryLocation()->first();
+
         return [
             'services' => $business->services()->where('status', BusinessServiceStatus::Active->value)
-                ->orderBy('sort_order')->get(),
+                ->orderBy('sort_order')->limit(12)->get(),
             'catalog' => CatalogItem::where('business_id', $business->id)
                 ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
-                ->orderBy('position')->get(),
-            'location' => $business->primaryLocation()->first(),
+                ->orderBy('position')->limit(12)->get(),
+            'location' => $location !== null && $location->isActive() && $location->public_address
+                ? $location
+                : null,
         ];
     }
 
