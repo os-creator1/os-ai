@@ -23,7 +23,7 @@
                         @endif
                     </div>
                 @endforeach
-                <button type="button" disabled>{{ $websiteForm['submit_label'] }}</button>
+                <button type="button" class="website-btn website-btn-primary" disabled>{{ $websiteForm['submit_label'] }}</button>
             </div>
         @else
             {{-- The page uid is part of the action URL itself, not a
@@ -45,7 +45,7 @@
                         @endif
                     </div>
                 @endforeach
-                <button type="submit">{{ $websiteForm['submit_label'] }}</button>
+                <button type="submit" class="website-btn website-btn-primary">{{ $websiteForm['submit_label'] }}</button>
             </form>
         @endif
     </section>
