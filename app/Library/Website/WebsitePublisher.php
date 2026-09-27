@@ -6,6 +6,7 @@ use App\Enums\Website\WebsiteStatus;
 use App\Events\Website\WebsitePublished;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
+use App\Models\WebsiteForm;
 use App\Models\WebsiteRevision;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -113,9 +114,10 @@ final class WebsitePublisher
         }
 
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
+        $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
         foreach ($pages as $page) {
-            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true);
+            $this->sectionValidator->validate($page->sections ?? [], $validAssetUids, true, $validFormUids);
         }
     }
 

@@ -113,6 +113,13 @@ class WebsiteMigrationsTest extends TestCase
             'website_revisions' => database_path('migrations/2026_09_07_130003_create_website_revisions_table.php'),
             'published_revision_id' => database_path('migrations/2026_09_07_130004_add_published_revision_id_to_websites_table.php'),
             'website_assets' => database_path('migrations/2026_09_07_130005_create_website_assets_table.php'),
+            // The Forms slice added two later tables that FK to `websites`
+            // (website_forms) and to `website_forms` itself
+            // (website_form_submissions). Dropping `websites` while either
+            // still exists would violate their foreign key, so this test's
+            // own isolation now has to unwind and rebuild them too.
+            'website_form_submissions' => database_path('migrations/2026_10_06_120001_create_website_form_submissions_table.php'),
+            'website_forms' => database_path('migrations/2026_10_06_120000_create_website_forms_table.php'),
         ];
 
         $websites = require $paths['websites'];
@@ -120,10 +127,19 @@ class WebsiteMigrationsTest extends TestCase
         $revisions = require $paths['website_revisions'];
         $publishedRevisionId = require $paths['published_revision_id'];
         $assets = require $paths['website_assets'];
+        $formSubmissions = require $paths['website_form_submissions'];
+        $forms = require $paths['website_forms'];
 
         try {
-            // Reverse order: assets, then the published_revision_id
-            // column/FK, then revisions, then pages, then websites.
+            // Reverse order: form submissions, then forms, then assets,
+            // then the published_revision_id column/FK, then revisions,
+            // then pages, then websites.
+            $formSubmissions->down();
+            $this->assertFalse(Schema::hasTable('website_form_submissions'));
+
+            $forms->down();
+            $this->assertFalse(Schema::hasTable('website_forms'));
+
             $assets->down();
             $this->assertFalse(Schema::hasTable('website_assets'));
 
@@ -141,22 +157,26 @@ class WebsiteMigrationsTest extends TestCase
             $this->assertFalse(Schema::hasTable('websites'));
         } finally {
             // Forward order: websites, pages, revisions,
-            // published_revision_id, assets — restore the schema so
-            // RefreshDatabase's transaction rollback for THIS test
-            // doesn't leave the next test file with a mismatched
-            // schema (these are raw DDL changes outside any
-            // transaction).
+            // published_revision_id, assets, forms, form submissions —
+            // restore the schema so RefreshDatabase's transaction
+            // rollback for THIS test doesn't leave the next test file
+            // with a mismatched schema (these are raw DDL changes
+            // outside any transaction).
             $websites->up();
             $pages->up();
             $revisions->up();
             $publishedRevisionId->up();
             $assets->up();
+            $forms->up();
+            $formSubmissions->up();
         }
 
         $this->assertTrue(Schema::hasTable('websites'));
         $this->assertTrue(Schema::hasTable('website_pages'));
         $this->assertTrue(Schema::hasTable('website_revisions'));
         $this->assertTrue(Schema::hasTable('website_assets'));
+        $this->assertTrue(Schema::hasTable('website_forms'));
+        $this->assertTrue(Schema::hasTable('website_form_submissions'));
         $this->assertTrue(Schema::hasColumn('websites', 'published_revision_id'));
     }
 }

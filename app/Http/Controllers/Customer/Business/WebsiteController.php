@@ -19,6 +19,7 @@ use App\Library\Website\WebsiteStarterDraftService;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Website;
+use App\Models\WebsiteForm;
 use App\Models\WebsitePage;
 use App\Models\WebsiteRevision;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -174,6 +175,7 @@ class WebsiteController extends CustomerBaseController
             'reusable' => $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null,
             'photoCount' => $isPhotoBooth ? $website->assets()->count() : null,
             'galleryPage' => $isPhotoBooth ? $website->pages()->where('slug', 'gallery')->first() : null,
+            'quoteForm' => $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->first() : null,
         ]);
     }
 
@@ -189,6 +191,7 @@ class WebsiteController extends CustomerBaseController
             'website' => $website,
             'page' => null,
             'assets' => $website->assets()->latest()->get(),
+            'forms' => $website->forms()->get(),
         ]);
     }
 
@@ -219,6 +222,7 @@ class WebsiteController extends CustomerBaseController
             'website' => $website,
             'page' => $page,
             'assets' => $website->assets()->latest()->get(),
+            'forms' => $website->forms()->get(),
         ]);
     }
 
@@ -270,6 +274,13 @@ class WebsiteController extends CustomerBaseController
             'alt_text' => $asset->alt_text,
         ])->all();
 
+        $formsByUid = $website->forms()->get()->keyBy('uid')->map(fn ($form) => [
+            'uid' => $form->uid,
+            'name' => $form->name,
+            'fields' => $form->fields,
+            'submit_label' => $form->submit_label,
+        ])->all();
+
         // Contract §19 — preview renders the CURRENT DRAFT, never the
         // published revision. Normalized to the exact same shape the
         // public renderer feeds public.website.page (contract §7.3's
@@ -290,6 +301,7 @@ class WebsiteController extends CustomerBaseController
             ],
             'sections' => $page->sections ?? [],
             'assetsByUid' => $assetsByUid,
+            'formsByUid' => $formsByUid,
             'isPreview' => true,
             'navigationPages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get()->map(fn ($candidate) => [
                 'uid' => $candidate->uid,

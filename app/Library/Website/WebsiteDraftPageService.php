@@ -4,6 +4,7 @@ namespace App\Library\Website;
 
 use App\Models\Website;
 use App\Models\WebsiteAsset;
+use App\Models\WebsiteForm;
 use App\Models\WebsitePage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator as ValidatorFacade;
@@ -175,8 +176,9 @@ final class WebsiteDraftPageService
 
         $sections = $attributes['sections'] ?? ($existing->sections ?? []);
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
+        $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
-        $this->sectionValidator->validate($sections, $validAssetUids, true);
+        $this->sectionValidator->validate($sections, $validAssetUids, true, $validFormUids);
 
         return [
             'title' => $attributes['title'],

@@ -5,6 +5,7 @@ namespace App\Library\Website;
 use App\Enums\Website\WebsiteSectionType;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
+use App\Models\WebsiteForm;
 use Carbon\Carbon;
 
 /**
@@ -28,14 +29,19 @@ final class WebsiteSnapshotBuilder
         $business = $website->business;
         $pages = $website->pages()->orderBy('sort_order')->orderBy('id')->get();
         $referencedAssetUids = [];
+        $referencedFormUids = [];
 
-        $pageSnapshots = $pages->map(function ($page) use ($business, &$referencedAssetUids) {
-            $sections = collect($page->sections ?? [])->map(function ($section) use ($business, &$referencedAssetUids) {
+        $pageSnapshots = $pages->map(function ($page) use ($business, &$referencedAssetUids, &$referencedFormUids) {
+            $sections = collect($page->sections ?? [])->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
                 $type = WebsiteSectionType::tryFrom($section['type'] ?? '');
                 $data = $section['data'] ?? [];
 
                 foreach ($this->assetUidsIn($type, $data) as $uid) {
                     $referencedAssetUids[$uid] = true;
+                }
+
+                if ($type === WebsiteSectionType::Form && ! empty($data['form_uid'])) {
+                    $referencedFormUids[$data['form_uid']] = true;
                 }
 
                 if ($type === WebsiteSectionType::ContactDetails) {
@@ -72,6 +78,20 @@ final class WebsiteSnapshotBuilder
                 'alt_text' => $asset->alt_text,
             ])->values()->all();
 
+        // Embedded, not live-read: a `form` section's rendered fields and a
+        // submission's validation rules both come from this frozen copy, so
+        // editing a form after publishing never changes what an already-
+        // published page shows or accepts until the next publish.
+        $forms = WebsiteForm::where('website_id', $website->id)
+            ->whereIn('uid', array_keys($referencedFormUids))
+            ->get()
+            ->map(fn ($form) => [
+                'uid' => $form->uid,
+                'name' => $form->name,
+                'fields' => $form->fields,
+                'submit_label' => $form->submit_label,
+            ])->values()->all();
+
         return [
             'schema_version' => self::SCHEMA_VERSION,
             'generated_at' => Carbon::now()->toIso8601String(),
@@ -81,6 +101,7 @@ final class WebsiteSnapshotBuilder
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
+            'forms' => $forms,
         ];
     }
 

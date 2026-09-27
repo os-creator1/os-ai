@@ -73,7 +73,7 @@
             @foreach ($sections as $section)
                 @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
-                    @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? []])
+                    @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
                 @endif
             @endforeach
         </div>

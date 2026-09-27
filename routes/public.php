@@ -336,4 +336,13 @@
             ->missing(fn () => abort(404));
         Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page')
             ->missing(fn () => abort(404));
+
+        // Forms slice — the one public mutation. 10/minute matches the
+        // existing public booking and document-sign mutation limits.
+        // {pageUid} names the exact page the visitor was actually on — the
+        // same form can appear on more than one page, so the form_uid
+        // alone cannot identify which one a given submission came from.
+        Route::post('{website:public_id}/forms/{formUid}/{pageUid}', 'Public\WebsiteFormController@submit')->whereUuid('website')
+            ->middleware('throttle:10,1')->name('public.website.form.submit')
+            ->missing(fn () => abort(404));
     });

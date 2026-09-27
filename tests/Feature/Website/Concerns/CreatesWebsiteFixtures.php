@@ -145,6 +145,7 @@ trait CreatesWebsiteFixtures
             'cta' => ['heading' => 'Get in touch', 'body' => null, 'buttons' => [['label' => 'Contact us', 'url' => 'https://example.test/contact']]],
             'contact_details' => ['show_phone' => true, 'show_email' => true, 'show_address' => true],
             'gallery' => ['heading' => 'Gallery', 'items' => [['image' => null]]],
+            'form' => ['heading' => 'Get a quote', 'form_uid' => null],
             default => throw new \InvalidArgumentException("Unknown section type: {$type}"),
         };
     }
