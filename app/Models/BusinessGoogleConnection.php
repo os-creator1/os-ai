@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
@@ -33,6 +34,7 @@ class BusinessGoogleConnection extends Model
     protected $fillable = [
         'uid',
         'business_id',
+        'product',
         'state',
         'refresh_token_encrypted',
         'granted_scopes',
@@ -55,6 +57,7 @@ class BusinessGoogleConnection extends Model
     ];
 
     protected $casts = [
+        'product' => GoogleConnectionProduct::class,
         'state' => GoogleConnectionState::class,
         'refresh_token_encrypted' => 'encrypted',
         'oauth_state_expires_at' => 'datetime',

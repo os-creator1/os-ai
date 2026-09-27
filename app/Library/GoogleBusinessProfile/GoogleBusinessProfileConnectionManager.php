@@ -3,6 +3,7 @@
 namespace App\Library\GoogleBusinessProfile;
 
 use App\DTO\GoogleBusinessProfile\GoogleTokenGrant;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnected;
@@ -54,6 +55,20 @@ use LogicException;
  */
 final class GoogleBusinessProfileConnectionManager
 {
+    /**
+     * SEO Contract 18 §7.3 — this class is, by name and by every existing
+     * caller, exclusively the Business Profile manager: it never reads or
+     * writes a Search Console row, today or after this sub-slice.
+     * Hardcoding the product here (rather than threading a parameter
+     * through every one of this class's public methods and every one of
+     * their callers) is what keeps this refactor genuinely
+     * behavior-preserving — no public signature here changes — while
+     * still making the underlying query itself product-scoped, the actual
+     * thing the hard gate requires: a `business_google_connections` read
+     * or write that can only ever see or create a `business_profile` row.
+     */
+    private const PRODUCT = GoogleConnectionProduct::BusinessProfile;
+
     public function __construct(
         private readonly GoogleBusinessProfileReadClient $client,
         private readonly GoogleOAuthStateSigner $stateSigner,
@@ -65,7 +80,10 @@ final class GoogleBusinessProfileConnectionManager
 
     public function findForBusiness(Business $business): ?BusinessGoogleConnection
     {
-        return BusinessGoogleConnection::query()->where('business_id', $business->id)->first();
+        return BusinessGoogleConnection::query()
+            ->where('business_id', $business->id)
+            ->where('product', self::PRODUCT->value)
+            ->first();
     }
 
     /**
@@ -163,6 +181,7 @@ final class GoogleBusinessProfileConnectionManager
         try {
             return BusinessGoogleConnection::create([
                 'business_id' => $business->id,
+                'product' => self::PRODUCT,
                 'state' => GoogleConnectionState::Pending,
                 'connected_by_user_id' => $actorUserId,
             ]);
