@@ -3,6 +3,7 @@
 namespace App\Library\GoogleBusinessProfile;
 
 use App\DTO\GoogleBusinessProfile\GoogleTokenGrant;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileConnected;
@@ -54,6 +55,20 @@ use LogicException;
  */
 final class GoogleBusinessProfileConnectionManager
 {
+    /**
+     * SEO Contract 18 §7.3 — this class is, by name and by every existing
+     * caller, exclusively the Business Profile manager: it never reads or
+     * writes a Search Console row, today or after this sub-slice.
+     * Hardcoding the product here (rather than threading a parameter
+     * through every one of this class's public methods and every one of
+     * their callers) is what keeps this refactor genuinely
+     * behavior-preserving — no public signature here changes — while
+     * still making the underlying query itself product-scoped, the actual
+     * thing the hard gate requires: a `business_google_connections` read
+     * or write that can only ever see or create a `business_profile` row.
+     */
+    private const PRODUCT = GoogleConnectionProduct::BusinessProfile;
+
     public function __construct(
         private readonly GoogleBusinessProfileReadClient $client,
         private readonly GoogleOAuthStateSigner $stateSigner,
@@ -65,7 +80,47 @@ final class GoogleBusinessProfileConnectionManager
 
     public function findForBusiness(Business $business): ?BusinessGoogleConnection
     {
-        return BusinessGoogleConnection::query()->where('business_id', $business->id)->first();
+        return BusinessGoogleConnection::query()
+            ->where('business_id', $business->id)
+            ->where('product', self::PRODUCT->value)
+            ->first();
+    }
+
+    /**
+     * SEO Contract 18 §7.3 — the product guard for every method that is
+     * HANDED a connection rather than looking one up.
+     *
+     * WHY A SCOPED LOOKUP IS NOT ENOUGH. findForBusiness() and
+     * createFirstConnection() can only ever see or create a
+     * `business_profile` row, which protects the paths that start here. It
+     * protects nothing on the paths that start with a caller's own row: a
+     * controller, job or future Search Console code holding a
+     * `search_console` connection could hand it to revoke(), disconnect()
+     * or accessTokenFor() and this class would happily wipe its refresh
+     * token or spend its grant. `business_google_connections` rows are the
+     * same shape for both products, so nothing downstream would object.
+     *
+     * The guard therefore runs FIRST in each such method — before any
+     * provider call, ledger entry, event or write — so a rejected call
+     * leaves the row and its token byte-for-byte untouched.
+     *
+     * LogicException, not a domain exception, and deliberately: a
+     * Search Console row reaching Business Profile code is a programming
+     * error with no customer-facing remedy, and it is the same shape the
+     * sibling invariant already uses in
+     * GoogleBusinessProfileBindingManager::bind().
+     */
+    private function assertBusinessProfileConnection(BusinessGoogleConnection $connection): void
+    {
+        if ($connection->product !== self::PRODUCT) {
+            throw new LogicException(sprintf(
+                'Google Business Profile code refused a [%s] connection; only [%s] rows may be operated on here.',
+                $connection->product instanceof GoogleConnectionProduct
+                    ? $connection->product->value
+                    : (string) $connection->product,
+                self::PRODUCT->value,
+            ));
+        }
     }
 
     /**
@@ -163,6 +218,7 @@ final class GoogleBusinessProfileConnectionManager
         try {
             return BusinessGoogleConnection::create([
                 'business_id' => $business->id,
+                'product' => self::PRODUCT,
                 'state' => GoogleConnectionState::Pending,
                 'connected_by_user_id' => $actorUserId,
             ]);
@@ -183,6 +239,8 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function attemptBelongsToActor(BusinessGoogleConnection $connection, int $actorUserId): bool
     {
+        $this->assertBusinessProfileConnection($connection);
+
         return $connection->connected_by_user_id !== null
             && (int) $connection->connected_by_user_id === $actorUserId;
     }
@@ -200,6 +258,8 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function completeConnect(BusinessGoogleConnection $connection, string $code, int $actorUserId): void
     {
+        $this->assertBusinessProfileConnection($connection);
+
         $this->oauthConfig->assertUsable();
 
         $operation = $this->ledger->open(
@@ -265,6 +325,8 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function accessTokenFor(BusinessGoogleConnection $connection): string
     {
+        $this->assertBusinessProfileConnection($connection);
+
         if (! $connection->isActive() || ! $connection->hasStoredAuthorization()) {
             throw GoogleBusinessProfileProviderException::invalidGrant();
         }
@@ -283,6 +345,7 @@ final class GoogleBusinessProfileConnectionManager
 
         DB::table('business_google_connections')
             ->where('id', $connection->id)
+            ->where('product', self::PRODUCT->value)
             ->update(['last_refreshed_at' => now(), 'failure_classification' => null, 'updated_at' => now()]);
 
         $connection->refresh();
@@ -299,6 +362,8 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function revoke(BusinessGoogleConnection $connection): void
     {
+        $this->assertBusinessProfileConnection($connection);
+
         if ($connection->state === GoogleConnectionState::Revoked) {
             return;
         }
@@ -323,6 +388,8 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function disconnect(BusinessGoogleConnection $connection, ?int $actorUserId): void
     {
+        $this->assertBusinessProfileConnection($connection);
+
         $businessId = (int) $connection->business_id;
 
         DB::transaction(function () use ($connection) {
@@ -360,10 +427,13 @@ final class GoogleBusinessProfileConnectionManager
      */
     public function claimRefresh(BusinessGoogleConnection $connection, int $staleAfterSeconds = 300): bool
     {
+        $this->assertBusinessProfileConnection($connection);
+
         $now = now();
 
         $affected = DB::table('business_google_connections')
             ->where('id', $connection->id)
+            ->where('product', self::PRODUCT->value)
             ->where(function ($query) use ($now, $staleAfterSeconds) {
                 $query->whereNull('refresh_claimed_at')
                     ->orWhere('refresh_claimed_at', '<', $now->copy()->subSeconds($staleAfterSeconds));
@@ -375,15 +445,21 @@ final class GoogleBusinessProfileConnectionManager
 
     public function releaseRefreshClaim(BusinessGoogleConnection $connection): void
     {
+        $this->assertBusinessProfileConnection($connection);
+
         DB::table('business_google_connections')
             ->where('id', $connection->id)
+            ->where('product', self::PRODUCT->value)
             ->update(['refresh_claimed_at' => null, 'updated_at' => now()]);
     }
 
     public function markFailure(BusinessGoogleConnection $connection, GoogleBusinessProfileProviderException $exception): void
     {
+        $this->assertBusinessProfileConnection($connection);
+
         DB::table('business_google_connections')
             ->where('id', $connection->id)
+            ->where('product', self::PRODUCT->value)
             ->update(['failure_classification' => $exception->classification, 'updated_at' => now()]);
 
         $connection->refresh();
@@ -431,6 +507,7 @@ final class GoogleBusinessProfileConnectionManager
 
         $affected = DB::table('business_google_connections')
             ->where('id', $connection->id)
+            ->where('product', self::PRODUCT->value)
             ->where('lock_version', $expectedVersion)
             ->update(array_merge($attributes, [
                 'state' => $target->value,

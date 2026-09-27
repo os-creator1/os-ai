@@ -2,6 +2,7 @@
 
 namespace App\Library\GoogleBusinessProfile;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileLocationBound;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileLocationUnbound;
@@ -15,6 +16,7 @@ use App\Models\BusinessGoogleOperation;
 use App\Models\BusinessLocation;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use LogicException;
 
 /**
  * GBP Slice A contract §19.2 — the exact bind sequence, and the only place
@@ -53,6 +55,15 @@ final class GoogleBusinessProfileBindingManager
         string $locationResourceName,
         int $actorUserId,
     ): BusinessGoogleLocation {
+        // SEO Contract 18 §7.3 — business_google_locations' composite FK
+        // (business_google_connection_id, business_id) does not encode
+        // product, so this is the one place that invariant is enforced in
+        // code (also proved by test): a binding may only ever reference a
+        // business_profile connection.
+        if ($connection->product !== GoogleConnectionProduct::BusinessProfile) {
+            throw new LogicException('A business_google_locations row may only reference a business_profile connection.');
+        }
+
         $mask = $this->readMask->forLocation($location);
         $addressPermitted = $this->readMask->addressPermittedForLocation($location);
 

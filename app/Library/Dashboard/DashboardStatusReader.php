@@ -2,6 +2,7 @@
 
 namespace App\Library\Dashboard;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -53,7 +54,17 @@ final class DashboardStatusReader
             ->leftJoin('business_usage_wallets as w', 'w.business_id', '=', 'b.id')
             ->leftJoin('currencies as c', 'c.id', '=', 'w.currency_id')
             ->leftJoin('websites as s', 's.business_id', '=', 'b.id')
-            ->leftJoin('business_google_connections as g', 'g.business_id', '=', 'b.id')
+            // SEO Contract 18 §7.3 — a Business can now hold more than one
+            // business_google_connections row (one per product). Scoping
+            // the join itself to business_profile (rather than filtering
+            // afterward) keeps a Business with no GBP connection at all
+            // correctly LEFT-JOINed to null, while never matching a
+            // search_console row — the same read this returns today,
+            // before any such row can exist.
+            ->leftJoin('business_google_connections as g', function ($join) {
+                $join->on('g.business_id', '=', 'b.id')
+                    ->where('g.product', '=', GoogleConnectionProduct::BusinessProfile->value);
+            })
             ->whereIn('b.id', $businessIds)
             ->select([
                 'b.id as business_id',

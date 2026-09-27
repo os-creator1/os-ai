@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Business;
 use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConcurrencyException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConfigurationException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
@@ -192,7 +193,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
 
         // Correction item 4 — there is no "reconnect a healthy connection"
         // path. Refusing here means no state change and no provider call.
-        $existing = $this->connectionRepository->findForBusiness($business);
+        $existing = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($existing !== null && $existing->isActive()) {
             return $this->redirectWithError($workspaceUid, $businessUid, 'This business is already connected to Google. Disconnect first to connect a different account.');
@@ -252,6 +253,17 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
+        // 1b — SEO Contract 18 §7.3: "the one fixed callback branches on
+        // [the product] after full state revalidation" — this is that
+        // branch. This controller is exclusively the Business Profile
+        // callback; a state genuinely signed for a different product (none
+        // can exist yet — Search Console issues no states until Sub-slice
+        // C) is refused here, before any tenant data is touched, exactly
+        // like every other malformed-state case.
+        if ($payload['p'] !== GoogleConnectionProduct::BusinessProfile->value) {
+            abort(404);
+        }
+
         // 2 — Business and connection come ONLY from the signed state.
         $business = Business::query()->find($payload['b']);
 
@@ -259,7 +271,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($connection === null) {
             abort(404);
@@ -319,7 +331,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
         }
 
         // 6 — atomic, single-use consumption.
-        if (! $this->stateSigner->consume((int) $business->id, $payload['n'])) {
+        if (! $this->stateSigner->consume((int) $business->id, GoogleConnectionProduct::BusinessProfile, $payload['n'])) {
             abort(404);
         }
 
@@ -370,7 +382,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
         $this->authorize('manage_google_business_profile');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($connection === null || ! $connection->isActive()) {
             return $this->redirectWithError($workspaceUid, $businessUid, 'Connect a Google account first.');
@@ -429,7 +441,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $demo;
         }
 
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($connection === null || ! $connection->isActive()) {
             return $this->redirectWithError($workspaceUid, $businessUid, 'Connect a Google account first.');
@@ -517,7 +529,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $demo;
         }
 
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($connection === null) {
             return redirect()->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
@@ -553,7 +565,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $demo;
         }
 
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         if ($connection === null || ! $connection->isActive()) {
             return $this->redirectWithError($workspaceUid, $businessUid, 'Connect a Google account first.');
@@ -675,7 +687,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function overviewData(string $workspaceUid, string $businessUid, Business $business): array
     {
-        $connection = $this->connectionRepository->findForBusiness($business);
+        $connection = $this->connectionRepository->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
 
         return [
             'workspaceUid' => $workspaceUid,

@@ -3,8 +3,10 @@
 namespace App\Library\GoogleBusinessProfile;
 
 use App\DTO\GoogleBusinessProfile\GoogleLocationCandidate;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
+use LogicException;
 
 /**
  * GBP Slice A contract §19.2 — REQUEST-SCOPED PROOF that the
@@ -48,6 +50,14 @@ final class GoogleBusinessProfileCandidateTokenSigner
 
     public function issue(Business $business, BusinessGoogleConnection $connection, int $actorUserId, GoogleLocationCandidate $candidate): string
     {
+        // SEO Contract 18 §7.3 — fail closed before ANY provider call or
+        // write: a `search_console` row handed to Business Profile code is
+        // a programming error, not a customer condition. Same shape as
+        // GoogleBusinessProfileBindingManager::bind().
+        if ($connection->product !== GoogleConnectionProduct::BusinessProfile) {
+            throw new LogicException('Google Business Profile code may only operate on a business_profile connection.');
+        }
+
         $payload = [
             'b' => (int) $business->id,
             'c' => (int) $connection->id,
@@ -71,6 +81,14 @@ final class GoogleBusinessProfileCandidateTokenSigner
      */
     public function verify(?string $token, Business $business, BusinessGoogleConnection $connection, int $actorUserId): ?array
     {
+        // SEO Contract 18 §7.3 — fail closed before ANY provider call or
+        // write: a `search_console` row handed to Business Profile code is
+        // a programming error, not a customer condition. Same shape as
+        // GoogleBusinessProfileBindingManager::bind().
+        if ($connection->product !== GoogleConnectionProduct::BusinessProfile) {
+            throw new LogicException('Google Business Profile code may only operate on a business_profile connection.');
+        }
+
         if (! is_string($token) || $token === '') {
             return null;
         }

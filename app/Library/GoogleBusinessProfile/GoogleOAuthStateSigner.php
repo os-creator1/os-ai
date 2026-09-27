@@ -2,6 +2,7 @@
 
 namespace App\Library\GoogleBusinessProfile;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Models\BusinessGoogleConnection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -10,9 +11,20 @@ use Illuminate\Support\Str;
  * GBP Slice A contract §9.4 — the OAuth state: signed, expiring,
  * single-use, and carrying the MINIMUM identifiers only.
  *
- * The payload is exactly {"b":<business_id>,"n":"<nonce>","e":<unix ts>}.
- * It carries NO redirect_to, NO return, NO URL of any kind and NO user id
+ * The payload is exactly
+ * {"b":<business_id>,"p":"<product>","n":"<nonce>","e":<unix ts>}. It
+ * carries NO redirect_to, NO return, NO URL of any kind and NO user id
  * (contract §9.4, §17.3 — there is no open redirect anywhere in GBP).
+ *
+ * SEO Contract 18 §7.3 — the product travels IN the signed state (`p`),
+ * read from the connection row itself at issue time, never supplied by
+ * the caller. The one fixed OAuth callback (Google matches redirect_uri
+ * exactly, so it cannot vary by product any more than it can vary by
+ * tenant) reads this field, after full state revalidation, to know which
+ * product's connection it is completing — and consume() re-checks it
+ * against the actual row, so a state issued for one product can never be
+ * replayed to complete, or even be recognized as belonging to, the other
+ * (test T-SEO-B-REPLAY).
  *
  * Signing uses the application key via hash_hmac, so a tampered payload
  * fails verification. Comparison is hash_equals to avoid a timing oracle.
@@ -45,6 +57,7 @@ final class GoogleOAuthStateSigner
 
         $payload = [
             'b' => (int) $connection->business_id,
+            'p' => $connection->product->value,
             'n' => $nonce,
             'e' => $expiresAt->getTimestamp(),
         ];
@@ -59,7 +72,7 @@ final class GoogleOAuthStateSigner
      * null. Does NOT consume the nonce and does NOT look at the database —
      * the caller consumes only after every tenancy check has passed.
      *
-     * @return array{b:int, n:string, e:int}|null
+     * @return array{b:int, p:string, n:string, e:int}|null
      */
     public function verify(?string $state): ?array
     {
@@ -86,10 +99,15 @@ final class GoogleOAuthStateSigner
         }
 
         $businessId = $decoded['b'] ?? null;
+        $product = $decoded['p'] ?? null;
         $nonce = $decoded['n'] ?? null;
         $expiresAt = $decoded['e'] ?? null;
 
-        if (! is_int($businessId) || ! is_string($nonce) || ! is_int($expiresAt)) {
+        if (! is_int($businessId) || ! is_string($product) || ! is_string($nonce) || ! is_int($expiresAt)) {
+            return null;
+        }
+
+        if (GoogleConnectionProduct::tryFrom($product) === null) {
             return null;
         }
 
@@ -97,21 +115,23 @@ final class GoogleOAuthStateSigner
             return null;
         }
 
-        return ['b' => $businessId, 'n' => $nonce, 'e' => $expiresAt];
+        return ['b' => $businessId, 'p' => $product, 'n' => $nonce, 'e' => $expiresAt];
     }
 
     /**
      * Contract §9.4 — ATOMIC single-use consumption. Returns true only
      * when this call is the one that consumed the nonce.
      *
-     * The WHERE clause re-checks the nonce, the owning Business and the
-     * stored expiry together, so a replay, a nonce issued for a different
-     * Business, or an expired row all affect zero rows.
+     * The WHERE clause re-checks the nonce, the owning Business, the
+     * PRODUCT and the stored expiry together, so a replay, a nonce issued
+     * for a different Business, a nonce issued for the OTHER product on
+     * the very same Business, or an expired row all affect zero rows.
      */
-    public function consume(int $businessId, string $nonce): bool
+    public function consume(int $businessId, GoogleConnectionProduct $product, string $nonce): bool
     {
         $affected = DB::table('business_google_connections')
             ->where('business_id', $businessId)
+            ->where('product', $product->value)
             ->where('oauth_state_nonce', $nonce)
             ->where('oauth_state_expires_at', '>', now())
             ->update([

@@ -5,6 +5,7 @@ namespace App\Library\GoogleBusinessProfile;
 use App\DTO\GoogleBusinessProfile\GoogleLocationStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\GoogleBusinessProfile\GoogleComparisonStatus;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
@@ -94,7 +95,9 @@ final class GoogleBusinessProfileStatusReader
             ->filter(fn ($location) => isset($accessibleIds[(int) $location->id]))
             ->values();
 
-        $connection = $this->connections->findForBusiness($business);
+        // This reader is GBP-only (contract §37.2): SEO's read is scoped to
+        // business_profile until a future slice adds Search Console.
+        $connection = $this->connections->findForBusiness($business, GoogleConnectionProduct::BusinessProfile);
         $bindingsByLocation = $this->bindings->allForBusinessKeyedByLocationId($business);
 
         $statuses = [];
