@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Messaging;
 
+use App\Helpers\Helper;
 use App\Library\Messaging\ProvisioningIncidentRecorder;
 use App\Models\AppConfig;
 use App\Models\Business;
@@ -152,6 +153,7 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $admin = $this->actingAsAdmin();
 
         $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
             'resolution_note' => 'Confirmed in Telnyx dashboard: number pn_fixture_1 is attached to mp_fixture_1. Re-ran attachNumber() manually.',
         ])
             ->assertRedirect(route('admin.messaging-provisioning-incidents.index'))
@@ -172,8 +174,45 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $incident = $this->recordIncident($business);
         $this->actingAsAdmin();
 
-        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [])
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
+        ])
             ->assertSessionHasErrors('resolution_note');
+
+        $this->assertNull($incident->fresh()->resolved_at);
+    }
+
+    /**
+     * Item 2 of the review — 'reconciliation_confirmed' is a human
+     * attestation that the operator personally checked the Telnyx resource
+     * and this platform's own records, distinct from and required alongside
+     * the free-text note describing what was checked.
+     */
+    public function test_resolving_an_incident_requires_the_reconciliation_confirmation_when_omitted(): void
+    {
+        $business = $this->makeBusiness();
+        $incident = $this->recordIncident($business);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'resolution_note' => 'Checked Telnyx dashboard but forgot to tick the box.',
+        ])
+            ->assertSessionHasErrors('reconciliation_confirmed');
+
+        $this->assertNull($incident->fresh()->resolved_at, 'A note alone, without the confirmation, must never resolve an incident.');
+    }
+
+    public function test_resolving_an_incident_requires_the_reconciliation_confirmation_to_be_truthy_not_merely_present(): void
+    {
+        $business = $this->makeBusiness();
+        $incident = $this->recordIncident($business);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '0',
+            'resolution_note' => 'The field is present but unchecked.',
+        ])
+            ->assertSessionHasErrors('reconciliation_confirmed');
 
         $this->assertNull($incident->fresh()->resolved_at);
     }
@@ -217,6 +256,7 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $admin = $this->actingAsAdmin();
 
         $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
             'resolution_note' => 'First reconciliation: verified with Telnyx support.',
         ])->assertSessionHas('flash_success');
 
@@ -234,6 +274,7 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
         $this->actingAs($secondAdmin);
 
         $this->post(route('admin.messaging-provisioning-incidents.resolve', $incident->id), [
+            'reconciliation_confirmed' => '1',
             'resolution_note' => 'Second attempt — should never land.',
         ])
             ->assertRedirect(route('admin.messaging-provisioning-incidents.index'))
@@ -265,5 +306,123 @@ class MessagingProvisioningIncidentReconciliationTest extends TestCase
     public function test_resolving_a_nonexistent_incident_updates_nothing(): void
     {
         $this->assertSame(0, $this->recorder()->resolve(999999, 1, 'No such incident.'));
+    }
+
+    // =================================================================
+    // Item 2 of the review — the UI is explicit that this is a human
+    // attestation, never an automated Telnyx check.
+    // =================================================================
+
+    public function test_the_index_page_presents_resolution_as_a_human_attestation_not_an_automated_check(): void
+    {
+        $business = $this->makeBusiness();
+        $incident = $this->recordIncident($business);
+        $this->actingAsAdmin();
+
+        $html = (string) $this->get(route('admin.messaging-provisioning-incidents.index'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('name="reconciliation_confirmed"', $html);
+        $this->assertStringContainsString('checked this number/profile in Telnyx', $html);
+        $this->assertStringContainsString('the app has not verified Telnyx on your behalf', $html);
+        $this->assertMatchesRegularExpression(
+            '/name="reconciliation_confirmed"[^>]*required/',
+            $html,
+            'The confirmation checkbox must be required client-side, not only server-side.',
+        );
+    }
+
+    // =================================================================
+    // Item 1 of the review — a discoverable admin-menu link, bounded by the
+    // same authorization the route itself enforces.
+    // =================================================================
+
+    /**
+     * @return array<int, object>
+     */
+    private function usageBillingSubmenu(): array
+    {
+        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Usage Billing')['submenu'] ?? [];
+
+        return json_decode(json_encode($submenu));
+    }
+
+    public function test_an_administrator_can_find_the_incident_list_link_in_the_admin_menu(): void
+    {
+        $this->actingAsAdmin();
+
+        $html = view('panels.submenu', ['menu' => $this->usageBillingSubmenu()])->render();
+
+        $this->assertStringContainsString(url(config('app.admin_path') . '/messaging-provisioning-incidents'), $html);
+        $this->assertStringContainsString('Messaging Provisioning Incidents', $html);
+    }
+
+    public function test_a_customer_cannot_find_the_incident_list_link_in_the_admin_menu_even_with_backend_permissions(): void
+    {
+        $customer = $this->createCustomer();
+        $this->withSession(['permissions' => collect(['access backend', 'access_backend'])]);
+        $this->actingAs($customer->user);
+
+        $html = view('panels.submenu', ['menu' => $this->usageBillingSubmenu()])->render();
+
+        $this->assertStringNotContainsString(url(config('app.admin_path') . '/messaging-provisioning-incidents'), $html);
+    }
+
+    /**
+     * The realistic gap the review flagged: a non-admin backend account
+     * (is_admin false, is_customer false — e.g. limited support staff) can
+     * legitimately hold the 'access backend' permission and reach some
+     * admin pages, but must never see a link to a page
+     * EnsureUserIsAdministrator will refuse it.
+     */
+    public function test_a_non_admin_backend_account_cannot_find_the_incident_list_link_even_holding_the_access_backend_permission(): void
+    {
+        $staff = User::create([
+            'first_name' => 'Limited', 'last_name' => 'Staff',
+            'email' => 'limited-staff-' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        $this->withSession(['permissions' => collect(['access backend'])]);
+        $this->actingAs($staff);
+
+        $html = view('panels.submenu', ['menu' => $this->usageBillingSubmenu()])->render();
+
+        $this->assertStringNotContainsString(url(config('app.admin_path') . '/messaging-provisioning-incidents'), $html);
+        // And the sibling items untouched by this fix keep their prior,
+        // unrelated behaviour — this correction changes nothing for them.
+        $this->assertStringContainsString(url(config('app.admin_path') . '/provider-events'), $html);
+    }
+
+    // =================================================================
+    // Item 3 of the review — the recorder is the only resolution writer.
+    // =================================================================
+
+    public function test_the_resolution_columns_are_not_mass_assignable(): void
+    {
+        $model = new BusinessMessagingProvisioningIncident();
+
+        $this->assertFalse($model->isFillable('resolved_at'));
+        $this->assertFalse($model->isFillable('resolved_by_user_id'));
+        $this->assertFalse($model->isFillable('resolution_note'));
+    }
+
+    public function test_mass_assignment_cannot_resolve_an_incident_bypassing_the_recorder(): void
+    {
+        $business = $this->makeBusiness();
+
+        $incident = BusinessMessagingProvisioningIncident::create([
+            'business_id' => (int) $business->id,
+            'stage' => 'number_attach_failed_after_provider_success',
+            'phone_number' => '+14155550998',
+            // An attacker- or bug-shaped attempt to smuggle a resolution
+            // through mass assignment at creation time.
+            'resolved_at' => now(),
+            'resolved_by_user_id' => 999,
+            'resolution_note' => 'Smuggled through mass assignment.',
+        ]);
+
+        $incident->refresh();
+        $this->assertNull($incident->resolved_at);
+        $this->assertNull($incident->resolved_by_user_id);
+        $this->assertNull($incident->resolution_note);
     }
 }

@@ -12,10 +12,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * a customer-facing request path.
  *
  * Phone Numbers + A2P lane — resolved_by_user_id/resolution_note added so
- * resolution is auditable (who reconciled it, and what was verified), never
- * written directly through this model: ProvisioningIncidentRecorder::resolve()
- * is the one place that performs the idempotent conditional write, exactly
- * as record() already is for creation.
+ * resolution is auditable (who reconciled it, and what was verified). All
+ * three resolution columns (resolved_at, resolved_by_user_id,
+ * resolution_note) are deliberately absent from $fillable: the ONLY path
+ * that may ever write them is ProvisioningIncidentRecorder::resolve()'s
+ * idempotent conditional UPDATE, run through the query builder, not through
+ * this model's own mass assignment. Making them fillable here would let a
+ * second, uncontrolled write path bypass resolve()'s "already resolved"
+ * check and its auditability guarantee.
  */
 class BusinessMessagingProvisioningIncident extends Model
 {
@@ -29,9 +33,6 @@ class BusinessMessagingProvisioningIncident extends Model
         'phone_number',
         'number_type',
         'error_message',
-        'resolved_at',
-        'resolved_by_user_id',
-        'resolution_note',
     ];
 
     protected $casts = [
