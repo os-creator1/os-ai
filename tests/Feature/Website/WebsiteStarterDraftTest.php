@@ -163,6 +163,134 @@ class WebsiteStarterDraftTest extends TestCase
         $this->assertSame('Wedding booth package', $packages->sections[1]['data']['items'][0]['name']);
     }
 
+    public function test_home_is_a_concise_preview_of_the_same_services_the_dedicated_page_shows_in_full(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $longDescription = str_repeat('Real detail about this booth option. ', 8);
+        foreach (range(1, 5) as $i) {
+            BusinessService::create([
+                'business_id' => $business->id,
+                'name' => "Booth option {$i}",
+                'slug' => "booth-option-{$i}",
+                'description' => $longDescription,
+                'status' => BusinessServiceStatus::Active,
+                'sort_order' => $i,
+            ]);
+        }
+
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $home = $website->pages()->where('is_home', true)->firstOrFail();
+        $servicesPage = $website->pages()->where('slug', 'photo-booth-services')->firstOrFail();
+
+        $homeItems = collect($home->sections)->firstWhere('type', 'services')['data']['items'];
+        $fullItems = collect($servicesPage->sections)->firstWhere('type', 'services')['data']['items'];
+
+        // Same underlying records (same name, same order), but Home is a
+        // concise preview: fewer items, and each one truncated shorter
+        // than the dedicated page's full description of that exact
+        // saved record.
+        $this->assertCount(3, $homeItems);
+        $this->assertCount(5, $fullItems);
+        $this->assertSame($longDescription, $fullItems[0]['description']);
+        $this->assertNotSame($fullItems[0]['description'], $homeItems[0]['description']);
+        $this->assertTrue(strlen($homeItems[0]['description']) < strlen($fullItems[0]['description']));
+        $this->assertSame($fullItems[0]['name'], $homeItems[0]['name']);
+    }
+
+    public function test_home_is_a_concise_preview_of_the_same_packages_the_dedicated_page_shows_in_full(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $longDescription = str_repeat('Real detail about what this package includes. ', 6);
+        foreach (range(1, 5) as $i) {
+            CatalogItem::create([
+                'business_id' => $business->id,
+                'type' => CatalogItemType::Package,
+                'name' => "Package option {$i}",
+                'description' => $longDescription,
+                'position' => $i,
+                'created_by_user_id' => $customer->user_id,
+            ]);
+        }
+
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $home = $website->pages()->where('is_home', true)->firstOrFail();
+        $packagesPage = $website->pages()->where('slug', 'photo-booth-packages')->firstOrFail();
+
+        $homeItems = collect($home->sections)->first(fn ($section) => ($section['data']['heading'] ?? null) === 'Packages & products')['data']['items'];
+        $fullItems = collect($packagesPage->sections)->firstWhere('type', 'services')['data']['items'];
+
+        $this->assertCount(3, $homeItems);
+        $this->assertCount(5, $fullItems);
+        $this->assertSame($longDescription, $fullItems[0]['description']);
+        $this->assertNotSame($fullItems[0]['description'], $homeItems[0]['description']);
+        $this->assertTrue(strlen($homeItems[0]['description']) < strlen($fullItems[0]['description']));
+    }
+
+    public function test_a_page_specific_detail_added_to_the_services_page_survives_and_never_reaches_home(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        BusinessService::create([
+            'business_id' => $business->id,
+            'name' => 'Mirror booth',
+            'status' => BusinessServiceStatus::Active,
+            'sort_order' => 0,
+        ]);
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $servicesPage = $website->pages()->where('slug', 'photo-booth-services')->firstOrFail();
+        $home = $website->pages()->where('is_home', true)->firstOrFail();
+        $this->authenticateAsCustomer($customer);
+
+        $ownerDetail = 'We bring a floral backdrop, a vintage prop chest, and a strip-print station to every event.';
+        $sections = $servicesPage->sections;
+        $sections[] = ['type' => 'text', 'data' => ['heading' => 'What to expect', 'body' => $ownerDetail]];
+
+        $this->put(route('customer.workspaces.businesses.website.pages.update', [$workspace->uid, $business->uid, $servicesPage->uid]), [
+            'title' => $servicesPage->title,
+            'slug' => $servicesPage->slug,
+            'is_home' => 0,
+            'noindex' => 1,
+            'sections' => $sections,
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $lastSection = collect($servicesPage->fresh()->sections)->last();
+        $this->assertSame('text', $lastSection['type']);
+        $this->assertSame($ownerDetail, $lastSection['data']['body']);
+        $this->assertTrue($servicesPage->fresh()->noindex);
+
+        // Never leaked onto Home...
+        $this->assertStringNotContainsString($ownerDetail, json_encode($home->fresh()->sections));
+
+        // ...and re-running the (idempotent) starter-draft creation call
+        // does not reset or duplicate the page-specific edit.
+        $again = app(WebsiteStarterDraftService::class)->create($business, 'bold');
+        $this->assertSame($website->id, $again->id);
+        $this->assertSame($ownerDetail, collect($servicesPage->fresh()->sections)->last()['data']['body']);
+    }
+
+    public function test_the_services_page_editor_explains_how_to_add_real_detail(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        BusinessService::create([
+            'business_id' => $business->id,
+            'name' => 'Mirror booth',
+            'status' => BusinessServiceStatus::Active,
+            'sort_order' => 0,
+        ]);
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $servicesPage = $website->pages()->where('slug', 'photo-booth-services')->firstOrFail();
+        $home = $website->pages()->where('is_home', true)->firstOrFail();
+        $this->authenticateAsCustomer($customer);
+
+        $this->get(route('customer.workspaces.businesses.website.pages.edit', [$workspace->uid, $business->uid, $servicesPage->uid]))
+            ->assertOk()
+            ->assertSee('booth types, backdrops, props, and extras', false);
+
+        // Page-specific: the same guidance never shows while editing Home.
+        $this->get(route('customer.workspaces.businesses.website.pages.edit', [$workspace->uid, $business->uid, $home->uid]))
+            ->assertOk()
+            ->assertDontSee('booth types, backdrops, props, and extras', false);
+    }
+
     public function test_a_non_photo_booth_business_keeps_the_single_page_start(): void
     {
         [, $business] = $this->entitledTenant();

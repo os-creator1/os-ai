@@ -23,6 +23,21 @@ use Illuminate\Validation\ValidationException;
  */
 final class WebsiteStarterDraftService
 {
+    /**
+     * Home shows a short, concise preview of the business's saved
+     * services/catalog; the dedicated Services/Packages page is the
+     * fuller destination for the same underlying records — never
+     * different data, only a different depth, so a visitor who clicks
+     * through from Home actually finds more than they already saw.
+     */
+    private const PREVIEW_ITEM_LIMIT = 3;
+
+    private const FULL_ITEM_LIMIT = 12;
+
+    private const PREVIEW_DESCRIPTION_LENGTH = 140;
+
+    private const FULL_DESCRIPTION_LENGTH = 500;
+
     public static function isPhotoBooth(Business $business): bool
     {
         // Older businesses may store an empty industry string, which cannot
@@ -106,13 +121,15 @@ final class WebsiteStarterDraftService
 
     /**
      * Extra pages are assembled from the same canonical services/catalog
-     * builders `sections()` itself calls (never a copy of the Home
-     * page's own section array — a single source of truth for what
-     * counts as "the business's saved services/catalog" instead of two
-     * places that could drift). They remain noindex until the owner adds
-     * distinct page content (real photos, and their own description of
-     * booth types, backdrops, props and extras) through the ordinary
-     * page editor.
+     * builders `sections()` itself calls — a single source of truth for
+     * what counts as "the business's saved services/catalog" instead of
+     * two places that could drift — but with `full: true`, so the
+     * dedicated page carries the complete list and full descriptions
+     * while Home shows only a short preview of the same records
+     * (never a copy of Home's own, shorter section array). They remain
+     * noindex until the owner adds distinct page content (real photos,
+     * and their own description of booth types, backdrops, props and
+     * extras) through the ordinary page editor.
      */
     private function createPhotoBoothPages(Website $website, Business $business, array $homeSections): void
     {
@@ -123,13 +140,13 @@ final class WebsiteStarterDraftService
                 'title' => 'Services',
                 'slug' => 'photo-booth-services',
                 'hero' => 'Photo booth services',
-                'content' => $this->activeServicesSection($business),
+                'content' => $this->activeServicesSection($business, full: true),
             ],
             [
                 'title' => 'Packages',
                 'slug' => 'photo-booth-packages',
                 'hero' => 'Photo booth packages',
-                'content' => $this->activeCatalogSection($business),
+                'content' => $this->activeCatalogSection($business, full: true),
             ],
         ] as $page) {
             if ($page['content'] === null) {
@@ -157,22 +174,30 @@ final class WebsiteStarterDraftService
     }
 
     /**
+     * @param  bool  $full  false (Home) returns a short preview — fewer
+     *                      items, shorter descriptions; true (the dedicated Services page)
+     *                      returns the complete list with full descriptions. Same records
+     *                      either way, never different data.
      * @return ?array{type: string, data: array} null when there are no active saved services to show
      */
-    private function activeServicesSection(Business $business): ?array
+    private function activeServicesSection(Business $business, bool $full): ?array
     {
         $services = $business->services()->where('status', BusinessServiceStatus::Active->value)
-            ->orderBy('sort_order')->limit(12)->get();
+            ->orderBy('sort_order')
+            ->limit($full ? self::FULL_ITEM_LIMIT : self::PREVIEW_ITEM_LIMIT)
+            ->get();
 
         if ($services->isEmpty()) {
             return null;
         }
 
+        $descriptionLength = $full ? self::FULL_DESCRIPTION_LENGTH : self::PREVIEW_DESCRIPTION_LENGTH;
+
         return ['type' => 'services', 'data' => [
             'heading' => 'Our services',
             'items' => $services->map(fn ($service) => array_filter([
                 'name' => Str::limit($service->name, 120, ''),
-                'description' => $service->description ? Str::limit($service->description, 500, '') : null,
+                'description' => $service->description ? Str::limit($service->description, $descriptionLength, '') : null,
                 'price_label' => $service->starting_price !== null && $service->currency_code
                     ? Str::limit('From ' . strtoupper($service->currency_code) . ' ' . $service->starting_price, 40, '')
                     : null,
@@ -186,23 +211,31 @@ final class WebsiteStarterDraftService
      * promotes a dedicated Packages page into existing, since it isn't a
      * business's own saved catalog.
      *
+     * @param  bool  $full  false (Home) returns a short preview — fewer
+     *                      items, shorter descriptions; true (the dedicated Packages page)
+     *                      returns the complete list with full descriptions. Same records
+     *                      either way, never different data.
      * @return ?array{type: string, data: array}
      */
-    private function activeCatalogSection(Business $business): ?array
+    private function activeCatalogSection(Business $business, bool $full): ?array
     {
         $catalog = CatalogItem::where('business_id', $business->id)
             ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
-            ->orderBy('position')->limit(12)->get();
+            ->orderBy('position')
+            ->limit($full ? self::FULL_ITEM_LIMIT : self::PREVIEW_ITEM_LIMIT)
+            ->get();
 
         if ($catalog->isEmpty()) {
             return null;
         }
 
+        $descriptionLength = $full ? self::FULL_DESCRIPTION_LENGTH : self::PREVIEW_DESCRIPTION_LENGTH;
+
         return ['type' => 'services', 'data' => [
             'heading' => 'Packages & products',
             'items' => $catalog->map(fn ($item) => array_filter([
                 'name' => Str::limit($item->name, 120, ''),
-                'description' => $item->description ? Str::limit($item->description, 500, '') : null,
+                'description' => $item->description ? Str::limit($item->description, $descriptionLength, '') : null,
                 'price_label' => $item->price_minor !== null && $item->currency_code
                     ? Str::limit(CatalogMoney::format($item->price_minor, $item->currency_code), 40, '')
                     : null,
@@ -229,12 +262,12 @@ final class WebsiteStarterDraftService
         }
         $sections[] = ['type' => 'hero', 'data' => $hero];
 
-        $servicesSection = $this->activeServicesSection($business);
+        $servicesSection = $this->activeServicesSection($business, full: false);
         if ($servicesSection !== null) {
             $sections[] = $servicesSection;
         }
 
-        $catalogSection = $this->activeCatalogSection($business);
+        $catalogSection = $this->activeCatalogSection($business, full: false);
         if ($catalogSection !== null) {
             $sections[] = $catalogSection;
         } elseif ($profile !== null && in_array(BusinessKnowledgeProfileFieldKey::Offers->value, $confirmed, true) && $profile->offers) {
