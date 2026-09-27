@@ -2,6 +2,7 @@
 
 namespace App\Library\Website;
 
+use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Catalog\CatalogItemLifecycleState;
@@ -21,6 +22,13 @@ use Illuminate\Validation\ValidationException;
  */
 final class WebsiteStarterDraftService
 {
+    public static function isPhotoBooth(Business $business): bool
+    {
+        // Older businesses may store an empty industry string, which cannot
+        // be cast to BusinessIndustry. Read the persisted value directly.
+        return $business->getRawOriginal('industry') === BusinessIndustry::PhotoBoothService->value;
+    }
+
     public function __construct(
         private readonly WebsiteDraftPageService $pages,
         private readonly BusinessKnowledgeProfileManager $profiles,
@@ -50,19 +58,61 @@ final class WebsiteStarterDraftService
             ]);
 
             if ($design !== 'blank') {
+                $sections = $this->sections($business);
                 $this->pages->createPage($website, [
                     'title' => 'Home',
                     'is_home' => true,
-                    'sections' => $this->sections($business),
+                    'sections' => $sections,
                     'seo_title' => Str::limit($business->name, 70, ''),
                     'meta_description' => $business->description
                         ? Str::limit(trim($business->description), 160, '')
                         : null,
                 ]);
+
+                if (self::isPhotoBooth($business)) {
+                    $this->createPhotoBoothPages($website, $business, $sections);
+                }
             }
 
             return $website;
         });
+    }
+
+    /**
+     * Extra pages are assembled only from actual saved services and catalog
+     * items. They remain noindex until the owner adds distinct page content.
+     */
+    private function createPhotoBoothPages(Website $website, Business $business, array $homeSections): void
+    {
+        $contact = collect($homeSections)->firstWhere('type', 'contact_details');
+
+        foreach ([
+            ['heading' => 'Our services', 'title' => 'Services', 'slug' => 'photo-booth-services', 'hero' => 'Photo booth services'],
+            ['heading' => 'Packages & products', 'title' => 'Packages', 'slug' => 'photo-booth-packages', 'hero' => 'Photo booth packages'],
+        ] as $page) {
+            $content = collect($homeSections)->first(fn ($section) => ($section['data']['heading'] ?? null) === $page['heading']);
+            if ($content === null) {
+                continue;
+            }
+
+            $sections = [
+                ['type' => 'hero', 'data' => ['heading' => $page['hero']]],
+                $content,
+            ];
+            if ($contact !== null) {
+                $sections[] = $contact;
+            }
+
+            $this->pages->createPage($website, [
+                'title' => $page['title'],
+                'slug' => $page['slug'],
+                'is_home' => false,
+                'sections' => $sections,
+                'seo_title' => Str::limit($page['hero'] . ' | ' . $business->name, 70, ''),
+                'meta_description' => null,
+                'noindex' => true,
+            ]);
+        }
     }
 
     private function sections(Business $business): array

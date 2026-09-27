@@ -166,7 +166,7 @@ class WebsiteController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
-            'pages' => $website->pages()->orderBy('sort_order')->get(),
+            'pages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get(),
         ]);
     }
 
@@ -272,6 +272,7 @@ class WebsiteController extends CustomerBaseController
             'website' => $website,
             'websiteMeta' => ['name' => $website->name, 'theme' => $website->theme ?? []],
             'page' => (object) [
+                'uid' => $page->uid,
                 'title' => $page->title,
                 'seo' => (object) [
                     'seo_title' => $page->seo_title,
@@ -282,6 +283,12 @@ class WebsiteController extends CustomerBaseController
             'sections' => $page->sections ?? [],
             'assetsByUid' => $assetsByUid,
             'isPreview' => true,
+            'navigationPages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get()->map(fn ($candidate) => [
+                'uid' => $candidate->uid,
+                'title' => $candidate->title,
+                'is_home' => $candidate->is_home,
+                'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
+            ])->all(),
         ]);
     }
 
