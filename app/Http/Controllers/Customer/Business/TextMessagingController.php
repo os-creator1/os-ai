@@ -20,9 +20,13 @@ use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
+use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
+use App\Library\Messaging\PortOutRequestManager;
 use App\Library\Messaging\ProvisioningAvailability;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Models\Business;
+use App\Models\BusinessMessagingNumber;
+use App\Models\BusinessMessagingNumberPortOutRequest;
 use App\Models\BusinessMessagingRegistration;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Foundation\Application;
@@ -76,6 +80,7 @@ class TextMessagingController extends CustomerBaseController
         private readonly BusinessMessagingRegistrationService $registrations,
         private readonly BusinessAnalyticsPresenter $analyticsPresenter,
         private readonly CustomerShellComposer $shell,
+        private readonly PortOutRequestManager $portOutRequests,
     ) {
     }
 
@@ -309,11 +314,79 @@ class TextMessagingController extends CustomerBaseController
     }
 
     // -----------------------------------------------------------------
+    // STATE 3 — port a number out (messaging contract §13.4). Records and
+    // tracks the request only; never releases, replaces, transfers or
+    // purchases a number, and never calls Telnyx.
+    // -----------------------------------------------------------------
+
+    /**
+     * §13.4: "A customer may port a number out. The platform must not
+     * obstruct it. Porting out is a supported, documented request path,
+     * not a support escalation." Authorized exactly like registration
+     * mutation (buy_numbers + owner-or-active-admin, item's own precedent
+     * in authorizeRegistrationMutation()) because leaving is at least as
+     * consequential a decision as registering. The number is always
+     * resolved server-side from this Business's own active identity — the
+     * request never accepts a number id from the client, so there is no
+     * input that could name another Business's number.
+     */
+    public function requestPortOut(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('buy_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->authorizeRegistrationMutation($business);
+
+        $number = $this->primaryNumberFor($business);
+
+        if ($number === null) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Get a phone number before requesting a port-out.');
+        }
+
+        try {
+            $this->portOutRequests->request($business, $number, (int) Auth::id());
+        } catch (PortOutRequestAlreadyActiveException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'A port-out request for this number is already in progress.');
+        }
+
+        return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'Your request to port this number out has been received. Our team will follow up with next steps.',
+        ]);
+    }
+
+    public function cancelPortOutRequest(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('buy_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->authorizeRegistrationMutation($business);
+
+        $number = $this->primaryNumberFor($business);
+        $request = $number !== null ? $this->portOutRequests->activeRequestFor($number) : null;
+
+        // Belt-and-braces cross-tenant guard: even though the request id
+        // itself is never accepted from the client, refuse to cancel
+        // anything that does not resolve back to THIS Business's own
+        // number.
+        if ($request === null || (int) $request->business_id !== (int) $business->id) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'There is no active port-out request to cancel.');
+        }
+
+        $this->portOutRequests->cancel((int) $request->id, (int) Auth::id());
+
+        return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'Port-out request cancelled.',
+        ]);
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 
     /**
-     * @return array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration}
+     * @return array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, portOutRequest: ?BusinessMessagingNumberPortOutRequest}
      */
     private function situation(Business $business): array
     {
@@ -321,13 +394,13 @@ class TextMessagingController extends CustomerBaseController
         $registration = $this->registrationFor($business);
 
         if ($identity === null) {
-            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration];
+            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, 'portOutRequest' => null];
         }
 
         try {
             $number = $this->identities->resolvePrimaryNumber($identity);
         } catch (MessagingIdentityConflictException) {
-            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration];
+            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, 'portOutRequest' => null];
         }
 
         $ready = $number->isActive() && $registration !== null && $registration->isApproved();
@@ -338,6 +411,7 @@ class TextMessagingController extends CustomerBaseController
             'textingAvailable' => $ready,
             'mediaAvailable' => $ready,
             'registration' => $registration,
+            'portOutRequest' => $this->portOutRequests->activeRequestFor($number),
         ];
     }
 
@@ -371,6 +445,13 @@ class TextMessagingController extends CustomerBaseController
 
     private function numberTypeFor(Business $business): ?PhoneNumberType
     {
+        $number = $this->primaryNumberFor($business);
+
+        return $number?->number_type;
+    }
+
+    private function primaryNumberFor(Business $business): ?BusinessMessagingNumber
+    {
         $identity = $this->identities->resolveForBusiness($business);
 
         if ($identity === null) {
@@ -378,12 +459,10 @@ class TextMessagingController extends CustomerBaseController
         }
 
         try {
-            $number = $this->identities->resolvePrimaryNumber($identity);
+            return $this->identities->resolvePrimaryNumber($identity);
         } catch (MessagingIdentityConflictException) {
             return null;
         }
-
-        return $number->number_type;
     }
 
     /**
@@ -430,7 +509,7 @@ class TextMessagingController extends CustomerBaseController
     }
 
     /**
-     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration}  $situation
+     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, portOutRequest: ?BusinessMessagingNumberPortOutRequest}  $situation
      */
     private function renderReady(string $workspaceUid, string $businessUid, array $situation): View
     {
@@ -440,6 +519,7 @@ class TextMessagingController extends CustomerBaseController
             'phoneNumber' => $situation['phoneNumber'],
             'textingAvailable' => $situation['textingAvailable'],
             'mediaAvailable' => $situation['mediaAvailable'],
+            'portOutRequest' => $situation['portOutRequest'],
         ]);
     }
 
