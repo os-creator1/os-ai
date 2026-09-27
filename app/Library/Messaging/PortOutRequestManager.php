@@ -2,9 +2,12 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\PortOutRequestStatus;
+use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
 use App\Models\Business;
+use App\Models\BusinessMessagingIdentity;
 use App\Models\BusinessMessagingNumber;
 use App\Models\BusinessMessagingNumberPortOutRequest;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -26,6 +29,55 @@ use Illuminate\Support\Facades\DB;
 class PortOutRequestManager
 {
     /**
+     * Review correction — the ownership-safe lookup for §13.4's exit path.
+     * Deliberately NOT BusinessMessagingIdentityResolver::resolveForBusiness()
+     * / resolvePrimaryNumber(): those are Slice 3's outbound-send/inbound-
+     * attribution contract, which is correctly restricted to an Active
+     * identity and an Active primary number (T-MSG-3) — exactly the wrong
+     * restriction here, since a customer with a Suspended number (§13.3:
+     * "stops new paid outbound while retaining the number") or a Pending
+     * identity still retains that number and must still be able to request
+     * to leave with it. The only status this method excludes is Released —
+     * a released number is no longer retained, so there is nothing left to
+     * port. Ownership is always resolved through the identity's own
+     * business_id (BusinessMessagingNumber carries no business_id column of
+     * its own), never trusted from a caller-supplied pairing, and a
+     * business with more than one retained primary number candidate is
+     * refused rather than guessed, mirroring resolvePrimaryNumber()'s own
+     * fail-closed discipline.
+     */
+    public function retainedNumberFor(Business $business): ?BusinessMessagingNumber
+    {
+        $identityIds = BusinessMessagingIdentity::query()
+            ->where('business_id', (int) $business->id)
+            ->pluck('id');
+
+        if ($identityIds->isEmpty()) {
+            return null;
+        }
+
+        $candidates = BusinessMessagingNumber::query()
+            ->whereIn('business_messaging_identity_id', $identityIds)
+            ->where('is_primary', true)
+            ->where('status', '!=', BusinessMessagingNumberStatus::Released->value)
+            ->orderBy('id')
+            ->limit(2)
+            ->get();
+
+        return $candidates->count() === 1 ? $candidates->first() : null;
+    }
+
+    /**
+     * @throws MessagingIdentityConflictException      when $number does not
+     *                                                  actually belong to
+     *                                                  $business — the
+     *                                                  manager never trusts
+     *                                                  a caller-supplied
+     *                                                  pairing, even though
+     *                                                  every current caller
+     *                                                  resolves $number from
+     *                                                  $business itself via
+     *                                                  retainedNumberFor()
      * @throws PortOutRequestAlreadyActiveException when this number already
      *                                               has an unresolved
      *                                               request, whether found
@@ -35,6 +87,8 @@ class PortOutRequestManager
      */
     public function request(Business $business, BusinessMessagingNumber $number, int $requestedByUserId): BusinessMessagingNumberPortOutRequest
     {
+        $this->assertNumberBelongsToBusiness($business, $number);
+
         try {
             return DB::transaction(function () use ($business, $number, $requestedByUserId): BusinessMessagingNumberPortOutRequest {
                 $existing = BusinessMessagingNumberPortOutRequest::query()
@@ -103,5 +157,21 @@ class PortOutRequestManager
             ->where('business_messaging_number_id', (int) $number->id)
             ->active()
             ->first();
+    }
+
+    /**
+     * @throws MessagingIdentityConflictException
+     */
+    private function assertNumberBelongsToBusiness(Business $business, BusinessMessagingNumber $number): void
+    {
+        $identity = $number->identity;
+
+        if (! $identity instanceof BusinessMessagingIdentity || (int) $identity->business_id !== (int) $business->id) {
+            throw new MessagingIdentityConflictException(sprintf(
+                'Number [%d] does not belong to Business [%d].',
+                (int) $number->id,
+                (int) $business->id,
+            ));
+        }
     }
 }

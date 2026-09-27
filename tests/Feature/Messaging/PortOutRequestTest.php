@@ -3,13 +3,16 @@
 namespace Tests\Feature\Messaging;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\PortOutRequestStatus;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Helpers\Helper;
+use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
 use App\Library\Messaging\PortOutRequestManager;
 use App\Models\BusinessMessagingNumberPortOutRequest;
+use App\Models\BusinessMessagingRegistration;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -85,6 +88,148 @@ class PortOutRequestTest extends TestCase
             ->assertSessionHas('status', 'error');
 
         $this->assertDatabaseCount('business_messaging_number_port_out_requests', 0);
+    }
+
+    // =================================================================
+    // Review correction — §13.4 requires the exit path even when
+    // registration is pending/rejected, or the number is suspended
+    // ("paid outbound access is unavailable", §13.3). Deliberately NOT
+    // resolved through BusinessMessagingIdentityResolver, which would hide
+    // both.
+    // =================================================================
+
+    public function test_a_customer_can_request_a_port_out_while_registration_is_pending(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551101');
+        BusinessMessagingRegistration::create([
+            'business_id' => $business->id,
+            'number_type' => 'local',
+            'status' => 'pending',
+        ]);
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        // Confirms the scenario is genuine: this Business is NOT in the
+        // "ready" state (registration is pending, not approved).
+        $html = (string) $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('Request to port this number out', $html);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+
+        $this->assertDatabaseCount('business_messaging_number_port_out_requests', 1);
+    }
+
+    public function test_a_customer_can_request_a_port_out_while_registration_is_rejected(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551102');
+        BusinessMessagingRegistration::create([
+            'business_id' => $business->id,
+            'number_type' => 'local',
+            'status' => 'rejected',
+        ]);
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+
+        $this->assertDatabaseCount('business_messaging_number_port_out_requests', 1);
+    }
+
+    public function test_a_customer_can_request_a_port_out_for_a_suspended_number(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551103', true, BusinessMessagingNumberStatus::Suspended);
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        // The number is invisible to Slice 3's own outbound resolver, so
+        // this Business renders the "no active number" screen — the
+        // exit path must still appear there.
+        $html = (string) $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+        $this->assertStringContainsString('+14155551103', $html);
+        $this->assertStringContainsString('Suspended', $html);
+        $this->assertStringContainsString('Request to port this number out', $html);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+
+        $this->assertDatabaseHas('business_messaging_number_port_out_requests', [
+            'business_id' => $business->id,
+            'phone_number' => '+14155551103',
+        ]);
+    }
+
+    public function test_a_customer_can_cancel_a_port_out_request_for_a_suspended_number(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $number = $this->attachNumber($this->attachIdentity($business), '+14155551104', true, BusinessMessagingNumberStatus::Suspended);
+        $this->manager()->request($business, $number, (int) $customer->user->id);
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.cancel', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+
+        $this->assertSame(PortOutRequestStatus::Cancelled, BusinessMessagingNumberPortOutRequest::where('business_id', $business->id)->first()->status);
+    }
+
+    public function test_a_released_number_is_never_offered_for_a_port_out_request(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551105', true, BusinessMessagingNumberStatus::Released);
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        $html = (string) $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+        $this->assertStringNotContainsString('Request to port this number out', $html);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'error');
+
+        $this->assertDatabaseCount('business_messaging_number_port_out_requests', 0);
+    }
+
+    // =================================================================
+    // The ownership-safe lookup itself.
+    // =================================================================
+
+    public function test_retained_number_for_finds_a_suspended_number(): void
+    {
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth);
+        $number = $this->attachNumber($this->attachIdentity($business), '+14155551106', true, BusinessMessagingNumberStatus::Suspended);
+
+        $this->assertSame($number->id, $this->manager()->retainedNumberFor($business)?->id);
+    }
+
+    public function test_retained_number_for_excludes_a_released_number(): void
+    {
+        [, $business] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551107', true, BusinessMessagingNumberStatus::Released);
+
+        $this->assertNull($this->manager()->retainedNumberFor($business));
+    }
+
+    public function test_retained_number_for_never_returns_a_foreign_businesss_number(): void
+    {
+        [, $businessA] = $this->tenant(WorkspacePlanTier::Growth, 'Business A', 'Workspace A');
+        [, $businessB] = $this->tenant(WorkspacePlanTier::Growth, 'Business B', 'Workspace B');
+        $this->attachNumber($this->attachIdentity($businessB), '+14155551109');
+
+        $this->assertNull($this->manager()->retainedNumberFor($businessA));
+    }
+
+    // =================================================================
+    // Review correction — the manager itself verifies ownership, never
+    // trusting a caller-supplied (Business, number) pairing.
+    // =================================================================
+
+    public function test_the_manager_refuses_a_number_that_does_not_belong_to_the_supplied_business(): void
+    {
+        [, $businessA] = $this->tenant(WorkspacePlanTier::Growth, 'Business A', 'Workspace A');
+        [, $businessB] = $this->tenant(WorkspacePlanTier::Growth, 'Business B', 'Workspace B');
+        $numberB = $this->attachNumber($this->attachIdentity($businessB), '+14155551110');
+
+        $this->expectException(MessagingIdentityConflictException::class);
+        $this->manager()->request($businessA, $numberB, 1);
     }
 
     // =================================================================
@@ -196,31 +341,46 @@ class PortOutRequestTest extends TestCase
     }
 
     // =================================================================
-    // Authorization — same shape as registration mutation
-    // (TextMessagingRegistrationAuthorizationTest): buy_numbers AND the
-    // canonical owner-or-active-admin Workspace authority.
+    // Authorization — review correction. Porting OUT is not a number-
+    // acquisition action: it is gated on view_numbers (the same baseline
+    // read capability show()/deliveryUsage() already require) PLUS the
+    // canonical owner-or-active-admin Workspace authority, and is
+    // deliberately independent of buy_numbers in both directions.
     // =================================================================
 
-    public function test_view_numbers_only_cannot_request_a_port_out(): void
+    public function test_a_business_owner_can_request_a_port_out_with_no_buy_numbers_permission_at_all(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->attachNumber($this->attachIdentity($business), '+14155551008');
+        // Deliberately NOT granted: buy_numbers.
         $this->authenticateAs($customer, ['view_numbers']);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
-            ->assertStatus(401);
+            ->assertSessionHas('status', 'success');
 
-        $this->assertDatabaseCount('business_messaging_number_port_out_requests', 0);
+        $this->assertDatabaseCount('business_messaging_number_port_out_requests', 1);
     }
 
-    public function test_a_plain_workspace_member_with_buy_numbers_cannot_request_a_port_out(): void
+    public function test_neither_action_requires_buy_numbers_permission(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->attachNumber($this->attachIdentity($business), '+14155551108');
+        $this->authenticateAs($customer, ['view_numbers']);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.cancel', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('status', 'success');
+    }
+
+    public function test_a_plain_workspace_member_cannot_request_a_port_out_even_holding_view_numbers(): void
     {
         [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->attachNumber($this->attachIdentity($business), '+14155551009');
 
         $staffCustomer = $this->createCustomer();
         $this->member($workspace, $staffCustomer->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All, true);
-        $this->authenticateAs($staffCustomer, ['view_numbers', 'buy_numbers']);
+        $this->authenticateAs($staffCustomer, ['view_numbers']);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
             ->assertStatus(401);
@@ -235,7 +395,7 @@ class PortOutRequestTest extends TestCase
 
         $adminCustomer = $this->createCustomer();
         $this->member($workspace, $adminCustomer->user, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::All, true);
-        $this->authenticateAs($adminCustomer, ['view_numbers', 'buy_numbers']);
+        $this->authenticateAs($adminCustomer, ['view_numbers']);
 
         $this->post(route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');

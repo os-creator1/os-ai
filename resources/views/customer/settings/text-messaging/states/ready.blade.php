@@ -53,23 +53,7 @@
             </x-card>
         </div>
         <div class="col-md-6 mb-2">
-            <x-card title="Port your number out" :padded="true">
-                @if ($portOutRequest !== null)
-                    <p class="text-caption text-muted mb-2" data-role="port-out-status">
-                        Request received on {{ $portOutRequest->created_at?->format('Y-m-d') }}. Our team will follow up with next steps.
-                    </p>
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.text-messaging.number.port-out.cancel', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <x-button type="submit" variant="outline" size="sm">Cancel request</x-button>
-                    </form>
-                @else
-                    <p class="text-caption text-muted mb-2">You can move this number to another provider at any time.</p>
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.text-messaging.number.port-out.request', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <x-button type="submit" variant="outline" size="sm">Request to port this number out</x-button>
-                    </form>
-                @endif
-            </x-card>
+            @include('customer.settings.text-messaging._port-out-card')
         </div>
     </div>
 @endsection
