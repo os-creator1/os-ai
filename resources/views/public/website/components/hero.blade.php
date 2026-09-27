@@ -1,7 +1,14 @@
-{{-- Website Component Library — hero (contract §7.2). Plain escaped text only. --}}
-<section class="website-section website-hero"
-    @if (! empty($data['background_image']) && isset($assetsByUid[$data['background_image']]))
-        style="background-image: url('{{ $assetsByUid[$data['background_image']]['url'] }}');"
+{{--
+    Website Component Library — hero (contract §7.2). Plain escaped text
+    only. When a background image is set, a fixed dark scrim is layered
+    behind it (never a separate overlay element) so the heading and
+    subheading stay legible regardless of the image's own content, and
+    the website-hero-has-image class switches their color to white.
+--}}
+@php($hasBackgroundImage = ! empty($data['background_image']) && isset($assetsByUid[$data['background_image']]))
+<section class="website-section website-hero @if($hasBackgroundImage) website-hero-has-image @endif"
+    @if ($hasBackgroundImage)
+        style="background-image: linear-gradient(rgba(15, 23, 42, .45), rgba(15, 23, 42, .45)), url('{{ $assetsByUid[$data['background_image']]['url'] }}');"
     @endif
 >
     <div class="website-hero-inner">

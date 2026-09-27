@@ -7,15 +7,43 @@
     --website-secondary: #111827;
     --website-content-width: 960px;
     --website-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --website-surface: #ffffff;
+    --website-surface-muted: #f9fafb;
+    --website-border: #e5e7eb;
+    --website-muted: #6b7280;
+    --website-radius: 0.75rem;
+    --website-radius-sm: 0.5rem;
+    --website-shadow-sm: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
+    --website-shadow-md: 0 8px 16px -4px rgba(15, 23, 42, .12), 0 4px 6px -2px rgba(15, 23, 42, .06);
+
+    /* Declared explicitly so a visitor's OS/browser dark-mode preference
+       never auto-inverts an otherwise light, unstyled page — every
+       surface below also sets its own background rather than relying on
+       the browser default. */
+    color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 
+html { background: var(--website-surface); }
+
 body.website-body {
     margin: 0;
+    background: var(--website-surface);
     font-family: var(--website-font);
     color: #1f2937;
-    line-height: 1.6;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+body.website-body h1,
+body.website-body h2,
+body.website-body h3 {
+    color: var(--website-secondary);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
 }
 
 .website-container {
@@ -32,59 +60,154 @@ body.website-body {
     font-size: 0.875rem;
 }
 
+a { color: var(--website-primary); }
+
+:focus-visible {
+    outline: 2px solid var(--website-primary);
+    outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------
+   Header + navigation. Sticky so the site's calls to action (quote
+   form, contact links, etc.) stay reachable while a visitor reads a
+   longer page — no JavaScript required.
+   --------------------------------------------------------------- */
+
 .website-header {
-    padding: 1.25rem 0;
-    border-bottom: 1px solid #e5e7eb;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--website-surface);
+    padding: 1.1rem 0;
+    border-bottom: 1px solid var(--website-border);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, .02);
 }
 
 .website-header .website-container { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
-.website-navigation { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
-.website-navigation a { color: inherit; text-decoration: none; }
-.website-navigation a:hover, .website-navigation a[aria-current="page"] { color: var(--website-primary); text-decoration: underline; text-underline-offset: .3rem; }
+
+.website-navigation { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+.website-navigation a {
+    color: inherit;
+    text-decoration: none;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--website-radius-sm);
+    font-weight: 500;
+    transition: background-color .15s ease, color .15s ease;
+}
+.website-navigation a:hover { background: var(--website-surface-muted); color: var(--website-primary); }
+.website-navigation a[aria-current="page"] { color: var(--website-primary); font-weight: 700; }
 
 .website-brand {
-    font-weight: 700;
+    font-weight: 800;
     font-size: 1.25rem;
     color: var(--website-secondary);
     text-decoration: none;
 }
 
-.website-section {
-    padding: 3rem 0;
+@media (max-width: 640px) {
+    .website-header .website-container { justify-content: center; text-align: center; }
+    .website-navigation { justify-content: center; width: 100%; gap: 0.15rem; }
+    .website-navigation a { padding: 0.5rem 0.6rem; font-size: 0.9375rem; }
 }
+
+/* ---------------------------------------------------------------
+   Sections, typography rhythm shared across every component.
+   --------------------------------------------------------------- */
+
+.website-section {
+    padding: 4rem 0;
+}
+
+/* A centered heading + small accent underline gives every content
+   section (services, packages, gallery, testimonials, FAQ, CTA,
+   contact) the same visual rhythm. image_text keeps its own
+   side-by-side heading, since it is never a direct section child. */
+.website-section > h2 {
+    text-align: center;
+    font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.125rem);
+    margin: 0 0 0.75rem;
+}
+.website-section > h2::after {
+    content: '';
+    display: block;
+    width: 3rem;
+    height: 3px;
+    margin: 0.85rem auto 0;
+    background: var(--website-primary);
+    border-radius: 2px;
+}
+.website-section > h2:last-child::after { margin-bottom: 0; }
 
 .website-hero {
     text-align: center;
-    padding: 5rem 1.5rem;
+    padding: 5.5rem 1.5rem;
     background-size: cover;
     background-position: center;
+    background-color: var(--website-surface-muted);
 }
 
-.website-hero-subheading { font-size: 1.125rem; color: #4b5563; }
+.website-hero-inner { max-width: 720px; margin: 0 auto; }
+.website-hero h1 { font-size: clamp(2rem, 1.4rem + 2.4vw, 3rem); }
+.website-hero-subheading { font-size: 1.125rem; color: #4b5563; margin: 0 0 1.75rem; }
+
+/* Set only when the hero carries a real, business-supplied background
+   image (hero.blade.php also layers a fixed dark scrim behind the
+   image itself) — plain text otherwise keeps the theme's own colors.
+   Specificity has to beat the global `body.website-body h1` rule
+   above, hence the repeated body.website-body prefix. */
+body.website-body .website-hero-has-image h1,
+body.website-body .website-hero-has-image .website-hero-subheading { color: #fff; }
+
+.website-hero-ctas { display: flex; justify-content: center; gap: 0.75rem; flex-wrap: wrap; }
+
+/* An outline-style secondary/primary button is only legible against the
+   theme's own light surface. Over a real background image (always
+   darkened by hero.blade.php's scrim, regardless of theme) it must
+   switch to a white outline instead, whichever button_style is active. */
+.website-hero-has-image .website-btn-secondary,
+body.website-button-outline .website-hero-has-image .website-btn-primary {
+    color: #fff;
+    border-color: #fff;
+}
+.website-hero-has-image .website-btn-secondary:hover,
+body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
+    background: #fff;
+    color: var(--website-secondary);
+}
 
 .website-btn {
     display: inline-block;
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.375rem;
+    padding: 0.8rem 1.75rem;
+    border-radius: var(--website-radius-sm);
     text-decoration: none;
     font-weight: 600;
     margin: 0.25rem;
+    border: 2px solid transparent;
+    transition: transform .1s ease, box-shadow .15s ease, background-color .15s ease, color .15s ease;
 }
 
 .website-btn-primary {
     background: var(--website-primary);
     color: #fff;
+    box-shadow: var(--website-shadow-sm);
 }
+.website-btn-primary:hover { transform: translateY(-1px); box-shadow: var(--website-shadow-md); }
 
 .website-btn-secondary {
     background: transparent;
     color: var(--website-primary);
-    border: 1px solid var(--website-primary);
+    border-color: var(--website-primary);
+}
+.website-btn-secondary:hover { background: var(--website-surface-muted); }
+
+@media (max-width: 480px) {
+    .website-hero-ctas { flex-direction: column; align-items: stretch; }
+    .website-hero-ctas .website-btn { margin: 0.25rem 0; }
 }
 
 .website-image-text {
     display: flex;
-    gap: 2rem;
+    gap: 2.5rem;
     align-items: center;
     flex-wrap: wrap;
 }
@@ -93,34 +216,74 @@ body.website-body {
 
 .website-image-text-media img,
 .website-service-card img,
-.website-image-text-media { flex: 1 1 320px; max-width: 100%; border-radius: 0.5rem; }
+.website-image-text-media {
+    flex: 1 1 320px;
+    max-width: 100%;
+    border-radius: var(--website-radius);
+}
+.website-image-text-media img { box-shadow: var(--website-shadow-sm); display: block; }
 
 .website-image-text-content { flex: 1 1 320px; }
+.website-image-text-content h2 { font-size: 1.75rem; margin-bottom: 0.75rem; }
 
 .website-services-grid,
 .website-testimonials-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.75rem;
 }
 
 .website-service-card,
 .website-testimonial-card {
-    padding: 1.5rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 0.5rem;
+    background: var(--website-surface);
+    padding: 1.75rem;
+    border: 1px solid var(--website-border);
+    border-radius: var(--website-radius);
+    box-shadow: var(--website-shadow-sm);
+    transition: transform .15s ease, box-shadow .15s ease;
 }
+.website-service-card:hover,
+.website-testimonial-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--website-shadow-md);
+}
+
+.website-service-card img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    margin-bottom: 1rem;
+}
+
+.website-service-card h3 { margin: 0 0 0.5rem; font-size: 1.125rem; }
+.website-service-card p { color: var(--website-muted); margin: 0; }
+
+.website-service-price {
+    display: inline-block;
+    margin-top: 1rem;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--website-surface-muted);
+    color: var(--website-primary);
+    font-weight: 700;
+    font-size: 0.9375rem;
+}
+
+.website-testimonial-card { color: var(--website-muted); }
+.website-testimonial-card p { color: #1f2937; font-size: 1.0625rem; margin: 0 0 1rem; }
+.website-testimonial-card footer strong { color: var(--website-secondary); display: block; }
 
 .website-gallery-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
 }
 
 .website-gallery-item {
     aspect-ratio: 4 / 3;
     overflow: hidden;
-    border-radius: 0.5rem;
+    border-radius: var(--website-radius);
+    box-shadow: var(--website-shadow-sm);
 }
 
 .website-gallery-item img {
@@ -128,24 +291,48 @@ body.website-body {
     height: 100%;
     object-fit: cover;
     display: block;
+    transition: transform .35s ease;
 }
+.website-gallery-item:hover img { transform: scale(1.06); }
+
+/* ---------------------------------------------------------------
+   Quote / inquiry form — styled as a distinct panel so a request
+   reads as a deliberate, trustworthy action rather than a bare list
+   of inputs.
+   --------------------------------------------------------------- */
 
 .website-form-fields {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.1rem;
     max-width: 480px;
+    margin: 0 auto;
+    background: var(--website-surface);
+    border: 1px solid var(--website-border);
+    border-radius: var(--website-radius);
+    box-shadow: var(--website-shadow-sm);
+    padding: 1.75rem;
 }
 
-.website-form-field { display: flex; flex-direction: column; gap: 0.35rem; }
-.website-form-field label { font-weight: 600; }
+.website-form-field { display: flex; flex-direction: column; gap: 0.4rem; }
+.website-form-field label { font-weight: 600; font-size: 0.9375rem; }
 .website-form-field input,
 .website-form-field textarea {
-    padding: 0.6rem 0.75rem;
+    padding: 0.7rem 0.85rem;
     border: 1px solid #d1d5db;
-    border-radius: 0.5rem;
+    border-radius: var(--website-radius-sm);
     font: inherit;
+    transition: border-color .15s ease, box-shadow .15s ease;
 }
+.website-form-field input:focus,
+.website-form-field textarea:focus {
+    outline: none;
+    border-color: var(--website-primary);
+    box-shadow: 0 0 0 3px rgba(26, 86, 219, .15);
+}
+
+.website-form-fields button[type="submit"] { align-self: stretch; text-align: center; }
+.website-form-fields button[disabled] { align-self: stretch; text-align: center; opacity: .6; cursor: not-allowed; }
 
 .website-form-honeypot {
     position: absolute;
@@ -156,33 +343,51 @@ body.website-body {
 }
 
 .website-form-preview-note {
-    color: #6b7280;
+    color: var(--website-muted);
     font-size: 0.875rem;
     font-style: italic;
+    text-align: center;
 }
 
+.website-faq-list { max-width: 720px; margin: 0 auto; }
 .website-faq-item {
-    border-bottom: 1px solid #e5e7eb;
-    padding: 1rem 0;
+    border-bottom: 1px solid var(--website-border);
+    padding: 1.1rem 0;
 }
+.website-faq-item summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--website-secondary);
+}
+.website-faq-item summary:hover { color: var(--website-primary); }
+.website-faq-item p { color: var(--website-muted); margin: 0.75rem 0 0; }
 
 .website-cta {
     text-align: center;
-    background: #f9fafb;
-    border-radius: 0.75rem;
+    background: var(--website-surface-muted);
+    border: 1px solid var(--website-border);
+    border-radius: var(--website-radius);
+    padding: 3rem 2rem;
 }
+.website-cta p { max-width: 560px; margin: 0 auto 1.5rem; color: var(--website-muted); font-size: 1.0625rem; }
+.website-cta-buttons { display: flex; justify-content: center; gap: 0.75rem; flex-wrap: wrap; }
 
 .website-contact-list {
     list-style: none;
     padding: 0;
+    max-width: 420px;
+    margin: 0 auto;
+    text-align: center;
 }
-
-.website-contact-list li { margin-bottom: 0.5rem; }
+.website-contact-list li { margin-bottom: 0.6rem; font-size: 1.0625rem; }
+.website-contact-list a { font-weight: 600; text-decoration: none; }
+.website-contact-list a:hover { text-decoration: underline; }
 
 .website-footer {
-    padding: 2rem 0;
-    border-top: 1px solid #e5e7eb;
-    color: #6b7280;
+    padding: 2.5rem 0;
+    background: var(--website-surface-muted);
+    border-top: 1px solid var(--website-border);
+    color: var(--website-muted);
     font-size: 0.875rem;
     text-align: center;
 }
@@ -191,7 +396,8 @@ body.website-body {
 .website-font-serif { --website-font: Georgia, "Times New Roman", serif; }
 
 .website-header-clean .website-hero {
-    background: #eff6ff;
+    background-color: #eff6ff;
+    background-image: radial-gradient(circle at 25% 20%, #ffffff, #eff6ff 65%);
     border-radius: 1.25rem;
     margin-top: 2rem;
 }
@@ -199,33 +405,38 @@ body.website-body {
 .website-header-bold .website-header { background: #172033; border-bottom-color: #2c394d; }
 .website-header-bold .website-brand { color: #fff; }
 .website-header-bold .website-navigation a { color: #fff; }
-.website-header-bold .website-navigation a:hover, .website-header-bold .website-navigation a[aria-current="page"] { color: #ffb49f; }
+.website-header-bold .website-navigation a:hover { background: rgba(255, 255, 255, .08); color: #ffb49f; }
+.website-header-bold .website-navigation a[aria-current="page"] { color: #ffb49f; }
 .website-header-bold .website-hero {
-    background: #172033;
+    background-color: #172033;
+    background-image: linear-gradient(160deg, #1d2942, #172033 70%);
     color: #fff;
     margin: 0 calc(50% - 50vw);
-    padding: 6rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+    padding: 6.5rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
 }
 .website-header-bold .website-hero-subheading { color: #d4dae5; }
-.website-header-bold .website-cta { background: #fcece6; }
+.website-header-bold .website-cta { background: #fcece6; border-color: #f5d9cd; }
 .website-header-bold .website-service-card { border-top: 4px solid var(--website-primary); }
 
 .website-header-premium .website-header { background: #f7f2e9; border-bottom-color: #ddd0be; }
 .website-header-premium .website-hero {
-    background: #f7f2e9;
+    background-color: #f7f2e9;
+    background-image: radial-gradient(circle at 75% 15%, #fffaf0, #f7f2e9 60%);
     margin: 0 calc(50% - 50vw);
-    padding: 6rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+    padding: 6.5rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
 }
 .website-header-premium .website-hero h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); line-height: 1.12; }
 .website-header-premium .website-service-card { border-color: #ddd0be; border-radius: 0; }
-.website-header-premium .website-cta { background: #f7f2e9; }
+.website-header-premium .website-cta { background: #f7f2e9; border-color: #ddd0be; }
 .website-footer-premium { background: #f7f2e9; }
 
 .website-button-rounded .website-btn { border-radius: 999px; }
-.website-button-outline .website-btn-primary { background: transparent; color: var(--website-primary); border: 2px solid var(--website-primary); }
+.website-button-outline .website-btn-primary { background: transparent; color: var(--website-primary); border-color: var(--website-primary); }
 .website-button-outline .website-btn-primary:hover { background: var(--website-primary); color: #fff; }
 
 @media (max-width: 640px) {
+    .website-section { padding: 3rem 0; }
     .website-header-bold .website-hero,
     .website-header-premium .website-hero { padding-top: 4rem; padding-bottom: 4rem; }
+    .website-form-fields { padding: 1.25rem; }
 }
