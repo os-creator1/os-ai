@@ -414,6 +414,11 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
     margin: 0 calc(50% - 50vw);
     padding: 6.5rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
 }
+/* The dark hero background needs a white heading whether or not a
+   photo is set — the global `body.website-body h1` rule above is an
+   explicit match on the element itself, so it wins over this
+   inherited `color: #fff` from the section unless restated here. */
+.website-header-bold .website-hero h1 { color: #fff; }
 .website-header-bold .website-hero-subheading { color: #d4dae5; }
 .website-header-bold .website-cta { background: #fcece6; border-color: #f5d9cd; }
 .website-header-bold .website-service-card { border-top: 4px solid var(--website-primary); }
