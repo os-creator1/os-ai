@@ -21,7 +21,7 @@
 
     @if ($page && in_array($page->slug, ['photo-booth-services', 'photo-booth-packages'], true))
         <x-alert variant="accent" class="mb-3">
-            This page shows your full saved {{ $page->slug === 'photo-booth-services' ? 'services' : 'packages' }} list — Home only shows a short preview of the same records. Edit an item's Description above to add real booth types, backdrops, props, and extras{{ $page->slug === 'photo-booth-packages' ? ", or what's included in each package" : '' }}, or add a Text section below. These details show only on this page, never on Home.
+            This page shows your saved {{ $page->slug === 'photo-booth-services' ? 'services' : 'packages' }} list. Edit an item's Description in the sections below, or add a Text section, for page-specific booth types, backdrops, props, and extras{{ $page->slug === 'photo-booth-packages' ? ", or what's included in each package" : '' }}. Edits here apply only to this page — they never change Home or your saved Business service/catalog records.
         </x-alert>
     @endif
 

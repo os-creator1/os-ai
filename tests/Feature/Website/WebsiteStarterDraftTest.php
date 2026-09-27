@@ -283,7 +283,15 @@ class WebsiteStarterDraftTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.pages.edit', [$workspace->uid, $business->uid, $servicesPage->uid]))
             ->assertOk()
-            ->assertSee('booth types, backdrops, props, and extras', false);
+            ->assertSee('booth types, backdrops, props, and extras', false)
+            ->assertSee('sections below', false)
+            ->assertSee('they never change Home or your saved Business service/catalog records', false)
+            // The item editor is below this alert, not above it, and this
+            // draft may predate the Home-preview/full-page split, so the
+            // guidance must not claim a specific Home behavior that isn't
+            // guaranteed for every draft.
+            ->assertDontSee('Description above', false)
+            ->assertDontSee('Home only shows a short preview', false);
 
         // Page-specific: the same guidance never shows while editing Home.
         $this->get(route('customer.workspaces.businesses.website.pages.edit', [$workspace->uid, $business->uid, $home->uid]))
