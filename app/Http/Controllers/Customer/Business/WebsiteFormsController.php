@@ -6,12 +6,14 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Website\WebsiteFormPresets;
+use App\Library\Website\WebsiteStarterDraftService;
 use App\Models\Business;
 use App\Models\Website;
 use App\Models\WebsiteForm;
 use App\Models\Workspace;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The business side of the Forms foundation: create the one Photo Booth
@@ -34,6 +36,7 @@ class WebsiteFormsController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
+            'isPhotoBooth' => WebsiteStarterDraftService::isPhotoBooth($business),
             'form' => $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->first(),
         ]);
     }
@@ -43,6 +46,15 @@ class WebsiteFormsController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+
+        // The Photo Booth quote-request preset is the only one this slice
+        // ships; a niche it was never written for must never be offered
+        // it, whether through the view or a direct request to this action.
+        if (! WebsiteStarterDraftService::isPhotoBooth($business)) {
+            throw ValidationException::withMessages([
+                'form' => ['This form preset is only available for Photo Booth businesses.'],
+            ]);
+        }
 
         if ($website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->exists()) {
             return redirect()->route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]);

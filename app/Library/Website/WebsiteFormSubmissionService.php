@@ -21,6 +21,12 @@ use Illuminate\Support\Str;
  * A Business with no CRM pipeline yet never loses the inquiry: the
  * WebsiteFormSubmission row is the durable record either way.
  *
+ * An anonymous inquiry is never treated as messaging consent: the Contact
+ * this creates is never subscribed and never fires a contact-created
+ * automation (EloquentContactsRepository::findOrCreateForWebsiteForm()
+ * carries that rule) — only the CRM link is created, so the business can
+ * find and reply to the inquiry the same way it always contacts a lead.
+ *
  * Never called for a preview render (WebsiteFormSubmissionService has no
  * concept of preview — the public controller simply never calls submit()
  * from a preview request in the first place).
@@ -38,22 +44,30 @@ final class WebsiteFormSubmissionService
     ) {}
 
     /**
-     * @param  array<string, mixed>  $input  raw request input, keyed by the
-     *                                       form's own field keys, plus the honeypot field
-     * @return ?WebsiteFormSubmission null when this exact identity
-     *                                resubmitted within the duplicate window — never a second row
+     * @param  array<int, array{key: string, label: string, type: string, required: bool}>  $fields  the form's field config AS PUBLISHED — the caller reads this from the immutable snapshot, never live from $form, so an edit made after publishing can never change what a submission is validated against
+     * @param  array<string, mixed>  $input  raw request input, keyed by the form's own field keys, plus the honeypot field
+     * @return ?WebsiteFormSubmission null when this exact request (same
+     *                                form, same field values) was already submitted within the duplicate
+     *                                window — a different value in even one field is a distinct request and is
+     *                                always retained
      */
-    public function submit(WebsiteForm $form, array $input, ?string $pageSlug, ?string $ip): ?WebsiteFormSubmission
+    public function submit(WebsiteForm $form, array $fields, string $formName, array $input, ?string $pageSlug, ?string $ip): ?WebsiteFormSubmission
     {
         $isSpam = trim((string) ($input[self::HONEYPOT_FIELD] ?? '')) !== '';
-        $data = $this->validated($form, $input);
+        $data = $this->validated($fields, $input);
         $dedupeKey = $this->dedupeKey($form, $data);
 
-        if ($dedupeKey !== null && $this->isDuplicate($form, $dedupeKey)) {
-            return null;
-        }
+        return DB::transaction(function () use ($form, $formName, $data, $pageSlug, $ip, $dedupeKey, $isSpam) {
+            // Locks the WebsiteForm row itself so two submissions racing
+            // for the SAME form are serialized — the second one's
+            // duplicate check below only ever runs after the first has
+            // either committed or rolled back, never concurrently with it.
+            WebsiteForm::where('id', $form->id)->lockForUpdate()->first();
 
-        return DB::transaction(function () use ($form, $data, $pageSlug, $ip, $dedupeKey, $isSpam) {
+            if ($dedupeKey !== null && $this->isDuplicate($form, $dedupeKey)) {
+                return null;
+            }
+
             $submission = WebsiteFormSubmission::create([
                 'website_form_id' => $form->id,
                 'page_slug' => $pageSlug,
@@ -81,7 +95,7 @@ final class WebsiteFormSubmissionService
 
             $pipeline = $this->crmBoard->pipelines($business)->first();
             if ($pipeline !== null) {
-                $title = Str::limit(trim(($data['name'] !== '' ? $data['name'].' — ' : '').$form->name), CrmOpportunityService::TITLE_MAX, '');
+                $title = Str::limit(trim(($data['name'] !== '' ? $data['name'].' — ' : '').$formName), CrmOpportunityService::TITLE_MAX, '');
                 $opportunity = $this->opportunities->create(
                     $business,
                     $pipeline,
@@ -102,13 +116,14 @@ final class WebsiteFormSubmissionService
     }
 
     /**
+     * @param  array<int, array{key: string, label: string, type: string, required: bool}>  $fields
      * @return array<string, mixed>
      */
-    private function validated(WebsiteForm $form, array $input): array
+    private function validated(array $fields, array $input): array
     {
         $rules = [];
 
-        foreach ($form->fields as $field) {
+        foreach ($fields as $field) {
             $type = WebsiteFormFieldType::tryFrom((string) ($field['type'] ?? ''));
             $prefix = ($field['required'] ?? false) ? 'required' : 'nullable';
 
@@ -123,7 +138,7 @@ final class WebsiteFormSubmissionService
         $validated = ValidatorFacade::make($input, $rules)->validate();
 
         $data = [];
-        foreach ($form->fields as $field) {
+        foreach ($fields as $field) {
             $data[$field['key']] = $validated[$field['key']] ?? null;
         }
 
@@ -135,17 +150,28 @@ final class WebsiteFormSubmissionService
      * shape only a future, non-preset form could produce, since the
      * shipped preset always requires phone. Deduplication needs a real
      * identity to compare; without one, every submission is unique.
+     *
+     * Hashes every submitted field, not just phone/email: two requests
+     * from the same person are duplicates only when EVERY value matches
+     * (an honest double-click or a page refresh). A different event date,
+     * event type or message is a different request and must never be
+     * silently dropped just because the contact details repeat.
      */
     private function dedupeKey(WebsiteForm $form, array $data): ?string
     {
-        $phone = strtolower(trim((string) ($data['phone'] ?? '')));
-        $email = strtolower(trim((string) ($data['email'] ?? '')));
+        $hasIdentity = trim((string) ($data['phone'] ?? '')) !== '' || trim((string) ($data['email'] ?? '')) !== '';
 
-        if ($phone === '' && $email === '') {
+        if (! $hasIdentity) {
             return null;
         }
 
-        return hash('sha256', $form->id.'|'.$phone.'|'.$email);
+        $normalized = [];
+        foreach ($data as $key => $value) {
+            $normalized[$key] = is_string($value) ? strtolower(trim($value)) : $value;
+        }
+        ksort($normalized);
+
+        return hash('sha256', $form->id.'|'.json_encode($normalized));
     }
 
     private function isDuplicate(WebsiteForm $form, string $dedupeKey): bool

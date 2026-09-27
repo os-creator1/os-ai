@@ -1,5 +1,9 @@
-{{-- Website Component Library — form (Photo Booth quote-request slice). Plain escaped text only. --}}
-@php($websiteForm = !empty($data['form_uid']) ? \App\Models\WebsiteForm::where('website_id', $website->id)->where('uid', $data['form_uid'])->first() : null)
+{{-- Website Component Library — form (Photo Booth quote-request slice).
+     Plain escaped text only. $formsByUid is embedded in the immutable
+     published snapshot (or, in preview, read live) — never a per-render
+     database query — so a published page's fields stay exactly as they
+     were at publish time until the next publish. --}}
+@php($websiteForm = !empty($data['form_uid']) ? ($formsByUid[$data['form_uid']] ?? null) : null)
 @if ($websiteForm)
     <section class="website-section website-form">
         @if (! empty($data['heading']))
@@ -9,7 +13,7 @@
         @if ($isPreview ?? false)
             <p class="website-form-preview-note">Preview — this form does not accept submissions here.</p>
             <div class="website-form-fields" aria-hidden="true">
-                @foreach ($websiteForm->fields as $field)
+                @foreach ($websiteForm['fields'] as $field)
                     <div class="website-form-field">
                         <label>{{ $field['label'] }}{{ ($field['required'] ?? false) ? ' *' : '' }}</label>
                         @if (($field['type'] ?? 'text') === 'textarea')
@@ -19,14 +23,16 @@
                         @endif
                     </div>
                 @endforeach
-                <button type="button" disabled>{{ $websiteForm->submit_label }}</button>
+                <button type="button" disabled>{{ $websiteForm['submit_label'] }}</button>
             </div>
         @else
-            <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm->uid]) }}" class="website-form-fields">
+            {{-- No page_slug field: the submit controller derives the
+                 source page itself from the published snapshot, since a
+                 posted value would be visitor-controlled and unverifiable. --}}
+            <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid']]) }}" class="website-form-fields">
                 @csrf
-                <input type="hidden" name="page_slug" value="{{ $pageSlug ?? '' }}">
                 <input type="text" name="{{ \App\Library\Website\WebsiteFormSubmissionService::HONEYPOT_FIELD }}" value="" tabindex="-1" autocomplete="off" class="website-form-honeypot" aria-hidden="true">
-                @foreach ($websiteForm->fields as $field)
+                @foreach ($websiteForm['fields'] as $field)
                     <div class="website-form-field">
                         <label for="website-form-{{ $field['key'] }}">{{ $field['label'] }}{{ ($field['required'] ?? false) ? ' *' : '' }}</label>
                         @if (($field['type'] ?? 'text') === 'textarea')
@@ -36,7 +42,7 @@
                         @endif
                     </div>
                 @endforeach
-                <button type="submit">{{ $websiteForm->submit_label }}</button>
+                <button type="submit">{{ $websiteForm['submit_label'] }}</button>
             </form>
         @endif
     </section>

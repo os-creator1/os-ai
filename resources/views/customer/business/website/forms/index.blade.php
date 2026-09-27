@@ -18,7 +18,7 @@
             <p class="text-caption mb-2">To publish it, add a <strong>Form</strong> section to a page in the page editor and it will offer this form automatically.</p>
             <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.forms.submissions', [$workspaceUid, $businessUid, $form->uid]) }}">View inquiries</x-button>
         </x-card>
-    @else
+    @elseif ($isPhotoBooth)
         <x-card title="Quote Request form" class="mb-3">
             <p class="text-caption mb-2">Create a Photo Booth quote request form so visitors can ask for a quote directly from your website. It asks for a name, phone number, email, event date, event type, and a message — a real submission always shows up here and, if you already use the CRM, in your pipeline too.</p>
             <form method="POST" action="{{ route('customer.workspaces.businesses.website.forms.store', [$workspaceUid, $businessUid]) }}">
@@ -26,5 +26,7 @@
                 <x-button type="submit" variant="primary">Create quote request form</x-button>
             </form>
         </x-card>
+    @else
+        <x-empty-state icon="inbox" title="No forms available yet" description="This slice ships one preset — a Photo Booth quote request — for Photo Booth businesses. A form for your business type isn't available yet." />
     @endif
 @endsection

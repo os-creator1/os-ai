@@ -274,6 +274,13 @@ class WebsiteController extends CustomerBaseController
             'alt_text' => $asset->alt_text,
         ])->all();
 
+        $formsByUid = $website->forms()->get()->keyBy('uid')->map(fn ($form) => [
+            'uid' => $form->uid,
+            'name' => $form->name,
+            'fields' => $form->fields,
+            'submit_label' => $form->submit_label,
+        ])->all();
+
         // Contract §19 — preview renders the CURRENT DRAFT, never the
         // published revision. Normalized to the exact same shape the
         // public renderer feeds public.website.page (contract §7.3's
@@ -294,6 +301,7 @@ class WebsiteController extends CustomerBaseController
             ],
             'sections' => $page->sections ?? [],
             'assetsByUid' => $assetsByUid,
+            'formsByUid' => $formsByUid,
             'isPreview' => true,
             'navigationPages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get()->map(fn ($candidate) => [
                 'uid' => $candidate->uid,

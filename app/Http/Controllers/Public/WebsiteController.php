@@ -92,6 +92,7 @@ class WebsiteController extends Controller
     private function renderPage(Website $website, array $snapshot, array $page): Response
     {
         $assetsByUid = collect($snapshot['assets'] ?? [])->keyBy('uid')->all();
+        $formsByUid = collect($snapshot['forms'] ?? [])->keyBy('uid')->all();
 
         $response = response()->view('public.website.page', [
             'website' => $website,
@@ -99,6 +100,7 @@ class WebsiteController extends Controller
             'page' => (object) array_merge($page, ['seo' => (object) $page['seo']]),
             'sections' => $page['sections'],
             'assetsByUid' => $assetsByUid,
+            'formsByUid' => $formsByUid,
             'isPreview' => false,
             // Public navigation is built only from the immutable revision.
             'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [

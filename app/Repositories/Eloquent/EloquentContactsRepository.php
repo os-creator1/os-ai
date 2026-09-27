@@ -108,7 +108,17 @@
             $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
 
             $contact = Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->first();
+
+            // Blacklisting is re-checked on every call, not only when a new
+            // row is about to be created — a phone blacklisted AFTER an
+            // earlier, legitimate inquiry must still refuse this one.
             if ($contact !== null) {
+                if ($contact->isListedInBlacklist()) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                    ]);
+                }
+
                 return $contact;
             }
 
@@ -130,16 +140,16 @@
             $contact->customer_id = $group->customer_id;
             $contact->business_id = $business->id;
             $contact->location_id = Contacts::singleActiveLocationIdFor($business->id);
-            $contact->status = Contacts::STATUS_SUBSCRIBE;
+            // NOT STATUS_SUBSCRIBE, and no contact-created automation
+            // dispatch below: submitting a quote-request form is an
+            // inquiry, never messaging consent. The Contact and its CRM
+            // link still exist so the business can find and reply to it —
+            // only the "this person opted into messaging / triggers
+            // automations" side effects are withheld until the business
+            // (or the contact, elsewhere) does that explicitly.
+            $contact->status = Contacts::STATUS_UNSUBSCRIBE;
             $contact->save();
             $contact->updateFields($fields + ['PHONE' => $phone]);
-
-            if ($contact->wasRecentlyCreated && $contact->business_id !== null) {
-                dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
-                dispatch(EnrollWorkflowContact::forContactCreated(
-                    (int) $contact->id, ContactCreationSource::Other
-                ))->afterCommit();
-            }
 
             return $contact;
         }

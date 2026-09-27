@@ -2,27 +2,41 @@
 
 namespace Tests\Feature\Website;
 
+use App\Enums\Business\BusinessIndustry;
+use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
+use App\Jobs\AutomationJob;
 use App\Library\Crm\CrmPipelineService;
 use App\Library\Website\WebsiteFormPresets;
 use App\Library\Website\WebsiteFormSubmissionService;
 use App\Library\Website\WebsitePublisher;
+use App\Models\Blacklists;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\Website;
 use App\Models\WebsiteForm;
 use App\Models\WebsiteFormSubmission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\TestCase;
 
 /**
  * The Forms slice: the smallest reusable foundation (WebsiteForm,
  * WebsiteFormSubmission, one closed `form` section type), shipping
- * exactly one preset (Photo Booth quote request). A real submission
- * always produces a durable WebsiteFormSubmission; it additionally
- * produces a Contact (matched or created by phone) and, only when the
- * Business already has a CRM pipeline, a CrmOpportunity tagged
- * `source = website_form`.
+ * exactly one preset (Photo Booth quote request, offered only to Photo
+ * Booth businesses). A real submission always produces a durable
+ * WebsiteFormSubmission; it additionally produces a Contact (matched or
+ * created by phone) and, only when the Business already has a CRM
+ * pipeline, a CrmOpportunity tagged `source = website_form`.
+ *
+ * An anonymous inquiry is never messaging consent: the Contact it creates
+ * is never subscribed and never fires a contact-created automation.
+ *
+ * A form's fields and its "is this form live" status are both read from
+ * the immutable published snapshot, never live from website_forms — a
+ * submission is accepted only for a form the current published revision
+ * actually renders on one of its pages, and the recorded source page is
+ * derived from that same snapshot, never from anything the visitor posted.
  */
 class WebsiteFormTest extends TestCase
 {
@@ -42,7 +56,7 @@ class WebsiteFormTest extends TestCase
     private function publishFormPage(Website $website, WebsiteForm $form): void
     {
         $this->homePage($website);
-        $formPage = $this->subPage($website, 'quote', [
+        $this->subPage($website, 'quote', [
             'sections' => [$this->section('form', ['form_uid' => $form->uid])],
         ]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
@@ -72,6 +86,26 @@ class WebsiteFormTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.forms.index', [$workspace->uid, $business->uid]))
             ->assertOk()->assertSee('View inquiries');
+    }
+
+    public function test_the_photo_booth_preset_is_never_offered_to_another_niche(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $business->update(['industry' => BusinessIndustry::Other]);
+        $website = $this->createWebsite($business->fresh());
+        $this->authenticateAsCustomer($customer);
+
+        $this->get(route('customer.workspaces.businesses.website.forms.index', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertDontSee('Create quote request form')
+            ->assertDontSee('Photo Booth quote request form');
+
+        // Defence in depth: a direct POST is refused too, not just hidden
+        // from the view.
+        $this->post(route('customer.workspaces.businesses.website.forms.store', [$workspace->uid, $business->uid]))
+            ->assertSessionHasErrors('form');
+
+        $this->assertSame(0, $website->forms()->count());
     }
 
     public function test_a_foreign_businesss_form_and_submissions_never_leak(): void
@@ -128,8 +162,26 @@ class WebsiteFormTest extends TestCase
         ])->assertSessionHasErrors('sections.0.form_uid');
     }
 
+    public function test_a_form_section_naming_another_websites_real_form_is_rejected(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        [, $foreignBusiness] = $this->entitledTenant();
+        $foreignWebsite = $this->createWebsite($foreignBusiness);
+        $foreignForm = $this->createQuoteForm($foreignWebsite);
+
+        $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Home',
+            'is_home' => 1,
+            'sections' => [$this->section('form', ['form_uid' => $foreignForm->uid])],
+        ])->assertSessionHasErrors('sections.0.form_uid');
+    }
+
     // ---------------------------------------------------------------
-    // Public rendering: preview never submits; live page does
+    // Public rendering: preview never submits; live page does; fields
+    // stay stable to what was actually published
     // ---------------------------------------------------------------
 
     public function test_preview_renders_a_disabled_form_and_never_a_real_submit_action(): void
@@ -171,6 +223,22 @@ class WebsiteFormTest extends TestCase
             ->assertSee('name="phone"', false);
     }
 
+    public function test_a_form_absent_from_the_published_revision_404s(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        // Published, but no page references this form at all.
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Never Published', 'phone' => '5551110000',
+        ])->assertNotFound();
+
+        $this->assertSame(0, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+    }
+
     // ---------------------------------------------------------------
     // Submission -> Contact -> CrmOpportunity, spam, duplicates, tenancy
     // ---------------------------------------------------------------
@@ -189,7 +257,6 @@ class WebsiteFormTest extends TestCase
             'event_date' => '2027-06-01',
             'event_type' => 'Wedding',
             'message' => 'Looking for a mirror booth for 150 guests.',
-            'page_slug' => 'quote',
         ])->assertRedirect()->assertSessionHasNoErrors();
 
         $submission = WebsiteFormSubmission::where('website_form_id', $form->id)->sole();
@@ -207,6 +274,43 @@ class WebsiteFormTest extends TestCase
             ->assertOk()
             ->assertSee('Jamie Rivera')
             ->assertSee('jamie@example.test');
+    }
+
+    public function test_a_posted_page_slug_is_ignored_the_server_derives_it_from_the_published_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $this->publishFormPage($website, $form);
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Spoofer', 'phone' => '5551119999',
+            'page_slug' => 'totally-fake-page-i-was-never-on',
+        ])->assertRedirect();
+
+        $submission = WebsiteFormSubmission::where('website_form_id', $form->id)->sole();
+        $this->assertSame('quote', $submission->page_slug);
+    }
+
+    public function test_no_messaging_jobs_are_dispatched_and_the_contact_is_not_subscribed(): void
+    {
+        Bus::fake();
+
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $this->publishFormPage($website, $form);
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Quiet Visitor', 'phone' => '5552221000', 'email' => 'quiet@example.test',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $submission = WebsiteFormSubmission::where('website_form_id', $form->id)->sole();
+        $contact = Contacts::findOrFail($submission->contact_id);
+
+        $this->assertSame(Contacts::STATUS_UNSUBSCRIBE, $contact->status);
+        Bus::assertNotDispatched(AutomationJob::class);
+        Bus::assertNotDispatched(EnrollWorkflowContact::class);
     }
 
     public function test_a_submission_creates_a_crm_opportunity_only_when_a_pipeline_already_exists(): void
@@ -262,7 +366,32 @@ class WebsiteFormTest extends TestCase
         $this->assertSame(0, Contacts::where('business_id', $business->id)->count());
     }
 
-    public function test_a_resubmission_with_the_same_identity_within_the_window_is_not_duplicated(): void
+    public function test_recheck_blacklisting_even_when_a_matching_contact_already_exists(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $this->publishFormPage($website, $form);
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Later Blacklisted', 'phone' => '5553334444',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $existingContact = Contacts::where('business_id', $business->id)->where('phone', 5553334444)->sole();
+
+        // Blacklisted AFTER the first, legitimate inquiry.
+        Blacklists::create(['number' => '5553334444']);
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Later Blacklisted', 'phone' => '5553334444', 'message' => 'A second, different message.',
+        ])->assertSessionHasErrors('phone');
+
+        // No second submission was recorded, and the existing Contact is untouched.
+        $this->assertSame(1, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+        $this->assertSame($existingContact->id, Contacts::where('business_id', $business->id)->sole()->id);
+    }
+
+    public function test_an_exact_resubmission_within_the_window_is_not_duplicated(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -275,6 +404,28 @@ class WebsiteFormTest extends TestCase
         $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), $payload)->assertRedirect();
 
         $this->assertSame(1, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+        $this->assertSame(1, Contacts::where('business_id', $business->id)->count());
+    }
+
+    public function test_a_second_request_for_a_different_event_from_the_same_person_is_retained(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $this->publishFormPage($website, $form);
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Repeat Customer', 'phone' => '5557778888', 'email' => 'repeat@example.test',
+            'event_date' => '2027-03-01', 'event_type' => 'Birthday', 'message' => 'First inquiry.',
+        ])->assertRedirect();
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+            'name' => 'Repeat Customer', 'phone' => '5557778888', 'email' => 'repeat@example.test',
+            'event_date' => '2027-09-01', 'event_type' => 'Corporate', 'message' => 'A completely different event.',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $this->assertSame(2, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+        // Same phone -> the same Contact is reused, not duplicated.
         $this->assertSame(1, Contacts::where('business_id', $business->id)->count());
     }
 

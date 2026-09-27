@@ -24,10 +24,12 @@ final class WebsiteSectionValidator
      * @param array $validAssetUids uids of assets belonging to this Website
      * @param bool $allowAssetReferences false for AI-generated output (§16) —
      *        any non-empty asset reference is itself a validation failure
+     * @param array $validFormUids uids of WebsiteForm rows belonging to this
+     *        Website — a `form` section's form_uid must match one of these
      * @return array the validated (structurally unchanged) sections array
      * @throws ValidationException
      */
-    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true): array
+    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true, array $validFormUids = []): array
     {
         $errors = [];
 
@@ -52,7 +54,7 @@ final class WebsiteSectionValidator
             }
 
             try {
-                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences);
+                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences, $validFormUids);
             } catch (ValidationException $e) {
                 foreach ($e->errors() as $field => $messages) {
                     $errors["sections.{$index}.{$field}"] = $messages;
@@ -70,7 +72,7 @@ final class WebsiteSectionValidator
     /**
      * @throws ValidationException
      */
-    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences): void
+    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences, array $validFormUids = []): void
     {
         $rules = match ($type) {
             WebsiteSectionType::Hero => [
@@ -143,6 +145,10 @@ final class WebsiteSectionValidator
 
         $this->validateUrls($type, $data);
         $this->validateAssetReferences($type, $data, $validAssetUids, $allowAssetReferences);
+
+        if ($type === WebsiteSectionType::Form && ! in_array($data['form_uid'], $validFormUids, true)) {
+            throw ValidationException::withMessages(['form_uid' => ['Unknown or foreign form reference.']]);
+        }
     }
 
     /**
