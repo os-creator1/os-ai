@@ -245,6 +245,39 @@ class WebsiteStarterDraftTest extends TestCase
         }
     }
 
+    public function test_the_pages_checklist_guides_booth_detail_and_photo_reuse(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        BusinessService::create([
+            'business_id' => $business->id,
+            'name' => 'Mirror booth',
+            'status' => BusinessServiceStatus::Active,
+            'sort_order' => 0,
+        ]);
+        app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $this->authenticateAsCustomer($customer);
+
+        $pages = route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]);
+        $this->get($pages)->assertOk()
+            ->assertSee('booth types, backdrops, props, and extras', false)
+            ->assertDontSee('Add Gallery photos');
+
+        // Once real photos are selected for the Gallery page, the
+        // checklist points to reusing them, and each non-Gallery page
+        // in the list offers to do so in one action.
+        $website = Website::where('business_id', $business->id)->firstOrFail();
+        $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
+            'image' => $this->fakeImageUpload('booth.png'),
+            'alt_text' => 'Booth at a real event',
+        ])->assertRedirect();
+        $asset = $website->assets()->sole();
+        $this->post(route('customer.workspaces.businesses.website.gallery.store', [$workspace->uid, $business->uid]), [
+            'asset_uids' => [$asset->uid],
+        ])->assertRedirect();
+
+        $this->get($pages)->assertOk()->assertSee('Add Gallery photos');
+    }
+
     public function test_photo_booth_guidance_only_promises_an_active_public_location(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

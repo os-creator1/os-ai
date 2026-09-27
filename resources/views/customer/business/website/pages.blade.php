@@ -24,10 +24,10 @@
         <x-card title="Photo Booth checklist" class="mb-3">
             <ul class="mb-2">
                 <li>
-                    Services: @if ($reusable['services']->isNotEmpty()) reused on your Services page ({{ $reusable['services']->pluck('name')->implode(', ') }}). @else none saved — describe your booth options in the page editor. @endif
+                    Services: @if ($reusable['services']->isNotEmpty()) reused on your Services page ({{ $reusable['services']->pluck('name')->implode(', ') }}). Edit that page to describe your booth types, backdrops, props, and extras in your own words — that's real detail this page doesn't have yet. @else none saved — describe your booth options in the page editor. @endif
                 </li>
                 <li>
-                    Packages: @if ($reusable['catalog']->isNotEmpty()) reused on your Packages page ({{ $reusable['catalog']->pluck('name')->implode(', ') }}). @else none saved. <a href="{{ route('customer.workspaces.businesses.catalog.create', [$workspaceUid, $businessUid]) }}">Add a package</a>. @endif
+                    Packages: @if ($reusable['catalog']->isNotEmpty()) reused on your Packages page ({{ $reusable['catalog']->pluck('name')->implode(', ') }}). Edit that page to add what's included in each package beyond the saved price and description. @else none saved. <a href="{{ route('customer.workspaces.businesses.catalog.create', [$workspaceUid, $businessUid]) }}">Add a package</a>. @endif
                 </li>
                 <li>
                     Location: @if ($reusable['location']) Your public location{{ $reusable['location']->city ? ' in ' . $reusable['location']->city : '' }} is reused in your contact details. @else no active public location is available. <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Review your locations</a>. @endif
@@ -35,7 +35,7 @@
                 <li>
                     Photos: {{ $photoCount }} {{ $photoCount === 1 ? 'photo' : 'photos' }} uploaded.
                     @if ($galleryPage)
-                        <a href="{{ route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $galleryPage->uid]) }}">Edit your Gallery page</a>.
+                        <a href="{{ route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $galleryPage->uid]) }}">Edit your Gallery page</a>. Use "Add Gallery photos" below to reuse the same selected photos on your Services or Packages page.
                     @else
                         <a href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Upload photos and build a Gallery page</a>.
                     @endif
@@ -70,6 +70,12 @@
                     <span>
                         <x-button variant="ghost" size="sm" href="{{ route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $page->uid]) }}">Preview</x-button>
                         <x-button variant="secondary" size="sm" href="{{ route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid]) }}">Edit</x-button>
+                        @if ($isPhotoBooth && $galleryPage && $galleryPage->id !== $page->id && ! empty(collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')['data']['items'] ?? []))
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.website.pages.reuseGalleryPhotos', [$workspaceUid, $businessUid, $page->uid]) }}" class="d-inline">
+                                @csrf
+                                <x-button variant="ghost" size="sm" type="submit">Add Gallery photos</x-button>
+                            </form>
+                        @endif
                     </span>
                 </div>
             @empty

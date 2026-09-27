@@ -2,6 +2,9 @@
 
 namespace Tests\Feature\Website;
 
+use App\Models\Business;
+use App\Models\Website;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\TestCase;
@@ -300,5 +303,135 @@ class WebsiteGalleryTest extends TestCase
         $this->get(route('customer.workspaces.businesses.website.pages.create', [$workspace->uid, $business->uid]))
             ->assertOk()
             ->assertSee('Already uploaded before this page existed', false);
+    }
+
+    // ---------------------------------------------------------------
+    // Reusing the Gallery page's own selected photos on another page
+    // (e.g. Photo Booth Services or Packages) — never a second
+    // selection UI, never a photo the owner has not already chosen.
+    // ---------------------------------------------------------------
+
+    private function selectGalleryPhotos(Website $website, Business $business, Workspace $workspace): array
+    {
+        $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
+            'image' => $this->fakeImageUpload('reuse-1.png'),
+            'alt_text' => 'Booth setup at a wedding',
+        ])->assertRedirect();
+        $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
+            'image' => $this->fakeImageUpload('reuse-2.png'),
+            'alt_text' => 'Props table at a corporate event',
+        ])->assertRedirect();
+
+        [$assetOne, $assetTwo] = $website->assets()->orderBy('id')->get();
+
+        $this->post(route('customer.workspaces.businesses.website.gallery.store', [$workspace->uid, $business->uid]), [
+            'asset_uids' => [$assetOne->uid, $assetTwo->uid],
+        ])->assertRedirect();
+
+        return [$assetOne, $assetTwo];
+    }
+
+    public function test_reusing_gallery_photos_adds_a_gallery_section_to_another_page(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        [$assetOne, $assetTwo] = $this->selectGalleryPhotos($website, $business, $workspace);
+
+        $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Services',
+            'slug' => 'photo-booth-services',
+            'is_home' => 0,
+            'sections' => [$this->section('hero', ['heading' => 'Photo booth services'])],
+        ])->assertRedirect();
+        $servicesPage = $website->pages()->where('slug', 'photo-booth-services')->firstOrFail();
+
+        $this->post(route('customer.workspaces.businesses.website.pages.reuseGalleryPhotos', [$workspace->uid, $business->uid, $servicesPage->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.pages.edit', [$workspace->uid, $business->uid, $servicesPage->uid]))
+            ->assertSessionHasNoErrors();
+
+        $sections = $servicesPage->fresh()->sections;
+        // The original hero section is untouched, and the new gallery
+        // section carries exactly the photos already selected for the
+        // Gallery page — not a fresh, separate selection.
+        $this->assertSame('hero', $sections[0]['type']);
+        $this->assertSame('Photo booth services', $sections[0]['data']['heading']);
+        $gallerySection = collect($sections)->firstWhere('type', 'gallery');
+        $this->assertNotNull($gallerySection);
+        $this->assertSame([$assetOne->uid, $assetTwo->uid], collect($gallerySection['data']['items'])->pluck('image')->all());
+    }
+
+    public function test_reusing_gallery_photos_again_replaces_the_pages_own_gallery_section_in_place(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
+            'image' => $this->fakeImageUpload('stale.png'),
+            'alt_text' => 'A photo picked directly on this page before',
+        ])->assertRedirect();
+        $stale = $website->assets()->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Packages',
+            'slug' => 'photo-booth-packages',
+            'is_home' => 0,
+            'sections' => [
+                $this->section('hero', ['heading' => 'Photo booth packages']),
+                $this->section('gallery', ['items' => [['image' => $stale->uid]]]),
+            ],
+        ])->assertRedirect();
+        $packagesPage = $website->pages()->where('slug', 'photo-booth-packages')->firstOrFail();
+
+        [$assetOne, $assetTwo] = $this->selectGalleryPhotos($website, $business, $workspace);
+
+        $this->post(route('customer.workspaces.businesses.website.pages.reuseGalleryPhotos', [$workspace->uid, $business->uid, $packagesPage->uid]))
+            ->assertRedirect()->assertSessionHasNoErrors();
+
+        $sections = $packagesPage->fresh()->sections;
+        // Still exactly one gallery section on the page (updated in
+        // place), and the hero section before it is untouched.
+        $this->assertSame(2, count($sections));
+        $this->assertSame('hero', $sections[0]['type']);
+        $gallerySection = collect($sections)->firstWhere('type', 'gallery');
+        $this->assertSame([$assetOne->uid, $assetTwo->uid], collect($gallerySection['data']['items'])->pluck('image')->all());
+    }
+
+    public function test_reusing_gallery_photos_is_refused_before_any_photos_are_selected(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Services',
+            'slug' => 'photo-booth-services',
+            'is_home' => 0,
+            'sections' => [$this->section('hero')],
+        ])->assertRedirect();
+        $servicesPage = $website->pages()->where('slug', 'photo-booth-services')->firstOrFail();
+
+        $this->post(route('customer.workspaces.businesses.website.pages.reuseGalleryPhotos', [$workspace->uid, $business->uid, $servicesPage->uid]))
+            ->assertRedirect()
+            ->assertSessionHas('status', 'error');
+
+        $this->assertSame(['hero'], array_column($servicesPage->fresh()->sections, 'type'));
+    }
+
+    public function test_reusing_gallery_photos_onto_a_foreign_websites_page_404s(): void
+    {
+        [$customerA, $businessA, $workspaceA] = $this->entitledTenant();
+        $websiteA = $this->createWebsite($businessA);
+        $this->authenticateAsCustomer($customerA);
+        $this->selectGalleryPhotos($websiteA, $businessA, $workspaceA);
+
+        [, $businessB, $workspaceB] = $this->entitledTenant();
+        $websiteB = $this->createWebsite($businessB);
+        $foreignPage = $this->homePage($websiteB);
+
+        $this->post(route('customer.workspaces.businesses.website.pages.reuseGalleryPhotos', [$workspaceA->uid, $businessA->uid, $foreignPage->uid]))
+            ->assertNotFound();
     }
 }

@@ -1608,6 +1608,7 @@
 
             Route::get('/photos', 'Business\WebsiteController@photos')->name('photos.index');
             Route::post('/gallery', 'Business\WebsiteController@storeGallery')->name('gallery.store');
+            Route::post('/pages/{pageUid}/reuse-gallery-photos', 'Business\WebsiteController@copyGalleryPhotosToPage')->name('pages.reuseGalleryPhotos');
 
             Route::get('/forms', 'Business\WebsiteFormsController@home')->name('forms.index');
             Route::post('/forms', 'Business\WebsiteFormsController@store')->name('forms.store');

@@ -105,25 +105,40 @@ final class WebsiteStarterDraftService
     }
 
     /**
-     * Extra pages are assembled only from actual saved services and catalog
-     * items. They remain noindex until the owner adds distinct page content.
+     * Extra pages are assembled from the same canonical services/catalog
+     * builders `sections()` itself calls (never a copy of the Home
+     * page's own section array — a single source of truth for what
+     * counts as "the business's saved services/catalog" instead of two
+     * places that could drift). They remain noindex until the owner adds
+     * distinct page content (real photos, and their own description of
+     * booth types, backdrops, props and extras) through the ordinary
+     * page editor.
      */
     private function createPhotoBoothPages(Website $website, Business $business, array $homeSections): void
     {
         $contact = collect($homeSections)->firstWhere('type', 'contact_details');
 
         foreach ([
-            ['heading' => 'Our services', 'title' => 'Services', 'slug' => 'photo-booth-services', 'hero' => 'Photo booth services'],
-            ['heading' => 'Packages & products', 'title' => 'Packages', 'slug' => 'photo-booth-packages', 'hero' => 'Photo booth packages'],
+            [
+                'title' => 'Services',
+                'slug' => 'photo-booth-services',
+                'hero' => 'Photo booth services',
+                'content' => $this->activeServicesSection($business),
+            ],
+            [
+                'title' => 'Packages',
+                'slug' => 'photo-booth-packages',
+                'hero' => 'Photo booth packages',
+                'content' => $this->activeCatalogSection($business),
+            ],
         ] as $page) {
-            $content = collect($homeSections)->first(fn ($section) => ($section['data']['heading'] ?? null) === $page['heading']);
-            if ($content === null) {
+            if ($page['content'] === null) {
                 continue;
             }
 
             $sections = [
                 ['type' => 'hero', 'data' => ['heading' => $page['hero']]],
-                $content,
+                $page['content'],
             ];
             if ($contact !== null) {
                 $sections[] = $contact;
@@ -139,6 +154,60 @@ final class WebsiteStarterDraftService
                 'noindex' => true,
             ]);
         }
+    }
+
+    /**
+     * @return ?array{type: string, data: array} null when there are no active saved services to show
+     */
+    private function activeServicesSection(Business $business): ?array
+    {
+        $services = $business->services()->where('status', BusinessServiceStatus::Active->value)
+            ->orderBy('sort_order')->limit(12)->get();
+
+        if ($services->isEmpty()) {
+            return null;
+        }
+
+        return ['type' => 'services', 'data' => [
+            'heading' => 'Our services',
+            'items' => $services->map(fn ($service) => array_filter([
+                'name' => Str::limit($service->name, 120, ''),
+                'description' => $service->description ? Str::limit($service->description, 500, '') : null,
+                'price_label' => $service->starting_price !== null && $service->currency_code
+                    ? Str::limit('From ' . strtoupper($service->currency_code) . ' ' . $service->starting_price, 40, '')
+                    : null,
+            ], fn ($value) => $value !== null && $value !== ''))->all(),
+        ]];
+    }
+
+    /**
+     * Null when there are no real saved catalog items — a knowledge-profile
+     * "offers" fallback is Home-page-only (see sections() below) and never
+     * promotes a dedicated Packages page into existing, since it isn't a
+     * business's own saved catalog.
+     *
+     * @return ?array{type: string, data: array}
+     */
+    private function activeCatalogSection(Business $business): ?array
+    {
+        $catalog = CatalogItem::where('business_id', $business->id)
+            ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
+            ->orderBy('position')->limit(12)->get();
+
+        if ($catalog->isEmpty()) {
+            return null;
+        }
+
+        return ['type' => 'services', 'data' => [
+            'heading' => 'Packages & products',
+            'items' => $catalog->map(fn ($item) => array_filter([
+                'name' => Str::limit($item->name, 120, ''),
+                'description' => $item->description ? Str::limit($item->description, 500, '') : null,
+                'price_label' => $item->price_minor !== null && $item->currency_code
+                    ? Str::limit(CatalogMoney::format($item->price_minor, $item->currency_code), 40, '')
+                    : null,
+            ], fn ($value) => $value !== null && $value !== ''))->all(),
+        ]];
     }
 
     private function sections(Business $business): array
@@ -160,35 +229,14 @@ final class WebsiteStarterDraftService
         }
         $sections[] = ['type' => 'hero', 'data' => $hero];
 
-        $services = $business->services()->where('status', BusinessServiceStatus::Active->value)
-            ->orderBy('sort_order')->limit(12)->get();
-        if ($services->isNotEmpty()) {
-            $sections[] = ['type' => 'services', 'data' => [
-                'heading' => 'Our services',
-                'items' => $services->map(fn ($service) => array_filter([
-                    'name' => Str::limit($service->name, 120, ''),
-                    'description' => $service->description ? Str::limit($service->description, 500, '') : null,
-                    'price_label' => $service->starting_price !== null && $service->currency_code
-                        ? Str::limit('From ' . strtoupper($service->currency_code) . ' ' . $service->starting_price, 40, '')
-                        : null,
-                ], fn ($value) => $value !== null && $value !== ''))->all(),
-            ]];
+        $servicesSection = $this->activeServicesSection($business);
+        if ($servicesSection !== null) {
+            $sections[] = $servicesSection;
         }
 
-        $catalog = CatalogItem::where('business_id', $business->id)
-            ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
-            ->orderBy('position')->limit(12)->get();
-        if ($catalog->isNotEmpty()) {
-            $sections[] = ['type' => 'services', 'data' => [
-                'heading' => 'Packages & products',
-                'items' => $catalog->map(fn ($item) => array_filter([
-                    'name' => Str::limit($item->name, 120, ''),
-                    'description' => $item->description ? Str::limit($item->description, 500, '') : null,
-                    'price_label' => $item->price_minor !== null && $item->currency_code
-                        ? Str::limit(CatalogMoney::format($item->price_minor, $item->currency_code), 40, '')
-                        : null,
-                ], fn ($value) => $value !== null && $value !== ''))->all(),
-            ]];
+        $catalogSection = $this->activeCatalogSection($business);
+        if ($catalogSection !== null) {
+            $sections[] = $catalogSection;
         } elseif ($profile !== null && in_array(BusinessKnowledgeProfileFieldKey::Offers->value, $confirmed, true) && $profile->offers) {
             $sections[] = ['type' => 'services', 'data' => [
                 'heading' => 'What we offer',
