@@ -109,6 +109,7 @@ class WebsiteAssetRetentionTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
             'image' => $this->fakeImageUpload('asset-b.png'),
+            'alt_text' => 'Asset B',
         ])->assertRedirect();
 
         $assetB = $website->assets()->sole();
@@ -131,6 +132,7 @@ class WebsiteAssetRetentionTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.assets.store', [$workspace->uid, $business->uid]), [
             'image' => $this->fakeImageUpload('asset-c.png'),
+            'alt_text' => 'Asset C',
         ])->assertRedirect();
 
         $assetC = $website->assets()->sole();

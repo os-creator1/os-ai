@@ -12,6 +12,7 @@ use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
 use App\Models\CatalogItem;
 use App\Models\Website;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -27,6 +28,27 @@ final class WebsiteStarterDraftService
         // Older businesses may store an empty industry string, which cannot
         // be cast to BusinessIndustry. Read the persisted value directly.
         return $business->getRawOriginal('industry') === BusinessIndustry::PhotoBoothService->value;
+    }
+
+    /**
+     * Read-only summary of the canonical business data the starter draft
+     * (and the Gallery-page picker) reuse — the same services/catalog/
+     * location lookups `sections()` itself makes, exposed so guidance
+     * screens can show what already exists versus what is still missing,
+     * without duplicating the query shape or inventing a new one.
+     *
+     * @return array{services: Collection, catalog: Collection, location: mixed}
+     */
+    public function reusableContent(Business $business): array
+    {
+        return [
+            'services' => $business->services()->where('status', BusinessServiceStatus::Active->value)
+                ->orderBy('sort_order')->get(),
+            'catalog' => CatalogItem::where('business_id', $business->id)
+                ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
+                ->orderBy('position')->get(),
+            'location' => $business->primaryLocation()->first(),
+        ];
     }
 
     public function __construct(

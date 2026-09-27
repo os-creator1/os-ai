@@ -6,7 +6,10 @@
     <div class="row mb-2">
         <div class="col-12 d-flex justify-content-between align-items-center">
             <h4 class="mb-0">Pages</h4>
-            <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.create', [$workspaceUid, $businessUid]) }}">Add page</x-button>
+            <span>
+                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Photos</x-button>
+                <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.create', [$workspaceUid, $businessUid]) }}">Add page</x-button>
+            </span>
         </div>
     </div>
 
@@ -14,6 +17,30 @@
 
     @if ($pages->contains('noindex', true))
         <x-alert variant="accent" class="mb-3">Starter service and package pages are marked hidden from search. Add your own details and photos to each page before removing that setting. All public websites remain hidden from search until the platform's search launch.</x-alert>
+    @endif
+
+    @if ($isPhotoBooth)
+        <x-card title="Photo Booth checklist" class="mb-3">
+            <ul class="mb-2">
+                <li>
+                    Services: @if ($reusable['services']->isNotEmpty()) reused on your Services page ({{ $reusable['services']->pluck('name')->implode(', ') }}). @else none saved — add one during setup or from your business details. @endif
+                </li>
+                <li>
+                    Packages: @if ($reusable['catalog']->isNotEmpty()) reused on your Packages page ({{ $reusable['catalog']->pluck('name')->implode(', ') }}). @else none saved. <a href="{{ route('customer.workspaces.businesses.catalog.create', [$workspaceUid, $businessUid]) }}">Add a package</a>. @endif
+                </li>
+                <li>
+                    Location: @if ($reusable['location'] && $reusable['location']->city) {{ $reusable['location']->city }} is reused in your contact details. @else not saved. <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Add your location</a>. @endif
+                </li>
+                <li>
+                    Photos: {{ $photoCount }} {{ $photoCount === 1 ? 'photo' : 'photos' }} uploaded.
+                    @if ($galleryPage)
+                        <a href="{{ route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $galleryPage->uid]) }}">Edit your Gallery page</a>.
+                    @else
+                        <a href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Upload photos and build a Gallery page</a>.
+                    @endif
+                </li>
+            </ul>
+        </x-card>
     @endif
 
     <x-card :padded="false">

@@ -21,7 +21,7 @@
 
     @if ($page)
         <x-card title="Photos for this site" class="mb-3">
-            <p class="text-caption">Upload your own photos, then choose them in a section below. Describe what each photo shows for accessibility.</p>
+            <p class="text-caption">Upload your own photos, then choose them in a section below. Describe what each photo shows for accessibility. Building a multi-photo Gallery page? <a href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Use the Photos screen</a> instead.</p>
             <form method="POST" enctype="multipart/form-data" action="{{ route('customer.workspaces.businesses.website.assets.store', [$workspaceUid, $businessUid]) }}">
                 @csrf
                 <div class="row align-items-end">

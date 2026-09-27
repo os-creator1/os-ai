@@ -198,8 +198,13 @@ class WebsiteTenancyTest extends TestCase
         $this->post(route('customer.workspaces.businesses.website.generate', $paramsB))->assertNotFound();
         $this->post(route('customer.workspaces.businesses.website.assets.store', $paramsB), [
             'image' => $this->fakeImageUpload(),
+            'alt_text' => 'Should never be stored',
         ])->assertNotFound();
         $this->delete(route('customer.workspaces.businesses.website.assets.destroy', [$workspaceB->uid, $businessB->uid, 'whatever-uid']))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.website.photos.index', $paramsB))->assertNotFound();
+        $this->post(route('customer.workspaces.businesses.website.gallery.store', $paramsB), [
+            'asset_uids' => ['whatever-uid'],
+        ])->assertNotFound();
 
         // The victim row is completely unmodified.
         $this->assertSame('Home', $pageB->fresh()->title);

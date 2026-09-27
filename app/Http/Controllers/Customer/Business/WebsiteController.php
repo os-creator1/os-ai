@@ -124,6 +124,7 @@ class WebsiteController extends CustomerBaseController
             'designs' => WebsiteStarterDesigns::all(),
             'services' => $business->services()->where('status', 'active')->orderBy('sort_order')->limit(4)->get(),
             'location' => $business->primaryLocation()->first(),
+            'reusable' => WebsiteStarterDraftService::isPhotoBooth($business) ? $this->starterDrafts->reusableContent($business) : null,
         ]);
     }
 
@@ -162,11 +163,17 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
 
+        $isPhotoBooth = WebsiteStarterDraftService::isPhotoBooth($business);
+
         return view('customer.business.website.pages', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
             'pages' => $website->pages()->orderBy('sort_order')->orderBy('id')->get(),
+            'isPhotoBooth' => $isPhotoBooth,
+            'reusable' => $isPhotoBooth ? $this->starterDrafts->reusableContent($business) : null,
+            'photoCount' => $isPhotoBooth ? $website->assets()->count() : null,
+            'galleryPage' => $isPhotoBooth ? $website->pages()->where('slug', 'gallery')->first() : null,
         ]);
     }
 
@@ -181,6 +188,7 @@ class WebsiteController extends CustomerBaseController
             'businessUid' => $businessUid,
             'website' => $website,
             'page' => null,
+            'assets' => $website->assets()->latest()->get(),
         ]);
     }
 
@@ -410,6 +418,103 @@ class WebsiteController extends CustomerBaseController
         return redirect()->back()->with([
             'status' => 'success',
             'message' => 'Asset deleted.',
+        ]);
+    }
+
+    /**
+     * The Website-area photo library: upload real photos (independent of
+     * any page — an upload here never attaches to a page by itself, so a
+     * photo stays freely deletable until explicitly selected below), then
+     * select which ones belong in the Gallery page.
+     */
+    public function photos(string $workspaceUid, string $businessUid): View|Factory|Application
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        $galleryPage = $website->pages()->where('slug', 'gallery')->first();
+        $gallerySection = $galleryPage !== null
+            ? collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')
+            : null;
+
+        return view('customer.business.website.photos', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'website' => $website,
+            'assets' => $website->assets()->latest()->get(),
+            'galleryPage' => $galleryPage,
+            'selectedUids' => collect($gallerySection['data']['items'] ?? [])->pluck('image')->all(),
+        ]);
+    }
+
+    /**
+     * Creates the Gallery page the first time, or updates only its
+     * `gallery` section thereafter — every other section already on that
+     * page (if the owner added any) is left untouched. Every uid must
+     * belong to this Website's own assets; a photo never enters a page
+     * merely because it exists.
+     */
+    public function storeGallery(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        $validated = validator($request->all(), [
+            'asset_uids' => 'required|array|min:1|max:24',
+            'asset_uids.*' => 'string',
+        ])->validate();
+
+        $selectedUids = collect($validated['asset_uids'])->unique()->values();
+        $ownedCount = $website->assets()->whereIn('uid', $selectedUids)->count();
+
+        if ($ownedCount !== $selectedUids->count()) {
+            throw ValidationException::withMessages([
+                'asset_uids' => ['One or more selected photos could not be found.'],
+            ]);
+        }
+
+        $gallerySection = ['type' => 'gallery', 'data' => [
+            'heading' => 'Gallery',
+            'items' => $selectedUids->map(fn ($uid) => ['image' => $uid])->all(),
+        ]];
+
+        $existing = $website->pages()->where('slug', 'gallery')->first();
+
+        if ($existing === null) {
+            $this->draftPages->createPage($website, [
+                'title' => 'Gallery',
+                'slug' => 'gallery',
+                'is_home' => false,
+                'sections' => [$gallerySection],
+                'noindex' => true,
+            ]);
+            $message = 'Gallery page created with your selected photos.';
+        } else {
+            $sections = collect($existing->sections ?? []);
+            $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
+            $index === false ? $sections->push($gallerySection) : $sections->put($index, $gallerySection);
+
+            $this->draftPages->updatePage($website, $existing, [
+                'title' => $existing->title,
+                'slug' => $existing->slug,
+                'is_home' => $existing->is_home,
+                'sections' => $sections->values()->all(),
+                'seo_title' => $existing->seo_title,
+                'meta_description' => $existing->meta_description,
+                'noindex' => $existing->noindex,
+            ]);
+            $message = 'Gallery page updated with your selected photos.';
+        }
+
+        return redirect()->route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => $message,
         ]);
     }
 

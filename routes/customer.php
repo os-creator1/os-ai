@@ -1605,6 +1605,9 @@
 
             Route::post('/assets', 'Business\WebsiteController@storeAsset')->name('assets.store');
             Route::delete('/assets/{assetUid}', 'Business\WebsiteController@destroyAsset')->name('assets.destroy');
+
+            Route::get('/photos', 'Business\WebsiteController@photos')->name('photos.index');
+            Route::post('/gallery', 'Business\WebsiteController@storeGallery')->name('gallery.store');
         });
 
         /*
