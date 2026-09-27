@@ -26,10 +26,13 @@
                 <button type="button" disabled>{{ $websiteForm['submit_label'] }}</button>
             </div>
         @else
-            {{-- No page_slug field: the submit controller derives the
-                 source page itself from the published snapshot, since a
-                 posted value would be visitor-controlled and unverifiable. --}}
-            <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid']]) }}" class="website-form-fields">
+            {{-- The page uid is part of the action URL itself, not a
+                 posted field: the submit controller looks it up in the
+                 published snapshot to verify and record the real source
+                 page, since a posted value would be visitor-controlled
+                 and unverifiable. The same form can appear on more than
+                 one page, so the form_uid alone can't say which. --}}
+            <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid'], $pageUid]) }}" class="website-form-fields">
                 @csrf
                 <input type="text" name="{{ \App\Library\Website\WebsiteFormSubmissionService::HONEYPOT_FIELD }}" value="" tabindex="-1" autocomplete="off" class="website-form-honeypot" aria-hidden="true">
                 @foreach ($websiteForm['fields'] as $field)

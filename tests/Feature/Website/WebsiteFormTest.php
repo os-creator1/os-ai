@@ -15,6 +15,7 @@ use App\Models\CrmOpportunity;
 use App\Models\Website;
 use App\Models\WebsiteForm;
 use App\Models\WebsiteFormSubmission;
+use App\Models\WebsitePage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
@@ -53,13 +54,23 @@ class WebsiteFormTest extends TestCase
         ]);
     }
 
-    private function publishFormPage(Website $website, WebsiteForm $form): void
+    /**
+     * @return WebsitePage the published "quote" page carrying the form
+     */
+    private function publishFormPage(Website $website, WebsiteForm $form): WebsitePage
     {
         $this->homePage($website);
-        $this->subPage($website, 'quote', [
+        $page = $this->subPage($website, 'quote', [
             'sections' => [$this->section('form', ['form_uid' => $form->uid])],
         ]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        return $page;
+    }
+
+    private function submitRoute(Website $website, WebsiteForm $form, WebsitePage $page): string
+    {
+        return route('public.website.form.submit', [$website->public_id, $form->uid, $page->uid]);
     }
 
     // ---------------------------------------------------------------
@@ -194,7 +205,7 @@ class WebsiteFormTest extends TestCase
         ]);
         $this->authenticateAsCustomer($customer);
 
-        $submitUrl = route('public.website.form.submit', [$website->public_id, $form->uid]);
+        $submitUrl = route('public.website.form.submit', [$website->public_id, $form->uid, $home->uid]);
 
         $this->get(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid, $home->uid]))
             ->assertOk()
@@ -209,12 +220,12 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->homePage($website, [
+        $home = $this->homePage($website, [
             'sections' => [$this->section('form', ['form_uid' => $form->uid, 'heading' => 'Request your quote'])],
         ]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
 
-        $submitUrl = route('public.website.form.submit', [$website->public_id, $form->uid]);
+        $submitUrl = route('public.website.form.submit', [$website->public_id, $form->uid, $home->uid]);
 
         $this->get(route('public.website.home', $website->public_id))
             ->assertOk()
@@ -229,14 +240,70 @@ class WebsiteFormTest extends TestCase
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
         // Published, but no page references this form at all.
-        $this->homePage($website);
+        $home = $this->homePage($website);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid, $home->uid]), [
             'name' => 'Never Published', 'phone' => '5551110000',
         ])->assertNotFound();
 
         $this->assertSame(0, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+    }
+
+    public function test_a_mismatched_page_and_form_pairing_is_refused(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        // $home is a real, currently-published page, but its own sections
+        // never reference $form — the form lives on $quotePage instead.
+        $home = $this->homePage($website);
+        $this->subPage($website, 'quote', [
+            'sections' => [$this->section('form', ['form_uid' => $form->uid])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        // Each half is individually valid — $form is genuinely live and
+        // $home is genuinely published — but this exact pairing never
+        // matched, so it must be refused rather than silently accepted.
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid, $home->uid]), [
+            'name' => 'Mismatched', 'phone' => '5551110002',
+        ])->assertNotFound();
+
+        $this->assertSame(0, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
+    }
+
+    public function test_the_same_form_on_two_published_pages_each_submission_records_its_actual_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $this->homePage($website);
+        $quotePage = $this->subPage($website, 'quote', [
+            'sections' => [$this->section('form', ['form_uid' => $form->uid])],
+        ]);
+        $bookingPage = $this->subPage($website, 'booking', [
+            'sections' => [$this->section('form', ['form_uid' => $form->uid])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid, $quotePage->uid]), [
+            'name' => 'From Quote Page', 'phone' => '5551000001',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid, $bookingPage->uid]), [
+            'name' => 'From Booking Page', 'phone' => '5551000002',
+        ])->assertRedirect()->assertSessionHasNoErrors();
+
+        $submissionsByName = WebsiteFormSubmission::where('website_form_id', $form->id)
+            ->get()
+            ->keyBy(fn ($submission) => $submission->data['name']);
+
+        // Each submission's recorded page is the one the visitor actually
+        // posted from, not whichever page a snapshot scan happens to find
+        // first for this form_uid.
+        $this->assertSame('quote', $submissionsByName['From Quote Page']->page_slug);
+        $this->assertSame('booking', $submissionsByName['From Booking Page']->page_slug);
     }
 
     // ---------------------------------------------------------------
@@ -248,9 +315,9 @@ class WebsiteFormTest extends TestCase
         [$customer, $business, $workspace] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Jamie Rivera',
             'phone' => '5551234567',
             'email' => 'jamie@example.test',
@@ -281,9 +348,9 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Spoofer', 'phone' => '5551119999',
             'page_slug' => 'totally-fake-page-i-was-never-on',
         ])->assertRedirect();
@@ -299,9 +366,9 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Quiet Visitor', 'phone' => '5552221000', 'email' => 'quiet@example.test',
         ])->assertRedirect()->assertSessionHasNoErrors();
 
@@ -318,9 +385,9 @@ class WebsiteFormTest extends TestCase
         [, $businessNoPipeline] = $this->entitledTenant();
         $websiteA = $this->createWebsite($businessNoPipeline);
         $formA = $this->createQuoteForm($websiteA);
-        $this->publishFormPage($websiteA, $formA);
+        $pageA = $this->publishFormPage($websiteA, $formA);
 
-        $this->post(route('public.website.form.submit', [$websiteA->public_id, $formA->uid]), [
+        $this->post($this->submitRoute($websiteA, $formA, $pageA), [
             'name' => 'No Pipeline Visitor', 'phone' => '5559990001',
         ]);
 
@@ -332,9 +399,9 @@ class WebsiteFormTest extends TestCase
         app(CrmPipelineService::class)->setUpStandardPipeline($businessWithPipeline);
         $websiteB = $this->createWebsite($businessWithPipeline);
         $formB = $this->createQuoteForm($websiteB);
-        $this->publishFormPage($websiteB, $formB);
+        $pageB = $this->publishFormPage($websiteB, $formB);
 
-        $this->post(route('public.website.form.submit', [$websiteB->public_id, $formB->uid]), [
+        $this->post($this->submitRoute($websiteB, $formB, $pageB), [
             'name' => 'Pipeline Visitor', 'phone' => '5559990002',
         ]);
 
@@ -352,9 +419,9 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Bot', 'phone' => '5550001111',
             WebsiteFormSubmissionService::HONEYPOT_FIELD => 'I am a bot',
         ])->assertRedirect();
@@ -371,9 +438,9 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Later Blacklisted', 'phone' => '5553334444',
         ])->assertRedirect()->assertSessionHasNoErrors();
 
@@ -382,7 +449,7 @@ class WebsiteFormTest extends TestCase
         // Blacklisted AFTER the first, legitimate inquiry.
         Blacklists::create(['number' => '5553334444']);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Later Blacklisted', 'phone' => '5553334444', 'message' => 'A second, different message.',
         ])->assertSessionHasErrors('phone');
 
@@ -396,12 +463,12 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
         $payload = ['name' => 'Double Click', 'phone' => '5552223333', 'email' => 'double@example.test'];
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), $payload)->assertRedirect();
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), $payload)->assertRedirect();
+        $this->post($this->submitRoute($website, $form, $page), $payload)->assertRedirect();
+        $this->post($this->submitRoute($website, $form, $page), $payload)->assertRedirect();
 
         $this->assertSame(1, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
         $this->assertSame(1, Contacts::where('business_id', $business->id)->count());
@@ -412,14 +479,14 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Repeat Customer', 'phone' => '5557778888', 'email' => 'repeat@example.test',
             'event_date' => '2027-03-01', 'event_type' => 'Birthday', 'message' => 'First inquiry.',
         ])->assertRedirect();
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'name' => 'Repeat Customer', 'phone' => '5557778888', 'email' => 'repeat@example.test',
             'event_date' => '2027-09-01', 'event_type' => 'Corporate', 'message' => 'A completely different event.',
         ])->assertRedirect()->assertSessionHasNoErrors();
@@ -438,10 +505,10 @@ class WebsiteFormTest extends TestCase
         [, $businessB] = $this->entitledTenant();
         $websiteB = $this->createWebsite($businessB);
         $formB = $this->createQuoteForm($websiteB);
-        $this->publishFormPage($websiteB, $formB);
+        $pageB = $this->publishFormPage($websiteB, $formB);
 
-        // formB's uid does not belong to websiteA.
-        $this->post(route('public.website.form.submit', [$websiteA->public_id, $formB->uid]), [
+        // formB's uid (and pageB's uid) do not belong to websiteA.
+        $this->post(route('public.website.form.submit', [$websiteA->public_id, $formB->uid, $pageB->uid]), [
             'name' => 'Cross Tenant', 'phone' => '5554445555',
         ])->assertNotFound();
 
@@ -453,9 +520,9 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
-        $this->publishFormPage($website, $form);
+        $page = $this->publishFormPage($website, $form);
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post($this->submitRoute($website, $form, $page), [
             'email' => 'no-name-or-phone@example.test',
         ])->assertSessionHasErrors(['name', 'phone']);
 
@@ -467,9 +534,10 @@ class WebsiteFormTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
+        $page = $this->homePage($website);
         // Never published.
 
-        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid]), [
+        $this->post(route('public.website.form.submit', [$website->public_id, $form->uid, $page->uid]), [
             'name' => 'Too Early', 'phone' => '5556667777',
         ])->assertNotFound();
     }

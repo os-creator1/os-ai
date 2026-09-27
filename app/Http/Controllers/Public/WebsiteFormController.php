@@ -18,13 +18,16 @@ use Illuminate\Support\Facades\Cache;
  * read-only renderer uses (contract §26.4) — a disabled, suspended or
  * unpublished Business's form 404s exactly like its pages already do.
  *
- * A submission is accepted only for a form the CURRENT PUBLISHED
- * REVISION actually renders on one of its pages — never merely because a
- * WebsiteForm row with that uid exists. This closes two things at once:
- * a form removed from every page (or never published at all) can no
- * longer be posted to, and the "source page" recorded on the submission
- * is read from that same snapshot, never from anything the visitor
- * posted — a page_slug field would be spoofable and is not trusted here.
+ * The route names the exact page the visitor was on, not just the form:
+ * the same form can be placed on more than one published page (a "Get a
+ * quote" section on the homepage AND on a dedicated quote page), so
+ * form_uid alone cannot say which one a given submission came from. The
+ * recorded source page is the one the CURRENT PUBLISHED REVISION's
+ * snapshot proves both exists and actually carries a `form` section for
+ * this exact form_uid — never merely because a WebsiteForm row exists,
+ * and never from a posted page_slug, which would be spoofable and is not
+ * read at all. A page or form that has since been removed, or a page/form
+ * pairing that never matched, 404s as stale rather than guessing.
  */
 class WebsiteFormController extends Controller
 {
@@ -36,7 +39,7 @@ class WebsiteFormController extends Controller
     ) {
     }
 
-    public function submit(Request $request, Website $website, string $formUid): RedirectResponse
+    public function submit(Request $request, Website $website, string $formUid, string $pageUid): RedirectResponse
     {
         abort_unless($this->gate->allows($website), 404);
 
@@ -44,12 +47,13 @@ class WebsiteFormController extends Controller
         $formSnapshot = collect($snapshot['forms'] ?? [])->firstWhere('uid', $formUid);
         abort_unless($formSnapshot !== null, 404);
 
-        $page = collect($snapshot['pages'] ?? [])->first(
-            fn ($candidate) => collect($candidate['sections'] ?? [])->contains(
-                fn ($section) => ($section['type'] ?? null) === 'form' && ($section['data']['form_uid'] ?? null) === $formUid
-            )
-        );
+        $page = collect($snapshot['pages'] ?? [])->firstWhere('uid', $pageUid);
         abort_unless($page !== null, 404);
+
+        $pageActuallyHasThisForm = collect($page['sections'] ?? [])->contains(
+            fn ($section) => ($section['type'] ?? null) === 'form' && ($section['data']['form_uid'] ?? null) === $formUid
+        );
+        abort_unless($pageActuallyHasThisForm, 404);
 
         // The snapshot proves the form is genuinely live; the row itself
         // (for its integer id — the only thing the FK needs) must still
