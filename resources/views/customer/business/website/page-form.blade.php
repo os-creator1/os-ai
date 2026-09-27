@@ -86,6 +86,7 @@
                     <option value="faq">FAQ</option>
                     <option value="cta">Call to action</option>
                     <option value="contact_details">Contact details</option>
+                    <option value="gallery">Gallery</option>
                 </select>
                 <x-button type="button" variant="secondary" id="add-section-btn">Add section</x-button>
             </div>
@@ -143,7 +144,8 @@
         ],
         services: [{key: 'heading', label: 'Heading', type: 'text'}],
         testimonials: [{key: 'heading', label: 'Heading', type: 'text'}],
-        faq: [{key: 'heading', label: 'Heading', type: 'text'}]
+        faq: [{key: 'heading', label: 'Heading', type: 'text'}],
+        gallery: [{key: 'heading', label: 'Heading', type: 'text'}]
     };
 
     var ITEM_TEMPLATES = {
@@ -154,7 +156,8 @@
         testimonials: [
             {key: 'quote', label: 'Quote'}, {key: 'author_name', label: 'Author name'}, {key: 'author_title', label: 'Author title'}
         ],
-        faq: [{key: 'question', label: 'Question'}, {key: 'answer', label: 'Answer'}]
+        faq: [{key: 'question', label: 'Question'}, {key: 'answer', label: 'Answer'}],
+        gallery: [{key: 'image', label: 'Photo', type: 'asset'}]
     };
 
     function get(obj, path) {

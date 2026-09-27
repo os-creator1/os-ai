@@ -27,7 +27,7 @@ class WebsiteComponentValidationTest extends TestCase
 
     private const ALL_TYPES = [
         'hero', 'text', 'image_text', 'services',
-        'testimonials', 'faq', 'cta', 'contact_details',
+        'testimonials', 'faq', 'cta', 'contact_details', 'gallery',
     ];
 
     private function validator(): WebsiteSectionValidator
@@ -36,7 +36,7 @@ class WebsiteComponentValidationTest extends TestCase
     }
 
     // ---------------------------------------------------------------
-    // (a) only the 8 allowlisted types are accepted
+    // (a) only the 9 allowlisted types are accepted
     // ---------------------------------------------------------------
 
     public function test_unknown_section_types_are_rejected(): void
@@ -51,12 +51,16 @@ class WebsiteComponentValidationTest extends TestCase
         }
     }
 
-    public function test_all_eight_allowlisted_types_validate_when_well_formed(): void
+    public function test_all_nine_allowlisted_types_validate_when_well_formed(): void
     {
         $validAssetUids = ['asset-uid-1'];
 
         foreach (self::ALL_TYPES as $type) {
-            $overrides = $type === 'image_text' ? ['image' => 'asset-uid-1'] : [];
+            $overrides = match ($type) {
+                'image_text' => ['image' => 'asset-uid-1'],
+                'gallery' => ['items' => [['image' => 'asset-uid-1']]],
+                default => [],
+            };
             $sections = [$this->section($type, $overrides)];
 
             $result = $this->validator()->validate($sections, $validAssetUids);
@@ -66,7 +70,7 @@ class WebsiteComponentValidationTest extends TestCase
     }
 
     // ---------------------------------------------------------------
-    // (b) malformed `data` shape throws for EACH of the 8 types
+    // (b) malformed `data` shape throws for EACH of the 9 types
     // ---------------------------------------------------------------
 
     public function test_each_section_type_rejects_malformed_data_missing_a_required_key(): void
@@ -82,6 +86,7 @@ class WebsiteComponentValidationTest extends TestCase
             'faq' => 'items',
             'cta' => 'buttons',
             'contact_details' => 'show_phone',
+            'gallery' => 'items',
         ];
 
         foreach ($missingKeyByType as $type => $missingKey) {
@@ -133,6 +138,42 @@ class WebsiteComponentValidationTest extends TestCase
             $this->fail('Expected ValidationException for 13 services items.');
         } catch (ValidationException $e) {
             $this->assertArrayHasKey('sections.0.items', $e->errors());
+        }
+    }
+
+    public function test_gallery_items_enforces_min_1_max_24_and_requires_a_known_asset(): void
+    {
+        $noItems = $this->section('gallery', ['items' => []]);
+
+        try {
+            $this->validator()->validate([$noItems], ['asset-uid-1']);
+            $this->fail('Expected ValidationException for 0 gallery items.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('sections.0.items', $e->errors());
+        }
+
+        $twentyFour = array_fill(0, 24, ['image' => 'asset-uid-1']);
+        $ok = $this->section('gallery', ['items' => $twentyFour]);
+        $result = $this->validator()->validate([$ok], ['asset-uid-1']);
+        $this->assertCount(24, $result[0]['data']['items']);
+
+        $twentyFive = array_fill(0, 25, ['image' => 'asset-uid-1']);
+        $tooMany = $this->section('gallery', ['items' => $twentyFive]);
+
+        try {
+            $this->validator()->validate([$tooMany], ['asset-uid-1']);
+            $this->fail('Expected ValidationException for 25 gallery items.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('sections.0.items', $e->errors());
+        }
+
+        $foreignAsset = $this->section('gallery', ['items' => [['image' => 'someone-elses-asset']]]);
+
+        try {
+            $this->validator()->validate([$foreignAsset], ['asset-uid-1']);
+            $this->fail('Expected ValidationException for a foreign asset reference.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('sections.0.items.0.image', $e->errors());
         }
     }
 

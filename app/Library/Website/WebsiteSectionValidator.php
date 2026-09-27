@@ -127,6 +127,11 @@ final class WebsiteSectionValidator
                 'show_email' => 'required|boolean',
                 'show_address' => 'required|boolean',
             ],
+            WebsiteSectionType::Gallery => [
+                'heading' => 'nullable|string|max:120',
+                'items' => 'required|array|min:1|max:24',
+                'items.*.image' => 'required|string',
+            ],
         };
 
         $validator = ValidatorFacade::make($data, $rules);
@@ -190,7 +195,7 @@ final class WebsiteSectionValidator
             $this->checkAssetValue($data[$field] ?? null, $field, $validAssetUids, $allowAssetReferences, $errors);
         }
 
-        if ($type === WebsiteSectionType::Services) {
+        if ($type === WebsiteSectionType::Services || $type === WebsiteSectionType::Gallery) {
             foreach (($data['items'] ?? []) as $i => $item) {
                 $this->checkAssetValue($item['image'] ?? null, "items.{$i}.image", $validAssetUids, $allowAssetReferences, $errors);
             }

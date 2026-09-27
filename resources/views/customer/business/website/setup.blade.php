@@ -40,7 +40,7 @@
 
     @if (\App\Library\Website\WebsiteStarterDraftService::isPhotoBooth($business))
         <x-alert variant="accent" class="mb-3">
-            For your Photo Booth business, the draft starts with a homepage and adds Services and Packages pages when you have saved those details. You can add your real event photos, backdrops, props, and extras in the editor. Add distinct details to each extra page before removing its search-hiding setting. All public websites remain hidden from search until the platform's search launch.
+            For your Photo Booth business, the draft starts with a homepage and adds Services and Packages pages when you have saved those details. Describe your booth types, backdrops, props, and extras there. Once you upload real event photos with a description of each one, add a Gallery page (or a Gallery section on any page) in the editor and choose your favorites. Add distinct details to each extra page before removing its search-hiding setting. All public websites remain hidden from search until the platform's search launch.
         </x-alert>
     @endif
 
