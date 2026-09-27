@@ -100,6 +100,15 @@ class WebsiteController extends Controller
             'sections' => $page['sections'],
             'assetsByUid' => $assetsByUid,
             'isPreview' => false,
+            // Public navigation is built only from the immutable revision.
+            'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
+                'uid' => $candidate['uid'],
+                'title' => $candidate['title'],
+                'is_home' => $candidate['is_home'],
+                'url' => $candidate['is_home']
+                    ? route('public.website.home', $website->public_id)
+                    : route('public.website.page', [$website->public_id, $candidate['slug']]),
+            ])->all(),
         ]);
 
         return $response->header('X-Robots-Tag', 'noindex, follow');

@@ -26,7 +26,7 @@ final class WebsiteSnapshotBuilder
     public function build(Website $website): array
     {
         $business = $website->business;
-        $pages = $website->pages()->orderBy('sort_order')->get();
+        $pages = $website->pages()->orderBy('sort_order')->orderBy('id')->get();
         $referencedAssetUids = [];
 
         $pageSnapshots = $pages->map(function ($page) use ($business, &$referencedAssetUids) {

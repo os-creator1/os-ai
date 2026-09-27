@@ -12,6 +12,10 @@
 
     <x-flash-alert class="mb-3" />
 
+    @if ($pages->contains('noindex', true))
+        <x-alert variant="accent" class="mb-3">Starter service and package pages are marked hidden from search. Add your own details and photos to each page before removing that setting. All public websites remain hidden from search until the platform's search launch.</x-alert>
+    @endif
+
     <x-card :padded="false">
         <div class="list-group list-group-flush">
             @forelse ($pages as $page)
@@ -22,6 +26,9 @@
                             <x-badge variant="accent">Home</x-badge>
                         @else
                             <span class="text-caption d-block">/{{ $page->slug }}</span>
+                        @endif
+                        @if ($page->noindex)
+                            <x-badge variant="warning">Hidden from search</x-badge>
                         @endif
                     </span>
                     <span>

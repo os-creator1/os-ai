@@ -38,6 +38,12 @@
         </p>
     </x-card>
 
+    @if (\App\Library\Website\WebsiteStarterDraftService::isPhotoBooth($business))
+        <x-alert variant="accent" class="mb-3">
+            For your Photo Booth business, the draft starts with a homepage and adds Services and Packages pages when you have saved those details. You can add your real event photos, backdrops, props, and extras in the editor. Add distinct details to each extra page before removing its search-hiding setting. All public websites remain hidden from search until the platform's search launch.
+        </x-alert>
+    @endif
+
     <form method="POST" action="{{ route('customer.workspaces.businesses.website.store', [$workspaceUid, $businessUid]) }}">
         @csrf
         <fieldset>

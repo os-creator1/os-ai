@@ -9,7 +9,8 @@
     $website, $websiteMeta (['name','theme']), $page (object with
     ->title, ->seo->{seo_title,meta_description,noindex}),
     $sections (array), $assetsByUid (array<uid, ['url','alt_text']>),
-    $isPreview (bool).
+    $isPreview (bool), $navigationPages (snapshot pages for public,
+    current draft pages for preview).
 
     Every text field renders through Blade's default escaped {{ }}
     output only (contract §8/§30) — never {!! !!}, never Blade::render()
@@ -51,7 +52,19 @@
 
     <header class="website-header">
         <div class="website-container">
-            <span class="website-brand">{{ $websiteMeta['name'] }}</span>
+            @php($homeNavigation = collect($navigationPages ?? [])->firstWhere('is_home', true))
+            @if ($homeNavigation)
+                <a class="website-brand" href="{{ $homeNavigation['url'] }}">{{ $websiteMeta['name'] }}</a>
+            @else
+                <span class="website-brand">{{ $websiteMeta['name'] }}</span>
+            @endif
+            @if (count($navigationPages ?? []) > 1)
+                <nav class="website-navigation" aria-label="Site pages">
+                    @foreach ($navigationPages as $navigationPage)
+                        <a href="{{ $navigationPage['url'] }}" @if (($page->uid ?? null) === $navigationPage['uid']) aria-current="page" @endif>{{ $navigationPage['title'] }}</a>
+                    @endforeach
+                </nav>
+            @endif
         </div>
     </header>
 
