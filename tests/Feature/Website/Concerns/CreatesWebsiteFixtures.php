@@ -8,6 +8,8 @@ use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Website\Domains\DnsVerifier;
+use App\Library\Website\Domains\ForgeDomainProvisioner;
 use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\AppConfig;
 use App\Models\Business;
@@ -228,6 +230,40 @@ trait CreatesWebsiteFixtures
         $mock->shouldReceive('lastRefusalReason')->andReturn(null);
         $mock->shouldReceive('complete')->andReturn($responseJson);
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        return $mock;
+    }
+
+    /**
+     * Website Generation + Hosting Slice B (custom domains) — a real DNS
+     * lookup is genuine outbound network I/O and is never performed in
+     * this test suite; every test that touches domain verification
+     * binds this double first.
+     */
+    protected function fakeDnsVerifier(bool $hasTxtRecord = true): \Mockery\MockInterface
+    {
+        $mock = \Mockery::mock(DnsVerifier::class);
+        $mock->shouldReceive('hasTxtRecord')->andReturn($hasTxtRecord);
+        $this->app->instance(DnsVerifier::class, $mock);
+
+        return $mock;
+    }
+
+    /**
+     * The real Forge API is never called in this test suite — every test
+     * that reaches certificate provisioning binds this double first and
+     * sets its own expectations for requestCertificate()/
+     * certificateStatus()/removeDomain().
+     */
+    protected function fakeDomainProvisioner(): \Mockery\MockInterface
+    {
+        $mock = \Mockery::mock(ForgeDomainProvisioner::class);
+        // A default, lenient expectation for the cleanup call every
+        // WebsiteDomainService::remove() makes — tests that care about
+        // asserting it (e.g. ->once()) still can, by declaring their own
+        // expectation afterwards, which Mockery lets override a default.
+        $mock->shouldReceive('removeDomain')->byDefault();
+        $this->app->instance(ForgeDomainProvisioner::class, $mock);
 
         return $mock;
     }

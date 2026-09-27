@@ -19,6 +19,16 @@ use Tests\TestCase;
  * foundation (WebsiteForm/WebsiteFormSubmission) — never an open-ended
  * form-builder, a generic leads product, or Website-specific analytics.
  * These tests fail loudly the moment scope creeps beyond that.
+ *
+ * §37.14 (Custom-domain boundary) has since been NARROWLY, deliberately
+ * lifted too — Slice B's own custom-domain connection feature
+ * (App\Library\Website\Domains\*, App\Models\WebsiteDomain,
+ * App\Http\Middleware\ResolveCustomDomainWebsite). The `website_domains`
+ * table and the DNS/TLS/certificate vocabulary that goes with it are the
+ * ONE now-authorized exception; every other guard in this file — no
+ * generic form builder, no analytics tables, and no hostname/domain
+ * ROUTE (the feature is middleware-based, never `Route::domain()`) —
+ * still holds exactly as before.
  */
 class WebsiteBoundaryTest extends TestCase
 {
@@ -135,14 +145,24 @@ class WebsiteBoundaryTest extends TestCase
         }
     }
 
-    public function test_no_website_domains_table_exists(): void
+    public function test_website_domains_table_exists_for_the_now_deliberately_built_slice_b(): void
     {
-        $this->assertFalse(Schema::hasTable('website_domains'));
+        // Was test_no_website_domains_table_exists in Slice A. Slice B's
+        // custom-domain connection feature deliberately built this table
+        // (App\Models\WebsiteDomain, database/migrations/
+        // 2026_10_08_120000_create_website_domains_table.php) — flipped,
+        // never removed, once that work was explicitly commissioned.
+        $this->assertTrue(Schema::hasTable('website_domains'));
     }
 
     // ---------------------------------------------------------------
     // §37.14 (d) — no TLS/DNS/ACME/CNAME automation anywhere in the
-    // Website feature's library or controller code
+    // ORIGINAL Slice A Website library/controller files. Slice B's own
+    // App\Library\Website\Domains\* is the one deliberate, contained
+    // exception (DnsVerifier, ForgeDomainProvisioner) and is
+    // intentionally NOT part of this scan — this proves the vocabulary
+    // never leaked into the surrounding Slice A surface, not that it
+    // doesn't exist anywhere in the Website feature at all.
     // ---------------------------------------------------------------
 
     public function test_no_tls_dns_acme_or_cname_code_exists_in_the_website_feature(): void

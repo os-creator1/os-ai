@@ -205,4 +205,32 @@
             'webhook_public_key'  => env('TELNYX_WEBHOOK_PUBLIC_KEY'),
             'mode'                => env('TELNYX_MODE', 'sandbox'),
         ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Laravel Forge — Website custom-domain certificates (Slice B)
+        |--------------------------------------------------------------------------
+        |
+        | Website Generation + Hosting contract §40. `server_id`/`site_id`
+        | identify the one managed Forge site every Website is hosted on;
+        | `api_token` is a Forge personal access token scoped to that
+        | server. None of these are read outside
+        | App\Library\Website\Domains\ForgeDomainProvisioner, and that class
+        | is never invoked by the test suite (App\Library\Website\Domains\DnsVerifier
+        | and ForgeDomainProvisioner are both bound to Mockery doubles in
+        | every test that touches domain verification/provisioning).
+        |
+        | `cname_target`/`a_record_ip` are what WebsiteDomainService shows
+        | the owner as DNS instructions — the platform's own canonical
+        | hosting hostname/IP, deployment configuration, not a secret.
+        |
+        */
+
+        'forge' => [
+            'api_token'    => env('FORGE_API_TOKEN'),
+            'server_id'    => env('FORGE_SERVER_ID'),
+            'site_id'      => env('FORGE_SITE_ID'),
+            'cname_target' => env('FORGE_CNAME_TARGET'),
+            'a_record_ip'  => env('FORGE_A_RECORD_IP'),
+        ],
     ];
