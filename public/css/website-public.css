@@ -130,3 +130,44 @@ body.website-body {
     font-size: 0.875rem;
     text-align: center;
 }
+
+/* Curated starter designs use only the bounded Website theme values. */
+.website-font-serif { --website-font: Georgia, "Times New Roman", serif; }
+
+.website-header-clean .website-hero {
+    background: #eff6ff;
+    border-radius: 1.25rem;
+    margin-top: 2rem;
+}
+
+.website-header-bold .website-header { background: #172033; border-bottom-color: #2c394d; }
+.website-header-bold .website-brand { color: #fff; }
+.website-header-bold .website-hero {
+    background: #172033;
+    color: #fff;
+    margin: 0 calc(50% - 50vw);
+    padding: 6rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+}
+.website-header-bold .website-hero-subheading { color: #d4dae5; }
+.website-header-bold .website-cta { background: #fcece6; }
+.website-header-bold .website-service-card { border-top: 4px solid var(--website-primary); }
+
+.website-header-premium .website-header { background: #f7f2e9; border-bottom-color: #ddd0be; }
+.website-header-premium .website-hero {
+    background: #f7f2e9;
+    margin: 0 calc(50% - 50vw);
+    padding: 6rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+}
+.website-header-premium .website-hero h1 { font-size: clamp(2.5rem, 6vw, 4.5rem); line-height: 1.12; }
+.website-header-premium .website-service-card { border-color: #ddd0be; border-radius: 0; }
+.website-header-premium .website-cta { background: #f7f2e9; }
+.website-footer-premium { background: #f7f2e9; }
+
+.website-button-rounded .website-btn { border-radius: 999px; }
+.website-button-outline .website-btn-primary { background: transparent; color: var(--website-primary); border: 2px solid var(--website-primary); }
+.website-button-outline .website-btn-primary:hover { background: var(--website-primary); color: #fff; }
+
+@media (max-width: 640px) {
+    .website-header-bold .website-hero,
+    .website-header-premium .website-hero { padding-top: 4rem; padding-bottom: 4rem; }
+}

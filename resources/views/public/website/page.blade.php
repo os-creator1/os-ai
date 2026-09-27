@@ -44,7 +44,7 @@
         </style>
     @endif
 </head>
-<body class="website-body website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }}">
+<body class="website-body website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }}">
     @if ($isPreview)
         <div class="website-preview-banner">Preview — draft content, not yet published</div>
     @endif

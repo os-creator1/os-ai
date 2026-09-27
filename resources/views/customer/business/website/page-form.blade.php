@@ -19,6 +19,27 @@
         </x-alert>
     @endif
 
+    @if ($page)
+        <x-card title="Photos for this site" class="mb-3">
+            <p class="text-caption">Upload your own photos, then choose them in a section below. Describe what each photo shows for accessibility.</p>
+            <form method="POST" enctype="multipart/form-data" action="{{ route('customer.workspaces.businesses.website.assets.store', [$workspaceUid, $businessUid]) }}">
+                @csrf
+                <div class="row align-items-end">
+                    <div class="col-md-5 mb-2"><label class="form-label" for="website-image">Photo</label><input id="website-image" name="image" type="file" accept="image/png,image/jpeg,image/webp" class="form-control" required></div>
+                    <div class="col-md-5 mb-2"><label class="form-label" for="website-alt-text">Describe the photo</label><input id="website-alt-text" name="alt_text" type="text" maxlength="160" class="form-control" placeholder="e.g. Guests using our photo booth" required></div>
+                    <div class="col-md-2 mb-2"><x-button type="submit" variant="secondary">Upload photo</x-button></div>
+                </div>
+            </form>
+            @if (isset($assets) && $assets->isNotEmpty())
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    @foreach ($assets as $asset)
+                        <img src="{{ $asset->url() }}" alt="{{ $asset->alt_text ?: 'Uploaded photo' }}" title="{{ $asset->alt_text ?: 'Uploaded photo' }}" width="100" height="75" style="object-fit:cover;border-radius:8px">
+                    @endforeach
+                </div>
+            @endif
+        </x-card>
+    @endif
+
     <form method="POST"
           action="{{ $page ? route('customer.workspaces.businesses.website.pages.update', [$workspaceUid, $businessUid, $page->uid]) : route('customer.workspaces.businesses.website.pages.store', [$workspaceUid, $businessUid]) }}"
           id="website-page-form">
@@ -72,15 +93,6 @@
 
         <input type="hidden" name="sections" id="sections-json">
 
-        @if (isset($assets) && $assets->isNotEmpty())
-            <p class="text-caption mt-2">Available asset UIDs (upload more from the page overview): </p>
-            <p class="text-caption">
-                @foreach ($assets as $asset)
-                    <code class="me-2">{{ $asset->uid }}</code>
-                @endforeach
-            </p>
-        @endif
-
         <div class="mt-3">
             <x-button type="submit" variant="primary">Save page</x-button>
             <x-button type="button" variant="ghost" onclick="window.history.back()">Cancel</x-button>
@@ -88,10 +100,11 @@
     </form>
 @endsection
 
-@push('page-script')
+@section('page-script')
 <script>
 (function () {
     var initialSections = @json(old('sections_decoded', $page->sections ?? []));
+    var availableAssets = @json(isset($assets) ? $assets->map(fn ($asset) => ['uid' => $asset->uid, 'label' => $asset->alt_text ?: 'Uploaded photo', 'url' => $asset->url()])->values()->all() : []);
     var listEl = document.getElementById('sections-list');
     var counter = 0;
 
@@ -99,7 +112,7 @@
         hero: [
             {key: 'heading', label: 'Heading', type: 'text'},
             {key: 'subheading', label: 'Subheading', type: 'text'},
-            {key: 'background_image', label: 'Background image asset UID', type: 'text'},
+            {key: 'background_image', label: 'Background photo', type: 'asset'},
             {key: 'primary_cta.label', label: 'Primary button label', type: 'text'},
             {key: 'primary_cta.url', label: 'Primary button URL', type: 'text'},
             {key: 'secondary_cta.label', label: 'Secondary button label', type: 'text'},
@@ -112,7 +125,7 @@
         image_text: [
             {key: 'heading', label: 'Heading', type: 'text'},
             {key: 'body', label: 'Body', type: 'textarea'},
-            {key: 'image', label: 'Image asset UID', type: 'text'},
+            {key: 'image', label: 'Photo', type: 'asset'},
             {key: 'image_position', label: 'Image position (left/right)', type: 'text'}
         ],
         cta: [
@@ -136,7 +149,7 @@
     var ITEM_TEMPLATES = {
         services: [
             {key: 'name', label: 'Name'}, {key: 'description', label: 'Description'},
-            {key: 'price_label', label: 'Price label'}, {key: 'image', label: 'Image asset UID'}
+            {key: 'price_label', label: 'Price label'}, {key: 'image', label: 'Photo', type: 'asset'}
         ],
         testimonials: [
             {key: 'quote', label: 'Quote'}, {key: 'author_name', label: 'Author name'}, {key: 'author_title', label: 'Author title'}
@@ -149,7 +162,9 @@
     }
 
     function fieldHtml(type, key, value) {
-        var safeId = 'f_' + counter + '_' + key.replace(/\./g, '_');
+        if (type === 'asset') {
+            return '<div class="mb-2"><select class="form-select" data-field="' + key + '">' + assetOptions(value) + '</select></div>';
+        }
         if (type === 'textarea') {
             return '<div class="mb-2"><textarea class="form-control" data-field="' + key + '" rows="3">' + escapeHtml(value) + '</textarea></div>';
         }
@@ -161,6 +176,14 @@
 
     function escapeHtml(v) {
         return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function assetOptions(selected) {
+        var options = '<option value="">Choose a photo</option>';
+        availableAssets.forEach(function (asset, index) {
+            options += '<option value="' + escapeHtml(asset.uid) + '"' + (asset.uid === selected ? ' selected' : '') + '>' + escapeHtml(asset.label) + ' #' + (index + 1) + '</option>';
+        });
+        return options;
     }
 
     function renderSection(type, data) {
@@ -217,7 +240,11 @@
         row.className = 'border rounded p-2 mb-2';
         var html = '';
         (ITEM_TEMPLATES[type] || []).forEach(function (f) {
-            html += '<input type="text" class="form-control form-control-sm mb-1" placeholder="' + f.label + '" data-item-field="' + f.key + '" value="' + escapeHtml(item[f.key] || '') + '">';
+            if (f.type === 'asset') {
+                html += '<select class="form-select form-select-sm mb-1" aria-label="Photo" data-item-field="' + f.key + '">' + assetOptions(item[f.key] || '') + '</select>';
+            } else {
+                html += '<input type="text" class="form-control form-control-sm mb-1" placeholder="' + f.label + '" data-item-field="' + f.key + '" value="' + escapeHtml(item[f.key] || '') + '">';
+            }
         });
         html += '<button type="button" class="btn btn-sm btn-link text-danger p-0 remove-item">Remove item</button>';
         row.innerHTML = html;
@@ -284,4 +311,4 @@
     });
 })();
 </script>
-@endpush
+@endsection

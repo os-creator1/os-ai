@@ -14,6 +14,8 @@ use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsiteAssetUploadService;
 use App\Library\Website\WebsiteDraftPageService;
 use App\Library\Website\WebsitePublisher;
+use App\Library\Website\WebsiteStarterDesigns;
+use App\Library\Website\WebsiteStarterDraftService;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Website;
@@ -59,6 +61,7 @@ class WebsiteController extends CustomerBaseController
         private readonly WebsiteAssetUploadService $assetUploads,
         private readonly WebsitePublisher $publisher,
         private readonly WebsiteAiDraftGenerator $aiGenerator,
+        private readonly WebsiteStarterDraftService $starterDrafts,
     ) {
     }
 
@@ -118,6 +121,9 @@ class WebsiteController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
+            'designs' => WebsiteStarterDesigns::all(),
+            'services' => $business->services()->where('status', 'active')->orderBy('sort_order')->limit(4)->get(),
+            'location' => $business->primaryLocation()->first(),
         ]);
     }
 
@@ -130,16 +136,23 @@ class WebsiteController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
         }
 
-        $request->validate(['name' => 'required|string|max:120']);
-
-        Website::create([
-            'business_id' => $business->id,
-            'name' => $request->input('name'),
+        $request->validate([
+            'design' => 'nullable|in:clean,bold,premium,blank',
+            'name' => 'nullable|string|max:120',
         ]);
+
+        if (! $request->filled('design') && ! $request->filled('name')) {
+            throw ValidationException::withMessages(['design' => ['Choose a design to start your website.']]);
+        }
+
+        $design = $request->input('design', 'blank');
+        $website = $this->starterDrafts->create($business, $design, $request->input('name'));
 
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => 'Website created. Add a homepage to get started.',
+            'message' => $website->pages()->exists()
+                ? 'Your starter draft is ready. Review the page and add your own photos before publishing.'
+                : 'Website created. Add a homepage to get started.',
         ]);
     }
 
