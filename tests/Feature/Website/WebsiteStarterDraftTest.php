@@ -9,6 +9,7 @@ use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Website\WebsiteDraftPageService;
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Models\BusinessLocation;
 use App\Models\BusinessService;
 use App\Models\CatalogItem;
 use App\Models\Website;
@@ -242,5 +243,28 @@ class WebsiteStarterDraftTest extends TestCase
             $this->delete(route('customer.workspaces.businesses.website.assets.destroy', [$workspace->uid, $business->uid, $asset->uid]))
                 ->assertRedirect()->assertSessionHasNoErrors();
         }
+    }
+
+    public function test_photo_booth_guidance_only_promises_an_active_public_location(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+            'city' => 'Privateville',
+            'public_address' => false,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $this->authenticateAsCustomer($customer);
+
+        $pages = route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]);
+        $this->get($pages)->assertOk()->assertSee('no active public location is available');
+
+        $location->public_address = true;
+        $location->save();
+        $this->get($pages)->assertOk()->assertSee('public location in Privateville');
     }
 }

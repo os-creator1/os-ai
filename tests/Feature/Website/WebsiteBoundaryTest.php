@@ -45,14 +45,14 @@ class WebsiteBoundaryTest extends TestCase
         }
     }
 
-    public function test_website_section_type_enum_has_exactly_the_eight_known_cases_and_no_form_case(): void
+    public function test_website_section_type_enum_has_exactly_the_nine_known_cases_and_no_form_case(): void
     {
         $values = array_map(static fn (WebsiteSectionType $case) => $case->value, WebsiteSectionType::cases());
 
         sort($values);
 
         $this->assertSame(
-            ['contact_details', 'cta', 'faq', 'hero', 'image_text', 'services', 'testimonials', 'text'],
+            ['contact_details', 'cta', 'faq', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
             $values
         );
 

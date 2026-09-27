@@ -247,6 +247,7 @@ class WebsiteSecurityTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.assets.store', $this->routeParams($workspaceA, $businessA)), [
             'image' => $this->fakeImageUpload('photo-a.png'),
+            'alt_text' => 'Photo A',
         ])->assertSessionDoesntHaveErrors();
 
         $assetA = $websiteA->fresh()->assets()->firstOrFail();

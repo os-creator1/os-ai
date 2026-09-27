@@ -9,6 +9,10 @@ use Illuminate\Foundation\Http\FormRequest;
  * Website Generation + Hosting Slice A contract §13. The FormRequest-
  * layer magic-byte/dimension check — deliberately in addition to, not
  * instead of, WebsiteAssetUploadService's own independent re-validation.
+ *
+ * `alt_text` is required: an uploaded photo is only ever useful once it
+ * has a real description, both for visitors using a screen reader and
+ * for the owner picking a photo out of a list later.
  */
 class StoreWebsiteAssetRequest extends FormRequest
 {
@@ -21,7 +25,7 @@ class StoreWebsiteAssetRequest extends FormRequest
     {
         return [
             'image' => ['required', 'file', new ValidWebsiteImageRule()],
-            'alt_text' => ['nullable', 'string', 'max:160'],
+            'alt_text' => ['required', 'string', 'max:160'],
         ];
     }
 }

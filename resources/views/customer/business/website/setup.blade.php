@@ -38,10 +38,37 @@
         </p>
     </x-card>
 
-    @if (\App\Library\Website\WebsiteStarterDraftService::isPhotoBooth($business))
-        <x-alert variant="accent" class="mb-3">
-            For your Photo Booth business, the draft starts with a homepage and adds Services and Packages pages when you have saved those details. You can add your real event photos, backdrops, props, and extras in the editor. Add distinct details to each extra page before removing its search-hiding setting. All public websites remain hidden from search until the platform's search launch.
-        </x-alert>
+    @if ($reusable)
+        <x-card title="What your Photo Booth draft will reuse" class="mb-3">
+            <ul class="mb-2">
+                <li>
+                    @if ($reusable['services']->isNotEmpty())
+                        <strong>Services</strong> (become your Services page): {{ $reusable['services']->pluck('name')->implode(', ') }}.
+                    @else
+                        <strong>Services</strong>: none saved yet, so no Services page will be added.
+                    @endif
+                </li>
+                <li>
+                    @if ($reusable['catalog']->isNotEmpty())
+                        <strong>Packages</strong> (become your Packages page): {{ $reusable['catalog']->pluck('name')->implode(', ') }}.
+                    @else
+                        <strong>Packages</strong>: none saved yet, so no Packages page will be added.
+                        <a href="{{ route('customer.workspaces.businesses.catalog.create', [$workspaceUid, $businessUid]) }}">Add a package</a>.
+                    @endif
+                </li>
+                <li>
+                    @if ($reusable['location'])
+                        <strong>Location</strong>: Your public location @if ($reusable['location']->city) in {{ $reusable['location']->city }} @endif will appear in your contact details.
+                    @else
+                        <strong>Location</strong>: no active public location is available.
+                        <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">Review your locations</a>.
+                    @endif
+                </li>
+            </ul>
+            <p class="text-caption mb-0">
+                Describe your booth types, backdrops, props, and extras as services or packages above. Once your site exists, upload real event photos with a description of each one from the Photos screen and pick your favorites to build a Gallery page. Extra pages start hidden from search until you review them. All public websites remain hidden from search until the platform's search launch.
+            </p>
+        </x-card>
     @endif
 
     <form method="POST" action="{{ route('customer.workspaces.businesses.website.store', [$workspaceUid, $businessUid]) }}">

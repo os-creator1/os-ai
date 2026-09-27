@@ -96,7 +96,7 @@ final class WebsiteSnapshotBuilder
             $uids[] = $data['image'];
         }
 
-        if ($type === WebsiteSectionType::Services) {
+        if ($type === WebsiteSectionType::Services || $type === WebsiteSectionType::Gallery) {
             foreach (($data['items'] ?? []) as $item) {
                 if (! empty($item['image'])) {
                     $uids[] = $item['image'];

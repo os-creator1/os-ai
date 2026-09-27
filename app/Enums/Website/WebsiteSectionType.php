@@ -19,4 +19,5 @@ enum WebsiteSectionType: string
     case Faq = 'faq';
     case Cta = 'cta';
     case ContactDetails = 'contact_details';
+    case Gallery = 'gallery';
 }
