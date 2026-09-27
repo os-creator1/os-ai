@@ -6,10 +6,12 @@ use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\PortOutRequestStatus;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\PortOutRequestAlreadyActiveException;
+use App\Library\Messaging\Exceptions\PortOutRequestNumberNotPortableException;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
 use App\Models\BusinessMessagingNumber;
 use App\Models\BusinessMessagingNumberPortOutRequest;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
@@ -29,24 +31,71 @@ use Illuminate\Support\Facades\DB;
 class PortOutRequestManager
 {
     /**
-     * Review correction — the ownership-safe lookup for §13.4's exit path.
+     * Review correction — a Pending number is not yet an actually acquired
+     * one. The schema's own default is 'pending' (business_messaging_numbers'
+     * creating migration), attachNumber()'s own default status, and the
+     * *reservation* it shares with Active under the active_or_pending_phone_number
+     * guard column is a claim on the E.164 number against a duplicate
+     * mapping — never a confirmed carrier acquisition. The real,
+     * synchronous provisioning path (BusinessMessagingProvisioningService)
+     * writes Active directly; it never leaves a genuinely purchased number
+     * sitting at Pending. Only Active and Suspended represent a number the
+     * Business actually holds today — Suspended still retains it (§13.3:
+     * suspension "stops new paid outbound while retaining the number").
+     * Pending and Released are both excluded, for opposite reasons: Pending
+     * because there may be nothing real to port yet, Released because there
+     * is nothing left to port at all.
+     *
+     * @var list<string>
+     */
+    private const PORTABLE_STATUSES = [
+        BusinessMessagingNumberStatus::Active->value,
+        BusinessMessagingNumberStatus::Suspended->value,
+    ];
+
+    /**
+     * Review correction — every actually acquired, non-released number
+     * belonging to this Business, not only its primary number. The
+     * one-to-many schema (§4.2) and the contract both allow more than one
+     * retained number; the earlier single-number, primary-only lookup lost
+     * the port-out path for every number once a Business held two.
+     *
      * Deliberately NOT BusinessMessagingIdentityResolver::resolveForBusiness()
      * / resolvePrimaryNumber(): those are Slice 3's outbound-send/inbound-
-     * attribution contract, which is correctly restricted to an Active
-     * identity and an Active primary number (T-MSG-3) — exactly the wrong
-     * restriction here, since a customer with a Suspended number (§13.3:
-     * "stops new paid outbound while retaining the number") or a Pending
-     * identity still retains that number and must still be able to request
-     * to leave with it. The only status this method excludes is Released —
-     * a released number is no longer retained, so there is nothing left to
-     * port. Ownership is always resolved through the identity's own
-     * business_id (BusinessMessagingNumber carries no business_id column of
-     * its own), never trusted from a caller-supplied pairing, and a
-     * business with more than one retained primary number candidate is
-     * refused rather than guessed, mirroring resolvePrimaryNumber()'s own
-     * fail-closed discipline.
+     * attribution contract, restricted to one Active identity and one
+     * Active primary number (T-MSG-3) — the wrong restriction here.
+     * Ownership is always resolved through each identity's own business_id
+     * (BusinessMessagingNumber carries no business_id column of its own).
+     *
+     * @return Collection<int, BusinessMessagingNumber>
      */
-    public function retainedNumberFor(Business $business): ?BusinessMessagingNumber
+    public function retainedNumbersFor(Business $business): Collection
+    {
+        $identityIds = BusinessMessagingIdentity::query()
+            ->where('business_id', (int) $business->id)
+            ->pluck('id');
+
+        if ($identityIds->isEmpty()) {
+            return new Collection();
+        }
+
+        return BusinessMessagingNumber::query()
+            ->whereIn('business_messaging_identity_id', $identityIds)
+            ->whereIn('status', self::PORTABLE_STATUSES)
+            ->orderByDesc('is_primary')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * The mutation-boundary lookup for a client-posted number id: never
+     * trusted alone. Returns the number only when it both belongs to this
+     * Business (through its identity's business_id) AND is currently in a
+     * portable status — the same two checks request() below re-verifies
+     * independently before writing anything, so a caller that skips this
+     * lookup (or is wrong about it) still cannot make a bad write.
+     */
+    public function retainedNumberFor(Business $business, int $numberId): ?BusinessMessagingNumber
     {
         $identityIds = BusinessMessagingIdentity::query()
             ->where('business_id', (int) $business->id)
@@ -56,28 +105,32 @@ class PortOutRequestManager
             return null;
         }
 
-        $candidates = BusinessMessagingNumber::query()
+        return BusinessMessagingNumber::query()
+            ->where('id', $numberId)
             ->whereIn('business_messaging_identity_id', $identityIds)
-            ->where('is_primary', true)
-            ->where('status', '!=', BusinessMessagingNumberStatus::Released->value)
-            ->orderBy('id')
-            ->limit(2)
-            ->get();
-
-        return $candidates->count() === 1 ? $candidates->first() : null;
+            ->whereIn('status', self::PORTABLE_STATUSES)
+            ->first();
     }
 
     /**
-     * @throws MessagingIdentityConflictException      when $number does not
-     *                                                  actually belong to
-     *                                                  $business — the
-     *                                                  manager never trusts
-     *                                                  a caller-supplied
-     *                                                  pairing, even though
-     *                                                  every current caller
-     *                                                  resolves $number from
-     *                                                  $business itself via
-     *                                                  retainedNumberFor()
+     * @throws MessagingIdentityConflictException       when $number does not
+     *                                                   actually belong to
+     *                                                   $business — the
+     *                                                   manager never trusts
+     *                                                   a caller-supplied
+     *                                                   pairing, even though
+     *                                                   every current caller
+     *                                                   resolves $number
+     *                                                   from $business
+     *                                                   itself first
+     * @throws PortOutRequestNumberNotPortableException when $number is not
+     *                                                   currently in a
+     *                                                   portable status
+     *                                                   (Pending or
+     *                                                   Released) — checked
+     *                                                   here too, never
+     *                                                   trusted from the
+     *                                                   caller's own filter
      * @throws PortOutRequestAlreadyActiveException when this number already
      *                                               has an unresolved
      *                                               request, whether found
@@ -88,6 +141,7 @@ class PortOutRequestManager
     public function request(Business $business, BusinessMessagingNumber $number, int $requestedByUserId): BusinessMessagingNumberPortOutRequest
     {
         $this->assertNumberBelongsToBusiness($business, $number);
+        $this->assertNumberIsPortable($number);
 
         try {
             return DB::transaction(function () use ($business, $number, $requestedByUserId): BusinessMessagingNumberPortOutRequest {
@@ -171,6 +225,20 @@ class PortOutRequestManager
                 'Number [%d] does not belong to Business [%d].',
                 (int) $number->id,
                 (int) $business->id,
+            ));
+        }
+    }
+
+    /**
+     * @throws PortOutRequestNumberNotPortableException
+     */
+    private function assertNumberIsPortable(BusinessMessagingNumber $number): void
+    {
+        if (! in_array($number->status->value, self::PORTABLE_STATUSES, true)) {
+            throw new PortOutRequestNumberNotPortableException(sprintf(
+                'Number [%d] is not currently portable (status: %s).',
+                (int) $number->id,
+                $number->status->value,
             ));
         }
     }
