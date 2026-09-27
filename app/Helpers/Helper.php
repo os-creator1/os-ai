@@ -905,6 +905,28 @@
                                 'icon'   => 'alert-triangle',
                             ],
                             [
+                                // Phone Numbers + A2P lane — the support/ops
+                                // reconciliation surface for
+                                // business_messaging_provisioning_incidents.
+                                // 'admin_only' is an additional, stricter
+                                // boundary panels/submenu.blade.php enforces on
+                                // top of the 'access' gate below: this entry's
+                                // OWN route is gated by EnsureUserIsAdministrator
+                                // (users.is_admin), which the 'access backend'
+                                // gate alone does not guarantee — hasPermission()
+                                // only checks the permission collection, not
+                                // account type, so a non-admin backend account
+                                // holding that permission string would otherwise
+                                // still see a link to a page it cannot open.
+                                'url'        => url(config('app.admin_path') . '/messaging-provisioning-incidents'),
+                                'slug'       => config('app.admin_path') . '/messaging-provisioning-incidents',
+                                'name'       => 'Messaging Provisioning Incidents',
+                                'i18n'       => 'Messaging Provisioning Incidents',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'life-buoy',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
                                 'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
                                 'name'   => 'Additional Slot Agreements',
