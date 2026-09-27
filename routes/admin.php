@@ -735,6 +735,23 @@
 
         /*
         |--------------------------------------------------------------------------
+        | Messaging provisioning incidents (Phone Numbers + A2P lane)
+        |--------------------------------------------------------------------------
+        |
+        | Support/ops reconciliation for business_messaging_provisioning_incidents
+        | (ProvisioningIncidentRecorder, PR #295 Correction Round 1, item 3).
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape and the
+        | same EnsureUserIsAdministrator + 'can:access backend' defense-in-depth
+        | as provider-events above. Never a customer-facing route.
+        |
+        */
+        Route::get('messaging-provisioning-incidents', 'MessagingProvisioningIncidentController@index')->name('messaging-provisioning-incidents.index');
+        Route::post('messaging-provisioning-incidents/{incident}/resolve', 'MessagingProvisioningIncidentController@resolve')
+            ->whereNumber('incident')
+            ->name('messaging-provisioning-incidents.resolve');
+
+        /*
+        |--------------------------------------------------------------------------
         | Additional-slot agreements (RFC-005 Milestone 4, §3 item 14)
         |--------------------------------------------------------------------------
         |
