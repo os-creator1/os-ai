@@ -13,7 +13,7 @@
     <x-flash-alert class="mb-3" />
 
     @if ($pages->contains('noindex', true))
-        <x-alert variant="accent" class="mb-3">Starter service and package pages are hidden from search. Add your own details and photos to each page, then uncheck “Hide from search engines” in its editor when it is ready.</x-alert>
+        <x-alert variant="accent" class="mb-3">Starter service and package pages are marked hidden from search. Add your own details and photos to each page before removing that setting. All public websites remain hidden from search until the platform's search launch.</x-alert>
     @endif
 
     <x-card :padded="false">
