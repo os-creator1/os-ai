@@ -250,19 +250,23 @@ trait CreatesWebsiteFixtures
     }
 
     /**
-     * The real Forge API is never called in this test suite — every test
-     * that reaches certificate provisioning binds this double first and
-     * sets its own expectations for requestCertificate()/
-     * certificateStatus()/removeDomain().
+     * The real Forge API is never called in this test suite (see
+     * ForgeDomainProvisionerTest for the one file that exercises this
+     * class's own HTTP-building/parsing logic, against Http::fake()
+     * fixtures) — every test that reaches WebsiteDomainService binds
+     * this double first and sets its own expectations for
+     * requestCertificateForDomains()/certificateStatus().
      */
     protected function fakeDomainProvisioner(): \Mockery\MockInterface
     {
         $mock = \Mockery::mock(ForgeDomainProvisioner::class);
-        // A default, lenient expectation for the cleanup call every
-        // WebsiteDomainService::remove() makes — tests that care about
-        // asserting it (e.g. ->once()) still can, by declaring their own
-        // expectation afterwards, which Mockery lets override a default.
-        $mock->shouldReceive('removeDomain')->byDefault();
+        // Default, lenient expectations for the calls
+        // WebsiteDomainService::provisionCertificate()/remove() always
+        // make — tests that care about asserting one (e.g. ->once())
+        // still can, by declaring their own expectation afterwards,
+        // which Mockery lets override a default.
+        $mock->shouldReceive('attachDomain')->byDefault();
+        $mock->shouldReceive('detachDomain')->byDefault();
         $this->app->instance(ForgeDomainProvisioner::class, $mock);
 
         return $mock;

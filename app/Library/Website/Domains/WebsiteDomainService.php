@@ -4,8 +4,10 @@ namespace App\Library\Website\Domains;
 
 use App\Enums\Website\WebsiteDomainCertificateStatus;
 use App\Enums\Website\WebsiteDomainStatus;
+use App\Http\Middleware\TrustHosts;
 use App\Models\Website;
 use App\Models\WebsiteDomain;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -147,7 +149,14 @@ final class WebsiteDomainService
         $domain->last_checked_at = now();
 
         try {
-            $domain->certificate_reference = $this->provisioner->requestCertificate($domain->domain);
+            // Attaching and certifying are two separate Forge operations
+            // (see ForgeDomainProvisioner's docblock) — attach first, so
+            // the site actually responds to $domain before Forge's own
+            // HTTP-01 challenge for the certificate request even runs.
+            $this->provisioner->attachDomain($domain->domain);
+            $domain->certificate_reference = $this->provisioner->requestCertificateForDomains(
+                $this->certificateDomainList($domain->domain)
+            );
             $domain->status = WebsiteDomainStatus::Provisioning;
             $domain->failure_reason = null;
         } catch (Throwable $exception) {
@@ -158,6 +167,34 @@ final class WebsiteDomainService
         $domain->save();
 
         return $domain;
+    }
+
+    /**
+     * Every domain the ONE shared Forge site's certificate must keep
+     * covering: every other currently Active custom domain (across
+     * every Business — they all share this one site), the platform's
+     * own host (the same site also serves the platform itself), and the
+     * one being requested now. Recomputed fresh on every call — never
+     * cached — so a request made moments after another Business's
+     * domain went Active still covers it, and a certificate is never
+     * requested with a stale, shrunk SAN list that would drop existing
+     * domains' HTTPS coverage.
+     *
+     * @return array<int, string>
+     */
+    private function certificateDomainList(string $newDomain): array
+    {
+        $platformHost = strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST));
+
+        $domains = WebsiteDomain::where('status', WebsiteDomainStatus::Active->value)
+            ->pluck('domain')
+            ->push($newDomain);
+
+        if ($platformHost !== '') {
+            $domains->push($platformHost);
+        }
+
+        return $domains->unique()->values()->all();
     }
 
     /**
@@ -185,21 +222,34 @@ final class WebsiteDomainService
 
         $domain->save();
 
+        // The trusted-host allowlist (App\Http\Middleware\TrustHosts) has
+        // to know about a newly Active domain on the VERY NEXT request,
+        // not after its own cache TTL lapses — see that class's own
+        // ACTIVE_DOMAINS_CACHE_KEY docblock for why this coupling exists.
+        if ($domain->status === WebsiteDomainStatus::Active) {
+            Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
+        }
+
         return $domain;
     }
 
     /**
      * Always succeeds locally even when the provider-side cleanup call
-     * fails (ForgeDomainProvisioner::removeDomain() never throws) — the
+     * fails (ForgeDomainProvisioner::detachDomain() never throws) — the
      * domain string is immediately free for anyone, including the same
-     * business, to claim again from scratch.
+     * business, to claim again from scratch. The public-serving lookup
+     * in App\Http\Middleware\ResolveCustomDomainWebsite is never cached,
+     * so a removed domain stops serving the former Website on the very
+     * next request without any invalidation step here; the trusted-host
+     * allowlist below is the one cache this method still has to clear.
      */
     public function remove(Website $website, WebsiteDomain $domain): void
     {
         abort_unless($domain->website_id === $website->id, 404);
 
-        $this->provisioner->removeDomain($domain->domain);
+        $this->provisioner->detachDomain($domain->domain);
 
+        $wasActive = $domain->isActive();
         $wasPrimary = $domain->is_primary;
         $domain->delete();
 
@@ -208,6 +258,10 @@ final class WebsiteDomainService
                 ->orderBy('id')
                 ->first()
                 ?->update(['is_primary' => true]);
+        }
+
+        if ($wasActive) {
+            Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
         }
     }
 

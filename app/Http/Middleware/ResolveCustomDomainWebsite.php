@@ -30,10 +30,15 @@ use Symfony\Component\HttpFoundation\Response;
  * Host for anything; a spoofed or unknown Host simply finds no matching
  * row and falls through.
  *
- * Only GET/HEAD are handled here — a POST (e.g. the quote form, or a
- * webhook) always falls through to normal path-based routing, which
- * already works regardless of Host (Laravel's router is host-agnostic
- * unless a route explicitly declares Route::domain()).
+ * Once a request's Host IS matched to a currently Active domain, this
+ * becomes an ALLOWLIST, not a passthrough: only a GET/HEAD page view (or
+ * sitemap) and a POST to that Website's own quote-request form are ever
+ * served. Laravel's routing is otherwise host-agnostic — without this,
+ * `customerdomain.com/login`, an admin route, a webhook, or any other
+ * platform POST would be processed exactly as it would be on the
+ * platform's own domain, since nothing about route matching itself
+ * considers Host. Everything else on a matched custom domain is
+ * refused with a 404 rather than ever reaching normal routing.
  */
 class ResolveCustomDomainWebsite
 {
@@ -45,10 +50,6 @@ class ResolveCustomDomainWebsite
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (! $request->isMethod('GET') && ! $request->isMethod('HEAD')) {
-            return $next($request);
-        }
-
         try {
             $host = strtolower((string) $request->getHost());
         } catch (SuspiciousOperationException) {
@@ -65,19 +66,42 @@ class ResolveCustomDomainWebsite
             return $next($request);
         }
 
-        $domain = Cache::remember(
-            "website_custom_domain_lookup_{$host}",
-            self::SNAPSHOT_CACHE_TTL_SECONDS,
-            fn () => WebsiteDomain::where('domain', $host)
-                ->where('status', WebsiteDomainStatus::Active->value)
-                ->first(),
-        );
+        // Deliberately NOT cached (a removed, reassigned, or newly
+        // Active domain must be correct on the very next request) —
+        // this lookup only ever runs for a request whose Host isn't the
+        // platform's own, a small fraction of total traffic, so a
+        // fresh, cheap, indexed query costs nothing meaningful.
+        $domain = WebsiteDomain::where('domain', $host)
+            ->where('status', WebsiteDomainStatus::Active->value)
+            ->first();
 
         if ($domain === null) {
             return $next($request);
         }
 
-        return $this->render($request, $domain);
+        if ($request->isMethod('GET') || $request->isMethod('HEAD')) {
+            return $this->render($request, $domain);
+        }
+
+        if ($request->isMethod('POST') && $this->isWebsiteFormSubmission($request)) {
+            return $next($request);
+        }
+
+        abort(404);
+    }
+
+    /**
+     * True only for a request Laravel's OWN public.website.form.submit
+     * route (routes/public.php) would itself match — never a hand-rolled
+     * regex duplicating that route's shape, so the two can never drift
+     * apart. This is the ONE non-GET/HEAD request a matched custom
+     * domain is ever allowed to reach normal routing for.
+     */
+    private function isWebsiteFormSubmission(Request $request): bool
+    {
+        $route = app('router')->getRoutes()->getByName('public.website.form.submit');
+
+        return $route !== null && $route->matches($request, true);
     }
 
     private function render(Request $request, WebsiteDomain $domain): Response

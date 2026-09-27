@@ -18,14 +18,24 @@ use Throwable;
  * every currently Active custom domain (App\Models\WebsiteDomain), on
  * top of the platform's own host it always trusted.
  *
- * A domain leaves the Active set (removed, reassigned, certificate
- * failure) within one cache TTL of no longer being trusted here either
- * — the same bound already accepted for public-rendering entitlement
- * (WebsitePublicEntitlementGate) and the middleware's own domain-lookup
- * cache.
+ * A domain entering or leaving the Active set is reflected here on the
+ * very next request, not after a cache TTL lapses:
+ * App\Library\Website\Domains\WebsiteDomainService explicitly
+ * Cache::forget()s ACTIVE_DOMAINS_CACHE_KEY the instant a domain
+ * activates or a previously Active domain is removed.
  */
 class TrustHosts extends Middleware
 {
+    /**
+     * Public so App\Library\Website\Domains\WebsiteDomainService can
+     * Cache::forget() it the instant a domain becomes Active or a
+     * previously Active domain is removed — this middleware runs on
+     * EVERY request (including the platform's own), so its cache TTL
+     * has to be long enough to matter for performance, which means it
+     * MUST be invalidated on write rather than left to lapse on its own.
+     */
+    public const ACTIVE_DOMAINS_CACHE_KEY = 'website_trust_hosts_active_domains';
+
     private const CACHE_TTL_SECONDS = 60;
 
     /**
@@ -46,7 +56,7 @@ class TrustHosts extends Middleware
      */
     private function activeCustomDomainPatterns(): array
     {
-        return Cache::remember('website_trust_hosts_active_domains', self::CACHE_TTL_SECONDS, function () {
+        return Cache::remember(self::ACTIVE_DOMAINS_CACHE_KEY, self::CACHE_TTL_SECONDS, function () {
             try {
                 return WebsiteDomain::where('status', WebsiteDomainStatus::Active->value)
                     ->pluck('domain')
