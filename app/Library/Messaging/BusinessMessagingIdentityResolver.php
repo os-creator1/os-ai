@@ -74,6 +74,19 @@ class BusinessMessagingIdentityResolver
      * The other independent inbound signal — resolved by joining through
      * business_messaging_numbers, so a number's owning Business has exactly
      * one source of truth.
+     *
+     * Messaging contract §13.2 correction — "Inbound handling required by
+     * law or compliance is preserved through the grace period." A
+     * Suspended number (§13.3: suspension "stops new paid outbound while
+     * retaining the number") still counts as inbound-attributable for
+     * exactly that reason: STOP/HELP and other compliance-required
+     * handling must keep working while a number sits in grace, even though
+     * its identity's own outbound path
+     * (resolveForBusiness()/resolvePrimaryNumber(), both still Active-only
+     * and therefore unchanged) already correctly refuses any NEW paid
+     * outbound for it. Pending and Released stay excluded — a Pending
+     * number is not yet a real, confirmed mapping, and a Released one no
+     * longer belongs to anyone.
      */
     public function resolveByPhoneNumber(?string $phoneNumber): ?BusinessMessagingIdentity
     {
@@ -85,7 +98,10 @@ class BusinessMessagingIdentityResolver
 
         $identityIds = BusinessMessagingNumber::query()
             ->where('phone_number', $normalized)
-            ->where('status', BusinessMessagingNumberStatus::Active->value)
+            ->whereIn('status', [
+                BusinessMessagingNumberStatus::Active->value,
+                BusinessMessagingNumberStatus::Suspended->value,
+            ])
             ->orderBy('id')
             ->limit(2)
             ->pluck('business_messaging_identity_id')
@@ -240,6 +256,8 @@ class BusinessMessagingIdentityResolver
                     ));
                 }
 
+                $activatedAt = $status === BusinessMessagingNumberStatus::Active ? Carbon::now() : null;
+
                 $number = new BusinessMessagingNumber([
                     'business_messaging_identity_id' => (int) $identity->id,
                     'phone_number' => $normalized,
@@ -247,8 +265,19 @@ class BusinessMessagingIdentityResolver
                     'provider_number_reference' => $providerNumberReference,
                     'status' => $status->value,
                     'is_primary' => $isPrimary,
-                    'activated_at' => $status === BusinessMessagingNumberStatus::Active ? Carbon::now() : null,
+                    'activated_at' => $activatedAt,
                 ]);
+
+                // Phone Numbers + A2P lane — messaging contract §13.2's
+                // renewal cycle starts from real activation, one billing
+                // cycle out. next_renewal_at is deliberately absent from
+                // $fillable (NumberLifecycleManager is its only other
+                // writer), so it is set here via forceFill(), not the
+                // constructor array above.
+                if ($activatedAt !== null) {
+                    $number->forceFill(['next_renewal_at' => $activatedAt->copy()->addMonthNoOverflow()]);
+                }
+
                 $number->save();
 
                 return $number;

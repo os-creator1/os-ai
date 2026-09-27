@@ -96,6 +96,12 @@
             // Customer Experience Slice 3 §4.2 — retention/disposal for the
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();
+            // Phone Numbers + A2P lane — messaging contract §13.2/§13.3's
+            // renewal/advance-warning/release-notice sweep. Never decides
+            // to release a number itself; see NumberLifecycleManager::
+            // recordReleaseDecision()'s own explicit, audited, admin-only
+            // action, which itself never confirms a real carrier release.
+            $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
             $schedule->command('dashboard:warm')->hourly();
             $schedule->command('keywords:check')->daily();

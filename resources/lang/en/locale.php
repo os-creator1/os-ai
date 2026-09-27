@@ -955,6 +955,7 @@
             'Additional Slot Agreements' => 'Additional Slot Agreements',
             'Messaging Provisioning Incidents' => 'Messaging Provisioning Incidents',
             'Messaging Port-Out Requests' => 'Messaging Port-Out Requests',
+            'Messaging Number Lifecycle' => 'Messaging Number Lifecycle',
             'Workspace'               => 'Workspace',
             'Workspace Plans'         => 'Workspace Plans',
             'Opportunities'           => 'Opportunities',

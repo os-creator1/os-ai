@@ -137,16 +137,38 @@ class PortOutRequestManager
      *                                               by the pre-check or by
      *                                               MySQL's own UNIQUE index
      *                                               losing a concurrent race
+     *
+     * Review correction — locks the exact same business_messaging_numbers
+     * row that NumberLifecycleManager::recordReleaseDecision() locks,
+     * before ever checking or writing anything, so a port-out request and
+     * a release decision always serialize through one another instead of
+     * racing: whichever transaction acquires this row first runs fully to
+     * completion before the other proceeds. That means a release decision
+     * can never be recorded while a request() call for the same number is
+     * still in flight (it will see this request once request() commits),
+     * and conversely this method always evaluates portability against
+     * whatever the most recently committed state actually is — never a
+     * stale $number the caller loaded earlier.
      */
     public function request(Business $business, BusinessMessagingNumber $number, int $requestedByUserId): BusinessMessagingNumberPortOutRequest
     {
         $this->assertNumberBelongsToBusiness($business, $number);
-        $this->assertNumberIsPortable($number);
 
         try {
             return DB::transaction(function () use ($business, $number, $requestedByUserId): BusinessMessagingNumberPortOutRequest {
+                $lockedNumber = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+                if ($lockedNumber === null) {
+                    throw new PortOutRequestNumberNotPortableException(sprintf(
+                        'Number [%d] no longer exists.',
+                        (int) $number->id,
+                    ));
+                }
+
+                $this->assertNumberIsPortable($lockedNumber);
+
                 $existing = BusinessMessagingNumberPortOutRequest::query()
-                    ->where('business_messaging_number_id', (int) $number->id)
+                    ->where('business_messaging_number_id', (int) $lockedNumber->id)
                     ->active()
                     ->lockForUpdate()
                     ->first();
@@ -154,14 +176,14 @@ class PortOutRequestManager
                 if ($existing instanceof BusinessMessagingNumberPortOutRequest) {
                     throw new PortOutRequestAlreadyActiveException(sprintf(
                         'Number [%d] already has an active port-out request.',
-                        (int) $number->id,
+                        (int) $lockedNumber->id,
                     ));
                 }
 
                 $request = new BusinessMessagingNumberPortOutRequest([
                     'business_id' => (int) $business->id,
-                    'business_messaging_number_id' => (int) $number->id,
-                    'phone_number' => $number->phone_number,
+                    'business_messaging_number_id' => (int) $lockedNumber->id,
+                    'phone_number' => $lockedNumber->phone_number,
                     'status' => PortOutRequestStatus::Requested->value,
                     'requested_by_user_id' => $requestedByUserId,
                 ]);

@@ -765,6 +765,29 @@
 
         /*
         |--------------------------------------------------------------------------
+        | Messaging number lifecycle (Phone Numbers + A2P lane, messaging
+        | contract §13.2/§13.3)
+        |--------------------------------------------------------------------------
+        |
+        | Read-only visibility plus the one genuinely human action here: an
+        | explicit, audited release DECISION for a suspended number whose
+        | grace period has expired and whose release notice was confirmed
+        | delivered for the required minimum notice period. This slice
+        | makes no real Telnyx call, so the number's status stays
+        | Suspended even after this decision — NumberLifecycleManager::
+        | recordReleaseDecision() itself refuses every precondition this
+        | route does not separately re-check — same
+        | EnsureUserIsAdministrator + 'can:access backend' defense-in-depth
+        | as every other entry in this group.
+        |
+        */
+        Route::get('messaging-number-lifecycle', 'MessagingNumberLifecycleController@index')->name('messaging-number-lifecycle.index');
+        Route::post('messaging-number-lifecycle/{number}/release', 'MessagingNumberLifecycleController@release')
+            ->whereNumber('number')
+            ->name('messaging-number-lifecycle.release');
+
+        /*
+        |--------------------------------------------------------------------------
         | Additional-slot agreements (RFC-005 Milestone 4, §3 item 14)
         |--------------------------------------------------------------------------
         |
