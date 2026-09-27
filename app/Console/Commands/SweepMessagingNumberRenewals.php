@@ -11,14 +11,18 @@ use Illuminate\Console\Command;
  * sweep: sends advance warnings, attempts due renewal charges, and sends
  * release notices once a suspended number's grace period has expired.
  *
- * Never releases a number itself — release is NumberLifecycleManager::release(),
- * an explicit, audited, admin-only action this command never calls. A
- * quiet run (0 due, 0 warned, 0 released-notice) is the expected, safe
- * default today: no number accumulates a real renewal charge without an
- * owner-activated rate for NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL,
- * so attemptRenewal() reports NotConfigured and this command counts that
+ * Never decides to release a number itself — that is
+ * NumberLifecycleManager::recordReleaseDecision(), an explicit, audited,
+ * admin-only action this command never calls, and even that action never
+ * itself confirms a real carrier release. A quiet run (0 due, 0 warned, 0
+ * release notices dispatched) is the expected, safe default today: no
+ * number accumulates a real renewal charge without an owner-activated
+ * rate for NumberLifecycleManager::FEATURE_NUMBER_RENTAL_RENEWAL, so
+ * attemptRenewal() reports NotConfigured and this command counts that
  * separately from a genuine insufficient-funds suspension — it is never
- * treated as a failure.
+ * treated as a failure. AlreadyProcessed (a concurrent run already
+ * resolved this number's due date under the row lock) is likewise never a
+ * failure.
  */
 class SweepMessagingNumberRenewals extends Command
 {
@@ -39,29 +43,32 @@ class SweepMessagingNumberRenewals extends Command
         $succeeded = 0;
         $suspended = 0;
         $notConfigured = 0;
+        $alreadyProcessed = 0;
 
         foreach ($lifecycle->numbersDueForRenewal() as $number) {
             match ($lifecycle->attemptRenewal($number)) {
                 NumberRenewalOutcome::Succeeded => $succeeded++,
                 NumberRenewalOutcome::InsufficientFunds => $suspended++,
                 NumberRenewalOutcome::NotConfigured => $notConfigured++,
+                NumberRenewalOutcome::AlreadyProcessed => $alreadyProcessed++,
             };
         }
 
-        $releaseNoticesSent = 0;
+        $releaseNoticesDispatched = 0;
 
         foreach ($lifecycle->numbersEligibleForReleaseNotice() as $number) {
             $lifecycle->sendReleaseNotice($number);
-            $releaseNoticesSent++;
+            $releaseNoticesDispatched++;
         }
 
         $this->info(sprintf(
-            'Advance warnings sent: %d. Renewals — succeeded: %d, suspended (insufficient funds): %d, not yet configured: %d. Release notices sent: %d.',
+            'Advance warnings sent: %d. Renewals — succeeded: %d, suspended (insufficient funds): %d, not yet configured: %d, already processed: %d. Release notices dispatched: %d.',
             $warned,
             $succeeded,
             $suspended,
             $notConfigured,
-            $releaseNoticesSent,
+            $alreadyProcessed,
+            $releaseNoticesDispatched,
         ));
 
         return self::SUCCESS;

@@ -28,15 +28,19 @@ use Illuminate\Support\Facades\DB;
  * that requires sufficient funds, an advance warning when the projected
  * balance looks insufficient, a suspension that pauses new paid outbound
  * while retaining the number, a defined non-zero grace period, and a
- * release that is never silent — explicit, audited, and preceded by
- * notification.
+ * release DECISION that is never silent — explicit, audited, preceded by
+ * confirmed-delivered notification, and never itself a claim that the
+ * carrier has actually released the number (this slice makes no real
+ * Telnyx call, so `status` never becomes Released here — it stays
+ * Suspended even after a release decision is recorded).
  *
- * Every write to business_messaging_numbers' five lifecycle columns
+ * Every write to business_messaging_numbers' seven lifecycle columns
  * (next_renewal_at, renewal_warning_sent_at, suspended_at,
- * grace_expires_at, release_notice_sent_at) goes through this class alone,
- * via the query builder — never through the model's own mass assignment
- * (deliberately absent from $fillable, mirroring
- * ProvisioningIncidentRecorder and PortOutRequestManager).
+ * grace_expires_at, release_notice_delivered_at, release_notice_failed_at,
+ * release_decided_at) goes through this class alone, via the query
+ * builder — never through the model's own mass assignment (deliberately
+ * absent from $fillable, mirroring ProvisioningIncidentRecorder and
+ * PortOutRequestManager).
  *
  * The renewal charge itself is real-shaped but structurally inert exactly
  * like TelnyxProvisioningAdapter's own three provisioning feature keys: no
@@ -47,6 +51,15 @@ use Illuminate\Support\Facades\DB;
  * InsufficientFunds outcome can therefore only ever occur once an owner
  * has deliberately activated a rate for this feature key — this class
  * changes nothing about that gate.
+ *
+ * Every mutating method re-fetches and locks (SELECT ... FOR UPDATE) the
+ * number row inside its own transaction and rechecks every precondition
+ * against that fresh row — never against the possibly-stale $number the
+ * caller passed in — so overlapping sweeps, a stale in-memory object, and
+ * a racing port-out request can never double-charge, double-suspend, or
+ * decide a release out from under an in-flight port-out.
+ * PortOutRequestManager::request() takes the same row lock, so the two
+ * classes always serialize through the identical row.
  */
 class NumberLifecycleManager
 {
@@ -108,7 +121,7 @@ class NumberLifecycleManager
             ->where('status', BusinessMessagingNumberStatus::Suspended->value)
             ->whereNotNull('grace_expires_at')
             ->where('grace_expires_at', '<=', $asOf)
-            ->whereNull('release_notice_sent_at')
+            ->whereNull('release_notice_delivered_at')
             ->get();
     }
 
@@ -119,55 +132,72 @@ class NumberLifecycleManager
      * distinct from the real renewal's own, so a probe never holds a real
      * reservation open for the whole advance-warning window.
      *
+     * Review correction: the probe key is keyed on $asOf (today), not on
+     * next_renewal_at (stable for the whole renewal cycle). reserve() is
+     * idempotent per key — a key that stays the same across an entire
+     * window would return the SAME reservation (or its already-released
+     * remnant) on every later day's call, so a balance that looked
+     * sufficient on day one could silently stay "sufficient" even after
+     * it dropped on day two. A fresh, dated key forces a genuine
+     * reassessment every day this method runs, while still deduplicating
+     * repeat calls within the same day.
+     *
+     * Runs under the same row lock as every other mutating method here so
+     * a concurrent renewal/suspension already reflected in the database
+     * gates this decision, never a possibly-stale in-memory $number.
+     *
      * @return bool whether a warning was actually dispatched
      */
     public function sendAdvanceWarningIfNeeded(BusinessMessagingNumber $number, ?Carbon $asOf = null): bool
     {
         $asOf ??= now();
 
-        if ($number->status !== BusinessMessagingNumberStatus::Active
-            || $number->next_renewal_at === null
-            || $number->renewal_warning_sent_at !== null
-            || $asOf->gte($number->next_renewal_at)
-            || $asOf->copy()->addDays($this->advanceWarningDays())->lt($number->next_renewal_at)
-        ) {
-            return false;
-        }
+        return DB::transaction(function () use ($number, $asOf): bool {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
 
-        $business = $number->identity->business;
-        $probeKey = sprintf('number_renewal_probe:%d:%s', $number->id, $number->next_renewal_at->toDateString());
-
-        try {
-            $probe = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $probeKey);
-        } catch (\Throwable $e) {
-            if (! $this->isNotConfiguredException($e)) {
-                throw $e;
+            if ($locked === null
+                || $locked->status !== BusinessMessagingNumberStatus::Active
+                || $locked->next_renewal_at === null
+                || $locked->renewal_warning_sent_at !== null
+                || $asOf->gte($locked->next_renewal_at)
+                || $asOf->copy()->addDays($this->advanceWarningDays())->lt($locked->next_renewal_at)
+            ) {
+                return false;
             }
 
-            // Nothing real to charge yet — there is nothing to warn about.
-            return false;
-        }
+            $business = $locked->identity->business;
+            $probeKey = sprintf('number_renewal_probe:%d:%s', $locked->id, $asOf->toDateString());
 
-        if ($probe->granted) {
-            if ($probe->reservationId !== null && $probe->createdByThisInvocation) {
-                $this->wallet->release($probe->reservationId);
+            try {
+                $probe = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $probeKey);
+            } catch (\Throwable $e) {
+                if (! $this->isNotConfiguredException($e)) {
+                    throw $e;
+                }
+
+                // Nothing real to charge yet — there is nothing to warn about.
+                return false;
             }
 
-            return false;
-        }
+            if ($probe->granted) {
+                if ($probe->reservationId !== null && $probe->createdByThisInvocation) {
+                    $this->wallet->release($probe->reservationId);
+                }
 
-        DB::transaction(function () use ($number, $business, $asOf): void {
-            DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+                return false;
+            }
+
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
                 'renewal_warning_sent_at' => $asOf,
                 'updated_at' => now(),
             ]);
 
-            $this->recordEvent($number, NumberLifecycleEventType::RenewalWarningSent);
+            $this->recordEvent($locked, NumberLifecycleEventType::RenewalWarningSent);
 
-            SendNumberRenewalWarning::dispatch((int) $business->id, (int) $number->id)->afterCommit();
+            SendNumberRenewalWarning::dispatch((int) $business->id, (int) $locked->id)->afterCommit();
+
+            return true;
         });
-
-        return true;
     }
 
     /**
@@ -177,46 +207,67 @@ class NumberLifecycleManager
      * it); this method only decides what happens to the NUMBER depending
      * on the outcome. NotConfigured never suspends anything — there is no
      * real charge to have failed.
+     *
+     * Review correction: re-fetches and locks the number row inside its
+     * own transaction and rechecks eligibility against that fresh row
+     * before ever calling reserve(). An overlapping sweep, or a caller
+     * still holding a stale in-memory $number from before another call
+     * already renewed (or suspended) it, now finds next_renewal_at (or
+     * status) has moved on and gets NumberRenewalOutcome::AlreadyProcessed
+     * instead of a second charge or a duplicate lifecycle event. The
+     * wallet's own idempotency key is a second, independent safeguard
+     * against a double charge for the same due date.
      */
     public function attemptRenewal(BusinessMessagingNumber $number, ?Carbon $asOf = null): NumberRenewalOutcome
     {
         $asOf ??= now();
-        $business = $number->identity->business;
-        $chargeKey = sprintf('number_renewal:%d:%s', $number->id, $number->next_renewal_at->toDateString());
 
-        try {
-            $reservation = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $chargeKey);
-        } catch (\Throwable $e) {
-            if (! $this->isNotConfiguredException($e)) {
-                throw $e;
+        return DB::transaction(function () use ($number, $asOf): NumberRenewalOutcome {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+            if ($locked === null
+                || $locked->status !== BusinessMessagingNumberStatus::Active
+                || $locked->next_renewal_at === null
+                || $locked->next_renewal_at->gt($asOf)
+            ) {
+                return NumberRenewalOutcome::AlreadyProcessed;
             }
 
-            return NumberRenewalOutcome::NotConfigured;
-        }
+            $business = $locked->identity->business;
+            $chargeKey = sprintf('number_renewal:%d:%s', $locked->id, $locked->next_renewal_at->toDateString());
 
-        if (! $reservation->granted || $reservation->reservationId === null) {
-            $this->suspend($number);
+            try {
+                $reservation = $this->wallet->reserve($business, self::FEATURE_NUMBER_RENTAL_RENEWAL, $chargeKey);
+            } catch (\Throwable $e) {
+                if (! $this->isNotConfiguredException($e)) {
+                    throw $e;
+                }
 
-            return NumberRenewalOutcome::InsufficientFunds;
-        }
+                return NumberRenewalOutcome::NotConfigured;
+            }
 
-        $this->wallet->commit($reservation->reservationId);
+            if (! $reservation->granted || $reservation->reservationId === null) {
+                $this->suspendLocked($locked);
 
-        DB::transaction(function () use ($number): void {
-            DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+                return NumberRenewalOutcome::InsufficientFunds;
+            }
+
+            $this->wallet->commit($reservation->reservationId);
+
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
                 // Idempotent per period (contract S-8): a replayed sweep for
                 // the same due date finds next_renewal_at already advanced
                 // and reserve()'s own idempotency key match means it never
                 // charges twice either way.
-                'next_renewal_at' => $number->next_renewal_at->copy()->addMonthNoOverflow(),
+                'next_renewal_at' => $locked->next_renewal_at->copy()->addMonthNoOverflow(),
                 'renewal_warning_sent_at' => null,
                 'updated_at' => now(),
             ]);
 
-            $this->recordEvent($number, NumberLifecycleEventType::RenewalCharged);
-        });
+            $this->recordEvent($locked, NumberLifecycleEventType::RenewalCharged);
 
-        return NumberRenewalOutcome::Succeeded;
+            return NumberRenewalOutcome::Succeeded;
+        });
     }
 
     /**
@@ -229,107 +280,205 @@ class NumberLifecycleManager
      * BusinessMessagingIdentityResolver::resolveByPhoneNumber() treating
      * Suspended as a valid inbound-matching status, unchanged by this
      * method.
+     *
+     * Review correction: re-fetches and locks the row and rechecks status
+     * against that fresh row, so a stale in-memory $number can never
+     * trigger a duplicate Suspended event or overwrite an already-running
+     * grace period. attemptRenewal() calls the already-locked variant
+     * directly since it already holds this same row's lock.
      */
     public function suspend(BusinessMessagingNumber $number): void
     {
-        if ($number->status !== BusinessMessagingNumberStatus::Active) {
-            // Never re-suspend, never overwrite an existing suspension's
-            // own grace_expires_at, never touch Pending/Released.
+        DB::transaction(function () use ($number): void {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+            if ($locked === null || $locked->status !== BusinessMessagingNumberStatus::Active) {
+                // Never re-suspend, never overwrite an existing suspension's
+                // own grace_expires_at, never touch Pending/Released.
+                return;
+            }
+
+            $this->suspendLocked($locked);
+        });
+    }
+
+    private function suspendLocked(BusinessMessagingNumber $locked): void
+    {
+        $business = $locked->identity->business;
+        $suspendedAt = now();
+        $graceExpiresAt = $suspendedAt->copy()->addDays($this->graceDays());
+
+        DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+            'status' => BusinessMessagingNumberStatus::Suspended->value,
+            'suspended_at' => $suspendedAt,
+            'grace_expires_at' => $graceExpiresAt,
+            'updated_at' => now(),
+        ]);
+
+        $this->recordEvent($locked, NumberLifecycleEventType::Suspended);
+
+        SendNumberSuspendedNotice::dispatch((int) $business->id, (int) $locked->id)->afterCommit();
+    }
+
+    /**
+     * §13.3's "preceded by notification" — this method only DISPATCHES the
+     * notice job. It never itself records that the customer was notified:
+     * recordReleaseNoticeDelivered()/recordReleaseNoticeDeliveryFailure()
+     * are the only writers of release_notice_delivered_at/
+     * release_notice_failed_at, and only SendNumberReleaseNotice calls
+     * them, after a confirmed outcome. A missing billing contact, an
+     * opt-out, a blank email, or the notification channel throwing can
+     * therefore never silently satisfy the "notice was sent" precondition
+     * a release decision depends on — it shows up as a recorded failure
+     * instead, and numbersEligibleForReleaseNotice() keeps offering the
+     * number for a retry until delivery is actually confirmed.
+     */
+    public function sendReleaseNotice(BusinessMessagingNumber $number): void
+    {
+        if ($number->status !== BusinessMessagingNumberStatus::Suspended || $number->release_notice_delivered_at !== null) {
             return;
         }
 
         $business = $number->identity->business;
-        $suspendedAt = now();
-        $graceExpiresAt = $suspendedAt->copy()->addDays($this->graceDays());
 
-        DB::transaction(function () use ($number, $business, $suspendedAt, $graceExpiresAt): void {
-            DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-                'status' => BusinessMessagingNumberStatus::Suspended->value,
-                'suspended_at' => $suspendedAt,
-                'grace_expires_at' => $graceExpiresAt,
+        SendNumberReleaseNotice::dispatch((int) $business->id, (int) $number->id)->afterCommit();
+    }
+
+    /**
+     * Called only by SendNumberReleaseNotice, after a confirmed successful
+     * send. Locked and idempotent: recorded at most once.
+     */
+    public function recordReleaseNoticeDelivered(BusinessMessagingNumber $number): void
+    {
+        DB::transaction(function () use ($number): void {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+            if ($locked === null || $locked->release_notice_delivered_at !== null) {
+                return;
+            }
+
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+                'release_notice_delivered_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            $this->recordEvent($number, NumberLifecycleEventType::Suspended);
-
-            SendNumberSuspendedNotice::dispatch((int) $business->id, (int) $number->id)->afterCommit();
+            $this->recordEvent($locked, NumberLifecycleEventType::ReleaseNoticeDelivered);
         });
     }
 
     /**
-     * §13.3's "preceded by notification" — idempotent: a number's release
-     * notice is sent at most once, ever.
+     * Called only by SendNumberReleaseNotice, on any confirmed failure to
+     * deliver (missing contact, opt-out, blank email, or the notification
+     * channel throwing) — makes a stuck number visible to operators
+     * instead of leaving it silently unnoticed. Never overwrites an
+     * already-confirmed delivery from an earlier attempt.
      */
-    public function sendReleaseNotice(BusinessMessagingNumber $number): void
+    public function recordReleaseNoticeDeliveryFailure(BusinessMessagingNumber $number, string $reason): void
     {
-        if ($number->release_notice_sent_at !== null) {
-            return;
-        }
+        DB::transaction(function () use ($number, $reason): void {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
 
-        $business = $number->identity->business;
+            if ($locked === null || $locked->release_notice_delivered_at !== null) {
+                return;
+            }
 
-        DB::transaction(function () use ($number, $business): void {
-            DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-                'release_notice_sent_at' => now(),
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+                'release_notice_failed_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            $this->recordEvent($number, NumberLifecycleEventType::ReleaseNoticeSent);
-
-            SendNumberReleaseNotice::dispatch((int) $business->id, (int) $number->id)->afterCommit();
+            $this->recordEvent($locked, NumberLifecycleEventType::ReleaseNoticeDeliveryFailed, null, $reason);
         });
     }
 
     /**
      * §13.3: "The transition from suspended to released must be explicit,
-     * audited, and preceded by notification." Every precondition is
-     * checked here, independently of whatever the caller believes —
-     * never a second, looser path to the same effect. §13.4's port-out
-     * exit path is checked too: releasing a number out from under an
-     * active port-out request would contradict the customer's own
-     * in-flight request to leave with it specifically.
+     * audited, and preceded by notification." This slice makes no real
+     * Telnyx call, so this method records only the platform operator's
+     * audited DECISION to release — never a confirmed carrier release.
+     * The number's `status` stays Suspended; a future, separately
+     * authorized slice is responsible for confirming the actual
+     * carrier-side release and only then transitioning status to
+     * Released. Keeping status Suspended also keeps the customer's own
+     * port-out path available right up to (and, deliberately, even
+     * after) this decision, until a real release is confirmed.
+     *
+     * Every precondition is rechecked here against the current, locked
+     * database row — never against the possibly-stale $number the caller
+     * passed in — including a minimum-notice-days gate so the customer
+     * has a meaningful opportunity to act after the notice was confirmed
+     * delivered, not merely dispatched. §13.4's port-out exit path is
+     * checked too: PortOutRequestManager::request() takes the same row
+     * lock, so a port-out request and a release decision can never race
+     * past each other.
+     *
+     * Idempotent: a number whose decision was already recorded is a
+     * silent no-op, never a second event.
      *
      * @throws NumberReleaseNotEligibleException
      */
-    public function release(BusinessMessagingNumber $number, int $actorUserId, string $note): void
+    public function recordReleaseDecision(BusinessMessagingNumber $number, int $actorUserId, string $note): void
     {
-        if ($number->status !== BusinessMessagingNumberStatus::Suspended) {
-            throw new NumberReleaseNotEligibleException(sprintf(
-                'Number [%d] is not Suspended (status: %s) and cannot be released.',
-                (int) $number->id,
-                $number->status->value,
-            ));
-        }
-
-        if ($number->grace_expires_at === null || $number->grace_expires_at->isFuture()) {
-            throw new NumberReleaseNotEligibleException(sprintf(
-                'Number [%d]\'s grace period has not yet expired.',
-                (int) $number->id,
-            ));
-        }
-
-        if ($number->release_notice_sent_at === null) {
-            throw new NumberReleaseNotEligibleException(sprintf(
-                'Number [%d] has not yet received a release notice.',
-                (int) $number->id,
-            ));
-        }
-
-        if ($this->portOutRequests->activeRequestFor($number) !== null) {
-            throw new NumberReleaseNotEligibleException(sprintf(
-                'Number [%d] has an active port-out request and must not be released out from under it.',
-                (int) $number->id,
-            ));
-        }
-
         DB::transaction(function () use ($number, $actorUserId, $note): void {
-            DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-                'status' => BusinessMessagingNumberStatus::Released->value,
-                'released_at' => now(),
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+            if ($locked === null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] no longer exists.',
+                    (int) $number->id,
+                ));
+            }
+
+            if ($locked->release_decided_at !== null) {
+                return;
+            }
+
+            if ($locked->status !== BusinessMessagingNumberStatus::Suspended) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] is not Suspended (status: %s) and cannot be released.',
+                    (int) $locked->id,
+                    $locked->status->value,
+                ));
+            }
+
+            if ($locked->grace_expires_at === null || $locked->grace_expires_at->isFuture()) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d]\'s grace period has not yet expired.',
+                    (int) $locked->id,
+                ));
+            }
+
+            if ($locked->release_notice_delivered_at === null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] has not yet had its release notice confirmed delivered.',
+                    (int) $locked->id,
+                ));
+            }
+
+            $noticeMatureAt = $locked->release_notice_delivered_at->copy()->addDays($this->minimumNoticeDays());
+
+            if ($noticeMatureAt->isFuture()) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d]\'s release notice must remain outstanding for at least %d day(s) so the customer has a meaningful opportunity to act; eligible from %s.',
+                    (int) $locked->id,
+                    $this->minimumNoticeDays(),
+                    $noticeMatureAt->toDateTimeString(),
+                ));
+            }
+
+            if ($this->portOutRequests->activeRequestFor($locked) !== null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] has an active port-out request and must not be released out from under it.',
+                    (int) $locked->id,
+                ));
+            }
+
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+                'release_decided_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            $this->recordEvent($number, NumberLifecycleEventType::Released, $actorUserId, $note);
+            $this->recordEvent($locked, NumberLifecycleEventType::ReleaseDecided, $actorUserId, $note);
         });
     }
 
@@ -367,5 +516,10 @@ class NumberLifecycleManager
     private function advanceWarningDays(): int
     {
         return (int) config('messaging.number_renewal_advance_warning_days', 7);
+    }
+
+    private function minimumNoticeDays(): int
+    {
+        return (int) config('messaging.number_release_minimum_notice_days', 7);
     }
 }

@@ -43,13 +43,24 @@ return [
     | Phone Numbers + A2P lane — messaging contract §13.2/§28.2. The grace
     | period is deliberately non-zero and never automatic-release: it only
     | bounds how long a Suspended number may sit before an explicit,
-    | audited release decision becomes eligible (NumberLifecycleManager::release()
-    | still refuses before this elapses; nothing releases a number on its
-    | own). The advance-warning window is how far ahead of next_renewal_at
-    | this platform alerts a Business whose projected balance looks
-    | insufficient — a look-ahead notice, not the renewal attempt itself.
+    | audited release DECISION becomes eligible
+    | (NumberLifecycleManager::recordReleaseDecision() still refuses before
+    | this elapses; nothing releases a number on its own, and even that
+    | decision never itself claims the carrier has released it). The
+    | advance-warning window is how far ahead of next_renewal_at this
+    | platform alerts a Business whose projected balance looks insufficient
+    | — a look-ahead notice, not the renewal attempt itself.
+    |
+    | number_release_minimum_notice_days is separate from the grace period:
+    | it is how long the release notice must have been CONFIRMED DELIVERED
+    | (never merely dispatched) before a release decision may be recorded,
+    | so the customer has a genuinely meaningful opportunity to act — e.g.
+    | to port the number out — after actually being notified, not merely
+    | after this platform attempted to notify them.
     */
     'number_renewal_grace_days' => env('MESSAGING_NUMBER_RENEWAL_GRACE_DAYS', 14),
 
     'number_renewal_advance_warning_days' => env('MESSAGING_NUMBER_RENEWAL_ADVANCE_WARNING_DAYS', 7),
+
+    'number_release_minimum_notice_days' => env('MESSAGING_NUMBER_RELEASE_MINIMUM_NOTICE_DAYS', 7),
 ];

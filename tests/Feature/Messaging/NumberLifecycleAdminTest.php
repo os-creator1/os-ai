@@ -16,10 +16,12 @@ use Tests\TestCase;
 /**
  * Phone Numbers + A2P lane — the platform-ops admin surface for the
  * messaging contract §13.2/§13.3 number lifecycle: visibility into
- * suspended numbers, and the one genuinely human, irreversible action,
- * explicit audited release. Same admin-only authorization shape as
- * MessagingProvisioningIncidentReconciliationTest and PortOutRequestTest's
- * own admin surfaces.
+ * suspended numbers, and the one genuinely human action, an explicit
+ * audited release DECISION — never itself a claim that the carrier has
+ * released the number; this slice makes no real Telnyx call, so status
+ * stays Suspended even after a decision is recorded. Same admin-only
+ * authorization shape as MessagingProvisioningIncidentReconciliationTest
+ * and PortOutRequestTest's own admin surfaces.
  */
 class NumberLifecycleAdminTest extends TestCase
 {
@@ -80,7 +82,10 @@ class NumberLifecycleAdminTest extends TestCase
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Suspended);
         DB::table('business_messaging_numbers')->where('id', $number->id)->update([
             'grace_expires_at' => now()->subDay(),
-            'release_notice_sent_at' => now(),
+            // Confirmed delivered well past the configured minimum notice
+            // period (default 7 days), so this number is eligible for a
+            // release decision, not merely past its grace period.
+            'release_notice_delivered_at' => now()->subDays(8),
         ]);
 
         return $number->fresh();
@@ -117,7 +122,8 @@ class NumberLifecycleAdminTest extends TestCase
     }
 
     // =================================================================
-    // Release — explicit, auditable, admin-only.
+    // Release decision — explicit, auditable, admin-only. Never itself a
+    // claim that the carrier has actually released the number.
     // =================================================================
 
     public function test_a_guest_cannot_release_a_number(): void
@@ -147,21 +153,21 @@ class NumberLifecycleAdminTest extends TestCase
         $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
     }
 
-    public function test_an_administrator_can_release_an_eligible_number_with_note_and_confirmation(): void
+    public function test_an_administrator_can_record_a_release_decision_for_an_eligible_number_with_note_and_confirmation(): void
     {
         $number = $this->releaseEligibleNumber();
         $admin = $this->actingAsAdmin();
 
         $this->post(route('admin.messaging-number-lifecycle.release', $number->id), [
             'release_confirmed' => '1',
-            'note' => 'Confirmed with the customer; releasing now.',
+            'note' => 'Confirmed with the customer; deciding to release now.',
         ])
             ->assertRedirect(route('admin.messaging-number-lifecycle.index'))
             ->assertSessionHas('flash_success');
 
         $number->refresh();
-        $this->assertSame(BusinessMessagingNumberStatus::Released, $number->status);
-        $this->assertNotNull($number->released_at);
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->status, 'No real Telnyx call is made in this slice — status must never become Released.');
+        $this->assertNotNull($number->release_decided_at);
     }
 
     public function test_release_requires_a_note(): void
@@ -194,7 +200,7 @@ class NumberLifecycleAdminTest extends TestCase
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Suspended);
         DB::table('business_messaging_numbers')->where('id', $number->id)->update([
             'grace_expires_at' => now()->addDays(5),
-            'release_notice_sent_at' => now(),
+            'release_notice_delivered_at' => now()->subDays(8),
         ]);
         $this->actingAsAdmin();
 
@@ -204,6 +210,31 @@ class NumberLifecycleAdminTest extends TestCase
         ])->assertSessionHas('flash_error');
 
         $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+        $this->assertNull($number->fresh()->release_decided_at);
+    }
+
+    /**
+     * Review correction: a confirmed-delivered notice is not, by itself,
+     * enough — the customer needs a meaningful opportunity to act after
+     * being notified.
+     */
+    public function test_release_is_refused_when_the_minimum_notice_period_has_not_yet_elapsed(): void
+    {
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Suspended);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+            'grace_expires_at' => now()->subDay(),
+            'release_notice_delivered_at' => now(),
+        ]);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted release moments after the notice was delivered.',
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+        $this->assertNull($number->fresh()->release_decided_at);
     }
 
     // =================================================================

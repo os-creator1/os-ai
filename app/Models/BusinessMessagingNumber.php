@@ -24,13 +24,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * carrier registration regime applies to this number — 10DLC for
  * `local`, toll-free verification for `toll_free` — never both.
  *
- * Phone Numbers + A2P lane — the five lifecycle columns (next_renewal_at,
+ * Phone Numbers + A2P lane — the seven lifecycle columns (next_renewal_at,
  * renewal_warning_sent_at, suspended_at, grace_expires_at,
- * release_notice_sent_at) are deliberately absent from $fillable:
+ * release_notice_delivered_at, release_notice_failed_at,
+ * release_decided_at) are deliberately absent from $fillable:
  * NumberLifecycleManager is the single writer for all of them, exactly
  * the same discipline ProvisioningIncidentRecorder and
  * PortOutRequestManager already apply to their own resolution/cancellation
  * columns.
+ *
+ * release_decided_at records only an audited platform-operator DECISION
+ * to release — never a confirmed carrier-side release. `status` never
+ * becomes Released in this slice; it stays Suspended even after a release
+ * decision, because no real Telnyx call confirms the carrier actually
+ * released the number.
  */
 class BusinessMessagingNumber extends Model
 {
@@ -58,7 +65,9 @@ class BusinessMessagingNumber extends Model
         'renewal_warning_sent_at' => 'datetime',
         'suspended_at' => 'datetime',
         'grace_expires_at' => 'datetime',
-        'release_notice_sent_at' => 'datetime',
+        'release_notice_delivered_at' => 'datetime',
+        'release_notice_failed_at' => 'datetime',
+        'release_decided_at' => 'datetime',
     ];
 
     public function identity(): BelongsTo
@@ -84,6 +93,38 @@ class BusinessMessagingNumber extends Model
     public function graceHasExpired(): bool
     {
         return $this->isSuspended() && $this->grace_expires_at !== null && ! $this->grace_expires_at->isFuture();
+    }
+
+    /**
+     * §13.3's "meaningful opportunity to act after notice" — true only once
+     * the release notice has been CONFIRMED DELIVERED (never merely
+     * dispatched) and the configured minimum notice window has elapsed
+     * since that confirmed delivery. Read-only convenience for admin
+     * views; NumberLifecycleManager::recordReleaseDecision() re-derives and
+     * enforces the identical condition itself and is the only writer of
+     * release_decided_at.
+     */
+    public function releaseNoticeHasMatured(): bool
+    {
+        return $this->release_notice_delivered_at !== null
+            && $this->release_notice_delivered_at->copy()
+                ->addDays((int) config('messaging.number_release_minimum_notice_days', 7))
+                ->isPast();
+    }
+
+    /**
+     * Read-only mirror of NumberLifecycleManager::recordReleaseDecision()'s
+     * own preconditions (excluding the port-out check, which requires a
+     * query this model does not itself perform) — for admin-view gating
+     * only, never the source of truth for whether a decision may actually
+     * be recorded.
+     */
+    public function isEligibleForReleaseDecision(): bool
+    {
+        return $this->isSuspended()
+            && $this->graceHasExpired()
+            && $this->releaseNoticeHasMatured()
+            && $this->release_decided_at === null;
     }
 
     public function scopeSuspended(Builder $query): Builder

@@ -13,6 +13,7 @@ enum NumberLifecycleEventType: string
     case RenewalWarningSent = 'renewal_warning_sent';
     case RenewalCharged = 'renewal_charged';
     case Suspended = 'suspended';
-    case ReleaseNoticeSent = 'release_notice_sent';
-    case Released = 'released';
+    case ReleaseNoticeDelivered = 'release_notice_delivered';
+    case ReleaseNoticeDeliveryFailed = 'release_notice_delivery_failed';
+    case ReleaseDecided = 'release_decided';
 }

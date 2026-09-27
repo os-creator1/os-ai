@@ -13,10 +13,12 @@ use Illuminate\Foundation\Http\FormRequest;
  * 'release_confirmed' is a human attestation, mirroring the incident
  * reconciliation surface's own 'reconciliation_confirmed': the app has
  * verified the mechanical preconditions (Suspended, grace expired, notice
- * sent, no active port-out request — NumberLifecycleManager::release()
+ * confirmed delivered for the required minimum notice period, no active
+ * port-out request — NumberLifecycleManager::recordReleaseDecision()
  * itself), but the operator is affirmatively confirming this Business has
- * been given every reasonable chance before release, on top of the
- * required free-text note.
+ * been given every reasonable chance to pay or port out, on top of the
+ * required free-text note. This attestation is for the release DECISION
+ * only — it never claims the carrier has actually released the number.
  */
 class ReleaseMessagingNumberRequest extends FormRequest
 {

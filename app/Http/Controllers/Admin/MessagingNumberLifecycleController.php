@@ -19,10 +19,13 @@ use Illuminate\Support\Facades\Auth;
  * (MessagingProvisioningIncidentController, MessagingPortOutRequestController).
  * Never a customer-facing route.
  *
- * Release is the one genuinely human, irreversible action here: explicit,
- * audited (actor + required note), and refused by
- * NumberLifecycleManager::release() itself — never merely by this
- * controller's own view — unless every §13.3 precondition already holds.
+ * Release is the one genuinely human, audited DECISION recorded here:
+ * explicit, audited (actor + required note), and refused by
+ * NumberLifecycleManager::recordReleaseDecision() itself — never merely by
+ * this controller's own view — unless every §13.3 precondition already
+ * holds. It is never itself a claim that the carrier has actually
+ * released the number: this slice makes no real Telnyx call, so the
+ * number's own status stays Suspended after this action.
  */
 class MessagingNumberLifecycleController extends AdminBaseController
 {
@@ -55,7 +58,7 @@ class MessagingNumberLifecycleController extends AdminBaseController
         }
 
         try {
-            $this->lifecycle->release($numberModel, (int) Auth::id(), $request->validated('note'));
+            $this->lifecycle->recordReleaseDecision($numberModel, (int) Auth::id(), $request->validated('note'));
         } catch (NumberReleaseNotEligibleException $e) {
             return redirect()
                 ->route('admin.messaging-number-lifecycle.index')
@@ -64,7 +67,7 @@ class MessagingNumberLifecycleController extends AdminBaseController
 
         return redirect()
             ->route('admin.messaging-number-lifecycle.index')
-            ->with('flash_success', 'Number released.');
+            ->with('flash_success', 'Release decision recorded — the number remains suspended pending confirmed carrier release.');
     }
 
     /**

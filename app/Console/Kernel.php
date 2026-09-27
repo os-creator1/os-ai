@@ -97,9 +97,10 @@
             // bounded webhook rejection audit.
             $schedule->command('messaging:purge-webhook-rejections')->daily();
             // Phone Numbers + A2P lane — messaging contract §13.2/§13.3's
-            // renewal/advance-warning/release-notice sweep. Never releases
-            // a number itself; see NumberLifecycleManager::release()'s own
-            // explicit, audited, admin-only action.
+            // renewal/advance-warning/release-notice sweep. Never decides
+            // to release a number itself; see NumberLifecycleManager::
+            // recordReleaseDecision()'s own explicit, audited, admin-only
+            // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
             $schedule->command('dashboard:warm')->hourly();

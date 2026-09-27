@@ -321,6 +321,45 @@ class NumberLifecycleTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    /**
+     * Review correction regression test: the probe's idempotency key used
+     * to be keyed on next_renewal_at (stable for the whole renewal
+     * window), so reserve() — itself idempotent per key — returned the
+     * SAME (already-released) reservation on every later day's call
+     * without ever re-evaluating the balance. A balance that was
+     * sufficient on day one could therefore silently stay "sufficient" on
+     * day two even after it actually dropped. The key is now dated by
+     * $asOf, so each day gets a genuinely fresh probe.
+     */
+    public function test_advance_warning_reassesses_the_balance_on_each_later_day_in_the_same_renewal_window(): void
+    {
+        Notification::fake();
+        $business = $this->makeBusiness();
+        $this->fundWallet($business, 100_000_000);
+        $this->billingContact($business, 'reassess@example.test');
+        $number = $this->activeNumberDueOn($business, now()->addDays(5));
+
+        $dayOne = now();
+        $this->assertFalse(
+            $this->manager()->sendAdvanceWarningIfNeeded($number->fresh(), $dayOne),
+            'Sufficient balance on day one must not warn.',
+        );
+        $this->assertNull($number->fresh()->renewal_warning_sent_at);
+
+        // The balance drops the next day, still well before the renewal
+        // is actually due.
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 0]);
+
+        $dayTwo = now()->addDay();
+        $this->assertTrue(
+            $this->manager()->sendAdvanceWarningIfNeeded($number->fresh(), $dayTwo),
+            'A reduced balance on day two, within the same renewal window, must trigger a fresh warning.',
+        );
+        $this->assertNotNull($number->fresh()->renewal_warning_sent_at);
+
+        Notification::assertSentOnDemandTimes(NumberRenewalWarningNotification::class, 1);
+    }
+
     // =================================================================
     // Query scoping.
     // =================================================================
@@ -355,7 +394,7 @@ class NumberLifecycleTest extends TestCase
         DB::table('business_messaging_numbers')->where('id', $notYetExpired->id)->update(['grace_expires_at' => now()->addDays(3)]);
 
         $alreadyNoticed = $this->attachNumber($identity, $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
-        DB::table('business_messaging_numbers')->where('id', $alreadyNoticed->id)->update(['grace_expires_at' => now()->subDay(), 'release_notice_sent_at' => now()]);
+        DB::table('business_messaging_numbers')->where('id', $alreadyNoticed->id)->update(['grace_expires_at' => now()->subDay(), 'release_notice_delivered_at' => now()]);
 
         $ids = $this->manager()->numbersEligibleForReleaseNotice()->pluck('id')->all();
 
@@ -365,10 +404,24 @@ class NumberLifecycleTest extends TestCase
     }
 
     // =================================================================
-    // Release notice.
+    // Release notice — dispatch is separate from confirmed delivery.
     // =================================================================
 
-    public function test_send_release_notice_is_sent_once_and_recorded(): void
+    /**
+     * Sets release_notice_delivered_at directly to a timestamp already
+     * past the configured minimum-notice-days window, mirroring
+     * NumberLifecycleAdminTest's releaseEligibleNumber() helper — used by
+     * tests further down that need a number eligible for a release
+     * decision without re-exercising the notice job itself.
+     */
+    private function matureReleaseNotice(BusinessMessagingNumber $number, ?Carbon $deliveredAt = null): void
+    {
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+            'release_notice_delivered_at' => $deliveredAt ?? now()->subDays(8),
+        ]);
+    }
+
+    public function test_send_release_notice_dispatches_and_records_confirmed_delivery(): void
     {
         Notification::fake();
         $business = $this->makeBusiness();
@@ -379,100 +432,170 @@ class NumberLifecycleTest extends TestCase
         $this->manager()->sendReleaseNotice($number->fresh());
         $this->manager()->sendReleaseNotice($number->fresh());
 
-        $this->assertNotNull($number->fresh()->release_notice_sent_at);
+        $number->refresh();
+        $this->assertNotNull($number->release_notice_delivered_at);
+        $this->assertNull($number->release_notice_failed_at);
         $this->assertSame(
             1,
             BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
-                ->where('event_type', NumberLifecycleEventType::ReleaseNoticeSent->value)
+                ->where('event_type', NumberLifecycleEventType::ReleaseNoticeDelivered->value)
                 ->count(),
-            'A release notice must never be recorded or sent twice.',
+            'A confirmed delivery must never be recorded twice.',
         );
 
         Notification::assertSentOnDemandTimes(NumberReleaseNoticeNotification::class, 1);
     }
 
+    /**
+     * Review correction: the old design set release_notice_sent_at the
+     * instant the job was DISPATCHED, before it ever ran — a missing
+     * billing contact could satisfy the "notice was sent" precondition
+     * without the customer ever being notified. Now a missing contact is
+     * a recorded, visible FAILURE, and the number stays eligible for a
+     * retry.
+     */
+    public function test_send_release_notice_records_a_visible_failure_when_no_billing_contact_exists(): void
+    {
+        Notification::fake();
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+
+        $this->manager()->sendReleaseNotice($number->fresh());
+
+        $number->refresh();
+        $this->assertNull($number->release_notice_delivered_at);
+        $this->assertNotNull($number->release_notice_failed_at);
+        $this->assertSame(
+            1,
+            BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
+                ->where('event_type', NumberLifecycleEventType::ReleaseNoticeDeliveryFailed->value)
+                ->count(),
+        );
+        $this->assertContains(
+            $number->id,
+            $this->manager()->numbersEligibleForReleaseNotice()->pluck('id')->all(),
+            'A failed delivery must remain eligible for a retry, never silently treated as sent.',
+        );
+
+        Notification::assertNothingSent();
+    }
+
     // =================================================================
-    // release() — every §13.3 precondition, and §13.4's port-out path
-    // preserved right up to the moment of release.
+    // recordReleaseDecision() — every §13.3 precondition, and §13.4's
+    // port-out path preserved right up to (and after) the decision.
+    // Never writes BusinessMessagingNumberStatus::Released — this slice
+    // makes no real Telnyx call.
     // =================================================================
 
-    public function test_release_refuses_an_active_number(): void
+    public function test_release_decision_refuses_an_active_number(): void
     {
         $business = $this->makeBusiness();
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber());
 
         $this->expectException(NumberReleaseNotEligibleException::class);
-        $this->manager()->release($number, $this->actorId(), 'Attempted release of an Active number.');
+        $this->manager()->recordReleaseDecision($number, $this->actorId(), 'Attempted release of an Active number.');
     }
 
-    public function test_release_refuses_before_grace_expires(): void
+    public function test_release_decision_refuses_before_grace_expires(): void
     {
         $business = $this->makeBusiness();
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
-        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-            'grace_expires_at' => now()->addDays(3),
-            'release_notice_sent_at' => now(),
-        ]);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->addDays(3)]);
+        $this->matureReleaseNotice($number);
 
         $this->expectException(NumberReleaseNotEligibleException::class);
-        $this->manager()->release($number->fresh(), $this->actorId(), 'Attempted early release.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Attempted early release.');
     }
 
-    public function test_release_refuses_without_a_prior_release_notice(): void
+    public function test_release_decision_refuses_without_a_confirmed_delivered_notice(): void
     {
         $business = $this->makeBusiness();
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
         DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
 
         $this->expectException(NumberReleaseNotEligibleException::class);
-        $this->manager()->release($number->fresh(), $this->actorId(), 'Attempted release without notice.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Attempted release without a confirmed-delivered notice.');
     }
 
-    public function test_release_refuses_while_an_active_port_out_request_exists(): void
+    /**
+     * Review correction: even a CONFIRMED delivery is not, by itself,
+     * enough — the customer must have a meaningful opportunity to act
+     * after being notified, not merely the instant the notice landed.
+     */
+    public function test_release_decision_refuses_before_the_minimum_notice_period_has_elapsed(): void
     {
         $business = $this->makeBusiness();
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
-        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-            'grace_expires_at' => now()->subDay(),
-            'release_notice_sent_at' => now(),
-        ]);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number, now());
+
+        $this->expectException(NumberReleaseNotEligibleException::class);
+        $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Attempted release moments after notice was delivered.');
+    }
+
+    public function test_release_decision_refuses_while_an_active_port_out_request_exists(): void
+    {
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number);
         app(PortOutRequestManager::class)->request($business, $number->fresh(), 1);
 
         $this->expectException(NumberReleaseNotEligibleException::class);
-        $this->manager()->release($number->fresh(), $this->actorId(), 'Attempted release out from under an active port-out request.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Attempted release out from under an active port-out request.');
     }
 
-    public function test_release_succeeds_once_every_precondition_holds_and_is_audited(): void
+    public function test_release_decision_succeeds_once_every_precondition_holds_and_is_audited_without_claiming_carrier_release(): void
     {
         $business = $this->makeBusiness();
         $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
-        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
-            'grace_expires_at' => now()->subDay(),
-            'release_notice_sent_at' => now(),
-        ]);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number);
         $actorId = $this->actorId();
 
-        $this->manager()->release($number->fresh(), $actorId, 'Verified with the customer; releasing after grace expired.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $actorId, 'Verified with the customer; deciding to release after grace expired.');
 
         $number->refresh();
-        $this->assertSame(BusinessMessagingNumberStatus::Released, $number->status);
-        $this->assertNotNull($number->released_at);
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->status, 'No real Telnyx call is made in this slice — status must never become Released.');
+        $this->assertNotNull($number->release_decided_at);
 
         $event = BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
-            ->where('event_type', NumberLifecycleEventType::Released->value)
+            ->where('event_type', NumberLifecycleEventType::ReleaseDecided->value)
             ->first();
         $this->assertNotNull($event);
         $this->assertSame($actorId, $event->actor_user_id);
-        $this->assertSame('Verified with the customer; releasing after grace expired.', $event->note);
+        $this->assertSame('Verified with the customer; deciding to release after grace expired.', $event->note);
+    }
+
+    public function test_release_decision_is_idempotent(): void
+    {
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number);
+        $actorId = $this->actorId();
+
+        $this->manager()->recordReleaseDecision($number->fresh(), $actorId, 'First decision.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $actorId, 'Second, redundant call.');
+
+        $this->assertSame(
+            1,
+            BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
+                ->where('event_type', NumberLifecycleEventType::ReleaseDecided->value)
+                ->count(),
+            'A number whose decision was already recorded must never produce a second event.',
+        );
     }
 
     /**
      * The core §13.4 preservation test: a customer can still request (and
      * cancel) port-out for a number all the way through suspension and
-     * grace, right up until the moment it is actually released — release
-     * never happens without cancelling the port-out attempt first.
+     * grace, right up until (and, deliberately, even after) a release
+     * decision — a decision alone never actually releases the number with
+     * the carrier, so port-out stays meaningful even past that point.
      */
-    public function test_port_out_remains_available_throughout_suspension_and_grace_until_release(): void
+    public function test_port_out_remains_available_throughout_suspension_and_grace_and_after_a_release_decision(): void
     {
         $business = $this->makeBusiness();
         $this->fundWallet($business, 0);
@@ -485,18 +608,102 @@ class NumberLifecycleTest extends TestCase
         $portOutRequest = app(PortOutRequestManager::class)->request($business, $number, 1);
         $this->assertNotNull($portOutRequest);
 
-        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay(), 'release_notice_sent_at' => now()]);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number);
 
         try {
-            $this->manager()->release($number->fresh(), $this->actorId(), 'Should be refused while porting out.');
+            $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Should be refused while porting out.');
             $this->fail('Expected NumberReleaseNotEligibleException while a port-out request is active.');
         } catch (NumberReleaseNotEligibleException) {
             // expected
         }
 
         app(PortOutRequestManager::class)->cancel((int) $portOutRequest->id, 1);
-        $this->manager()->release($number->fresh(), $this->actorId(), 'Port-out cancelled; releasing now.');
+        $this->manager()->recordReleaseDecision($number->fresh(), $this->actorId(), 'Port-out cancelled; deciding to release now.');
 
-        $this->assertSame(BusinessMessagingNumberStatus::Released, $number->fresh()->status);
+        $number->refresh();
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->status);
+        $this->assertNotNull($number->release_decided_at);
+
+        // A second, later port-out request is still possible — the
+        // decision never itself claims the carrier has released the
+        // number.
+        $secondRequest = app(PortOutRequestManager::class)->request($business, $number->fresh(), 1);
+        $this->assertNotNull($secondRequest);
+    }
+
+    // =================================================================
+    // Locking — overlapping renewals, a stale in-memory number object,
+    // and a port-out request racing a release decision must never
+    // double-charge, double-suspend, or decide a release out from under
+    // an in-flight port-out.
+    // =================================================================
+
+    public function test_overlapping_renewal_sweeps_for_the_same_due_date_charge_only_once(): void
+    {
+        $business = $this->makeBusiness();
+        $this->fundWallet($business, 100_000_000);
+        $number = $this->activeNumberDueOn($business, now()->subDay());
+
+        // Two overlapping sweep runs that both loaded the same due number
+        // before either began processing it.
+        $loadedByRunOne = $number->fresh();
+        $loadedByRunTwo = $number->fresh();
+
+        $outcomeOne = $this->manager()->attemptRenewal($loadedByRunOne);
+        $outcomeTwo = $this->manager()->attemptRenewal($loadedByRunTwo);
+
+        $this->assertSame(NumberRenewalOutcome::Succeeded, $outcomeOne);
+        $this->assertSame(NumberRenewalOutcome::AlreadyProcessed, $outcomeTwo);
+        $this->assertSame(
+            1,
+            BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
+                ->where('event_type', NumberLifecycleEventType::RenewalCharged->value)
+                ->count(),
+        );
+    }
+
+    public function test_attempt_renewal_with_a_stale_number_object_after_suspension_does_not_double_suspend(): void
+    {
+        $business = $this->makeBusiness();
+        $this->fundWallet($business, 0);
+        $number = $this->activeNumberDueOn($business, now()->subDay());
+        $stale = $number->fresh();
+
+        $first = $this->manager()->attemptRenewal($number->fresh());
+        $this->assertSame(NumberRenewalOutcome::InsufficientFunds, $first);
+
+        // $stale still shows the number as Active, exactly as if it had
+        // been loaded by a second sweep before the first one committed.
+        $second = $this->manager()->attemptRenewal($stale);
+
+        $this->assertSame(NumberRenewalOutcome::AlreadyProcessed, $second);
+        $this->assertSame(
+            1,
+            BusinessMessagingNumberLifecycleEvent::where('business_messaging_number_id', $number->id)
+                ->where('event_type', NumberLifecycleEventType::Suspended->value)
+                ->count(),
+            'A stale in-memory object must never trigger a duplicate Suspended event.',
+        );
+    }
+
+    public function test_release_decision_is_refused_when_a_port_out_request_arrives_after_a_stale_number_was_loaded(): void
+    {
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), false, BusinessMessagingNumberStatus::Suspended);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['grace_expires_at' => now()->subDay()]);
+        $this->matureReleaseNotice($number);
+
+        // The operator's admin page loaded this number before a port-out
+        // request came in for it.
+        $staleNumber = $number->fresh();
+
+        app(PortOutRequestManager::class)->request($business, $number->fresh(), 1);
+
+        $this->expectException(NumberReleaseNotEligibleException::class);
+        // recordReleaseDecision() must re-check against the current,
+        // locked row — never against $staleNumber's own already-outdated
+        // view of the world — so the request just inserted is not missed.
+        $this->manager()->recordReleaseDecision($staleNumber, $this->actorId(), 'Should be refused — a port-out request now exists.');
     }
 }
