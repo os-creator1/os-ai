@@ -5,6 +5,7 @@ namespace App\Library\GoogleBusinessProfile;
 use App\DTO\GoogleBusinessProfile\GoogleLocationProfile;
 use App\DTO\GoogleBusinessProfile\GoogleMirrorRefreshResult;
 use App\DTO\GoogleBusinessProfile\GoogleVoiceOfMerchantState;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Events\GoogleBusinessProfile\GoogleBusinessProfileMirrorRefreshed;
@@ -13,6 +14,7 @@ use App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessGoogleLocation;
 use Illuminate\Support\Facades\DB;
+use LogicException;
 
 /**
  * GBP Slice A contract §21 / §13 — fetches, bounds and persists the
@@ -49,6 +51,14 @@ final class GoogleBusinessProfileMirrorService
      */
     public function refresh(BusinessGoogleLocation $binding, BusinessGoogleConnection $connection, ?int $actorUserId = null): GoogleMirrorRefreshResult
     {
+        // SEO Contract 18 §7.3 — fail closed before ANY provider call or
+        // write: a `search_console` row handed to Business Profile code is
+        // a programming error, not a customer condition. Same shape as
+        // GoogleBusinessProfileBindingManager::bind().
+        if ($connection->product !== GoogleConnectionProduct::BusinessProfile) {
+            throw new LogicException('Google Business Profile code may only operate on a business_profile connection.');
+        }
+
         $location = $binding->businessLocation;
 
         if ($location === null) {

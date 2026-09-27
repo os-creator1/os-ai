@@ -56,6 +56,28 @@ class BusinessGoogleConnection extends Model
         'oauth_state_nonce',
     ];
 
+    /**
+     * SEO Contract 18 §7.3 — the model carries the SAME default the column
+     * does (`product varchar(24) not null default 'business_profile'`).
+     *
+     * WHY IT MATTERS. The database default only applies to the INSERT; an
+     * Eloquent model created without an explicit product has `product =
+     * null` in memory until it is re-read, even though the persisted row
+     * says `business_profile`. Any code comparing `$connection->product` to
+     * a product — the guards in this slice, and
+     * GoogleBusinessProfileBindingManager::bind() — would then reject a
+     * perfectly ordinary Business Profile connection, because null matches
+     * no product at all.
+     *
+     * Declaring it here makes in-memory state agree with the schema, so
+     * "which product is this row" has one answer whether the model was just
+     * created or freshly loaded. A Search Console row still has to say so
+     * explicitly, exactly as it must at the database level.
+     */
+    protected $attributes = [
+        'product' => 'business_profile',
+    ];
+
     protected $casts = [
         'product' => GoogleConnectionProduct::class,
         'state' => GoogleConnectionState::class,

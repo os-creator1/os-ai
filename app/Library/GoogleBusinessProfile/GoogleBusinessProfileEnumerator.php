@@ -4,12 +4,14 @@ namespace App\Library\GoogleBusinessProfile;
 
 use App\DTO\GoogleBusinessProfile\GoogleAccountSummary;
 use App\DTO\GoogleBusinessProfile\GoogleLocationCandidate;
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
 use App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessLocation;
+use LogicException;
 
 /**
  * GBP Slice A contract §8.3 / §8.5 — REQUEST-SCOPED account and location
@@ -42,6 +44,14 @@ final class GoogleBusinessProfileEnumerator
      */
     public function enumerate(Business $business, BusinessGoogleConnection $connection, ?int $actorUserId): array
     {
+        // SEO Contract 18 §7.3 — fail closed before ANY provider call or
+        // write: a `search_console` row handed to Business Profile code is
+        // a programming error, not a customer condition. Same shape as
+        // GoogleBusinessProfileBindingManager::bind().
+        if ($connection->product !== GoogleConnectionProduct::BusinessProfile) {
+            throw new LogicException('Google Business Profile code may only operate on a business_profile connection.');
+        }
+
         // Correction pass item 6 — the operation row is opened FIRST so
         // every outbound request it causes, including the token exchange
         // inside accessTokenFor(), is charged to the Business budget.
