@@ -90,6 +90,18 @@
             @endif
         @endif
     </x-card>
+
+    {{--
+        Review correction — a Business can land on this "no active number"
+        screen while still retaining a Suspended number (Slice 3's own
+        active-only identity/number resolvers hide it from the state
+        machine above). $retainedNumber is resolved independently via
+        PortOutRequestManager's ownership-safe lookup, so the exit path
+        stays reachable even here.
+    --}}
+    <div class="mt-2">
+        @include('customer.settings.text-messaging._port-out-card')
+    </div>
 @endsection
 
 @section('page-script')

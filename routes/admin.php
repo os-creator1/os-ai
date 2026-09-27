@@ -752,6 +752,19 @@
 
         /*
         |--------------------------------------------------------------------------
+        | Messaging number port-out requests (Phone Numbers + A2P lane,
+        | messaging contract §13.4)
+        |--------------------------------------------------------------------------
+        |
+        | Read-only platform-ops visibility only — this slice performs no
+        | mutation here. Same EnsureUserIsAdministrator + 'can:access
+        | backend' defense-in-depth as every other entry in this group.
+        |
+        */
+        Route::get('messaging-port-out-requests', 'MessagingPortOutRequestController@index')->name('messaging-port-out-requests.index');
+
+        /*
+        |--------------------------------------------------------------------------
         | Additional-slot agreements (RFC-005 Milestone 4, §3 item 14)
         |--------------------------------------------------------------------------
         |

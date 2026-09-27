@@ -954,6 +954,7 @@
             'Provider Events'         => 'Provider Events',
             'Additional Slot Agreements' => 'Additional Slot Agreements',
             'Messaging Provisioning Incidents' => 'Messaging Provisioning Incidents',
+            'Messaging Port-Out Requests' => 'Messaging Port-Out Requests',
             'Workspace'               => 'Workspace',
             'Workspace Plans'         => 'Workspace Plans',
             'Opportunities'           => 'Opportunities',

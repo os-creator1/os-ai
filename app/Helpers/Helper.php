@@ -927,6 +927,21 @@
                                 'icon'       => 'life-buoy',
                             ],
                             [
+                                // Phone Numbers + A2P lane — messaging
+                                // contract §13.4's tracking surface for
+                                // number port-out requests. Read-only;
+                                // 'admin_only' is the same additional
+                                // is_admin boundary the sibling entry above
+                                // uses, for the same reason.
+                                'url'        => url(config('app.admin_path') . '/messaging-port-out-requests'),
+                                'slug'       => config('app.admin_path') . '/messaging-port-out-requests',
+                                'name'       => 'Messaging Port-Out Requests',
+                                'i18n'       => 'Messaging Port-Out Requests',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'arrow-right-circle',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
                                 'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
                                 'name'   => 'Additional Slot Agreements',
