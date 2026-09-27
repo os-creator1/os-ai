@@ -132,6 +132,10 @@ final class WebsiteSectionValidator
                 'items' => 'required|array|min:1|max:24',
                 'items.*.image' => 'required|string',
             ],
+            WebsiteSectionType::Form => [
+                'heading' => 'nullable|string|max:120',
+                'form_uid' => 'required|string',
+            ],
         };
 
         $validator = ValidatorFacade::make($data, $rules);

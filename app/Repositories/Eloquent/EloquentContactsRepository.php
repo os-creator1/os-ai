@@ -7,6 +7,7 @@
     use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
     use App\Jobs\AutomationJob;
     use App\Library\Tool;
+    use App\Models\Business;
     use App\Models\Campaigns;
     use App\Models\ContactGroupFields;
     use App\Models\ContactGroups;
@@ -91,6 +92,58 @@
                 ->where('normalized_phone', $phone)
                 ->lockForUpdate()->firstOrFail();
         }
+
+        /**
+         * A public Website form's own find-or-create seam — same identity
+         * rule as findOrCreateForBooking() (Business-scoped by phone,
+         * blacklist-checked, default field values written through the
+         * existing updateFields() custom-field seam), without a Location
+         * lock: a form submission is not competing for a scarce calendar
+         * slot, so there is nothing to serialize against.
+         *
+         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'LAST_NAME' => ...]
+         */
+        public function findOrCreateForWebsiteForm(Business $business, string $rawPhone, array $fields): Contacts
+        {
+            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+
+            $contact = Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->first();
+            if ($contact !== null) {
+                return $contact;
+            }
+
+            $contact = new Contacts(['phone' => $phone]);
+            if ($contact->isListedInBlacklist()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                ]);
+            }
+
+            $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
+            if ($group === null) {
+                $group = $this->store([
+                    'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
+                ]);
+            }
+
+            $contact->group_id = $group->id;
+            $contact->customer_id = $group->customer_id;
+            $contact->business_id = $business->id;
+            $contact->location_id = Contacts::singleActiveLocationIdFor($business->id);
+            $contact->status = Contacts::STATUS_SUBSCRIBE;
+            $contact->save();
+            $contact->updateFields($fields + ['PHONE' => $phone]);
+
+            if ($contact->wasRecentlyCreated && $contact->business_id !== null) {
+                dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
+                dispatch(EnrollWorkflowContact::forContactCreated(
+                    (int) $contact->id, ContactCreationSource::Other
+                ))->afterCommit();
+            }
+
+            return $contact;
+        }
+
         /**
          * EloquentContactsRepository constructor.
          *

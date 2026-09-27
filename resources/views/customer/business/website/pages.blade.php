@@ -8,6 +8,7 @@
             <h4 class="mb-0">Pages</h4>
             <span>
                 <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Photos</x-button>
+                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Forms</x-button>
                 <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.create', [$workspaceUid, $businessUid]) }}">Add page</x-button>
             </span>
         </div>
@@ -37,6 +38,14 @@
                         <a href="{{ route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $galleryPage->uid]) }}">Edit your Gallery page</a>.
                     @else
                         <a href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Upload photos and build a Gallery page</a>.
+                    @endif
+                </li>
+                <li>
+                    Quote request form:
+                    @if ($quoteForm)
+                        {{ $quoteForm->submissions()->count() }} {{ $quoteForm->submissions()->count() === 1 ? 'inquiry' : 'inquiries' }} received. <a href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Manage your form</a>.
+                    @else
+                        not created yet. <a href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Create your quote request form</a>.
                     @endif
                 </li>
             </ul>

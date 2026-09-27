@@ -86,6 +86,11 @@ class Website extends Model
         return $this->hasMany(WebsiteAsset::class);
     }
 
+    public function forms(): HasMany
+    {
+        return $this->hasMany(WebsiteForm::class);
+    }
+
     public function publishedRevision(): BelongsTo
     {
         return $this->belongsTo(WebsiteRevision::class, 'published_revision_id');

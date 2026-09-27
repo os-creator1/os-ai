@@ -130,6 +130,37 @@ body.website-body {
     display: block;
 }
 
+.website-form-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 480px;
+}
+
+.website-form-field { display: flex; flex-direction: column; gap: 0.35rem; }
+.website-form-field label { font-weight: 600; }
+.website-form-field input,
+.website-form-field textarea {
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font: inherit;
+}
+
+.website-form-honeypot {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.website-form-preview-note {
+    color: #6b7280;
+    font-size: 0.875rem;
+    font-style: italic;
+}
+
 .website-faq-item {
     border-bottom: 1px solid #e5e7eb;
     padding: 1rem 0;

@@ -13,10 +13,12 @@ use Tests\TestCase;
 /**
  * Website Generation + Hosting Slice A — contract §37.13 (Forms/Analytics
  * boundary) and §37.14 (Custom-domain boundary), combined into one file
- * since both are pure absence-proofs: Slice A deliberately ships no
- * form-builder, no Website-specific analytics/event capture, and no
- * hostname-based (custom-domain) resolver or TLS/DNS/ACME automation.
- * These tests fail loudly the moment any of that scope creeps in.
+ * since both were originally pure absence-proofs. The Forms quote-request
+ * slice explicitly, narrowly lifts the Forms half of §37.13(a): exactly
+ * one closed `form` section type, backed by the smallest reusable Forms
+ * foundation (WebsiteForm/WebsiteFormSubmission) — never an open-ended
+ * form-builder, a generic leads product, or Website-specific analytics.
+ * These tests fail loudly the moment scope creeps beyond that.
  */
 class WebsiteBoundaryTest extends TestCase
 {
@@ -24,40 +26,58 @@ class WebsiteBoundaryTest extends TestCase
     use CreatesWebsiteFixtures;
 
     // ---------------------------------------------------------------
-    // §37.13 (a) — no form-builder route, no "form" section type
+    // §37.13 (a) — exactly the Forms foundation's own routes; no
+    // generic form-builder, no separate "leads" product
     // ---------------------------------------------------------------
 
-    public function test_no_form_builder_routes_are_registered(): void
+    public function test_only_the_forms_foundations_own_routes_exist_no_generic_form_builder(): void
     {
-        $plausibleFormRouteNames = [
+        $expected = [
             'customer.workspaces.businesses.website.forms.index',
-            'customer.workspaces.businesses.website.forms.create',
             'customer.workspaces.businesses.website.forms.store',
+            'customer.workspaces.businesses.website.forms.submissions',
+            'public.website.form.submit',
+        ];
+
+        foreach ($expected as $name) {
+            $this->assertTrue(Route::has($name), "Expected route [{$name}] to exist for the Forms slice.");
+        }
+
+        $stillForbidden = [
+            'customer.workspaces.businesses.website.forms.create',
+            'customer.workspaces.businesses.website.forms.edit',
+            'customer.workspaces.businesses.website.forms.update',
             'customer.workspaces.businesses.website.form-builder',
             'customer.workspaces.businesses.website.leads.index',
-            'public.website.form.submit',
             'public.website.forms.submit',
             'public.website.lead.submit',
         ];
 
-        foreach ($plausibleFormRouteNames as $name) {
-            $this->assertFalse(Route::has($name), "Expected no route named [{$name}] to exist in Slice A.");
+        foreach ($stillForbidden as $name) {
+            $this->assertFalse(Route::has($name), "Expected no route named [{$name}] — the Forms slice ships one fixed preset, not a builder.");
         }
     }
 
-    public function test_website_section_type_enum_has_exactly_the_nine_known_cases_and_no_form_case(): void
+    public function test_website_section_type_enum_has_exactly_the_ten_known_cases_and_no_generic_form_variant(): void
     {
         $values = array_map(static fn (WebsiteSectionType $case) => $case->value, WebsiteSectionType::cases());
 
         sort($values);
 
         $this->assertSame(
-            ['contact_details', 'cta', 'faq', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
+            ['contact_details', 'cta', 'faq', 'form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
             $values
         );
 
-        foreach (['form', 'contact_form', 'lead_form', 'form_builder'] as $forbidden) {
-            $this->assertNotContains($forbidden, $values, "Section type [{$forbidden}] must not exist in Slice A.");
+        foreach (['contact_form', 'lead_form', 'form_builder'] as $forbidden) {
+            $this->assertNotContains($forbidden, $values, "Section type [{$forbidden}] must not exist — only the one closed `form` type does.");
+        }
+    }
+
+    public function test_no_website_form_builder_table_exists(): void
+    {
+        foreach (['website_form_fields', 'website_form_builder_fields', 'leads'] as $table) {
+            $this->assertFalse(Schema::hasTable($table), "Table [{$table}] must not exist — form field config lives in website_forms.fields JSON.");
         }
     }
 

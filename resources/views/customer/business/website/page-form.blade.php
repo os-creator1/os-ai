@@ -87,6 +87,7 @@
                     <option value="cta">Call to action</option>
                     <option value="contact_details">Contact details</option>
                     <option value="gallery">Gallery</option>
+                    <option value="form">Form</option>
                 </select>
                 <x-button type="button" variant="secondary" id="add-section-btn">Add section</x-button>
             </div>
@@ -106,6 +107,7 @@
 (function () {
     var initialSections = @json(old('sections_decoded', $page->sections ?? []));
     var availableAssets = @json(isset($assets) ? $assets->map(fn ($asset) => ['uid' => $asset->uid, 'label' => $asset->alt_text ?: 'Uploaded photo', 'url' => $asset->url()])->values()->all() : []);
+    var availableForms = @json(isset($forms) ? $forms->map(fn ($form) => ['uid' => $form->uid, 'name' => $form->name])->values()->all() : []);
     var listEl = document.getElementById('sections-list');
     var counter = 0;
 
@@ -145,7 +147,11 @@
         services: [{key: 'heading', label: 'Heading', type: 'text'}],
         testimonials: [{key: 'heading', label: 'Heading', type: 'text'}],
         faq: [{key: 'heading', label: 'Heading', type: 'text'}],
-        gallery: [{key: 'heading', label: 'Heading', type: 'text'}]
+        gallery: [{key: 'heading', label: 'Heading', type: 'text'}],
+        form: [
+            {key: 'heading', label: 'Heading', type: 'text'},
+            {key: 'form_uid', label: 'Form', type: 'form_select'}
+        ]
     };
 
     var ITEM_TEMPLATES = {
@@ -168,6 +174,12 @@
         if (type === 'asset') {
             return '<div class="mb-2"><select class="form-select" data-field="' + key + '">' + assetOptions(value) + '</select></div>';
         }
+        if (type === 'form_select') {
+            if (availableForms.length === 0) {
+                return '<div class="mb-2 text-caption">No forms yet. Create one from the Forms screen first.</div>';
+            }
+            return '<div class="mb-2"><select class="form-select" data-field="' + key + '">' + formOptions(value) + '</select></div>';
+        }
         if (type === 'textarea') {
             return '<div class="mb-2"><textarea class="form-control" data-field="' + key + '" rows="3">' + escapeHtml(value) + '</textarea></div>';
         }
@@ -185,6 +197,14 @@
         var options = '<option value="">Choose a photo</option>';
         availableAssets.forEach(function (asset, index) {
             options += '<option value="' + escapeHtml(asset.uid) + '"' + (asset.uid === selected ? ' selected' : '') + '>' + escapeHtml(asset.label) + ' #' + (index + 1) + '</option>';
+        });
+        return options;
+    }
+
+    function formOptions(selected) {
+        var options = '<option value="">Choose a form</option>';
+        availableForms.forEach(function (form) {
+            options += '<option value="' + escapeHtml(form.uid) + '"' + (form.uid === selected ? ' selected' : '') + '>' + escapeHtml(form.name) + '</option>';
         });
         return options;
     }
