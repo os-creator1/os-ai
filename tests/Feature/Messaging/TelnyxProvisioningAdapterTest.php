@@ -228,7 +228,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         Http::fake([
             'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_1']]),
-            'api.telnyx.com/v2/10dlc/campaign' => Http::response(['data' => ['campaignId' => 'campaign_fixture_1']]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_1']]),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local));
@@ -236,8 +236,14 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame('brand_fixture_1', $result->providerBrandId);
         $this->assertSame('campaign_fixture_1', $result->providerCampaignId);
         $this->assertNull($result->providerRegistrationId);
-        Http::assertSent(fn ($request) => str_contains($request->url(), '/10dlc/brand'));
-        Http::assertSent(fn ($request) => str_contains($request->url(), '/10dlc/campaign'));
+        Http::assertSent(fn ($request) => $request->method() === 'POST' && str_contains($request->url(), '/10dlc/brand'));
+        // Campaign CREATION is the dedicated campaignBuilder resource, never the
+        // campaign/{id} retrieval path — verified against Telnyx's own "Campaign
+        // Builder" and "Get My Campaign" API reference pages.
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && $request->url() === 'https://api.telnyx.com/v2/10dlc/campaignBuilder');
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/10dlc/campaign')
+            && ! str_contains($request->url(), '/10dlc/campaignBuilder'));
     }
 
     public function test_toll_free_submission_hits_the_corrected_endpoint_once_funded(): void
