@@ -265,6 +265,20 @@ class DateReachedTriggerTest extends TestCase
         $this->publishDateWorkflow($business, $group, $field);
         $now = CarbonImmutable::parse('2026-06-15 09:00:00', 'UTC');
 
+        // Warm EntitlementManager's own decision cache before measuring.
+        // Every advanced step re-checks entitlement (WorkflowCheckpoint), and
+        // that manager caches its decision after the first lookup for a given
+        // Business — exactly as it would already be warm on a long-lived
+        // production worker. Measuring from a cold cache would attribute that
+        // one-time lookup cost to contact-list size instead of to entitlement
+        // caching, which is not what this test is about.
+        app(\App\Library\Entitlement\EntitlementManager::class)->decide(
+            $business->workspace,
+            $business,
+            \App\Enums\Entitlement\PlatformFeature::Automations->value,
+            (int) $business->customer_id,
+        );
+
         DB::listen(function (): void {
             $this->sweptQueries++;
         });

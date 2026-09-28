@@ -1085,8 +1085,11 @@ class AutomationsRuntimeTest extends TestCase
         $this->assertStringNotContainsString('::created(', $contacts);
         $this->assertStringNotContainsString('::saved(', $contacts);
 
-        // Exactly the two contracted interactive seams dispatch the trigger
-        // (AutomationJob itself only DEFINES the factory).
+        // Exactly the three contracted interactive seams dispatch the trigger
+        // (AutomationJob itself only DEFINES the factory): storeContact() and
+        // createContactFromRequest() from B4's original two, plus Calendar
+        // 15E's findOrCreateForBooking(), which follows the identical B4 +
+        // V2 dual-dispatch pattern for its own contact-identity seam.
         $callSites = [];
         foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(app_path())) as $file) {
             if ($file->isFile() && $file->getExtension() === 'php' && str_contains(php_strip_whitespace($file->getPathname()), 'AutomationJob::forContactCreated(')) {
@@ -1096,7 +1099,7 @@ class AutomationsRuntimeTest extends TestCase
 
         sort($callSites);
         $this->assertSame(['Repositories/Eloquent/EloquentContactsRepository.php'], $callSites, 'Unexpected CONTACT_CREATED dispatch sites: ' . json_encode($callSites));
-        $this->assertSame(2, substr_count(php_strip_whitespace(app_path('Repositories/Eloquent/EloquentContactsRepository.php')), 'AutomationJob::forContactCreated('));
+        $this->assertSame(3, substr_count(php_strip_whitespace(app_path('Repositories/Eloquent/EloquentContactsRepository.php')), 'AutomationJob::forContactCreated('));
     }
 
     // ---------------------------------------------------------------
