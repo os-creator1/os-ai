@@ -54,28 +54,6 @@ trait SendsDocuments
     }
 
     /**
-     * The counterpart of {@see allowPublicEntitlement()} — forces the
-     * entitlement step of the guard to refuse, so a test can prove §6.3.1
-     * ("the link is NOT an account or entitlement bypass") against a real
-     * denial. Now that every plan tier is entitled (see above), an actually
-     * unentitled Business no longer occurs from tier selection alone, so
-     * this replaces the same single guard step `allowPublicEntitlement()`
-     * does, in the other direction.
-     */
-    protected function denyPublicEntitlement(): void
-    {
-        $this->app->bind(PublicDocumentGuard::class, fn ($app) => new class(
-            $app->make(CustomerAccountAccessGuard::class),
-            $app->make(EntitlementManager::class),
-        ) extends PublicDocumentGuard {
-            protected function entitlementAllows(Workspace $workspace, Business $business): bool
-            {
-                return false;
-            }
-        });
-    }
-
-    /**
      * @return array{customer: Customer, business: Business, workspace: Workspace, location: BusinessLocation, contact: Contacts}
      */
     protected function sendableTenant(string $businessName = 'Harbor Lane Studios'): array

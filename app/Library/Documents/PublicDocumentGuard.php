@@ -187,10 +187,12 @@ class PublicDocumentGuard
 
     /**
      * §6.3.1 check 3. Its own method for exactly one reason: a test may
-     * replace THIS step alone — proving §6.3.1 in isolation, in either
-     * direction, via `SendsDocuments::allowPublicEntitlement()` /
-     * `denyPublicEntitlement()` — without weakening any other check. The
-     * actor id is the Business's own owning customer — server-derived,
+     * replace THIS step alone via `SendsDocuments::allowPublicEntitlement()`
+     * without weakening any other check; a real denial is proved instead
+     * through a genuine `WorkspaceEntitlementOverrideState::Deny` override
+     * against this unmodified method (see
+     * `PublicDocumentLinkTest::test_an_unentitled_account_gets_the_same_refusal_as_a_bad_token`).
+     * The actor id is the Business's own owning customer — server-derived,
      * never anything a browser supplied — exactly as
      * PublicBookingController does for the Calendar feature.
      */
