@@ -52,6 +52,18 @@ class MarketingTestimonial extends Model
      */
     public function hasDisplayableMedia(): bool
     {
-        return ! blank($this->poster_image_path) || $this->youtubeVideoId() !== null;
+        return self::wouldHaveDisplayableMedia($this->poster_image_path, $this->video_url);
+    }
+
+    /**
+     * The same displayable-media rule as hasDisplayableMedia(), evaluated
+     * against prospective values rather than this instance's current
+     * attributes — lets a caller (MarketingContentController) check what
+     * an update WOULD produce before asking the repository to persist it,
+     * without mutating the model itself.
+     */
+    public static function wouldHaveDisplayableMedia(?string $posterImagePath, ?string $videoUrl): bool
+    {
+        return ! blank($posterImagePath) || ($videoUrl ? YoutubeUrlParser::extractVideoId($videoUrl) !== null : false);
     }
 }

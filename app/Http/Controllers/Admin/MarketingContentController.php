@@ -7,9 +7,11 @@ use App\Http\Requests\Admin\SaveMarketingTestimonialRequest;
 use App\Http\Requests\Admin\UpdateMarketingHeroCopyRequest;
 use App\Library\Marketing\MarketingTestimonialAssetService;
 use App\Library\Marketing\YoutubeUrlParser;
-use App\Models\MarketingContentSettings;
 use App\Models\MarketingFaq;
 use App\Models\MarketingTestimonial;
+use App\Repositories\Contracts\MarketingContentSettingsRepository;
+use App\Repositories\Contracts\MarketingFaqRepository;
+use App\Repositories\Contracts\MarketingTestimonialRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
@@ -23,11 +25,22 @@ use Illuminate\Support\Facades\Auth;
  * Gated by the existing 'general settings' ability rather than a new
  * permission string, matching the Platform Branding contract's own
  * precedent of reusing that ability for owner-identity content.
+ *
+ * Review correction: this controller used to call Eloquent directly
+ * (MarketingFaq::query(), MarketingTestimonial::query(), etc.), bypassing
+ * the controller -> repository -> library -> model structure AGENTS.md
+ * requires. Every persistence/query operation now goes through the three
+ * Marketing repositories injected below; this class only handles
+ * authorization, request shaping, and orchestrating the repositories with
+ * MarketingTestimonialAssetService (file storage, a library concern).
  */
 class MarketingContentController extends AdminBaseController
 {
     public function __construct(
         private readonly MarketingTestimonialAssetService $testimonialAssets,
+        private readonly MarketingContentSettingsRepository $settings,
+        private readonly MarketingFaqRepository $faqs,
+        private readonly MarketingTestimonialRepository $testimonials,
     ) {
     }
 
@@ -36,9 +49,9 @@ class MarketingContentController extends AdminBaseController
         $this->authorize('general settings');
 
         return view('admin.marketing-content.index', [
-            'settings' => MarketingContentSettings::current(),
-            'faqs' => MarketingFaq::query()->orderBy('position')->orderBy('id')->get(),
-            'testimonials' => MarketingTestimonial::query()->orderBy('position')->orderBy('id')->get(),
+            'settings' => $this->settings->current(),
+            'faqs' => $this->faqs->allOrdered(),
+            'testimonials' => $this->testimonials->allOrdered(),
             'breadcrumbs' => $this->breadcrumbs(),
         ]);
     }
@@ -47,10 +60,7 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        $settings = MarketingContentSettings::current();
-        $settings->fill($request->validated());
-        $settings->updated_by_user_id = Auth::id();
-        $settings->save();
+        $this->settings->update($this->settings->current(), $request->validated(), Auth::id());
 
         return redirect()
             ->route('admin.marketing-content.index')
@@ -61,10 +71,10 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        MarketingFaq::query()->create([
+        $this->faqs->create([
             ...$request->validated(),
             'is_visible' => $request->boolean('is_visible'),
-            'position' => $request->input('position', MarketingFaq::query()->max('position') + 1),
+            'position' => $request->input('position', $this->faqs->nextPosition()),
         ]);
 
         return redirect()
@@ -76,9 +86,10 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        $faq->fill($request->validated());
-        $faq->is_visible = $request->boolean('is_visible');
-        $faq->save();
+        $this->faqs->update($faq, [
+            ...$request->validated(),
+            'is_visible' => $request->boolean('is_visible'),
+        ]);
 
         return redirect()
             ->route('admin.marketing-content.index')
@@ -89,7 +100,7 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        $faq->delete();
+        $this->faqs->delete($faq);
 
         return redirect()
             ->route('admin.marketing-content.index')
@@ -112,11 +123,11 @@ class MarketingContentController extends AdminBaseController
             ? $this->testimonialAssets->store($request->file('poster_image'))
             : null;
 
-        MarketingTestimonial::query()->create([
+        $this->testimonials->create([
             ...$request->safe()->except('poster_image'),
             'poster_image_path' => $posterPath,
             'is_visible' => $request->boolean('is_visible'),
-            'position' => $request->input('position', MarketingTestimonial::query()->max('position') + 1),
+            'position' => $request->input('position', $this->testimonials->nextPosition()),
         ]);
 
         return redirect()
@@ -128,22 +139,23 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        $testimonial->fill($request->safe()->except('poster_image'));
-        $testimonial->is_visible = $request->boolean('is_visible');
+        $previousPath = $testimonial->poster_image_path;
 
-        $previousPath = $testimonial->getOriginal('poster_image_path');
+        $newPosterPath = $request->hasFile('poster_image')
+            ? $this->testimonialAssets->store($request->file('poster_image'))
+            : $previousPath;
 
-        if ($request->hasFile('poster_image')) {
-            $testimonial->poster_image_path = $this->testimonialAssets->store($request->file('poster_image'));
-        }
-
-        if (! $testimonial->hasDisplayableMedia()) {
+        if (! MarketingTestimonial::wouldHaveDisplayableMedia($newPosterPath, $request->validated('video_url'))) {
             return back()
                 ->withErrors(['poster_image' => 'A poster image is required, unless you provide a YouTube video link.'])
                 ->withInput();
         }
 
-        $testimonial->save();
+        $this->testimonials->update($testimonial, [
+            ...$request->safe()->except('poster_image'),
+            'poster_image_path' => $newPosterPath,
+            'is_visible' => $request->boolean('is_visible'),
+        ]);
 
         // Content-hashed filenames mean re-uploading the same photo, or two
         // testimonials sharing one photo, can leave `$previousPath` equal to
@@ -161,7 +173,7 @@ class MarketingContentController extends AdminBaseController
         $this->authorize('general settings');
 
         $posterPath = $testimonial->poster_image_path;
-        $testimonial->delete();
+        $this->testimonials->delete($testimonial);
         $this->deletePosterIfOrphaned($posterPath);
 
         return redirect()
@@ -184,9 +196,7 @@ class MarketingContentController extends AdminBaseController
             return;
         }
 
-        $stillReferenced = MarketingTestimonial::query()->where('poster_image_path', $path)->exists();
-
-        if (! $stillReferenced) {
+        if (! $this->testimonials->isPosterPathInUse($path)) {
             $this->testimonialAssets->deleteIfOwned($path);
         }
     }

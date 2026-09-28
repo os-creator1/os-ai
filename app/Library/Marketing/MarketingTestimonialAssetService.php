@@ -2,9 +2,9 @@
 
 namespace App\Library\Marketing;
 
-use App\Library\Branding\Exceptions\InvalidBrandingAssetException;
 use App\Library\Marketing\Exceptions\InvalidMarketingAssetException;
-use App\Rules\ValidBrandingImageRule;
+use App\Library\Support\Exceptions\InvalidImageSignatureException;
+use App\Library\Support\ImageSignatureDetector;
 use Illuminate\Http\UploadedFile;
 
 /**
@@ -12,6 +12,14 @@ use Illuminate\Http\UploadedFile;
  * mirroring BrandingUploadService's write-then-swap-then-delete shape but
  * keyed to a MarketingTestimonial row rather than an .env-backed platform
  * identity field.
+ *
+ * Review correction: this used to detect the image signature through
+ * ValidBrandingImageRule::detectExtension(), which independently enforces
+ * branding's own 2MB limit — silently rejecting a valid 2-4MB marketing
+ * poster at the actual storage step even after validation allowed it. Uses
+ * the shared, size-agnostic App\Library\Support\ImageSignatureDetector
+ * directly instead; size policy for a marketing poster belongs to
+ * App\Rules\ValidMarketingImageRule alone, enforced before this is called.
  */
 class MarketingTestimonialAssetService
 {
@@ -24,8 +32,8 @@ class MarketingTestimonialAssetService
         }
 
         try {
-            $extension = ValidBrandingImageRule::detectExtension($contents);
-        } catch (InvalidBrandingAssetException $e) {
+            $extension = ImageSignatureDetector::detectExtension($contents);
+        } catch (InvalidImageSignatureException $e) {
             throw new InvalidMarketingAssetException($e->getMessage());
         }
 

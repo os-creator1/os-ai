@@ -294,4 +294,79 @@ class MarketingContentAdminTest extends TestCase
         $this->assertSame($sharedPath, $b->poster_image_path);
         $this->assertFileExists(public_path($sharedPath));
     }
+
+    /**
+     * Review correction (P2): SaveMarketingTestimonialRequest validates
+     * video_url up to 2048 characters, but the original migration's
+     * `string` column only stored 255 — a longer, otherwise-valid URL
+     * either failed to save or was silently truncated. The column is now
+     * sized to 2048 to match.
+     */
+    public function test_a_video_url_between_256_and_2048_characters_persists_intact(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $longUrl = 'https://videos.example.test/feedback.mp4?token=' . str_repeat('a', 2000);
+        $this->assertGreaterThan(255, strlen($longUrl));
+        $this->assertLessThanOrEqual(2048, strlen($longUrl));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'video_url' => $longUrl,
+            'poster_image' => UploadedFile::fake()->createWithContent('poster.png', $this->fakeImageBytes()),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertSame($longUrl, $testimonial->video_url);
+    }
+
+    /**
+     * Review correction (P2): ValidMarketingImageRule previously delegated
+     * signature detection to ValidBrandingImageRule::detectExtension(),
+     * which independently enforced branding's own 2MB limit — rejecting a
+     * valid 2-4MB marketing poster even though this rule's own check
+     * (4MB) had already passed it. Signature detection is now size-policy
+     * agnostic (App\Library\Support\ImageSignatureDetector), so a poster
+     * in that 2-4MB range is accepted.
+     */
+    public function test_a_poster_between_2mb_and_4mb_is_accepted(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes() . str_repeat("\0", 3 * 1024 * 1024);
+        $this->assertGreaterThan(2 * 1024 * 1024, strlen($bytes));
+        $this->assertLessThanOrEqual(4 * 1024 * 1024, strlen($bytes));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-large.png', $bytes),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertNotNull($testimonial->poster_image_path);
+        $this->assertFileExists(public_path($testimonial->poster_image_path));
+    }
+
+    /**
+     * Boundary regression: Marketing's own 4MB limit must still apply —
+     * separating signature detection from branding's size policy must not
+     * remove Marketing's size policy too.
+     */
+    public function test_a_poster_over_4mb_is_still_rejected(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes() . str_repeat("\0", 5 * 1024 * 1024);
+        $this->assertGreaterThan(4 * 1024 * 1024, strlen($bytes));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-huge.png', $bytes),
+        ])->assertSessionHasErrors('poster_image');
+
+        $this->assertDatabaseCount('marketing_testimonials', 0);
+    }
 }

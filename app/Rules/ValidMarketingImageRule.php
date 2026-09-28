@@ -2,8 +2,8 @@
 
 namespace App\Rules;
 
-use App\Library\Branding\Exceptions\InvalidBrandingAssetException;
-use App\Rules\ValidBrandingImageRule;
+use App\Library\Support\Exceptions\InvalidImageSignatureException;
+use App\Library\Support\ImageSignatureDetector;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Http\UploadedFile;
@@ -13,9 +13,16 @@ use Illuminate\Http\UploadedFile;
  * (testimonial poster images). A small sibling of ValidBrandingImageRule
  * rather than an extension of it — this is a distinct asset purpose
  * (per-testimonial poster frames, not platform brand identity) with its
- * own, wider dimension bounds, so branding's field map is never touched.
- * Reuses ValidBrandingImageRule::detectExtension(), the one piece of pure,
- * field-independent magic-byte logic, rather than re-implementing it.
+ * own, wider dimension bounds and its own 4MB size limit, so branding's
+ * field map and 2MB policy are never touched.
+ *
+ * Review correction: this used to call ValidBrandingImageRule::
+ * detectExtension() for its signature check, which independently enforced
+ * branding's 2MB limit — silently rejecting a valid 2-4MB marketing poster
+ * before this rule's own (already-passed) 4MB check ever mattered. It now
+ * calls the shared, size-agnostic App\Library\Support\ImageSignatureDetector
+ * directly — the one piece of pure, field-independent magic-byte logic —
+ * rather than a branding-specific wrapper around it.
  */
 class ValidMarketingImageRule implements ValidationRule
 {
@@ -46,22 +53,22 @@ class ValidMarketingImageRule implements ValidationRule
         }
 
         try {
-            ValidBrandingImageRule::detectExtension($contents);
+            ImageSignatureDetector::detectExtension($contents);
 
             $dimensions = @getimagesizefromstring($contents);
 
             if ($dimensions === false) {
-                throw new InvalidBrandingAssetException('The uploaded file is not a readable image.');
+                throw new InvalidImageSignatureException('The uploaded file is not a readable image.');
             }
 
             [$width, $height] = $dimensions;
 
             if ($width > self::MAX_WIDTH || $height > self::MAX_HEIGHT) {
-                throw new InvalidBrandingAssetException(
+                throw new InvalidImageSignatureException(
                     'The uploaded image exceeds the maximum allowed dimensions of ' . self::MAX_WIDTH . 'x' . self::MAX_HEIGHT . 'px.'
                 );
             }
-        } catch (InvalidBrandingAssetException $e) {
+        } catch (InvalidImageSignatureException $e) {
             $fail($e->getMessage());
         }
     }
