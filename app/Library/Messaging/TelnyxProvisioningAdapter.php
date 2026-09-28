@@ -2,6 +2,7 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
@@ -13,7 +14,9 @@ use App\Exceptions\Usage\UsageMeterRateIntegrityException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
@@ -82,6 +85,41 @@ use Illuminate\Support\Str;
  *                                                      ("reject", "declin", "fail") is used
  *                                                      and everything else stays Pending —
  *                                                      never guessed Approved.
+ *   - DELETE /phone_numbers/{id}                       CONFIRMED path (Phone Numbers +
+ *                                                      A2P lane, carrier-release
+ *                                                      boundary — developers.telnyx.com/
+ *                                                      api/numbers/delete-phone-number).
+ *                                                      A successful (2xx) response is
+ *                                                      Telnyx's own confirmation the
+ *                                                      number left this account. A 404
+ *                                                      is ALSO treated as confirmed —
+ *                                                      standard idempotent-DELETE
+ *                                                      semantics: Telnyx saying the
+ *                                                      number is not present is exactly
+ *                                                      the end state a release call
+ *                                                      wants, and it is what a retry
+ *                                                      after an earlier attempt's
+ *                                                      response was lost to this
+ *                                                      platform's own network/timeout
+ *                                                      would see. Telnyx's own support
+ *                                                      documentation additionally states
+ *                                                      a deleted number then sits
+ *                                                      through a hold/ageing period
+ *                                                      before anyone else can buy it —
+ *                                                      that is the carrier's own
+ *                                                      internal process and has no
+ *                                                      bearing on this platform's own
+ *                                                      "no longer ours" determination,
+ *                                                      which releaseNumber() treats as
+ *                                                      final the moment either response
+ *                                                      shape above is observed. Every
+ *                                                      other response, or a transport-
+ *                                                      level exception/timeout, is
+ *                                                      NotConfirmed — never guessed as a
+ *                                                      success, mirroring this class's
+ *                                                      own "never guess Approved"
+ *                                                      discipline for registration
+ *                                                      status.
  *
  * None of this can run with a real credential today regardless: every
  * write path here also requires config('messaging.managed_messaging_provisioning_enabled')
@@ -252,6 +290,34 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         }
 
         return $this->refreshTenDlcCampaignStatus($query);
+    }
+
+    /**
+     * Phone Numbers + A2P lane — see this class's own docblock for the
+     * endpoint verification. Deliberately does NOT go through
+     * reserveFunding(): releasing a number is not a purchase, and this
+     * contract has no "release fee" concept — the wallet is never touched
+     * here. Never mutates any local record; NumberLifecycleManager::
+     * confirmCarrierRelease() is the only writer of the resulting local
+     * state, under its own row lock.
+     */
+    public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult
+    {
+        try {
+            $response = $this->client()->delete(self::API_BASE . '/phone_numbers/' . $query->providerPhoneNumberId);
+        } catch (\Throwable) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'transport_error');
+        }
+
+        if ($response->successful()) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'http_' . $response->status());
+        }
+
+        if ($response->status() === 404) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'http_404_already_removed');
+        }
+
+        return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'http_' . $response->status());
     }
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult

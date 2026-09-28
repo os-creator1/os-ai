@@ -24,20 +24,22 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * carrier registration regime applies to this number — 10DLC for
  * `local`, toll-free verification for `toll_free` — never both.
  *
- * Phone Numbers + A2P lane — the seven lifecycle columns (next_renewal_at,
+ * Phone Numbers + A2P lane — the nine lifecycle columns (next_renewal_at,
  * renewal_warning_sent_at, suspended_at, grace_expires_at,
  * release_notice_delivered_at, release_notice_failed_at,
- * release_decided_at) are deliberately absent from $fillable:
- * NumberLifecycleManager is the single writer for all of them, exactly
- * the same discipline ProvisioningIncidentRecorder and
- * PortOutRequestManager already apply to their own resolution/cancellation
- * columns.
+ * release_decided_at, carrier_release_failed_at,
+ * carrier_release_failure_reason), plus released_at, are deliberately
+ * absent from $fillable: NumberLifecycleManager is the single writer for
+ * all of them, exactly the same discipline ProvisioningIncidentRecorder
+ * and PortOutRequestManager already apply to their own
+ * resolution/cancellation columns.
  *
  * release_decided_at records only an audited platform-operator DECISION
- * to release — never a confirmed carrier-side release. `status` never
- * becomes Released in this slice; it stays Suspended even after a release
- * decision, because no real Telnyx call confirms the carrier actually
- * released the number.
+ * to release. `status` becomes Released, and released_at is finally
+ * written, only once NumberLifecycleManager::confirmCarrierRelease() gets
+ * a genuine (or explicitly-faked-in-a-test) confirmation from
+ * MessagingProvisioningAdapter::releaseNumber() — never merely because a
+ * decision was recorded.
  */
 class BusinessMessagingNumber extends Model
 {
@@ -51,7 +53,6 @@ class BusinessMessagingNumber extends Model
         'status',
         'is_primary',
         'activated_at',
-        'released_at',
     ];
 
     protected $casts = [
@@ -68,6 +69,7 @@ class BusinessMessagingNumber extends Model
         'release_notice_delivered_at' => 'datetime',
         'release_notice_failed_at' => 'datetime',
         'release_decided_at' => 'datetime',
+        'carrier_release_failed_at' => 'datetime',
     ];
 
     public function identity(): BelongsTo
@@ -83,6 +85,11 @@ class BusinessMessagingNumber extends Model
     public function isSuspended(): bool
     {
         return $this->status === BusinessMessagingNumberStatus::Suspended;
+    }
+
+    public function isReleased(): bool
+    {
+        return $this->status === BusinessMessagingNumberStatus::Released;
     }
 
     public function isInGracePeriod(): bool
@@ -125,6 +132,19 @@ class BusinessMessagingNumber extends Model
             && $this->graceHasExpired()
             && $this->releaseNoticeHasMatured()
             && $this->release_decided_at === null;
+    }
+
+    /**
+     * Read-only mirror of NumberLifecycleManager::confirmCarrierRelease()'s
+     * own non-port-out preconditions, for admin-view gating only — never
+     * the source of truth for whether the carrier call may actually be
+     * attempted.
+     */
+    public function isEligibleForCarrierReleaseConfirmation(): bool
+    {
+        return $this->isSuspended()
+            && $this->release_decided_at !== null
+            && filled($this->provider_number_reference);
     }
 
     public function scopeSuspended(Builder $query): Builder

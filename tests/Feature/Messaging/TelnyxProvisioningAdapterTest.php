@@ -3,11 +3,13 @@
 namespace Tests\Feature\Messaging;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
@@ -316,5 +318,61 @@ class TelnyxProvisioningAdapterTest extends TestCase
         ));
 
         $this->assertSame(MessagingRegistrationStatus::Pending, $status);
+    }
+
+    // -----------------------------------------------------------------
+    // Phone Numbers + A2P lane — the carrier-release boundary.
+    // Deliberately does NOT reserveFunding(): releasing a number is not a
+    // purchase, so this is tested without any wallet fixture at all.
+    // -----------------------------------------------------------------
+
+    public function test_release_number_hits_the_confirmed_delete_endpoint_and_confirms_on_2xx(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_1' => Http::response(['data' => ['id' => 'pn_release_fixture_1']], 200),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_1', '+14155550600'));
+
+        $this->assertSame(CarrierReleaseOutcome::Confirmed, $result->outcome);
+        Http::assertSent(fn ($request) => $request->method() === 'DELETE' && str_contains($request->url(), '/phone_numbers/pn_release_fixture_1'));
+    }
+
+    public function test_release_number_treats_a_404_as_confirmed(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_2' => Http::response(['errors' => [['title' => 'Not Found']]], 404),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_2', '+14155550601'));
+
+        $this->assertSame(CarrierReleaseOutcome::Confirmed, $result->outcome);
+    }
+
+    public function test_release_number_never_guesses_confirmed_for_any_other_error_status(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_3' => Http::response(['errors' => [['title' => 'Unauthorized']]], 401),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_3', '+14155550602'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+    }
+
+    public function test_release_number_treats_a_transport_exception_as_not_confirmed(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_4' => fn () => throw new \Illuminate\Http\Client\ConnectionException('Connection timed out.'),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_4', '+14155550603'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('transport_error', $result->detail);
     }
 }
