@@ -1710,6 +1710,13 @@
             Route::post('/number/search', 'Business\TextMessagingController@searchNumber')->name('number.search');
             Route::post('/number/order', 'Business\TextMessagingController@orderNumber')->name('number.order');
 
+            // Review correction — the verify-first sequence's entry point:
+            // Telnyx genuinely supports completing 10DLC business
+            // verification before any local number exists. Never used for
+            // toll-free, whose own carrier verification always requires an
+            // already-owned number.
+            Route::post('/registration/start-local-verification', 'Business\TextMessagingController@startLocalVerification')->name('registration.start-local-verification');
+
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');
             Route::post('/registration/submit', 'Business\TextMessagingController@submitRegistration')->name('registration.submit');

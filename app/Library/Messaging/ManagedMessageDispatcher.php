@@ -11,6 +11,7 @@ use App\Enums\Messaging\ProviderErrorCategory;
 use App\Library\Messaging\Contracts\MessagingProviderAdapter;
 use App\Library\Messaging\DTO\OutboundMessageRequest;
 use App\Library\Messaging\DTO\OutboundMessageResult;
+use App\Library\Messaging\Exceptions\MessagingCampaignAssignmentNotConfirmedException;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Usage\UsageWalletManager;
@@ -61,6 +62,14 @@ class ManagedMessageDispatcher
      *                                            number, or an unusable
      *                                            destination — in every case
      *                                            with zero provider calls
+     * @throws MessagingCampaignAssignmentNotConfirmedException when the
+     *                                            resolved primary number is
+     *                                            local and its own carrier-side
+     *                                            campaign assignment is not yet
+     *                                            Confirmed — likewise zero
+     *                                            provider calls, zero
+     *                                            operation row, zero usage
+     *                                            measurement
      */
     public function dispatch(
         Business $business,
@@ -126,6 +135,23 @@ class ManagedMessageDispatcher
         // Fails closed on zero or several active primary numbers — there is
         // deliberately no "first number" fallback.
         $number = $this->resolver->resolvePrimaryNumber($identity);
+
+        // Review correction — the SAME fail-closed check
+        // TextMessagingController::situation()'s own Ready gate applies,
+        // enforced here too so a number can never send merely because a
+        // screen happened to render "Ready" (or because it never
+        // re-checked at all): a local number's carrier-side enablement is
+        // Requested, not Confirmed, until checkCampaignAssignmentStatus()
+        // actually polls Telnyx and finds it complete. Zero provider
+        // calls, zero operation row, zero usage measurement — exactly
+        // like every other pre-flight refusal above.
+        if (! $number->isCampaignAssignmentConfirmedOrNotRequired()) {
+            throw new MessagingCampaignAssignmentNotConfirmedException(sprintf(
+                'Number [%d] is not yet confirmed enabled for messaging by the carrier (campaign_assignment_status: %s).',
+                (int) $number->id,
+                $number->campaign_assignment_status ?? 'null',
+            ));
+        }
 
         $normalizedTo = E164Normalizer::normalize($toNumber);
 
