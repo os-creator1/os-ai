@@ -3,7 +3,10 @@
 namespace App\Library\Calendar;
 
 use App\Enums\Calendar\AppointmentStatus;
+use App\Enums\Calendar\ExternalCalendarConnectionState;
 use App\Models\Appointment;
+use App\Models\ExternalCalendarBusyBlock;
+use App\Models\ExternalCalendarConnection;
 use Carbon\CarbonInterface;
 
 /**
@@ -73,7 +76,42 @@ class BookingConflictDetector
         return [
             fn (int $staffUserId, CarbonInterface $startAt, CarbonInterface $endAt, ?int $ignoreAppointmentId): bool
                 => $this->hasOverlappingAppointment($staffUserId, $startAt, $endAt, $ignoreAppointmentId),
+
+            // Implementation Contract 15 §5.6/§7.6/§12.F, Sub-slice F — the
+            // second busy source, registered through this same union point
+            // with no change to the locking/transaction structure above.
+            // Advisory and additive only (§11's fail-safe-stale rule): a
+            // staff member with no active external connection, or whose
+            // sync cache is empty or stale, contributes nothing here, and
+            // internal-appointment checking alone remains fully
+            // authoritative.
+            fn (int $staffUserId, CarbonInterface $startAt, CarbonInterface $endAt, ?int $ignoreAppointmentId): bool
+                => $this->hasOverlappingExternalBusyBlock($staffUserId, $startAt, $endAt),
         ];
+    }
+
+    /**
+     * §7.6 step 2 — union in any external_calendar_busy_blocks row for this
+     * staff member's ACTIVE connection overlapping the candidate interval.
+     * Cardinality is at most one active connection per User (§5.5), so this
+     * is a single scalar lookup, not a collection.
+     */
+    private function hasOverlappingExternalBusyBlock(int $staffUserId, CarbonInterface $startAt, CarbonInterface $endAt): bool
+    {
+        $connectionId = ExternalCalendarConnection::query()
+            ->where('user_id', $staffUserId)
+            ->where('state', ExternalCalendarConnectionState::Active->value)
+            ->value('id');
+
+        if ($connectionId === null) {
+            return false;
+        }
+
+        return ExternalCalendarBusyBlock::query()
+            ->where('external_calendar_connection_id', $connectionId)
+            ->where('start_at', '<', $endAt)
+            ->where('end_at', '>', $startAt)
+            ->exists();
     }
 
     private function hasOverlappingAppointment(

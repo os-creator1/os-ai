@@ -309,6 +309,22 @@
     Route::post('webhooks/prospecting/{channelUid}/{token}/telnyx', 'Prospecting\AgencyProspectingWebhookController@telnyx')->name('prospecting.webhooks.telnyx');
 
     /*
+     * Implementation Contract 15 §11/§12.F — inbound Google/Outlook calendar
+     * push notification ingestion. Same URL-embedded-HMAC-token precedent as
+     * the Agency Prospecting webhooks immediately above: the connection uid
+     * plus ExternalCalendarWebhookToken identify and authenticate the
+     * connection, verified before any parsing or database read. A verified
+     * webhook is a TRIGGER, never a payload — see
+     * Calendar\ExternalCalendarWebhookController.
+     */
+    Route::post('webhooks/calendar/{connectionUid}/{token}/google', 'Calendar\ExternalCalendarWebhookController@google')
+        ->middleware('throttle:600,1')
+        ->name('public.calendar.webhooks.google');
+    Route::post('webhooks/calendar/{connectionUid}/{token}/outlook', 'Calendar\ExternalCalendarWebhookController@outlook')
+        ->middleware('throttle:600,1')
+        ->name('public.calendar.webhooks.outlook');
+
+    /*
      * Website Generation + Hosting Slice A (contract §3.3/§31.2). The
      * ONLY public identifier is Website.public_id — a dedicated,
      * independently generated UUID, never Business.uid (contract §3.1
