@@ -28,6 +28,9 @@ enum AiRefusalScope: string
     /** Only the interactive lane's share was spent (§10.4). */
     case InteractiveShare = 'interactive_share';
 
+    /** Contract §5.7a D — the Platform monthly cap alone was the limit. */
+    case Platform = 'platform';
+
     public function includesWorkspace(): bool
     {
         return $this === self::Workspace || $this === self::WorkspaceAndBusiness;

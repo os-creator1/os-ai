@@ -17,6 +17,9 @@ class AiUsagePeriod extends Model
 
     public const SCOPE_BUSINESS = 'business';
 
+    /** Contract §5.7a E, §12.19.H0 — the platform-scope period row. */
+    public const SCOPE_PLATFORM = 'platform';
+
     protected $fillable = [
         'scope_type',
         'scope_id',
