@@ -57,6 +57,7 @@
             RunAutomation::class,
             \App\Console\Commands\Automation\RecoverStalledWorkflowEnrollments::class,
             \App\Console\Commands\Automation\ResumeDueWorkflowEnrollments::class,
+            \App\Console\Commands\Automation\SweepDateReachedWorkflows::class,
             SMPPDLRReports::class,
             RunEveryTenSeconds::class,
             CleanDatabase::class,

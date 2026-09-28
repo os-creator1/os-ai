@@ -296,10 +296,24 @@ class WaitExecutorTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse('2026-06-01 12:00:00', 'UTC'));
 
+        // Fixture setup (creating the Business/Workspace/plan) is deliberately
+        // outside the fake window: it dispatches its own unrelated onboarding
+        // work (Niche Blueprint installation, on Business creation and first
+        // plan assignment), which this test is not about. The claim under
+        // test is narrower: ENTERING A WAIT STEP dispatches nothing.
+        [, $business] = $this->entitledTenant();
+        [$workflow] = $this->publishWorkflow($business, [
+            $this->waitStep(30, 'minutes'),
+            $this->recordedStep('after the wait'),
+            $this->endStep(),
+        ]);
+        $contact = $this->contactFor($business);
+
         Queue::fake();
         Bus::fake();
 
-        $this->enrollWithWait($this->waitStep(30, 'minutes'));
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        app(WorkflowAdvancer::class)->advance($enrollment);
 
         Queue::assertNothingPushed();
         Bus::assertNothingDispatched();
