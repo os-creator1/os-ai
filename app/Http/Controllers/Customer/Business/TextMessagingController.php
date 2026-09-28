@@ -187,8 +187,16 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'This Business already has a number set up.');
-        } catch (MessagingFundingUnavailableException|MessagingInsufficientFundsException) {
+        } catch (MessagingFundingUnavailableException) {
+            // Not yet configured (no rate/meter exists) — a platform gap,
+            // never something the customer can act on by adding funds.
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
+        } catch (MessagingInsufficientFundsException) {
+            // Distinct from the above: a rate IS configured and the
+            // customer's own wallet balance could not cover it — a real,
+            // customer-actionable outcome that must never be confused with
+            // "not available in this environment".
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to add this number. Add funds to your Business balance and try again.');
         }
 
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
