@@ -72,14 +72,19 @@ if ($actual !== $expected) {
 
 Tests\Support\TestDatabaseSafety::assertSafeTestDatabaseName($actual);
 
-// The registry ships empty; a child container needs the same fake the parent
-// registered, or gate 1 would refuse every publish for the wrong reason.
+// A child container needs the same fake type the parent registered under, or
+// gate 1 would refuse every publish for the wrong reason. Deliberately NOT
+// 'crm_pipeline': Sub-slice D's real CrmPipelineComponentAdapter registers
+// under that type via AppServiceProvider in this same fresh container, and
+// two adapters can never claim one component type (§10).
+const FAKE_COMPONENT_TYPE = 'publisher_test_component';
+
 app(App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry::class)->register(
     new class implements App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapter
     {
         public function componentType(): string
         {
-            return 'crm_pipeline';
+            return FAKE_COMPONENT_TYPE;
         }
 
         public function validateDescriptor(array $payload): void
@@ -122,7 +127,7 @@ function delegate(string $mode, array $args): callable
                 (int) $args[1],
                 $version,
                 (string) $args[2],
-                'crm_pipeline',
+                FAKE_COMPONENT_TYPE,
                 'crm',
                 ['pipeline_key' => 'sales']
             );

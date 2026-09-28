@@ -61,18 +61,23 @@ class BlueprintComponentAdapterSeamTest extends TestCase
         $this->assertNull($registry->find('crm_pipeline'));
     }
 
-    public function test_the_container_binding_is_a_singleton_and_also_ships_empty(): void
+    public function test_the_container_binding_is_a_singleton_and_registers_the_real_adapters(): void
     {
         $first = app(BlueprintComponentAdapterRegistry::class);
         $second = app(BlueprintComponentAdapterRegistry::class);
 
         $this->assertSame($first, $second, 'The adapter registry must be a container singleton.');
-        $this->assertSame([], $first->registeredComponentTypes(), 'Sub-slice A registers no adapter.');
+
+        // Sub-slice A shipped this registry empty; Sub-slice D registers the
+        // first real adapter (§11 rule 3). Each later Calendar/Packages/
+        // Proposal/Forms adapter adds one more component type to this list
+        // and nothing else in this test's assertions changes.
+        $this->assertSame(['crm_pipeline'], $first->registeredComponentTypes());
 
         // Registering through one reference must be visible through the other:
         // that is the whole point of the singleton (mirrors BusinessTemplateRegistry).
-        $first->register($this->fakeAdapter());
-        $this->assertTrue($second->has('crm_pipeline'));
+        $first->register($this->fakeAdapter('seam_test_fake_component'));
+        $this->assertTrue($second->has('seam_test_fake_component'));
     }
 
     /**
@@ -252,26 +257,28 @@ class BlueprintComponentAdapterSeamTest extends TestCase
      */
     public function test_no_publisher_installer_or_http_surface_exists_yet(): void
     {
-        // NicheBlueprintPublisher was on this list until Sub-slice B, and
-        // NicheBlueprintInstaller with its queued job until Sub-slice C —
-        // each moved to the assertion below when the sub-slice that owns it
-        // landed. Everything still listed belongs to D, E or F, and must not
-        // appear before the gates that protect it do.
+        // NicheBlueprintPublisher was on this list until Sub-slice B,
+        // NicheBlueprintInstaller with its queued job until Sub-slice C, and
+        // CrmPipelineComponentAdapter until Sub-slice D — each moved to the
+        // assertion below when the sub-slice that owns it landed. Everything
+        // still listed belongs to E or F, and must not appear before the
+        // gates that protect it do.
         foreach ([
             'App\\Http\\Controllers\\Customer\\Business\\NicheBlueprintController',
             'App\\Http\\Controllers\\Admin\\NicheBlueprintController',
-            'App\\Library\\NicheBlueprint\\Adapters\\CrmPipelineComponentAdapter',
         ] as $class) {
             $this->assertFalse(class_exists($class), $class . ' belongs to a later sub-slice.');
         }
 
-        // Sub-slice B's and C's own deliverables: present, and still the only
-        // Blueprint services that may exist at this point. Both are domain
-        // code with no customer HTTP surface of their own — the controllers
-        // above remain absent, which is what keeps the feature unreachable.
+        // Sub-slice B's, C's and D's own deliverables: present, and still the
+        // only Blueprint services that may exist at this point. All three are
+        // domain code with no customer HTTP surface of their own — the
+        // controllers above remain absent, which is what keeps the feature
+        // unreachable.
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintPublisher'));
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintInstaller'));
         $this->assertTrue(class_exists('App\\Jobs\\NicheBlueprint\\InstallNicheBlueprintForBusiness'));
+        $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\Adapters\\CrmPipelineComponentAdapter'));
     }
 
     public function test_no_niche_blueprint_route_is_registered(): void

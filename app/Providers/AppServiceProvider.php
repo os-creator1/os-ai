@@ -423,9 +423,24 @@
 
             // Niche Blueprint (Contract 20 §10) — one registry of component
             // adapters per container, so an adapter registered once is the one
-            // every publisher and installer sees. Ships empty: the first real
-            // adapter arrives in Sub-slice D.
-            $this->app->singleton(\App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry::class);
+            // every publisher and installer sees.
+            //
+            // Sub-slice D — the first real adapter. Purely additive, exactly
+            // as the Sub-slice A/C note above anticipated: a new class plus
+            // this one registration line, touching no existing adapter and
+            // no installer code (§11 rule 3). Each future
+            // Calendar/Packages/Proposal/Forms adapter adds one more
+            // register() call here and nothing else.
+            $this->app->singleton(
+                \App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry::class,
+                function ($app): \App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry {
+                    $registry = new \App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry();
+
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter::class));
+
+                    return $registry;
+                },
+            );
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
