@@ -37,6 +37,14 @@ use App\Enums\Opportunity\OpportunityCompletionPolicy;
  *                      cost estimate. Every action today is `false`:
  *                      `add_phone` writes a Business column through
  *                      BusinessManager and buys nothing.
+ *   `meter_key`      — Implementation Contract 19 §12 19.E: which
+ *                      UsageMeter ActionCostEstimator prices this action by,
+ *                      or null. Meaningless while `paid_effect` is false,
+ *                      and never populated speculatively — the same
+ *                      "deliberate, reviewed act" this docblock already
+ *                      requires of `paid_effect` applies to naming a real
+ *                      meter for the first time. Every action today is
+ *                      `null`.
  *   `location_bound` — the effect belongs to one Business Location, so
  *                      §5.4(2)'s Location gate must re-check
  *                      LocationAccessGuard against it. Every action today is
@@ -53,13 +61,14 @@ use App\Enums\Opportunity\OpportunityCompletionPolicy;
 final class OpportunityActionRegistry
 {
     /**
-     * @var array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
+     * @var array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, meter_key: ?string, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
      */
     private const DEFINITIONS = [
         'add_phone' => [
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -78,6 +87,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -87,6 +97,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -96,6 +107,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -105,6 +117,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -114,6 +127,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -123,6 +137,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -132,6 +147,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -141,6 +157,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -150,6 +167,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -159,6 +177,7 @@ final class OpportunityActionRegistry
             'schema_version' => 1,
             'mutates_business_data' => true,
             'paid_effect' => false,
+            'meter_key' => null,
             'location_bound' => false,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
@@ -230,7 +249,35 @@ final class OpportunityActionRegistry
     }
 
     /**
-     * @return array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}|null
+     * Implementation Contract 19 §12 19.E — which UsageMeter
+     * ActionCostEstimator prices this action by. Fails CLOSED for an
+     * unknown action key and for any known-but-unconfigured one alike: null
+     * either way means "no real price is configured", which
+     * ActionCostEstimator treats identically to "not paid" — never as
+     * "free" and never as licence to invent one.
+     */
+    public static function meterKeyFor(string $actionKey): ?string
+    {
+        $definition = self::get($actionKey);
+
+        return is_string($definition['meter_key'] ?? null) ? $definition['meter_key'] : null;
+    }
+
+    /**
+     * Implementation Contract 19 §12 19.E — the fixed unit quantity
+     * ActionCostEstimator prices this action's meter by, as the same
+     * decimal-safe string UsageWalletManager::reserve()'s own
+     * $estimatedQuantity uses. Every action today prices by exactly one
+     * unit; a future paid action with a genuinely variable quantity is its
+     * own reviewed registry change, not a default this method guesses.
+     */
+    public static function estimatedQuantityFor(string $actionKey): string
+    {
+        return '1';
+    }
+
+    /**
+     * @return array{schema_version: int, mutates_business_data: bool, paid_effect: bool, meter_key: ?string, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}|null
      */
     public static function get(string $actionKey): ?array
     {
@@ -238,7 +285,7 @@ final class OpportunityActionRegistry
     }
 
     /**
-     * @return array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
+     * @return array<string, array{schema_version: int, mutates_business_data: bool, paid_effect: bool, meter_key: ?string, location_bound: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>}>
      */
     public static function all(): array
     {

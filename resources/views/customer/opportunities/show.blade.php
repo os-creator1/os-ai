@@ -126,6 +126,38 @@
                             </form>
                         @endif
 
+                        {{-- Implementation Contract 19 §5.3, §12 19.E — before a human
+                             approves a paid action, show the actual payer, the estimated
+                             amount or units, the pricing basis and whether the payer's
+                             wallet currently covers it. Absent for every non-paid action
+                             (add_phone included) and for every action with no configured
+                             price, never a fabricated free estimate. --}}
+                        @if ($costEstimate !== null)
+                            <hr>
+
+                            <h5>Estimated cost</h5>
+                            <p class="mb-1"><strong>Payer:</strong> {{ ucfirst(str_replace('_', ' ', $costEstimate['payerType'])) }}</p>
+                            @if ($costEstimate['amountMinorUpperBound'] !== null)
+                                <p class="mb-1">
+                                    <strong>Estimated amount:</strong>
+                                    up to {{ number_format($costEstimate['amountMinorUpperBound']) }}
+                                    {{ $costEstimate['currencyCode'] ?? '' }}
+                                </p>
+                            @endif
+                            @if ($costEstimate['unitCount'] !== null)
+                                <p class="mb-1">
+                                    <strong>Units:</strong>
+                                    up to {{ number_format($costEstimate['unitCount']) }} {{ $costEstimate['unitKind'] }}
+                                </p>
+                            @endif
+                            <p class="mb-1"><strong>Basis:</strong> {{ $costEstimate['basis'] === 'exact' ? 'Exact' : 'Upper bound' }}</p>
+                            @if (! $costEstimate['walletSufficient'])
+                                <x-alert variant="warning" class="mb-1">
+                                    The payer's wallet does not currently have enough funds to cover this action.
+                                </x-alert>
+                            @endif
+                        @endif
+
                         @if ($opportunity->status->value === 'open' && $configuredValue !== null)
                             <form method="POST" action="{{ route('customer.opportunities.request-approval', $opportunity->id) }}" class="mb-2">
                                 @csrf

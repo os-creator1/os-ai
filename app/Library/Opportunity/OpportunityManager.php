@@ -129,6 +129,7 @@ class OpportunityManager
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly OpportunityActionExecutor $opportunityActionExecutor,
         private readonly OpportunityAuthorityGuard $authority,
+        private readonly ActionCostEstimator $costEstimator,
     ) {
     }
 
@@ -885,16 +886,34 @@ class OpportunityManager
                 );
             }
 
-            $definition = OpportunityActionRegistry::get($locked->recommended_action['action_key'] ?? '');
-            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $locked->recommended_action['action_key'] ?? '', $definition ?? []);
+            $actionKey = $locked->recommended_action['action_key'] ?? '';
+            $definition = OpportunityActionRegistry::get($actionKey);
+            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $actionKey, $definition ?? []);
             $this->assertActionIsApprovableAndExecutable($locked);
-            $this->authority->assertPaidEffectIsCovered($locked, $locked->recommended_action['action_key'], null);
 
-            $updated = $this->opportunityRepository->update($locked, [
+            // Implementation Contract 19 §5.3, §12 19.E — "an insufficient
+            // wallet is surfaced before approval, not discovered at
+            // execution": the estimate is computed and snapshotted onto the
+            // Opportunity itself, as the ceiling assertPaidEffectIsCovered()
+            // requires, BEFORE the status ever moves to awaiting_approval.
+            // Null for every action with no configured price today (R-0:
+            // no action is configured), add_phone included — a no-op write.
+            $costUpdate = $this->authority->estimatePaidEffectForApproval($locked, $actionKey, $this->costEstimator) ?? [];
+
+            if ($costUpdate !== []) {
+                // In-memory only, so the very next call reads the estimate
+                // just computed; the persisted write happens once, below,
+                // together with the status transition.
+                $locked->forceFill($costUpdate);
+            }
+
+            $this->authority->assertPaidEffectIsCovered($locked, $actionKey, null);
+
+            $updated = $this->opportunityRepository->update($locked, array_merge([
                 'status' => OpportunityStatus::AwaitingApproval->value,
                 'approval_expires_at' => $this->authority->approvalExpiryFromNow(),
                 'approval_initiated_by_type' => $proposer->value,
-            ]);
+            ], $costUpdate));
 
             $this->createTransition([
                 'opportunity_id' => $locked->id,
@@ -1818,7 +1837,16 @@ class OpportunityManager
             );
             $this->assertPendingExecutionAttemptIsValid($lockedOpportunity, $lockedExecution);
             $this->authority->assertApprovalIsFresh((int) $lockedOpportunity->id, $lockedExecution->approval_expires_at);
-            $this->authority->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $lockedExecution);
+
+            // Implementation Contract 19 §5.4(2)/§7.6, §12 19.E — "recheck
+            // payer, price ceiling, authority, and wallet at execution".
+            // Recomputed fresh, under this same lock, never inherited from
+            // confirmApproval(); null for every action with no configured
+            // meter (every shipped action today), in which case the guard
+            // falls back to its pre-19.E stored-snapshot-only check
+            // unchanged.
+            $liveEstimate = $this->costEstimator->estimateForAction($lockedOpportunity->business, $actionKey);
+            $this->authority->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $lockedExecution, $liveEstimate);
 
             $runningExecution = $this->actionExecutionRepository->update($lockedExecution, [
                 'status' => OpportunityActionExecutionStatus::Running->value,

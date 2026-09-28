@@ -36,6 +36,14 @@ return [
     // departure — which is the exact staleness §5.4(2) exists to defeat.
     'approval_window_minutes' => env('OPPORTUNITY_APPROVAL_WINDOW_MINUTES', 60),
 
+    // Implementation Contract 19 §5.3, §12 19.E — how long a customer-facing
+    // action cost estimate stays current before it must be recomputed. A
+    // separate window from approval_window_minutes on purpose: the estimate
+    // is shown, then snapshotted as the ceiling at requestApproval() time —
+    // its own freshness is what assertPaidEffectIsCovered() checks, never
+    // reused across a later re-approval.
+    'action_cost_estimate_ttl_minutes' => env('OPPORTUNITY_ACTION_COST_ESTIMATE_TTL_MINUTES', 60),
+
     'trigger_debounce_minutes' => env('OPPORTUNITY_TRIGGER_DEBOUNCE_MINUTES', 15),
     'sweep_stale_hours' => env('OPPORTUNITY_SWEEP_STALE_HOURS', 24),
     'sweep_limit' => env('OPPORTUNITY_SWEEP_LIMIT', 500),

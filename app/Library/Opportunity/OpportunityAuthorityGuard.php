@@ -15,6 +15,9 @@ use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEntitlementRevokedException;
 use App\Library\Opportunity\Exceptions\OpportunityLocationAccessRevokedException;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPayerChangedException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPriceChangedException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectWalletInsufficientException;
 use App\Models\BusinessLocation;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
@@ -279,13 +282,25 @@ final class OpportunityAuthorityGuard
      *
      * The awaiting-approval Opportunity owns the approved customer action
      * ceiling. At confirmation there is no execution yet; its snapshot is
-     * compared with that approval record on each execution attempt. The
-     * estimator and live payer/wallet recheck belong to 19.E.
+     * compared with that approval record on each execution attempt.
+     *
+     * Implementation Contract 19 §12 19.E — $liveEstimate is the SAME
+     * ActionCostEstimator recomputation OpportunityManager::
+     * beginExecutionAttempt() takes immediately before this call, passed in
+     * rather than resolved here so this guard stays a pure comparison over
+     * caller-supplied values (matching every other gate in this class). It
+     * is null whenever no live recomputation was possible — every action
+     * with no configured meter, which today is every registered action —
+     * and the check below is then skipped entirely, preserving exactly
+     * 19.D's own stored-snapshot-only behaviour. When it is non-null, R-3's
+     * three live checks run: same payer, no higher price/no retired price
+     * version, and the wallet still covers it.
      */
     public function assertPaidEffectIsCovered(
         Opportunity $lockedOpportunity,
         string $actionKey,
         ?OpportunityActionExecution $execution = null,
+        ?ActionCostEstimate $liveEstimate = null,
     ): void {
         if (! OpportunityActionRegistry::hasPaidEffect($actionKey)) {
             return;
@@ -317,6 +332,74 @@ final class OpportunityAuthorityGuard
                 $actionKey
             );
         }
+
+        if ($execution === null || $liveEstimate === null) {
+            return;
+        }
+
+        $ceiling = ActionCostEstimate::fromSnapshot($approval);
+
+        if ($ceiling === null) {
+            // Unreachable while $complete required every field above, kept
+            // as a fail-closed guard against that coupling ever drifting.
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $liveEstimate->sameFundingAs($ceiling)) {
+            throw OpportunityPaidEffectPayerChangedException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if ($liveEstimate->priceVersion !== $ceiling->priceVersion || $liveEstimate->exceedsCeiling($ceiling)) {
+            throw OpportunityPaidEffectPriceChangedException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $liveEstimate->walletSufficient) {
+            throw OpportunityPaidEffectWalletInsufficientException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+    }
+
+    /**
+     * Implementation Contract 19 §5.3, §12 19.E — for a `paid_effect`
+     * action, compute and validate the estimate BEFORE any approval is
+     * granted: "an insufficient wallet is surfaced before approval, not
+     * discovered at execution." Returns the `action_cost_*` snapshot to
+     * persist alongside the awaiting_approval transition, or null when the
+     * action is not `paid_effect` at all — nothing to compute, and every
+     * registered action today, add_phone included, takes this branch.
+     *
+     * A separate, independently-callable method (rather than inlined in
+     * OpportunityManager::requestApproval()) for the same reason every
+     * other gate lives here: ONE implementation, and one a synthetic,
+     * unregistered action key can exercise directly in tests without first
+     * satisfying assertActionIsExecutable()'s registry-integrity checks,
+     * which require a genuinely registered, executor-supported action no
+     * test may fabricate (R-0).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function estimatePaidEffectForApproval(Opportunity $lockedOpportunity, string $actionKey, ActionCostEstimator $estimator): ?array
+    {
+        if (! OpportunityActionRegistry::hasPaidEffect($actionKey)) {
+            return null;
+        }
+
+        $business = $lockedOpportunity->business;
+
+        if ($business === null) {
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        $estimate = $estimator->estimateForAction($business, $actionKey);
+
+        if ($estimate === null) {
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $estimate->walletSufficient) {
+            throw OpportunityPaidEffectWalletInsufficientException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        return $estimate->toSnapshot();
     }
 
     /** @return array<string, mixed> */
