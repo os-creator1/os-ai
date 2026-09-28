@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Website;
 
+use App\Enums\Website\WebsiteDomainStatus;
 use App\Library\Website\WebsitePublisher;
 use App\Models\WebsiteRevision;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -50,11 +51,14 @@ class WebsiteSeoTest extends TestCase
 
     public function test_canonical_url_is_correct_for_home_page(): void
     {
-        // resources/views/public/website/page.blade.php carries no
-        // <link rel="canonical"> tag at all (confirmed by reading the
-        // view) — so the meaningful, forward-ready proof available today
-        // is that route() itself generates the exact literal public URL
-        // for the home page, and that URL actually resolves.
+        // The platform path is never indexable, and with no active
+        // custom domain there is no address more canonical than this
+        // one — resources/views/public/website/page.blade.php therefore
+        // omits the tag entirely here (see
+        // Public\WebsiteController::renderPage()) rather than
+        // self-referencing a URL that is never meant to be indexed.
+        // What this proves instead: route() itself generates the exact
+        // literal public URL for the home page, and that URL resolves.
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $this->homePage($website);
@@ -64,14 +68,14 @@ class WebsiteSeoTest extends TestCase
         $canonicalUrl = route('public.website.home', $website->public_id);
 
         $this->assertSame(url('/sites/' . $website->public_id), $canonicalUrl);
-        $this->get($canonicalUrl)->assertOk();
+        $this->get($canonicalUrl)->assertOk()->assertDontSee('rel="canonical"', false);
     }
 
     public function test_canonical_url_is_correct_for_a_slugged_sub_page(): void
     {
-        // Same caveat as the home-page test above: no canonical tag
-        // exists in the view, so this proves route-generation
-        // correctness for the sub-page URL directly.
+        // Same caveat as the home-page test above: no active domain, so
+        // the tag is omitted — this proves route-generation correctness
+        // for the sub-page URL directly.
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $this->homePage($website);
@@ -82,7 +86,37 @@ class WebsiteSeoTest extends TestCase
         $canonicalUrl = route('public.website.page', [$website->public_id, 'about']);
 
         $this->assertSame(url('/sites/' . $website->public_id . '/about'), $canonicalUrl);
-        $this->get($canonicalUrl)->assertOk();
+        $this->get($canonicalUrl)->assertOk()->assertDontSee('rel="canonical"', false);
+    }
+
+    public function test_platform_path_canonical_points_to_the_active_custom_domain_when_one_exists(): void
+    {
+        // Both hosts serve identical content from the same published
+        // snapshot — without a shared canonical, search engines could
+        // treat them as competing duplicates. The platform path's own
+        // <link rel="canonical"> must point at the domain that is
+        // actually indexable, never at itself.
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        $this->subPage($website, 'about');
+        app(WebsitePublisher::class)->publish($website, $business->customer_id);
+        $website->domains()->create([
+            'domain' => 'canonical-target.test',
+            'is_primary' => true,
+            'status' => WebsiteDomainStatus::Active,
+            'verification_token' => 'token',
+            'verified_at' => now(),
+            'activated_at' => now(),
+        ]);
+
+        $this->get(route('public.website.home', $website->public_id))
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-target.test/">', false);
+
+        $this->get(route('public.website.page', [$website->public_id, 'about']))
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-target.test/about">', false);
     }
 
     public function test_per_page_noindex_value_survives_publish_snapshot_round_trip(): void

@@ -9,6 +9,7 @@ use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Website\StoreWebsiteAssetRequest;
+use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsiteAssetUploadService;
@@ -63,6 +64,7 @@ class WebsiteController extends CustomerBaseController
         private readonly WebsitePublisher $publisher,
         private readonly WebsiteAiDraftGenerator $aiGenerator,
         private readonly WebsiteStarterDraftService $starterDrafts,
+        private readonly BusinessKnowledgeProfileManager $profiles,
     ) {
     }
 
@@ -166,6 +168,19 @@ class WebsiteController extends CustomerBaseController
 
         $isPhotoBooth = WebsiteStarterDraftService::isPhotoBooth($business);
 
+        // The exact Knowledge Profile facts the About/FAQ pages read
+        // (WebsiteStarterDraftService::createAboutPage()/createFaqPage())
+        // — never the full field set, so this count means "would make
+        // THESE pages more complete", not "profile completeness" in
+        // general (a different, already-existing surface's concern).
+        $aboutFaqFieldKeys = [
+            'years_operating', 'ideal_customers', 'differentiators',
+            'credentials', 'warranties_guarantees', 'pricing_method', 'financing_available',
+        ];
+        $aboutFaqMissingCount = $isPhotoBooth
+            ? count(array_intersect($this->profiles->completenessCheck($business, $website)->missingFieldKeys, $aboutFaqFieldKeys))
+            : null;
+
         return view('customer.business.website.pages', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
@@ -176,6 +191,7 @@ class WebsiteController extends CustomerBaseController
             'photoCount' => $isPhotoBooth ? $website->assets()->count() : null,
             'galleryPage' => $isPhotoBooth ? $website->pages()->where('slug', 'gallery')->first() : null,
             'quoteForm' => $isPhotoBooth ? $website->forms()->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)->first() : null,
+            'aboutFaqMissingCount' => $aboutFaqMissingCount,
         ]);
     }
 

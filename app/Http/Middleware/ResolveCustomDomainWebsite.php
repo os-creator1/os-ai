@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Enums\Website\WebsiteDomainStatus;
+use App\Library\Website\Seo\WebsiteLocalBusinessStructuredData;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
 use App\Models\WebsiteDomain;
@@ -46,6 +47,7 @@ class ResolveCustomDomainWebsite
 
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
+        private readonly WebsiteLocalBusinessStructuredData $structuredData,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -107,10 +109,7 @@ class ResolveCustomDomainWebsite
     private function render(Request $request, WebsiteDomain $domain): Response
     {
         if (! $domain->is_primary) {
-            $primary = $domain->website->domains()
-                ->where('is_primary', true)
-                ->where('status', WebsiteDomainStatus::Active->value)
-                ->first();
+            $primary = $domain->website->activePrimaryDomain();
 
             // No active primary to redirect to (e.g. it just failed
             // renewal) — a stale alias serving nothing is worse than a
@@ -156,9 +155,28 @@ class ResolveCustomDomainWebsite
     private function renderPage(WebsiteDomain $domain, Website $website, array $snapshot, array $page): Response
     {
         $urlFor = fn (array $candidate) => 'https://'.$domain->domain.($candidate['is_home'] ? '/' : '/'.$candidate['slug']);
+        $canonicalUrl = $urlFor($page);
 
         $assetsByUid = collect($snapshot['assets'] ?? [])->keyBy('uid')->all();
         $formsByUid = collect($snapshot['forms'] ?? [])->keyBy('uid')->all();
+
+        $indexable = ! ($page['seo']['noindex'] ?? false);
+
+        // LocalBusiness structured data mirrors the page's own
+        // indexability: never rendered on a page the owner has marked
+        // noindex, so Google's structured-data guidance ("reflect
+        // visible, intended-for-search content") is never in tension
+        // with the robots directive on the very same response.
+        $localBusinessJsonLd = null;
+        if ($indexable && $website->business !== null) {
+            $business = $website->business;
+            $location = $business->primaryLocation()->first();
+            $localBusinessJsonLd = $this->structuredData->build(
+                $business,
+                $location !== null && $location->isActive() ? $location : null,
+                $canonicalUrl,
+            );
+        }
 
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
@@ -173,6 +191,8 @@ class ResolveCustomDomainWebsite
             'formsByUid' => $formsByUid,
             'isPreview' => false,
             'allowIndexing' => true,
+            'canonicalUrl' => $canonicalUrl,
+            'localBusinessJsonLd' => $localBusinessJsonLd,
             'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
                 'uid' => $candidate['uid'],
                 'title' => $candidate['title'],
@@ -181,18 +201,26 @@ class ResolveCustomDomainWebsite
             ])->all(),
         ]);
 
-        $indexable = ! ($page['seo']['noindex'] ?? false);
-
         return $response->header('X-Robots-Tag', $indexable ? 'index, follow' : 'noindex, follow');
     }
 
+    /**
+     * Only canonical, indexable pages — a noindex page's own URL is
+     * never a location Google is asked to discover via the sitemap
+     * (Search Central's sitemap guidance: list only the URLs you want
+     * to see in search results). An alias domain never reaches this
+     * method (it only ever redirects, see render()), so every URL
+     * listed here is already this Website's one canonical address.
+     */
     private function renderSitemap(WebsiteDomain $domain, array $snapshot): Response
     {
-        $urls = collect($snapshot['pages'])->map(function ($page) use ($domain) {
-            $loc = 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug']);
+        $urls = collect($snapshot['pages'])
+            ->reject(fn ($page) => $page['seo']['noindex'] ?? false)
+            ->map(function ($page) use ($domain) {
+                $loc = 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug']);
 
-            return '<url><loc>'.e($loc).'</loc></url>';
-        })->implode('');
+                return '<url><loc>'.e($loc).'</loc></url>';
+            })->implode('');
 
         $xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'.$urls.'</urlset>';
 

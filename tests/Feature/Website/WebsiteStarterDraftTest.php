@@ -13,6 +13,7 @@ use App\Models\BusinessLocation;
 use App\Models\BusinessService;
 use App\Models\CatalogItem;
 use App\Models\Website;
+use App\Models\WebsiteFormSubmission;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
 use Tests\TestCase;
@@ -64,7 +65,11 @@ class WebsiteStarterDraftTest extends TestCase
         $website = Website::where('business_id', $business->id)->firstOrFail();
         $this->assertSame('premium', $website->theme['header_variant']);
         $this->assertNull($website->published_revision_id);
-        $this->assertCount(2, $website->pages);
+        // Home, Services, and the always-created About/Contact pages — no
+        // FAQ, since no Knowledge Profile fact is confirmed yet (only a
+        // bare saved BusinessService and email exist).
+        $this->assertCount(4, $website->pages);
+        $this->assertNull($website->pages->firstWhere('slug', 'photo-booth-faq'));
         $page = $website->pages->firstWhere('is_home', true);
         $this->assertTrue($page->is_home);
         $this->assertSame('Snap Booth Co', $page->sections[0]['data']['heading']);
@@ -86,7 +91,7 @@ class WebsiteStarterDraftTest extends TestCase
             'design' => 'bold',
         ])->assertRedirect();
         $this->assertSame(1, Website::where('business_id', $business->id)->count());
-        $this->assertSame(2, $website->pages()->count());
+        $this->assertSame(4, $website->pages()->count());
     }
 
     public function test_unverified_profile_claims_do_not_enter_the_starter_draft(): void
@@ -99,10 +104,16 @@ class WebsiteStarterDraftTest extends TestCase
         ], 'imported', $customer->user_id);
 
         $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
-        $this->assertSame(1, $website->pages()->count());
-        $sections = $website->pages()->firstOrFail()->sections;
+        // Home, plus the always-created About/Contact pages — no unverified
+        // claim reaches any of them, and FAQ is never created at all since
+        // no Knowledge Profile fact is confirmed.
+        $this->assertSame(3, $website->pages()->count());
+        $this->assertNull($website->pages()->where('slug', 'photo-booth-faq')->first());
+        $sections = $website->pages()->where('is_home', true)->firstOrFail()->sections;
         $this->assertNotContains('testimonials', array_column($sections, 'type'));
         $this->assertNotContains('text', array_column($sections, 'type'));
+        $aboutSections = $website->pages()->where('slug', 'photo-booth-about')->firstOrFail()->sections;
+        $this->assertStringNotContainsString('Best in the world', json_encode($aboutSections));
 
         $profiles->updateFields($business, ['differentiators' => ['Family owned']], 'manual_edit', $customer->user_id, markVerified: true);
         $this->assertSame($website->id, app(WebsiteStarterDraftService::class)->create($business, 'premium')->id);
@@ -157,7 +168,10 @@ class WebsiteStarterDraftTest extends TestCase
 
         $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
 
-        $this->assertSame(['Home', 'Packages'], $website->pages()->orderBy('id')->pluck('title')->all());
+        // Packages exists because a real catalog item does; About/Contact
+        // are always created for a Photo Booth business; FAQ is not,
+        // since no Knowledge Profile fact is confirmed.
+        $this->assertSame(['Home', 'Packages', 'About', 'Contact'], $website->pages()->orderBy('id')->pluck('title')->all());
         $packages = $website->pages()->where('slug', 'photo-booth-packages')->firstOrFail();
         $this->assertTrue($packages->noindex);
         $this->assertSame('Wedding booth package', $packages->sections[1]['data']['items'][0]['name']);
@@ -435,5 +449,43 @@ class WebsiteStarterDraftTest extends TestCase
         $location->public_address = true;
         $location->save();
         $this->get($pages)->assertOk()->assertSee('public location in Privateville');
+    }
+
+    public function test_about_faq_and_contact_pages_are_reachable_via_navigation_and_the_contact_pages_form_works(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234']);
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
+            'years_operating' => 5,
+            'pricing_method' => 'package_tiers',
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+        $this->authenticateAsCustomer($customer);
+        app(WebsitePublisher::class)->publish($website, $customer->user_id);
+
+        // Every core page the owner never had to build by hand is
+        // reachable from the public site's own navigation — the same
+        // data-driven nav every other page already uses, so no
+        // dedicated wiring was needed for these three.
+        $home = $this->get(route('public.website.home', $website->public_id))->assertOk();
+        foreach (['photo-booth-about', 'photo-booth-faq', 'photo-booth-contact'] as $slug) {
+            $url = route('public.website.page', [$website->public_id, $slug]);
+            $home->assertSee($url, false);
+            $this->get($url)->assertOk();
+        }
+
+        // The auto-created quote-request form embedded on the Contact
+        // page actually accepts a real submission end to end.
+        $contactPage = $website->pages()->where('slug', 'photo-booth-contact')->firstOrFail();
+        $form = $website->forms()->sole();
+        $submitUrl = route('public.website.form.submit', [$website->public_id, $form->uid, $contactPage->uid]);
+
+        $this->post($submitUrl, [
+            'name' => 'Jane Visitor',
+            'phone' => '5551234567',
+        ])->assertRedirect();
+
+        $this->assertSame(1, WebsiteFormSubmission::where('website_form_id', $form->id)->count());
     }
 }

@@ -9,6 +9,7 @@ use App\Library\Website\Domains\DomainProvisioningException;
 use App\Library\Website\Domains\WebsiteDomainService;
 use App\Library\Website\WebsiteFormPresets;
 use App\Library\Website\WebsitePublisher;
+use App\Models\BusinessLocation;
 use App\Models\Website;
 use App\Models\WebsiteDomain;
 use App\Models\WebsiteForm;
@@ -160,6 +161,143 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-domain.test/about', $response->getContent());
         $this->assertStringNotContainsString($website->public_id, $response->getContent());
+    }
+
+    public function test_sitemap_excludes_pages_marked_noindex(): void
+    {
+        // Search Central's own sitemap guidance: include only the URLs
+        // you want to see in search results. A page the owner marked
+        // noindex is never a URL this sitemap should ask Google to
+        // discover, even though the platform-path sitemap (a different,
+        // never-indexable surface) still lists every page regardless.
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        $this->subPage($website, 'about');
+        $this->subPage($website, 'hidden', ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'sitemap-noindex.test');
+
+        $response = $this->get('http://'.$domain->domain.'/sitemap');
+
+        $response->assertOk();
+        $this->assertStringContainsString('https://sitemap-noindex.test/about', $response->getContent());
+        $this->assertStringNotContainsString('https://sitemap-noindex.test/hidden', $response->getContent());
+    }
+
+    public function test_canonical_tag_self_references_the_active_domain_and_survives_a_pages_own_noindex(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        $this->subPage($website, 'private-page', ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'canonical-self.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-self.test/">', false);
+
+        // Canonical answers "what is the one URL for this content",
+        // which is independent of whether THIS page is indexable —
+        // Google treats the two as compatible, not contradictory.
+        $this->get('http://'.$domain->domain.'/private-page')
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-self.test/private-page">', false)
+            ->assertSee('noindex, follow', false);
+    }
+
+    public function test_local_business_structured_data_uses_only_confirmed_visible_facts(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'region' => 'TX',
+            'postal_code' => '78701',
+            'country_code' => 'US',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+                'tuesday' => [],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-confirmed.test');
+
+        $response = $this->get('http://'.$domain->domain.'/');
+
+        $response->assertOk()->assertSee('application/ld+json', false);
+        $jsonLd = $this->extractJsonLd($response->getContent());
+        $this->assertSame('LocalBusiness', $jsonLd['@type']);
+        $this->assertSame($business->name, $jsonLd['name']);
+        $this->assertSame('https://jsonld-confirmed.test/', $jsonLd['url']);
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
+        $this->assertSame([
+            '@type' => 'OpeningHoursSpecification',
+            'dayOfWeek' => 'https://schema.org/Monday',
+            'opens' => '09:00',
+            'closes' => '17:00',
+        ], $jsonLd['openingHoursSpecification'][0]);
+        $this->assertArrayNotHasKey('aggregateRating', $jsonLd);
+        $this->assertArrayNotHasKey('review', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_never_reveals_a_private_address(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Austin',
+            'public_address' => false,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-private.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertArrayNotHasKey('address', $jsonLd);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_is_absent_from_a_noindexed_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-noindex.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertDontSee('application/ld+json', false);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function extractJsonLd(string $html): array
+    {
+        $this->assertMatchesRegularExpression('#<script type="application/ld\+json">(.+?)</script>#s', $html);
+        preg_match('#<script type="application/ld\+json">(.+?)</script>#s', $html, $matches);
+
+        return json_decode($matches[1], true);
     }
 
     public function test_the_platforms_own_host_is_unaffected_by_custom_domain_resolution(): void
