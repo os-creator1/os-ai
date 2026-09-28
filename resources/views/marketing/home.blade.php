@@ -38,7 +38,7 @@
             <div class="marketing-section__header">
                 <p class="marketing-section__eyebrow">{{ __('What you get') }}</p>
                 <h2 class="marketing-section__title">{{ __('Everything a local service business runs on') }}</h2>
-                <p class="marketing-section__lede">{{ __('The exact capabilities included on your plan — nothing here is a future promise.') }}</p>
+                <p class="marketing-section__lede">{{ __('Every capability below is live in the product today — nothing here is a future promise. Which ones are included depends on your plan; see the plan comparison below for exact inclusions.') }}</p>
             </div>
             @include('marketing.sections.product-overview')
         </div>

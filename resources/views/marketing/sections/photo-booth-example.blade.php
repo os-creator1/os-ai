@@ -4,14 +4,19 @@
     // (App\Library\Website\WebsiteFormPresets::photoBoothQuoteRequest()) —
     // not an invented mock-up — rendered here as example data, clearly
     // labelled, rather than a live customer's actual submissions.
+    //
+    // Correction: a submission is saved to Forms and creates a Contact
+    // (plus a CRM Opportunity when a pipeline exists) — it never appears
+    // in Conversations (the separate SMS/chat inbox), and nothing here
+    // claims booking/proposal happen "in the same screen".
     $fields = \App\Library\Website\WebsiteFormPresets::photoBoothQuoteRequest();
 @endphp
 <div class="marketing-example">
     <div class="marketing-example__copy">
-        <p>{{ __('A photo booth company publishes a site with their packages and a quote-request form. When a couple submits it, the inquiry appears in Conversations right away.') }}</p>
+        <p>{{ __('A photo booth company publishes a site with their packages and a quote-request form. When a couple submits it, it is saved to Forms and a Contact appears in the CRM.') }}</p>
         <ul class="marketing-example__steps">
             <li>{{ __('The quote request form asks exactly what a photo booth business needs to quote a job — no more.') }}</li>
-            <li>{{ __('The owner replies from Conversations and checks the date on Calendar in the same screen.') }}</li>
+            <li>{{ __('The owner follows up with the couple, checks the date on Calendar, and confirms the booking.') }}</li>
             <li>{{ __('Once confirmed, a proposal goes out and payment is collected against it.') }}</li>
         </ul>
         <p class="marketing-auth__note">{{ __('Photo Booth is one of several local-service niches the platform supports today.') }}</p>

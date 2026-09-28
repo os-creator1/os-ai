@@ -1,10 +1,16 @@
 @php
+    // Public Marketing Homepage contract, correction: a website form
+    // submission is saved to Forms and creates a Contact (plus an
+    // Opportunity when a CRM pipeline exists) — it does not appear in
+    // Conversations, which is the separate SMS/chat inbox. See
+    // resources/views/marketing/sections/photo-booth-example.blade.php
+    // for the same correction and docs/automation/PUBLIC-MARKETING-HOMEPAGE.md.
     $steps = [
         ['label' => __('Publish'), 'body' => __('Your business website goes live with your services, packages, and a way to reach you.')],
-        ['label' => __('Capture'), 'body' => __('A visitor submits an inquiry from your site — it lands in your account immediately.')],
-        ['label' => __('Reply'), 'body' => __('You reply from Conversations, one inbox for every channel a customer used to reach you.')],
-        ['label' => __('Book'), 'body' => __('Confirm the job on your Calendar, right from the same conversation.')],
-        ['label' => __('Propose & pay'), 'body' => __('Send a proposal, and get paid once it is accepted — still one connected thread.')],
+        ['label' => __('Capture'), 'body' => __('A visitor submits an inquiry from your site — it is saved to Forms and a Contact appears in your CRM.')],
+        ['label' => __('Follow up'), 'body' => __('Reach out to the new contact and reply to their messages from Conversations.')],
+        ['label' => __('Book'), 'body' => __('Confirm the job on your Calendar.')],
+        ['label' => __('Propose & pay'), 'body' => __('Send a proposal, and get paid once it is accepted.')],
     ];
 @endphp
 <div class="marketing-workflow">
