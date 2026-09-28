@@ -3,6 +3,7 @@
 namespace App\Library\Messaging;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\NumberLifecycleEventType;
 use App\Enums\Messaging\NumberRenewalOutcome;
 use App\Exceptions\Usage\NoActiveRateForFeatureException;
@@ -14,6 +15,9 @@ use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Jobs\Messaging\SendNumberReleaseNotice;
 use App\Jobs\Messaging\SendNumberRenewalWarning;
 use App\Jobs\Messaging\SendNumberSuspendedNotice;
+use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
+use App\Library\Messaging\Exceptions\NumberCarrierReleaseNotConfirmedException;
 use App\Library\Messaging\Exceptions\NumberReleaseNotEligibleException;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\BusinessMessagingNumber;
@@ -21,26 +25,31 @@ use App\Models\BusinessMessagingNumberLifecycleEvent;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Phone Numbers + A2P lane — messaging contract §13.2/§13.3, the number
  * lifecycle this platform owes every managed number: a renewal charge
  * that requires sufficient funds, an advance warning when the projected
  * balance looks insufficient, a suspension that pauses new paid outbound
- * while retaining the number, a defined non-zero grace period, and a
- * release DECISION that is never silent — explicit, audited, preceded by
- * confirmed-delivered notification, and never itself a claim that the
- * carrier has actually released the number (this slice makes no real
- * Telnyx call, so `status` never becomes Released here — it stays
- * Suspended even after a release decision is recorded).
+ * while retaining the number, a defined non-zero grace period, an audited
+ * release DECISION preceded by confirmed-delivered notification, and
+ * finally a genuine carrier-confirmed release
+ * (confirmCarrierRelease()) — the only path that ever writes
+ * BusinessMessagingNumberStatus::Released, and only after
+ * MessagingProvisioningAdapter::releaseNumber() itself confirms the
+ * carrier no longer has the number. A recorded decision alone never
+ * implies a real release; the two are deliberately separate, audited
+ * steps.
  *
- * Every write to business_messaging_numbers' seven lifecycle columns
+ * Every write to business_messaging_numbers' lifecycle columns
  * (next_renewal_at, renewal_warning_sent_at, suspended_at,
  * grace_expires_at, release_notice_delivered_at, release_notice_failed_at,
- * release_decided_at) goes through this class alone, via the query
- * builder — never through the model's own mass assignment (deliberately
- * absent from $fillable, mirroring ProvisioningIncidentRecorder and
- * PortOutRequestManager).
+ * release_decided_at, released_at, carrier_release_failed_at,
+ * carrier_release_failure_reason) goes through this class alone, via the
+ * query builder — never through the model's own mass assignment
+ * (deliberately absent from $fillable, mirroring
+ * ProvisioningIncidentRecorder and PortOutRequestManager).
  *
  * The renewal charge itself is real-shaped but structurally inert exactly
  * like TelnyxProvisioningAdapter's own three provisioning feature keys: no
@@ -480,6 +489,152 @@ class NumberLifecycleManager
 
             $this->recordEvent($locked, NumberLifecycleEventType::ReleaseDecided, $actorUserId, $note);
         });
+    }
+
+    /**
+     * The final carrier-release boundary §13.3 leaves for a "future,
+     * separately authorized slice" (see recordReleaseDecision()'s own
+     * docblock) — that slice. `status` becomes Released, and `released_at`
+     * is finally written (present on this table since Slice 3, never
+     * written until now), only after MessagingProvisioningAdapter::
+     * releaseNumber() itself confirms the carrier no longer has the
+     * number. Every non-carrier precondition is rechecked here against the
+     * current, locked database row, exactly like recordReleaseDecision():
+     * a release decision must already be recorded, the number must still
+     * be Suspended, it must carry a real provider reference, and no active
+     * port-out request may exist — PortOutRequestManager::request() takes
+     * this exact same row lock, so the two can never race past each other.
+     *
+     * The provider round trip deliberately happens INSIDE this same lock
+     * rather than after releasing it. This is a rare, human-triggered,
+     * one-off action per number — never a hot path — so holding the row
+     * lock for the duration of one bounded HTTP call (TIMEOUT_SECONDS on
+     * TelnyxProvisioningAdapter) is the trade that actually GUARANTEES "no
+     * active port-out request" stays true through the moment of the real
+     * carrier call, rather than merely at some earlier instant a caller
+     * could still race past.
+     *
+     * Idempotent: a number already Released is a silent no-op — the
+     * carrier is never called a second time for the same number. A
+     * NotConfirmed carrier response (or a transport-level exception) never
+     * writes Released; it is recorded as a visible, retryable failure
+     * (carrier_release_failed_at/carrier_release_failure_reason plus a
+     * CarrierReleaseAttemptFailed event) and this method throws
+     * NumberCarrierReleaseNotConfirmedException AFTER that failure record
+     * has already committed, so the audit trail survives even though the
+     * caller sees an exception.
+     *
+     * @throws NumberReleaseNotEligibleException          when a non-carrier
+     *                                                     precondition fails —
+     *                                                     the carrier is never
+     *                                                     even called
+     * @throws NumberCarrierReleaseNotConfirmedException  when every
+     *                                                     precondition held but
+     *                                                     the carrier did not
+     *                                                     confirm removal
+     */
+    public function confirmCarrierRelease(BusinessMessagingNumber $number, int $actorUserId, string $note): void
+    {
+        // Deliberately NOT caught here, mirroring
+        // BusinessMessagingProvisioningService::provisionNumber()'s own
+        // discipline: this action must be unreachable at all unless the
+        // caller already confirmed ProvisioningAvailability::isConfigured(),
+        // and resolving it lazily (never via this class's own constructor)
+        // means merely constructing NumberLifecycleManager — used
+        // throughout renewal/suspension/notice flows that have nothing to
+        // do with provisioning — never requires managed messaging to be
+        // configured at all.
+        $adapter = app(MessagingProvisioningAdapter::class);
+
+        $outcome = DB::transaction(function () use ($number, $actorUserId, $note, $adapter): ?CarrierReleaseOutcome {
+            $locked = BusinessMessagingNumber::query()->whereKey($number->id)->lockForUpdate()->first();
+
+            if ($locked === null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] no longer exists.',
+                    (int) $number->id,
+                ));
+            }
+
+            if ($locked->status === BusinessMessagingNumberStatus::Released) {
+                // Already confirmed released — the carrier is never called
+                // twice for the same number.
+                return null;
+            }
+
+            if ($locked->release_decided_at === null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] has no recorded release decision yet.',
+                    (int) $locked->id,
+                ));
+            }
+
+            if ($locked->status !== BusinessMessagingNumberStatus::Suspended) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] is not Suspended (status: %s) and cannot be released.',
+                    (int) $locked->id,
+                    $locked->status->value,
+                ));
+            }
+
+            if (blank($locked->provider_number_reference)) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] has no provider reference on file and cannot be released from the carrier.',
+                    (int) $locked->id,
+                ));
+            }
+
+            if ($this->portOutRequests->activeRequestFor($locked) !== null) {
+                throw new NumberReleaseNotEligibleException(sprintf(
+                    'Number [%d] has an active port-out request and must not be released out from under it.',
+                    (int) $locked->id,
+                ));
+            }
+
+            try {
+                $result = $adapter->releaseNumber(NumberReleaseQuery::fromModel($locked));
+            } catch (\Throwable $e) {
+                $this->recordCarrierReleaseFailure($locked, $actorUserId, $note, $e->getMessage());
+
+                return CarrierReleaseOutcome::NotConfirmed;
+            }
+
+            if ($result->outcome !== CarrierReleaseOutcome::Confirmed) {
+                $this->recordCarrierReleaseFailure($locked, $actorUserId, $note, $result->detail);
+
+                return CarrierReleaseOutcome::NotConfirmed;
+            }
+
+            DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+                'status' => BusinessMessagingNumberStatus::Released->value,
+                'released_at' => now(),
+                'carrier_release_failed_at' => null,
+                'carrier_release_failure_reason' => null,
+                'updated_at' => now(),
+            ]);
+
+            $this->recordEvent($locked, NumberLifecycleEventType::CarrierReleaseConfirmed, $actorUserId, $note);
+
+            return CarrierReleaseOutcome::Confirmed;
+        });
+
+        if ($outcome === CarrierReleaseOutcome::NotConfirmed) {
+            throw new NumberCarrierReleaseNotConfirmedException(sprintf(
+                'Number [%d]\'s release could not be confirmed by the carrier. It remains Suspended; see the recorded event for details.',
+                (int) $number->id,
+            ));
+        }
+    }
+
+    private function recordCarrierReleaseFailure(BusinessMessagingNumber $locked, int $actorUserId, string $note, ?string $reason): void
+    {
+        DB::table('business_messaging_numbers')->where('id', $locked->id)->update([
+            'carrier_release_failed_at' => now(),
+            'carrier_release_failure_reason' => $reason !== null ? Str::limit($reason, 490, '') : null,
+            'updated_at' => now(),
+        ]);
+
+        $this->recordEvent($locked, NumberLifecycleEventType::CarrierReleaseAttemptFailed, $actorUserId, $reason !== null ? $note . ' | ' . $reason : $note);
     }
 
     private function recordEvent(

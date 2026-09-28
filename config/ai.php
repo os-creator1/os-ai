@@ -61,6 +61,44 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Platform budget (contract §5.7a D, sub-slice 19.H0)
+    |--------------------------------------------------------------------------
+    |
+    | The Platform scope's own finite, versioned, config-derived cap — no
+    | customer plan is ever consulted for it. `AiBudgetPolicyResolver::
+    | resolveForPlatform()` is the ONLY reader of these two keys (R-29);
+    | T-BUD-7's no-amount-literal architecture test is extended to cover
+    | `monthly_cap_microusd` accordingly.
+    |
+    | Fails closed in both dimensions: an absent or non-positive
+    | `monthly_cap_microusd` resolves to a zero cap (refuse every call,
+    | identical to the `unassigned` Workspace policy); an
+    | `interactive_share_bps` outside 0…10000 raises a configuration
+    | failure rather than clamping silently or becoming unbounded.
+    |
+    */
+    'platform' => [
+        'monthly_cap_microusd' => (int) env('AI_PLATFORM_MONTHLY_CAP_MICROUSD', 20_000_000),
+        'interactive_share_bps' => (int) env('AI_PLATFORM_INTERACTIVE_SHARE_BPS', 3000),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Platform scope identity (contract §5.7a E)
+    |--------------------------------------------------------------------------
+    |
+    | The single canonical `ai_usage_periods`/`ai_usage_ledger` scope_id a
+    | Platform-scope row is ever written under. Opaque: never a Workspace
+    | id, never an FK, never read by anything except the AI gateway/ledger
+    | writing or querying a `scope_type = 'platform'` row. Deliberately
+    | outside the `platform` array above — it is an identity, not a budget
+    | amount, so it carries no T-BUD-7/R-29 restriction.
+    |
+    */
+    'platform_scope_id' => (int) env('AI_PLATFORM_SCOPE_ID', 1),
+
+    /*
+    |--------------------------------------------------------------------------
     | Reservation lifecycle (contract §10.1 steps 4 and 7)
     |--------------------------------------------------------------------------
     */

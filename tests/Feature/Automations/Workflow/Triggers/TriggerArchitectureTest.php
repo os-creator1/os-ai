@@ -209,10 +209,13 @@ class TriggerArchitectureTest extends TestCase
 
         $repository = file_get_contents(base_path('app/Repositories/Eloquent/EloquentContactsRepository.php'));
 
-        // Both dispatches, at both seams: two B4 and two V2, each still
-        // guarded by an explicit business_id check.
-        $this->assertSame(2, substr_count($repository, 'AutomationJob::forContactCreated'), 'B4 keeps both of its dispatches.');
-        $this->assertSame(2, substr_count($repository, 'EnrollWorkflowContact::forContactCreated'), 'V2 dispatches beside each of them.');
+        // Both dispatches, at all three seams: three B4 and three V2, each
+        // still guarded by an explicit business_id check. The third seam is
+        // Calendar 15E's findOrCreateForBooking(), added beside B4's original
+        // two (storeContact(), createContactFromRequest()) and following the
+        // identical dual-dispatch pattern.
+        $this->assertSame(3, substr_count($repository, 'AutomationJob::forContactCreated'), 'B4 keeps all three of its dispatches.');
+        $this->assertSame(3, substr_count($repository, 'EnrollWorkflowContact::forContactCreated'), 'V2 dispatches beside each of them.');
     }
 
     public function test_the_creation_source_vocabulary_is_closed_and_has_no_fictional_case(): void

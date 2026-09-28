@@ -1613,6 +1613,14 @@
             Route::get('/forms', 'Business\WebsiteFormsController@home')->name('forms.index');
             Route::post('/forms', 'Business\WebsiteFormsController@store')->name('forms.store');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
+
+            Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
+            Route::post('/domains', 'Business\WebsiteDomainController@store')->name('domains.store');
+            Route::post('/domains/{domainUid}/verify', 'Business\WebsiteDomainController@verify')->name('domains.verify');
+            Route::post('/domains/{domainUid}/provision', 'Business\WebsiteDomainController@provision')->name('domains.provision');
+            Route::post('/domains/{domainUid}/check-certificate', 'Business\WebsiteDomainController@checkCertificate')->name('domains.checkCertificate');
+            Route::post('/domains/{domainUid}/make-primary', 'Business\WebsiteDomainController@makePrimary')->name('domains.makePrimary');
+            Route::delete('/domains/{domainUid}', 'Business\WebsiteDomainController@destroy')->name('domains.destroy');
         });
 
         /*
@@ -1701,6 +1709,13 @@
             // STATE 1 — no number yet.
             Route::post('/number/search', 'Business\TextMessagingController@searchNumber')->name('number.search');
             Route::post('/number/order', 'Business\TextMessagingController@orderNumber')->name('number.order');
+
+            // Review correction — the verify-first sequence's entry point:
+            // Telnyx genuinely supports completing 10DLC business
+            // verification before any local number exists. Never used for
+            // toll-free, whose own carrier verification always requires an
+            // already-owned number.
+            Route::post('/registration/start-local-verification', 'Business\TextMessagingController@startLocalVerification')->name('registration.start-local-verification');
 
             // STATE 2 — number acquired, messaging registration required.
             Route::post('/registration', 'Business\TextMessagingController@updateRegistration')->name('registration.update');

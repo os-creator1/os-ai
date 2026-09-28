@@ -2,12 +2,15 @@
 
 namespace App\Library\Messaging\Contracts;
 
-use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CampaignAssignmentResult;
+use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
+use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Models\Business;
 
@@ -21,9 +24,10 @@ use App\Models\Business;
  * lifecycles, and a future adapter could plausibly implement one without
  * the other.
  *
- * Exactly four methods, each provider-neutral: no Telnyx-specific
- * parameter (rate center, TCR vetting tier, ...) crosses this boundary —
- * only what STATE 1/2 of the customer-facing hub actually need.
+ * Seven methods, each provider-neutral: no Telnyx-specific parameter (rate
+ * center, TCR vetting tier, ...) crosses this boundary — only what
+ * STATE 1/2 of the customer-facing hub and the Phone Numbers + A2P lane's
+ * own carrier-release boundary actually need.
  *
  * "Never fake a successful purchase" (the product requirement) is a
  * structural guarantee of this interface's shape, not a runtime check:
@@ -68,6 +72,65 @@ interface MessagingProvisioningAdapter
      * seam that lets an implementation route 10DLC and toll-free to their
      * own real status endpoints instead of one shared (and, for toll-free,
      * fictitious) "/campaign/{id}" call.
+     *
+     * Review correction — returns the whole RegistrationStatusResult, not
+     * a bare status: a Rejected answer must carry whatever specific,
+     * carrier-supplied reason the provider's own response included, so
+     * the customer sees a real reason when one exists rather than always
+     * the generic fallback copy.
      */
-    public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus;
+    public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult;
+
+    /**
+     * Phone Numbers + A2P lane — the final step of the 10DLC sequence this
+     * platform now supports completing before a number exists: once a
+     * Business's brand+campaign is Approved, and a local number has since
+     * been purchased under this call's own, freshly created Messaging
+     * Profile, that profile must be linked to the approved campaign before
+     * the number is genuinely enabled for 10DLC-compliant traffic. Never
+     * called for a toll-free number — toll-free verification is always
+     * submitted against an already-owned, already-assigned number, so this
+     * step does not apply to it.
+     *
+     * Requested (not Confirmed): Telnyx's own assignment endpoint responds
+     * with a background task id, never an immediate confirmation that the
+     * link is live — see CampaignAssignmentOutcome's own docblock. A
+     * caller must never treat Requested as proof the number can already
+     * send 10DLC traffic.
+     */
+    public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult;
+
+    /**
+     * Review correction — polls the ACTUAL completion mechanism Telnyx
+     * documents for the task assignMessagingProfileToCampaign() started:
+     * GET /10dlc/phoneNumberAssignmentByProfile/{taskId}/phoneNumbers,
+     * which reports the individual phone number's own status within that
+     * task (never the bare overall-task status, which this platform's own
+     * single-number-per-task usage makes an unnecessary extra layer of
+     * indirection to trust). Confirmed only once this exact
+     * $phoneNumber's own record reports "completed"; Failed only once it
+     * reports "failed". Still processing, an unrecognized value, a
+     * missing record, a non-2xx response, or a transport exception all
+     * report Requested again — "poll again later", never guessed as
+     * either terminal outcome.
+     */
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult;
+
+    /**
+     * Phone Numbers + A2P lane — the carrier-release boundary. Attempts to
+     * remove the number from the provider account and returns whether the
+     * carrier itself confirmed that. Never throws to signal an ordinary
+     * "not confirmed" outcome (a non-2xx response) — only a genuine
+     * transport-level failure a caller cannot otherwise observe may
+     * propagate as an exception; NumberLifecycleManager::
+     * confirmCarrierRelease() treats either the same way (NotConfirmed,
+     * never released).
+     *
+     * Only ever called with a number this platform's own records show as
+     * Suspended, already decided for release, and free of any active
+     * port-out request — this method itself has no opinion on local
+     * eligibility and performs no local write; it is purely the provider
+     * round trip.
+     */
+    public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult;
 }

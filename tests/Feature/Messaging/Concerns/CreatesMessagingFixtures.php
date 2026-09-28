@@ -94,10 +94,12 @@ trait CreatesMessagingFixtures
         string $phoneNumber,
         bool $isPrimary = true,
         BusinessMessagingNumberStatus $status = BusinessMessagingNumberStatus::Active,
+        ?string $providerNumberReference = null,
     ): BusinessMessagingNumber {
         $number = new BusinessMessagingNumber([
             'business_messaging_identity_id' => (int) $identity->id,
             'phone_number' => $phoneNumber,
+            'provider_number_reference' => $providerNumberReference,
             'status' => $status->value,
             'is_primary' => $isPrimary,
             'activated_at' => now(),

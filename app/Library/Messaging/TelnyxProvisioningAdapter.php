@@ -2,6 +2,8 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\CampaignAssignmentOutcome;
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
@@ -13,10 +15,14 @@ use App\Exceptions\Usage\UsageMeterRateIntegrityException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CampaignAssignmentResult;
+use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
+use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
@@ -60,18 +66,35 @@ use Illuminate\Support\Str;
  *                                                      Campaign" API reference pages.
  *                                                      Response field `campaignStatus`
  *                                                      confirmed by Telnyx's own "Get
- *                                                      My Campaign" API page; exact
- *                                                      non-ACTIVE status vocabulary
- *                                                      beyond ACTIVE/FAILED is NOT
- *                                                      independently confirmed field-
- *                                                      by-field — mapped conservatively
- *                                                      (unrecognised values stay Pending,
- *                                                      never guessed Approved).
+ *                                                      My Campaign" API page; the ACTIVE
+ *                                                      success value and the REJECTED/
+ *                                                      FAILED/DECLINED rejection family
+ *                                                      (matched by substring — covers the
+ *                                                      documented MNO_REJECTED,
+ *                                                      TCR_FAILED, TELNYX_FAILED and
+ *                                                      MNO_PROVISIONING_FAILED values
+ *                                                      none of which equalled this
+ *                                                      class's own original bare-string
+ *                                                      match) are the only ones this
+ *                                                      class treats as terminal;
+ *                                                      everything else stays Pending —
+ *                                                      never guessed Approved. A rejected
+ *                                                      campaign's reason is read from
+ *                                                      `failureReasons`/`reasons` when
+ *                                                      present (see extractReason()'s own
+ *                                                      docblock for the confirmation
+ *                                                      caveat); null otherwise.
  *   - POST /messaging_tollfree/verification/requests   CONFIRMED path (the original
  *   - GET  /messaging_tollfree/verification/requests/{id}
  *                                                      Implementation Round 1 guess —
  *                                                      /messaging_tollfree_verification_requests
  *                                                      — was wrong and is corrected here).
+ *                                                      Review correction — the submission
+ *                                                      body is documented to require a
+ *                                                      `phoneNumbers` array naming the
+ *                                                      already-owned number being
+ *                                                      verified; the original
+ *                                                      implementation omitted it entirely.
  *                                                      Response field `verificationStatus`
  *                                                      confirmed, with documented values
  *                                                      "Waiting for Telnyx" / "Waiting For
@@ -81,7 +104,197 @@ use Illuminate\Support\Str;
  *                                                      conservative substring match
  *                                                      ("reject", "declin", "fail") is used
  *                                                      and everything else stays Pending —
- *                                                      never guessed Approved.
+ *                                                      never guessed Approved. A rejected
+ *                                                      verification's reason is read from
+ *                                                      `declineReason`/`rejectionReason`/
+ *                                                      `reason` when present (support
+ *                                                      material repeatedly calls this a
+ *                                                      "decline reason"; the exact field
+ *                                                      name was not independently
+ *                                                      confirmable); null otherwise.
+ *   - POST /10dlc/phoneNumberAssignmentByProfile        CONFIRMED path (developers.telnyx.com/
+ *                                                      api/messaging/10dlc/post-assign-
+ *                                                      messaging-profile-to-campaign) — Phone
+ *                                                      Numbers + A2P lane, the step that
+ *                                                      links a freshly purchased local
+ *                                                      number's own Messaging Profile to an
+ *                                                      ALREADY-approved 10DLC campaign, for
+ *                                                      the sequence this platform now
+ *                                                      supports: business verification
+ *                                                      completed before any number is
+ *                                                      purchased. A successful call returns
+ *                                                      HTTP 202 with `taskId` (plus
+ *                                                      `messagingProfileId` and
+ *                                                      `campaignId`/`tcrCampaignId`) as
+ *                                                      TOP-LEVEL response fields — NOT nested
+ *                                                      under a `data` key. Second review
+ *                                                      correction — the original
+ *                                                      implementation read `data.taskId`,
+ *                                                      which Telnyx's own response never
+ *                                                      populates, so a real call would always
+ *                                                      have reported Failed('missing_task_id')
+ *                                                      regardless of the genuine outcome;
+ *                                                      verified against Telnyx's own published
+ *                                                      SDK type definitions
+ *                                                      (github.com/team-telnyx/telnyx-node,
+ *                                                      PhoneNumberAssignmentByProfileAssignResponse)
+ *                                                      since developers.telnyx.com is not
+ *                                                      reachable from this environment's
+ *                                                      egress proxy. `taskId` is a background
+ *                                                      task, never an immediate confirmation —
+ *                                                      see CampaignAssignmentOutcome's own
+ *                                                      docblock. A 2xx response with no usable
+ *                                                      top-level `taskId` is Failed, never
+ *                                                      Requested — this platform could never
+ *                                                      poll for completion without one.
+ *   - GET    /10dlc/phoneNumberAssignmentByProfile/     CONFIRMED path (developers.telnyx.com/
+ *            {taskId}/phoneNumbers                       api-reference/bulk-phone-number-
+ *                                                      campaigns/get-phone-number-status) —
+ *                                                      review correction: this platform now
+ *                                                      actually polls this task to
+ *                                                      completion (checkCampaignAssignmentStatus()),
+ *                                                      matched by this exact phone number
+ *                                                      within the response's own top-level
+ *                                                      `records` array (confirmed unwrapped,
+ *                                                      via the same SDK type definitions cited
+ *                                                      above — PhoneNumberAssignmentByProfile
+ *                                                      RetrievePhoneNumberStatusResponse) rather
+ *                                                      than trusting the overall-task-level
+ *                                                      status endpoint (GET .../{taskId}, also
+ *                                                      documented, but a coarser signal this
+ *                                                      platform's own one-number-per-task usage
+ *                                                      does not need). Documented per-record
+ *                                                      `status` values include "completed" and
+ *                                                      "failed" — only these two ever leave
+ *                                                      Requested; every other value (the
+ *                                                      documented in-progress states, an
+ *                                                      unrecognized one, a missing record, a
+ *                                                      non-2xx response, or a transport
+ *                                                      exception) reports Requested again —
+ *                                                      never guessed as terminal.
+ *
+ *                                                      Second review correction — this
+ *                                                      endpoint accepts `page`/`recordsPerPage`
+ *                                                      query parameters and neither the
+ *                                                      published SDK types nor Telnyx's own
+ *                                                      support documentation state a default
+ *                                                      page size, so checkCampaignAssignmentStatus()
+ *                                                      now passes `recordsPerPage` explicitly
+ *                                                      (comfortably above this platform's own
+ *                                                      real usage) rather than trusting an
+ *                                                      unstated default to include every
+ *                                                      record. This platform's own structural
+ *                                                      invariant makes a single generous page
+ *                                                      sufficient regardless: provisionNumber()
+ *                                                      below always creates a brand-new
+ *                                                      Messaging Profile per number order (POST
+ *                                                      /messaging_profiles, one call per
+ *                                                      order), and BusinessMessagingIdentityResolver::
+ *                                                      attachNumber() — the only production
+ *                                                      call site that ever attaches a number to
+ *                                                      an identity/profile — is reachable only
+ *                                                      once per identity (guardNoExistingNumber()
+ *                                                      in TextMessagingController refuses a
+ *                                                      second order once an identity already
+ *                                                      exists, and provisionNumber() itself
+ *                                                      always reserves a FRESH identity before
+ *                                                      ever calling the adapter). A Messaging
+ *                                                      Profile this platform creates therefore
+ *                                                      never holds more than the one phone
+ *                                                      number checkCampaignAssignmentStatus()
+ *                                                      is looking for, so its task's own
+ *                                                      `records` array never has more than one
+ *                                                      entry to page through in the first
+ *                                                      place — the explicit page size is
+ *                                                      defense in depth against that invariant
+ *                                                      ever quietly changing, not a fix for an
+ *                                                      observed pagination gap.
+ *   - GET    /phone_numbers/{id}                       CONFIRMED path (developers.telnyx.com/
+ *   - DELETE /phone_numbers/{id}                       api-reference/phone-number-configurations/
+ *                                                      retrieve-a-phone-number and
+ *                                                      .../api/numbers/delete-phone-number
+ *                                                      — Phone Numbers + A2P lane
+ *                                                      carrier-release boundary).
+ *
+ *                                                      Review correction — a bare 2xx or a
+ *                                                      bare 404 on the DELETE call is NOT
+ *                                                      by itself proof of anything: a 2xx
+ *                                                      could echo the wrong resource (a
+ *                                                      stale/corrupted provider reference
+ *                                                      pointing at someone else's number),
+ *                                                      and a 404 could mean the reference
+ *                                                      was always wrong, not that this
+ *                                                      platform's own prior attempt
+ *                                                      actually succeeded. releaseNumber()
+ *                                                      therefore verifies twice before
+ *                                                      ever reporting Confirmed:
+ *
+ *                                                      1. GET the resource by
+ *                                                         providerPhoneNumberId first. Its
+ *                                                         own documented `id` field must be
+ *                                                         PRESENT and equal
+ *                                                         providerPhoneNumberId, AND its
+ *                                                         `phone_number` field must match
+ *                                                         $query->phoneNumber exactly — a
+ *                                                         missing or mismatched id, or a
+ *                                                         mismatched phone_number, means the
+ *                                                         stored reference does not
+ *                                                         identify the number this platform
+ *                                                         believes it is releasing, and this
+ *                                                         method refuses to proceed to
+ *                                                         DELETE at all (NotConfirmed). A 404
+ *                                                         here is likewise NotConfirmed,
+ *                                                         never guessed as "already deleted"
+ *                                                         — there is no identity to verify
+ *                                                         against. If identity is confirmed
+ *                                                         and the lookup's own documented
+ *                                                         `status` field already reads
+ *                                                         "deleted", that alone is Confirmed
+ *                                                         (the safe way to recognize a retry
+ *                                                         after an earlier attempt's own
+ *                                                         response was lost to this
+ *                                                         platform's network/timeout —
+ *                                                         verified via retrieval, never
+ *                                                         guessed from a delete 404).
+ *                                                         Otherwise, `status` must be one of
+ *                                                         SAFE_STATUSES_FOR_DELETION (today,
+ *                                                         only "active") before this method
+ *                                                         will ever proceed to DELETE — a
+ *                                                         mid-port state ("port-out-pending",
+ *                                                         "ported-out"), an unrecognized
+ *                                                         value, or a missing one all refuse
+ *                                                         (NotConfirmed) rather than guess
+ *                                                         it is safe to delete from.
+ *                                                      2. Only once every check above holds
+ *                                                         does this method call DELETE. A
+ *                                                         404 here is ALWAYS NotConfirmed —
+ *                                                         per this correction, never treated
+ *                                                         as confirmed on its own. A 2xx
+ *                                                         response is Confirmed only once
+ *                                                         its own `id` is PRESENT and equal
+ *                                                         providerPhoneNumberId, its
+ *                                                         `phone_number` still matches, AND
+ *                                                         its `status` field reads "deleted";
+ *                                                         a missing id never counts as
+ *                                                         confirmation, and any 2xx response
+ *                                                         that cannot be verified that way is
+ *                                                         ambiguous and NotConfirmed — never
+ *                                                         guessed as a success.
+ *
+ *                                                      Every other response, or a
+ *                                                      transport-level exception/timeout at
+ *                                                      either step, is likewise
+ *                                                      NotConfirmed — mirroring this
+ *                                                      class's own "never guess Approved"
+ *                                                      discipline for registration status.
+ *                                                      Telnyx's own support documentation
+ *                                                      additionally states a deleted number
+ *                                                      then sits through a hold/ageing
+ *                                                      period before anyone else can buy
+ *                                                      it — that is the carrier's own
+ *                                                      internal process and has no bearing
+ *                                                      on this platform's own "no longer
+ *                                                      ours" determination.
  *
  * None of this can run with a real credential today regardless: every
  * write path here also requires config('messaging.managed_messaging_provisioning_enabled')
@@ -107,6 +320,21 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
     public const FEATURE_TEN_DLC_REGISTRATION = 'messaging_10dlc_registration';
 
     public const FEATURE_TOLL_FREE_VERIFICATION = 'messaging_tollfree_verification';
+
+    /**
+     * Phone Numbers + A2P lane — the only carrier-side status
+     * releaseNumber() recognizes as safe to delete from. Telnyx's own
+     * documented status vocabulary includes mid-port states
+     * ("port-out-pending", "ported-out") this platform must never delete
+     * out from under — deleting a number while the carrier itself shows
+     * it mid-port would be nonsensical and dangerous, independent of this
+     * platform's own PortOutRequestManager tracking. Every other value —
+     * a recognized-but-unsafe status, an unrecognized one, or a missing
+     * one — refuses to proceed to DELETE at all, never guessed as safe.
+     *
+     * @var list<string>
+     */
+    private const SAFE_STATUSES_FOR_DELETION = ['active'];
 
     private readonly string $apiKey;
 
@@ -245,13 +473,252 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * status endpoint per regime instead of one shared, and for toll-free
      * fictitious, "/campaign/{id}" call.
      */
-    public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->numberType === PhoneNumberType::TollFree) {
             return $this->refreshTollFreeVerificationStatus($query);
         }
 
         return $this->refreshTenDlcCampaignStatus($query);
+    }
+
+    /**
+     * Phone Numbers + A2P lane — see this class's own docblock and the
+     * interface's own for the endpoint/async-task rationale. Confirmed
+     * path: POST /10dlc/phoneNumberAssignmentByProfile, body
+     * {messagingProfileId, campaignId} (developers.telnyx.com/api/
+     * messaging/10dlc/post-assign-messaging-profile-to-campaign). Never
+     * goes through reserveFunding(): this links an already-purchased
+     * number's already-created Messaging Profile to an already-approved
+     * campaign — no new resource is purchased here.
+     *
+     * Second review correction — `taskId` is a TOP-LEVEL response field,
+     * never nested under `data`; see this class's own docblock for the
+     * verification source. Reading `data.taskId` (the original
+     * implementation) would silently read null on every real call and
+     * report every genuine success as Failed('missing_task_id').
+     */
+    public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult
+    {
+        try {
+            $response = $this->client()->post(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile', [
+                'messagingProfileId' => $messagingProfileId,
+                'campaignId' => $providerCampaignId,
+            ]);
+        } catch (\Throwable) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'transport_error');
+        }
+
+        if (! $response->successful()) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'http_' . $response->status());
+        }
+
+        $taskId = $response->json('taskId');
+
+        if (! is_string($taskId) || $taskId === '') {
+            // A 2xx response with no usable task id leaves this platform
+            // unable to ever poll for completion — never guessed as
+            // Requested (which promises a later confirmation this
+            // platform could not actually check for).
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'missing_task_id');
+        }
+
+        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'task_requested', $taskId);
+    }
+
+    /**
+     * Review correction — see this class's own docblock and the
+     * interface's own for the confirmed completion mechanism: GET
+     * /10dlc/phoneNumberAssignmentByProfile/{taskId}/phoneNumbers, whose
+     * documented response shape is a top-level {records: [{taskId,
+     * phoneNumber, status}, ...]} — one record per number in the task.
+     * This platform's own provisionNumber()/attachNumber() invariant (see
+     * this class's own docblock) means a task this platform created never
+     * actually holds more than one number, but this still matches by
+     * $phoneNumber explicitly rather than trusting record order or count,
+     * and still requests a generous explicit `recordsPerPage` rather than
+     * relying on an undocumented default — belt and braces, not a fix for
+     * an observed gap.
+     */
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult
+    {
+        try {
+            $response = $this->client()->get(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile/' . $taskId . '/phoneNumbers', [
+                'recordsPerPage' => 50,
+            ]);
+        } catch (\Throwable) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_transport_error');
+        }
+
+        if (! $response->successful()) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_http_' . $response->status());
+        }
+
+        $record = null;
+
+        foreach ((array) $response->json('records', []) as $row) {
+            if (is_array($row) && ($row['phoneNumber'] ?? null) === $phoneNumber) {
+                $record = $row;
+                break;
+            }
+        }
+
+        if ($record === null) {
+            // The task exists but says nothing about THIS number yet —
+            // never guessed either way.
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_record_not_found');
+        }
+
+        $status = strtolower((string) ($record['status'] ?? ''));
+
+        if ($status === 'completed') {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Confirmed, 'poll_completed');
+        }
+
+        if ($status === 'failed') {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'poll_failed');
+        }
+
+        // Covers the documented in-progress values ("pending", "starting",
+        // "processing", "running") and anything this platform has not
+        // seen before — never guessed as terminal either way.
+        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_status_' . ($status !== '' ? $status : 'unknown'));
+    }
+
+    /**
+     * Phone Numbers + A2P lane — see this class's own docblock for the
+     * full endpoint/verification rationale. Deliberately does NOT go
+     * through reserveFunding(): releasing a number is not a purchase, and
+     * this contract has no "release fee" concept — the wallet is never
+     * touched here. Never mutates any local record; NumberLifecycleManager::
+     * confirmCarrierRelease() is the only writer of the resulting local
+     * state, under its own row lock.
+     *
+     * Two verified steps, never a single trusting call: a lookup that must
+     * identity-match before anything is deleted, then a delete whose own
+     * response must confirm both identity and deleted state before this
+     * method ever reports Confirmed. A 404 at either step is NotConfirmed
+     * — it is never treated as proof that a prior release already
+     * succeeded.
+     */
+    public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult
+    {
+        $lookup = $this->lookUpNumber($query);
+
+        if ($lookup instanceof CarrierReleaseResult) {
+            // A definitive outcome already — either a verified prior
+            // deletion (Confirmed) or a lookup failure/mismatch
+            // (NotConfirmed). Either way, DELETE is never called.
+            return $lookup;
+        }
+
+        // $lookup is the resource's own current status string here — the
+        // identity already matched, and it does not yet read "deleted".
+        try {
+            $response = $this->client()->delete(self::API_BASE . '/phone_numbers/' . $query->providerPhoneNumberId);
+        } catch (\Throwable) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_transport_error');
+        }
+
+        if ($response->status() === 404) {
+            // Never proof of a prior successful release on its own — the
+            // reference could simply be wrong. NumberLifecycleManager
+            // records this as a visible, retryable failure rather than
+            // ever guessing the number is gone.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_not_found');
+        }
+
+        if (! $response->successful()) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_http_' . $response->status());
+        }
+
+        $responseId = $response->json('data.id');
+        $responsePhoneNumber = $response->json('data.phone_number');
+        $responseStatus = strtolower((string) $response->json('data.status', ''));
+
+        // Review correction — a MISSING id must never count as
+        // confirmation. The earlier version treated an absent id as "no
+        // opinion, check phone_number instead", which let a delete
+        // response with no id at all pass identity verification on
+        // phone_number alone. The id is now required to be PRESENT and
+        // matching, exactly like the lookup step already requires.
+        $identityConfirmed = $responseId !== null
+            && (string) $responseId === $query->providerPhoneNumberId
+            && $responsePhoneNumber === $query->phoneNumber;
+
+        if (! $identityConfirmed || $responseStatus !== 'deleted') {
+            // A 2xx response that does not itself confirm WHICH resource
+            // was deleted, or does not confirm it was actually deleted, is
+            // ambiguous — never guessed as a success.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_response_ambiguous');
+        }
+
+        return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'delete_confirmed');
+    }
+
+    /**
+     * Retrieves the resource and verifies its identity before any delete
+     * is ever attempted. Returns a definitive CarrierReleaseResult when
+     * there is nothing left for releaseNumber() to do (a lookup failure,
+     * an identity mismatch, a lookup that already shows the number
+     * deleted, or a status not recognized as safe to delete from);
+     * otherwise returns the resource's own current (already verified
+     * safe) status string so releaseNumber() knows it is safe to proceed
+     * to DELETE.
+     */
+    private function lookUpNumber(NumberReleaseQuery $query): CarrierReleaseResult|string
+    {
+        try {
+            $response = $this->client()->get(self::API_BASE . '/phone_numbers/' . $query->providerPhoneNumberId);
+        } catch (\Throwable) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_transport_error');
+        }
+
+        if ($response->status() === 404) {
+            // Not, by itself, evidence of anything — never guessed as
+            // "already deleted" without a matching identity to verify.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_not_found');
+        }
+
+        if (! $response->successful()) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_http_' . $response->status());
+        }
+
+        $id = $response->json('data.id');
+
+        // Review correction — id must be PRESENT and match, not merely
+        // "if present, must match". A response with no id at all proves
+        // nothing about which resource was actually retrieved.
+        if ($id === null || (string) $id !== $query->providerPhoneNumberId) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_id_mismatch');
+        }
+
+        $phoneNumber = $response->json('data.phone_number');
+
+        if ($phoneNumber !== $query->phoneNumber) {
+            // The stored provider reference does not identify the number
+            // this platform believes it is releasing — refuses to
+            // proceed to DELETE at all.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_phone_number_mismatch');
+        }
+
+        $status = strtolower((string) $response->json('data.status', ''));
+
+        if ($status === 'deleted') {
+            // Verified via retrieval, never guessed from a delete 404 —
+            // the safe way to recognize a retry after an earlier attempt's
+            // own response was lost to this platform's own network/timeout.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'lookup_already_deleted');
+        }
+
+        if (! in_array($status, self::SAFE_STATUSES_FOR_DELETION, true)) {
+            // Covers a recognized-but-unsafe status (e.g. port-out-pending,
+            // ported-out), an unrecognized one, and a missing one alike —
+            // never guessed as safe to delete from.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_status_not_safe_for_deletion');
+        }
+
+        return $status;
     }
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
@@ -323,6 +790,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private function submitTollFreeVerification(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        // Review correction — Telnyx's toll-free verification genuinely
+        // cannot be submitted without the number already being verified
+        // (confirmed via current Telnyx documentation: the request body
+        // carries a `phoneNumbers` array, and Telnyx's own guidance warns
+        // the number must already be assigned to a messaging profile
+        // before submitting, or the submission must be started over). This
+        // platform's own controller never reaches this method without an
+        // already-owned number for a toll-free registration — this is a
+        // second, independent check at the adapter boundary, never trusted
+        // from the caller alone.
+        if ($submission->phoneNumber === null) {
+            throw new \RuntimeException('Toll-free verification cannot be submitted without an already-owned number.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
         $reservationId = $this->reserveFunding($business, self::FEATURE_TOLL_FREE_VERIFICATION);
 
@@ -342,6 +823,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'optInWorkflow' => $submission->optInMethod,
                 'privacyPolicyUrl' => $submission->privacyPolicyUrl,
                 'termsAndConditionsUrl' => $submission->termsUrl,
+                'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
             ]);
 
             if (! $response->successful()) {
@@ -364,53 +846,122 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return new RegistrationSubmissionResult(null, null, $requestId, MessagingRegistrationStatus::Pending);
     }
 
-    private function refreshTenDlcCampaignStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    /**
+     * Review correction — the exact-equality REJECTED/FAILED/DECLINED
+     * match missed every real 10DLC failure status this additional
+     * research confirmed (team-telnyx's own public knowledge-base and
+     * Telnyx's release notes): MNO_REJECTED, TCR_FAILED, TELNYX_FAILED and
+     * MNO_PROVISIONING_FAILED are all genuine rejection states that never
+     * equalled the old bare strings, so a truly rejected campaign stayed
+     * Pending forever under the previous mapping. Matched conservatively
+     * by substring now (never the reverse: nothing that merely CONTAINS
+     * "ACTIVE" is treated as approved), and the "never guess Approved"
+     * discipline is unchanged — ACTIVE remains the one confirmed success
+     * value (confirmed independently via team-telnyx/knowledge-base); the
+     * originally-guessed APPROVED/VERIFIED aliases are kept only because
+     * removing an already-shipped, harmless allowance is not this
+     * correction's job.
+     *
+     * $reason is read from the first of several plausible field names
+     * this environment's egress limits prevented independently confirming
+     * field-by-field: `failureReasons` (an array, joined) and `reasons`
+     * (an array, joined — the name team-telnyx's own webhook-payload
+     * documentation uses for registration failures). Null when none of
+     * them are present — the caller then shows an explicit "no detailed
+     * reason was supplied" message, never a guessed one.
+     */
+    private function refreshTenDlcCampaignStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->providerCampaignId === null) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $response = $this->client()->get(self::API_BASE . '/10dlc/campaign/' . $query->providerCampaignId);
 
         if (! $response->successful()) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $status = strtoupper((string) $response->json('data.campaignStatus', $response->json('data.status', '')));
 
-        return match (true) {
-            $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED' => MessagingRegistrationStatus::Approved,
-            $status === 'FAILED' || $status === 'REJECTED' || $status === 'DECLINED' => MessagingRegistrationStatus::Rejected,
-            default => MessagingRegistrationStatus::Pending,
-        };
+        $isApproved = $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED';
+        $isRejected = str_contains($status, 'REJECTED') || str_contains($status, 'FAILED') || str_contains($status, 'DECLINED');
+
+        if ($isApproved) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
+        }
+
+        if ($isRejected) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, $this->extractReason($response, ['data.failureReasons', 'data.reasons']));
+        }
+
+        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
     }
 
-    private function refreshTollFreeVerificationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    private function refreshTollFreeVerificationStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->providerRegistrationId === null) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
 
         if (! $response->successful()) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $status = strtolower((string) $response->json('data.verificationStatus', $response->json('data.status', '')));
 
         if ($status === 'verified') {
-            return MessagingRegistrationStatus::Approved;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
         }
 
         if (str_contains($status, 'reject') || str_contains($status, 'declin') || str_contains($status, 'fail')) {
-            return MessagingRegistrationStatus::Rejected;
+            // Field name not independently confirmable in this environment
+            // (egress-limited, same constraint this class's own docblock
+            // already documents elsewhere) — support materials repeatedly
+            // call this a "decline reason", so `declineReason` is tried
+            // first, then the more generic names every other regime here
+            // already tries.
+            return new RegistrationStatusResult(
+                MessagingRegistrationStatus::Rejected,
+                $this->extractReason($response, ['data.declineReason', 'data.rejectionReason', 'data.reason']),
+            );
         }
 
         // Covers the confirmed documented pending states ("Waiting for
         // Telnyx", "Waiting For Customer") and any other value this
         // platform has not seen before — never guessed Approved.
-        return MessagingRegistrationStatus::Pending;
+        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+    }
+
+    /**
+     * Tries each field, in order, and returns the first non-blank one it
+     * finds — a string as-is, or an array of strings joined with "; ".
+     * Null when nothing usable is present, so the caller shows an
+     * explicit "no detailed reason was supplied" message rather than a
+     * guessed one.
+     *
+     * @param  list<string>  $fieldPaths
+     */
+    private function extractReason(\Illuminate\Http\Client\Response $response, array $fieldPaths): ?string
+    {
+        foreach ($fieldPaths as $path) {
+            $value = $response->json($path);
+
+            if (is_array($value)) {
+                $value = implode('; ', array_filter(array_map(
+                    fn ($item) => is_scalar($item) ? (string) $item : (is_array($item) ? ($item['reason'] ?? $item['message'] ?? null) : null),
+                    $value,
+                )));
+            }
+
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
     }
 
     /**

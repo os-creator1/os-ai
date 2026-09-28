@@ -20,7 +20,7 @@
                     @if ($numbers->isEmpty())
                         <x-empty-state icon="inbox" title="No suspended numbers." />
                     @else
-                        <x-table :headers="['ID', 'Business', 'Phone number', 'Suspended', 'Grace ends', 'Release notice', 'Release decision']">
+                        <x-table :headers="['ID', 'Business', 'Phone number', 'Suspended', 'Grace ends', 'Release notice', 'Release decision & carrier release']">
                             @foreach ($numbers as $number)
                                 <tr>
                                     <td class="text-numeric">{{ $number->id }}</td>
@@ -41,9 +41,31 @@
                                             <x-badge variant="neutral">Not yet sent</x-badge>
                                         @endif
                                     </td>
-                                    <td style="min-width: 260px;">
+                                    <td style="min-width: 280px;">
                                         @if ($number->release_decided_at !== null)
-                                            <span class="text-caption text-muted">Decision recorded on {{ $number->release_decided_at->format('Y-m-d H:i') }} — awaiting confirmed carrier release.</span>
+                                            <span class="text-caption text-muted d-block mb-1">Decision recorded on {{ $number->release_decided_at->format('Y-m-d H:i') }}.</span>
+
+                                            @if ($number->carrier_release_failed_at !== null)
+                                                <x-alert variant="danger" class="mb-1">
+                                                    <span class="text-caption">Last carrier release attempt failed on {{ $number->carrier_release_failed_at->format('Y-m-d H:i') }}: {{ $number->carrier_release_failure_reason ?? 'no detail recorded' }}</span>
+                                                </x-alert>
+                                            @endif
+
+                                            @if ($carrierReleaseAvailable)
+                                                <form method="POST" action="{{ route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id) }}">
+                                                    @csrf
+                                                    <input type="text" name="note" class="form-control form-control-sm transition-fast mb-1" placeholder="What was checked before confirming with the carrier" required maxlength="5000">
+                                                    <div class="form-check mb-1">
+                                                        <input type="checkbox" class="form-check-input" id="carrier-release-confirmed-{{ $number->id }}" name="release_confirmed" value="1" required>
+                                                        <label class="form-check-label text-caption" for="carrier-release-confirmed-{{ $number->id }}">
+                                                            I confirm I intend to release this number with the carrier now. This is irreversible.
+                                                        </label>
+                                                    </div>
+                                                    <x-button type="submit" variant="danger" size="sm">Confirm carrier release</x-button>
+                                                </form>
+                                            @else
+                                                <span class="text-caption text-muted">Carrier release confirmation is not enabled in this environment.</span>
+                                            @endif
                                         @elseif ($number->isEligibleForReleaseDecision())
                                             <form method="POST" action="{{ route('admin.messaging-number-lifecycle.release', $number->id) }}">
                                                 @csrf

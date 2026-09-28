@@ -769,14 +769,17 @@
         | contract §13.2/§13.3)
         |--------------------------------------------------------------------------
         |
-        | Read-only visibility plus the one genuinely human action here: an
-        | explicit, audited release DECISION for a suspended number whose
-        | grace period has expired and whose release notice was confirmed
-        | delivered for the required minimum notice period. This slice
-        | makes no real Telnyx call, so the number's status stays
-        | Suspended even after this decision — NumberLifecycleManager::
-        | recordReleaseDecision() itself refuses every precondition this
-        | route does not separately re-check — same
+        | Read-only visibility plus two distinct, sequential human actions:
+        | an explicit, audited release DECISION for a suspended number
+        | whose grace period has expired and whose release notice was
+        | confirmed delivered for the required minimum notice period
+        | (never itself a claim of carrier release — status stays
+        | Suspended), and a later, separate carrier-release confirmation
+        | that makes the real (or explicitly-faked-in-a-test) carrier call
+        | and only on confirmation transitions status to Released.
+        | NumberLifecycleManager::recordReleaseDecision()/
+        | confirmCarrierRelease() themselves refuse every precondition
+        | this route does not separately re-check — same
         | EnsureUserIsAdministrator + 'can:access backend' defense-in-depth
         | as every other entry in this group.
         |
@@ -785,6 +788,9 @@
         Route::post('messaging-number-lifecycle/{number}/release', 'MessagingNumberLifecycleController@release')
             ->whereNumber('number')
             ->name('messaging-number-lifecycle.release');
+        Route::post('messaging-number-lifecycle/{number}/confirm-carrier-release', 'MessagingNumberLifecycleController@confirmCarrierRelease')
+            ->whereNumber('number')
+            ->name('messaging-number-lifecycle.confirm-carrier-release');
 
         /*
         |--------------------------------------------------------------------------

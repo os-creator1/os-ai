@@ -5,6 +5,7 @@ namespace App\Library\Ai;
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
 use App\Library\Ai\Enums\AiRefusalScope;
+use App\Library\Ai\Enums\AiScope;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
@@ -44,16 +45,27 @@ final class AiUsageLedgerManager
     private const TRANSACTION_ATTEMPTS = 3;
 
     /**
-     * An unlocked read of the Workspace's current reserved+committed
-     * total for one period, used only by AiModelRouter's headroom
-     * heuristic to decide whether `reasoning` is worth attempting before
-     * the authoritative, locked check inside reserve() below.
+     * Contract §5.7a E — the single canonical, opaque `ai_usage_periods`/
+     * `ai_usage_ledger` scope_id every Platform-scope row is written and
+     * read under. Never a Workspace id, never an FK.
      */
-    public function peekWorkspaceCommittedAndReserved(int $workspaceId, string $periodKey): int
+    public static function platformScopeId(): int
+    {
+        return (int) config('ai.platform_scope_id');
+    }
+
+    /**
+     * An unlocked read of the primary scope's (Workspace or Platform)
+     * current reserved+committed total for one period, used only by
+     * AiModelRouter's headroom heuristic to decide whether `reasoning` is
+     * worth attempting before the authoritative, locked check inside
+     * reserve() below.
+     */
+    public function peekCommittedAndReserved(string $scopeType, int $scopeId, string $periodKey): int
     {
         $period = AiUsagePeriod::query()
-            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
-            ->where('scope_id', $workspaceId)
+            ->where('scope_type', $scopeType)
+            ->where('scope_id', $scopeId)
             ->where('period_key', $periodKey)
             ->first();
 
@@ -64,19 +76,6 @@ final class AiUsageLedgerManager
         return $period->reserved_microusd + $period->committed_microusd;
     }
 
-    /**
-     * Correction 10 — the cap this Workspace period is actually enforced
-     * against.
-     *
-     * A period snapshots its cap when it opens, and reserve() checks
-     * against that snapshot for the rest of the period. Route headroom must
-     * therefore ask the same question: reading the freshly configured cap
-     * instead would let routing believe there is room reserve() will refuse
-     * when a cap was lowered mid-period, and withhold reasoning the period
-     * could still afford when one was raised. A period that has not opened
-     * yet has no snapshot, so the configured cap is the honest answer for
-     * it — and is what that period will snapshot when it opens.
-     */
     /**
      * Slice AI-3 — what the ledger already holds for one durable idempotency
      * family (every key starting with `$keyPrefix`), so a caller whose work
@@ -112,11 +111,23 @@ final class AiUsageLedgerManager
         return ['paid' => $paid, 'in_flight' => $inFlight, 'attempts' => $rows->count()];
     }
 
-    public function enforcedWorkspaceCapMicrousd(int $workspaceId, AiBudgetPolicy $policy): int
+    /**
+     * Correction 10 — the cap this period is actually enforced against.
+     *
+     * A period snapshots its cap when it opens, and reserve() checks
+     * against that snapshot for the rest of the period. Route headroom must
+     * therefore ask the same question: reading the freshly configured cap
+     * instead would let routing believe there is room reserve() will refuse
+     * when a cap was lowered mid-period, and withhold reasoning the period
+     * could still afford when one was raised. A period that has not opened
+     * yet has no snapshot, so the configured cap is the honest answer for
+     * it — and is what that period will snapshot when it opens.
+     */
+    public function enforcedCapMicrousd(string $scopeType, int $scopeId, AiBudgetPolicy $policy): int
     {
         $period = AiUsagePeriod::query()
-            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
-            ->where('scope_id', $workspaceId)
+            ->where('scope_type', $scopeType)
+            ->where('scope_id', $scopeId)
             ->where('period_key', $policy->periodKey)
             ->first();
 
@@ -135,10 +146,16 @@ final class AiUsageLedgerManager
         // customer an error because two of their own requests arrived
         // together.
         return DB::transaction(function () use ($request, $policy, $estimate, $bypassCapEnforcement): array {
-            $workspacePeriod = $this->lockOrCreatePeriod(
-                AiUsagePeriod::SCOPE_WORKSPACE,
-                $request->workspace->id,
-                $request->workspace->id,
+            $isPlatform = $request->scope === AiScope::Platform;
+            $primaryScopeType = $isPlatform ? AiUsagePeriod::SCOPE_PLATFORM : AiUsagePeriod::SCOPE_WORKSPACE;
+            $primaryScopeId = $isPlatform ? self::platformScopeId() : $request->workspace->id;
+
+            $primaryPeriod = $this->lockOrCreatePeriod(
+                $primaryScopeType,
+                $primaryScopeId,
+                // Contract §5.7a E — a Platform period row carries no
+                // Workspace id at all, never a magic id (R-19).
+                $isPlatform ? null : $request->workspace->id,
                 $policy,
                 $policy->workspaceCapMicrousd,
             );
@@ -157,8 +174,8 @@ final class AiUsageLedgerManager
 
             $isInteractive = $request->lane === AiLane::Interactive;
 
-            $projectedWorkspace = $workspacePeriod->reserved_microusd + $workspacePeriod->committed_microusd + $estimate->costMicrousd;
-            $exceedsWorkspace = $projectedWorkspace > $workspacePeriod->cap_microusd;
+            $projectedPrimary = $primaryPeriod->reserved_microusd + $primaryPeriod->committed_microusd + $estimate->costMicrousd;
+            $exceedsPrimary = $projectedPrimary > $primaryPeriod->cap_microusd;
 
             $exceedsBusiness = false;
             if ($businessPeriod !== null) {
@@ -168,15 +185,15 @@ final class AiUsageLedgerManager
 
             $exceedsInteractive = false;
             if ($isInteractive) {
-                $interactiveCap = intdiv($workspacePeriod->cap_microusd * $policy->interactiveShareBps, 10_000);
-                $projectedInteractive = $workspacePeriod->interactive_reserved_microusd + $workspacePeriod->interactive_committed_microusd + $estimate->costMicrousd;
+                $interactiveCap = intdiv($primaryPeriod->cap_microusd * $policy->interactiveShareBps, 10_000);
+                $projectedInteractive = $primaryPeriod->interactive_reserved_microusd + $primaryPeriod->interactive_committed_microusd + $estimate->costMicrousd;
                 $exceedsInteractive = $projectedInteractive > $interactiveCap;
             }
 
-            $mustRefuse = ($exceedsWorkspace || $exceedsBusiness || $exceedsInteractive) && ! $bypassCapEnforcement;
+            $mustRefuse = ($exceedsPrimary || $exceedsBusiness || $exceedsInteractive) && ! $bypassCapEnforcement;
 
             if ($mustRefuse) {
-                $reason = $exceedsInteractive && ! $exceedsWorkspace && ! $exceedsBusiness
+                $reason = $exceedsInteractive && ! $exceedsPrimary && ! $exceedsBusiness
                     ? AiRefusalReason::InteractiveShareExhausted
                     : AiRefusalReason::BudgetExhausted;
 
@@ -187,16 +204,21 @@ final class AiUsageLedgerManager
                 // account's AI is used up (§11.3). Where a broader cap and the
                 // interactive share are both spent, the broader cap is named:
                 // freeing the interactive lane would not let the call through.
+                // A Platform request has no Business period, so it is always
+                // either the Platform cap alone or the interactive share.
                 $scope = match (true) {
-                    $exceedsWorkspace && $exceedsBusiness => AiRefusalScope::WorkspaceAndBusiness,
-                    $exceedsWorkspace => AiRefusalScope::Workspace,
+                    $exceedsPrimary && $exceedsBusiness => AiRefusalScope::WorkspaceAndBusiness,
+                    $exceedsPrimary && $isPlatform => AiRefusalScope::Platform,
+                    $exceedsPrimary => AiRefusalScope::Workspace,
                     $exceedsBusiness => AiRefusalScope::Business,
                     default => AiRefusalScope::InteractiveShare,
                 };
 
                 $entry = AiUsageLedgerEntry::create([
-                    'workspace_id' => $request->workspace->id,
+                    'workspace_id' => $request->workspace?->id,
                     'business_id' => $request->business?->id,
+                    'scope_type' => $primaryScopeType,
+                    'scope_id' => $primaryScopeId,
                     'category' => $request->category,
                     'lane' => $request->lane,
                     'model_route' => $estimate->route,
@@ -218,9 +240,9 @@ final class AiUsageLedgerManager
                 return ['entry' => $entry, 'refused' => true];
             }
 
-            $workspacePeriod->increment('reserved_microusd', $estimate->costMicrousd);
+            $primaryPeriod->increment('reserved_microusd', $estimate->costMicrousd);
             if ($isInteractive) {
-                $workspacePeriod->increment('interactive_reserved_microusd', $estimate->costMicrousd);
+                $primaryPeriod->increment('interactive_reserved_microusd', $estimate->costMicrousd);
             }
 
             if ($businessPeriod !== null) {
@@ -231,8 +253,10 @@ final class AiUsageLedgerManager
             }
 
             $entry = AiUsageLedgerEntry::create([
-                'workspace_id' => $request->workspace->id,
+                'workspace_id' => $request->workspace?->id,
                 'business_id' => $request->business?->id,
+                'scope_type' => $primaryScopeType,
+                'scope_id' => $primaryScopeId,
                 'category' => $request->category,
                 'lane' => $request->lane,
                 'model_route' => $estimate->route,
@@ -375,22 +399,27 @@ final class AiUsageLedgerManager
     {
         $isInteractive = $entry->lane === AiLane::Interactive;
 
-        $workspacePeriod = AiUsagePeriod::query()
-            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
-            ->where('scope_id', $entry->workspace_id)
+        // The entry's OWN recorded scope_type/scope_id — Workspace or
+        // Platform — not an assumption. Every entry reserve() creates now
+        // carries both; pre-19.H0 rows were backfilled to
+        // scope_type = 'workspace', scope_id = workspace_id (§8), so this is
+        // correct for old and new rows alike.
+        $primaryPeriod = AiUsagePeriod::query()
+            ->where('scope_type', $entry->scope_type)
+            ->where('scope_id', $entry->scope_id)
             ->where('period_key', $entry->period_key)
             ->lockForUpdate()
             ->first();
 
-        if ($workspacePeriod !== null) {
-            $workspacePeriod->decrement('reserved_microusd', min($releaseReserved, $workspacePeriod->reserved_microusd));
+        if ($primaryPeriod !== null) {
+            $primaryPeriod->decrement('reserved_microusd', min($releaseReserved, $primaryPeriod->reserved_microusd));
             if ($addCommitted > 0) {
-                $workspacePeriod->increment('committed_microusd', $addCommitted);
+                $primaryPeriod->increment('committed_microusd', $addCommitted);
             }
             if ($isInteractive) {
-                $workspacePeriod->decrement('interactive_reserved_microusd', min($releaseReserved, $workspacePeriod->interactive_reserved_microusd));
+                $primaryPeriod->decrement('interactive_reserved_microusd', min($releaseReserved, $primaryPeriod->interactive_reserved_microusd));
                 if ($addCommitted > 0) {
-                    $workspacePeriod->increment('interactive_committed_microusd', $addCommitted);
+                    $primaryPeriod->increment('interactive_committed_microusd', $addCommitted);
                 }
             }
         }
@@ -438,7 +467,7 @@ final class AiUsageLedgerManager
      * read runs only once the row is certainly there, where it takes a
      * single record lock and nothing wider.
      */
-    private function lockOrCreatePeriod(string $scopeType, int $scopeId, int $workspaceId, AiBudgetPolicy $policy, int $capMicrousd): AiUsagePeriod
+    private function lockOrCreatePeriod(string $scopeType, int $scopeId, ?int $workspaceId, AiBudgetPolicy $policy, int $capMicrousd): AiUsagePeriod
     {
         $exists = AiUsagePeriod::query()
             ->where('scope_type', $scopeType)

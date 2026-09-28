@@ -530,13 +530,47 @@ a snapshot-time-resolved copy of the actual values (§14), so the
 published-revision-immutability rule is still honored: the *values* are
 copied into the snapshot at publish time exactly like every other field,
 only the *decision of what to display* re-reads Business state on the next
-publish.
+publish. **Exception: the address's privacy *permission* is live on every
+request, not just at the next publish — see §7.5.**
 
 ### 7.4 No drag-and-drop; no raw content
 
 A form/section editor with add/edit/reorder/delete controls is sufficient
 (§20). No visual/drag-and-drop architecture. No custom HTML/JS/CSS/PHP/
 Blade/iframe component type exists in this enum, ever (§8).
+
+### 7.5 Address privacy is the one live, per-request exception
+
+§7.3's "re-reads state only at the next publish" rule has exactly one
+carve-out: whether an address may be shown AT ALL. A `contact_details`
+address and the LocalBusiness JSON-LD address (the public structured-data
+markup built by `App\Library\Website\Seo\WebsiteLocalBusinessStructuredData`)
+are both gated, in addition to their own value-freeze/visibility rules, by
+`App\Library\Website\Seo\WebsiteAddressPrivacyGate`, which re-checks the
+Business's **current** primary `BusinessLocation`'s
+`GoogleBusinessProfileReadMask::addressPermittedForLocation()` result
+fresh on every public request — never cached, never baked into a
+`WebsiteRevision.snapshot` column, and never something a later publish
+is needed to pick up.
+
+This is a real-world-harm exception, not an ordinary content-freshness
+one: revealing a street address the owner has withdrawn consent for
+(`business_locations.public_address` turned off, or `service_mode`
+changed away from Storefront/Hybrid) is a privacy incident, not stale
+copy, so it must stop on the very next request — including when the
+currently published revision is the one that originally baked in the
+now-withdrawn address, and including after a rollback (§10) to an older
+revision that was itself published while the address was still
+permitted. `WebsiteRevision` rows remain wholly immutable either way:
+this gate only ever redacts, in memory, what a given request's response
+is built from — it never rewrites a `snapshot` column, and a revision
+whose frozen `resolved.address` was correctly permitted at ITS OWN
+publish time is not "wrong" — it simply is not authoritative for
+whether that value may still be shown today.
+
+Every other resolved `contact_details` value (phone, email) and every
+other snapshot field is entirely unaffected by this section and keeps
+following §7.3's ordinary next-publish rule.
 
 ---
 

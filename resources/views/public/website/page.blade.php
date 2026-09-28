@@ -24,16 +24,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $page->seo->seo_title ?: $page->title }} — {{ $websiteMeta['name'] }}</title>
     <meta name="description" content="{{ $page->seo->meta_description }}">
-    @if ($page->seo->noindex ?? false)
-        <meta name="robots" content="noindex, follow">
-    @endif
-    {{-- Contract §21 — every Slice A public page is noindex regardless
-         of the per-page field above, until a verified custom domain
-         exists (Slice B). --}}
-    <meta name="robots" content="noindex, follow">
+    {{--
+        Contract §21/§40 — every Slice A page is noindex regardless of
+        the per-page field, UNLESS $allowIndexing was explicitly passed
+        true: only App\Http\Middleware\ResolveCustomDomainWebsite's
+        renderer ever does that, and only for a domain whose certificate
+        is Active (App\Enums\Website\WebsiteDomainStatus) — the
+        platform-path /sites/{public_id} route and preview never pass
+        it, so they keep today's behavior exactly.
+    --}}
+    @php($indexable = ($allowIndexing ?? false) && ! ($page->seo->noindex ?? false))
+    <meta name="robots" content="{{ $indexable ? 'index, follow' : 'noindex, follow' }}">
     <meta property="og:title" content="{{ $page->seo->seo_title ?: $page->title }}">
     <meta property="og:description" content="{{ $page->seo->meta_description }}">
+    {{--
+        Set only once the Website has an active custom domain — see
+        Public\WebsiteController::renderPage() and
+        ResolveCustomDomainWebsite::renderPage() for why: with no such
+        domain there is no address more canonical than this one, so the
+        tag is omitted rather than self-referencing a platform path that
+        is never indexable in the first place.
+    --}}
+    @if (! empty($canonicalUrl ?? null))
+        <link rel="canonical" href="{{ $canonicalUrl }}">
+    @endif
     <link rel="stylesheet" href="{{ asset('css/website-public.css') }}">
+    {{--
+        LocalBusiness structured data (Website Generation + Hosting gap
+        recorded in Implementation Contract 18 §3.2/§3.6) — built only
+        from confirmed Business/Location facts by
+        App\Library\Website\WebsiteLocalBusinessStructuredData, and only
+        ever passed in for a genuinely indexable custom-domain page (see
+        ResolveCustomDomainWebsite::renderPage()). The JSON_HEX_* flags
+        hex-escape `<`, `>`, `&`, `'`, `"` inside every string value, so
+        a business name or address field can never break out of this
+        `<script>` element even though this is necessarily a raw,
+        unescaped `{!! !!}` output (Blade's `{{ }}` would HTML-entity-
+        encode the JSON itself, corrupting it).
+    --}}
+    @if (! empty($localBusinessJsonLd ?? null))
+        <script type="application/ld+json">{!! json_encode($localBusinessJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @if (! empty($theme))
         <style>
