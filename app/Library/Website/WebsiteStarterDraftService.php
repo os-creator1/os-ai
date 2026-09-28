@@ -293,12 +293,16 @@ final class WebsiteStarterDraftService
         }
 
         if ($profile !== null && in_array(BusinessKnowledgeProfileFieldKey::Credentials->value, $confirmed, true) && $profile->credentials) {
-            // Only a credential the owner marked `verified` supports a
-            // "Yes" claim here — an unverified label is still saved data,
-            // but not yet a confirmed fact this FAQ answer may assert.
+            // `verified` only confirms the owner actually holds the
+            // exact saved LABEL (e.g. "Chamber member") — it never
+            // proves that label is itself a license, insurance policy,
+            // or certification, so this may only ever restate the
+            // verified label(s) themselves, never answer a yes/no
+            // licensing/insurance/certification question they don't
+            // actually establish.
             $labels = $this->verifiedCredentialLabels($profile->credentials);
             if ($labels !== '') {
-                $confirmedItems[] = ['question' => 'Are you licensed, insured, or certified?', 'answer' => 'Yes: ' . $labels . '.'];
+                $confirmedItems[] = ['question' => 'What credentials do you have?', 'answer' => $labels . '.'];
             }
         }
 

@@ -307,7 +307,15 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $this->assertStringNotContainsString('75201', $encoded);
     }
 
-    public function test_local_business_structured_data_is_absent_after_business_and_location_are_removed_post_publish(): void
+    /**
+     * Two different rules meet here (contract §7.3 vs §7.5): removing
+     * phone/email live, with no republish, does NOT retroactively hide
+     * them — they stay frozen from publish time like every other
+     * ordinary fact. Revoking address privacy (`public_address`) is the
+     * one exception: it suppresses the address immediately, on the very
+     * next request, unlike phone/email.
+     */
+    public function test_local_business_structured_data_freezes_phone_and_email_but_immediately_suppresses_a_revoked_address(): void
     {
         [, $business] = $this->entitledTenant();
         $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
@@ -328,8 +336,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'jsonld-removed.test');
 
-        // Removed after publishing, with no republish — the public page
-        // must still show the values frozen into the published snapshot.
+        // Removed/revoked after publishing, with no republish.
         $business->update(['phone' => null, 'email' => null]);
         $location->update(['public_address' => false, 'hours' => []]);
 
@@ -337,7 +344,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
 
         $this->assertSame('+15550001234', $jsonLd['telephone']);
         $this->assertSame('hello@example.test', $jsonLd['email']);
-        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertArrayNotHasKey('address', $jsonLd);
         $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
     }
 
@@ -530,15 +537,17 @@ class WebsiteCustomDomainRenderingTest extends TestCase
     }
 
     /**
-     * Mirrors the LocalBusiness JSON-LD immutability contract (§7.3):
-     * `contact_details`'s resolved values are frozen at publish time —
-     * revoking address privacy afterward, with no republish, must not
-     * retroactively change an already-published page's HTML. Only the
-     * NEXT publish re-applies the (now stricter) privacy decision.
+     * Contract §7.5 — address privacy is the one narrow exception to
+     * §7.3's usual "next publish" freeze: revoking `public_address`,
+     * with no republish, must suppress the address on the VERY NEXT
+     * public request, in both visible HTML and LocalBusiness JSON-LD —
+     * never wait for a republish, since revealing a withdrawn address is
+     * a privacy incident, not ordinary staleness.
      */
-    public function test_contact_details_html_address_privacy_revoked_after_publish_takes_effect_on_the_next_publish_only(): void
+    public function test_contact_details_address_privacy_revoked_without_republishing_is_suppressed_on_the_next_request(): void
     {
         [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234']);
         $location = BusinessLocation::create([
             'business_id' => $business->id,
             'service_mode' => 'storefront',
@@ -553,17 +562,58 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'contact-revoked-address.test');
 
-        // Revoked after publishing, with no republish — the already-
-        // published page must keep showing the frozen, once-permitted
-        // value, exactly like every other published fact.
+        // Initial publication: permitted, so it appears in both places.
+        $firstResponse = $this->get('http://'.$domain->domain.'/');
+        $firstResponse->assertOk()->assertSee('123 Main St');
+        $this->assertSame('123 Main St', $this->extractJsonLd($firstResponse->getContent())['address']['streetAddress']);
+
+        // Revoked with no republish — must disappear on the very next
+        // request, from HTML and JSON-LD alike. Phone (an ordinary,
+        // non-privacy resolved value) is unaffected and keeps showing.
         $location->update(['public_address' => false]);
 
-        $this->get('http://'.$domain->domain.'/')->assertOk()->assertSee('123 Main St');
+        $response = $this->get('http://'.$domain->domain.'/');
+        $response->assertOk()->assertDontSee('123 Main St')->assertSee('+15550001234');
+        $this->assertArrayNotHasKey('address', $this->extractJsonLd($response->getContent()));
+    }
 
-        // The next publish re-reads current state and now withholds it.
-        app(WebsitePublisher::class)->publish($website->fresh(), $this->platformAdminId());
+    /**
+     * Contract §7.5 — the live gate applies no matter WHICH revision is
+     * currently served: rolling back to an older revision that was
+     * itself published while the address was still permitted must not
+     * resurrect it once privacy has since been revoked. Revision rows
+     * stay untouched; only what a response is built from is redacted.
+     */
+    public function test_contact_details_address_privacy_revocation_survives_a_rollback_to_an_older_permitted_revision(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        $publisher = app(WebsitePublisher::class);
+        $firstRevision = $publisher->publish($website, $this->platformAdminId());
 
+        $this->subPage($website, 'about');
+        $publisher->publish($website->fresh(), $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-rollback-address.test');
+
+        $location->update(['public_address' => false]);
+        $publisher->rollback($website, $firstRevision->uid);
+
+        // $firstRevision's OWN frozen snapshot still carries the address
+        // (it was permitted when that revision was published) — the
+        // live gate must withhold it anyway, on this now-current
+        // revision, without ever mutating that revision row.
         $this->get('http://'.$domain->domain.'/')->assertOk()->assertDontSee('123 Main St');
+        $this->assertSame('123 Main St', $firstRevision->fresh()->snapshot['website']['localBusiness']['address']['line1']);
     }
 
     /**

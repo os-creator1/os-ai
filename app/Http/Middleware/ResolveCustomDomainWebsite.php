@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Enums\Website\WebsiteDomainStatus;
+use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
 use App\Library\Website\Seo\WebsiteLocalBusinessStructuredData;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
@@ -48,6 +49,7 @@ class ResolveCustomDomainWebsite
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
         private readonly WebsiteLocalBusinessStructuredData $structuredData,
+        private readonly WebsiteAddressPrivacyGate $privacyGate,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -162,19 +164,31 @@ class ResolveCustomDomainWebsite
 
         $indexable = ! ($page['seo']['noindex'] ?? false);
 
-        // LocalBusiness structured data is built ONLY from the frozen
-        // snapshot's own localBusiness facts (WebsiteSnapshotBuilder::
+        // Contract §7.5 — the address's PRIVACY PERMISSION (never its
+        // resolved value, which stays frozen from publish time) is
+        // re-checked live, against the Business's CURRENT primary
+        // location, on every request: a revoked `public_address` must
+        // stop showing the address immediately, on this exact revision
+        // (even one reached through rollback), never only starting with
+        // the next publish. `$business` is a live read on purpose.
+        $business = $website->business;
+        $sections = $this->privacyGate->redactSections($page['sections'], $business);
+        $localBusiness = $this->privacyGate->redactLocalBusiness($snapshot['website']['localBusiness'] ?? [], $business);
+
+        // LocalBusiness structured data is otherwise built ONLY from the
+        // frozen snapshot's own localBusiness facts (WebsiteSnapshotBuilder::
         // localBusinessFacts(), computed once at publish time) — never
-        // a live Business/Location read here. A phone/address/hours
-        // change made after publishing, or never confirmed at publish
-        // time, never appears until the next publish, exactly like
-        // every other published fact on the site. Also mirrors the
-        // page's own indexability: never rendered on a page the owner
-        // has marked noindex, so Google's structured-data guidance
-        // ("reflect visible, intended-for-search content") is never in
-        // tension with the robots directive on the same response.
+        // a live Business/Location read here beyond the address-privacy
+        // gate immediately above. A phone change made after publishing,
+        // or never confirmed at publish time, never appears until the
+        // next publish, exactly like every other published fact on the
+        // site. Also mirrors the page's own indexability: never rendered
+        // on a page the owner has marked noindex, so Google's
+        // structured-data guidance ("reflect visible, intended-for-search
+        // content") is never in tension with the robots directive on the
+        // same response.
         $localBusinessJsonLd = $indexable
-            ? $this->structuredData->build($snapshot['website']['localBusiness'] ?? [], $canonicalUrl)
+            ? $this->structuredData->build($localBusiness, $canonicalUrl)
             : null;
 
         // The site "actually works" on this domain — active certificate,
@@ -185,7 +199,7 @@ class ResolveCustomDomainWebsite
             'website' => $website,
             'websiteMeta' => $snapshot['website'],
             'page' => (object) array_merge($page, ['seo' => (object) $page['seo']]),
-            'sections' => $page['sections'],
+            'sections' => $sections,
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => false,

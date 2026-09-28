@@ -4,6 +4,7 @@ namespace Tests\Feature\Website;
 
 use App\Enums\Website\WebsiteDomainStatus;
 use App\Library\Website\WebsitePublisher;
+use App\Models\BusinessLocation;
 use App\Models\WebsiteRevision;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
@@ -69,6 +70,35 @@ class WebsiteSeoTest extends TestCase
 
         $this->assertSame(url('/sites/' . $website->public_id), $canonicalUrl);
         $this->get($canonicalUrl)->assertOk()->assertDontSee('rel="canonical"', false);
+    }
+
+    /**
+     * Contract §7.5 — the platform-path renderer shares the exact same
+     * `contact_details` component as a custom domain, so revoking
+     * address privacy without a republish must be withheld here too,
+     * on the very next request.
+     */
+    public function test_platform_path_contact_details_withholds_a_revoked_address_without_republishing(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $business->customer_id);
+
+        $this->get(route('public.website.home', $website->public_id))->assertOk()->assertSee('123 Main St');
+
+        $location->update(['public_address' => false]);
+
+        $this->get(route('public.website.home', $website->public_id))->assertOk()->assertDontSee('123 Main St');
     }
 
     public function test_canonical_url_is_correct_for_a_slugged_sub_page(): void

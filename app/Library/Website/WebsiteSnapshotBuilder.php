@@ -3,7 +3,7 @@
 namespace App\Library\Website;
 
 use App\Enums\Website\WebsiteSectionType;
-use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
+use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
 use App\Models\Business;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
@@ -16,22 +16,31 @@ use Carbon\Carbon;
  * Plain scalars/arrays only — no executable class names, no serialized
  * Eloquent models. `contact_details` (contract §7.3) and the site-wide
  * `localBusiness` facts below are the two deliberate live-read
- * exceptions: their values are resolved from CURRENT Business/Location
- * state and copied into the snapshot at BUILD (publish) time only —
- * the decision of what to display re-reads Business state on the next
- * publish, but the already-published snapshot's values never change
- * themselves, no matter what changes on the Business/Location
- * afterward. This is what makes the public LocalBusiness structured
- * data (App\Library\Website\Seo\WebsiteLocalBusinessStructuredData)
- * safe to build purely from this frozen data — it never reads a live
- * model.
+ * exceptions: their VALUES are resolved from CURRENT Business/Location
+ * state and copied into the snapshot at BUILD (publish) time only — a
+ * phone/email change, or a change to WHICH address would be shown,
+ * takes effect only on the next publish, and the already-published
+ * snapshot's values never change themselves in the meantime.
+ *
+ * The address's PERMISSION to be shown at all (contract §7.5) is the
+ * one narrow exception to that freeze: it is re-checked live, on every
+ * public request, by App\Library\Website\Seo\WebsiteAddressPrivacyGate
+ * — a business revoking `public_address` must stop showing its street
+ * address on the very next request, even on an already-published
+ * revision or one reached through rollback, never only "on the next
+ * publish". This class never applies that live check to what it
+ * BAKES INTO a snapshot at publish time (so a permitted, frozen address
+ * value is exactly what the render path's own live gate then decides
+ * whether to actually reveal); it exists here only so a frozen `false`
+ * decision at publish time is never later "upgraded" to `true` by
+ * something this snapshot's own values wouldn't otherwise support.
  */
 final class WebsiteSnapshotBuilder
 {
     public const SCHEMA_VERSION = 1;
 
     public function __construct(
-        private readonly GoogleBusinessProfileReadMask $addressPredicate,
+        private readonly WebsiteAddressPrivacyGate $privacyGate,
     ) {}
 
     public function build(Website $website): array
@@ -198,21 +207,15 @@ final class WebsiteSnapshotBuilder
     }
 
     /**
-     * The ONE gate an address must pass before it may appear ANYWHERE
-     * on the published site — visible `contact_details` HTML and
-     * LocalBusiness JSON-LD both call this, so the two can never
-     * disagree about whether a given business/location's address is
-     * safe to publish. A `show_address` toggle is a display
-     * *preference*; it is never itself permission to reveal an address
-     * `GoogleBusinessProfileReadMask::addressPermittedForLocation()`
-     * would withhold (e.g. a service-area location with no public
-     * street address).
+     * Delegates to the one shared, LIVE address-privacy gate
+     * (App\Library\Website\Seo\WebsiteAddressPrivacyGate) that render
+     * time also calls on every public request — see that class for why
+     * the permission check itself is never baked into the snapshot,
+     * unlike the resolved VALUES this method's two callers freeze.
      */
     private function addressPermitted(?Business $business): bool
     {
-        $location = $business?->primaryLocation;
-
-        return $location !== null && $location->isActive() && $this->addressPredicate->addressPermittedForLocation($location);
+        return $this->privacyGate->currentlyPermitsAddress($business);
     }
 
     /**
@@ -227,11 +230,13 @@ final class WebsiteSnapshotBuilder
      * fact actually shown to a visitor via a published `contact_details`
      * section's own Show phone/Show email/Show address toggle? — never
      * claim in machine-readable metadata what the page itself doesn't
-     * display) AND, for `address` only, the SAME privacy predicate GBP/
-     * SEO already rely on (`GoogleBusinessProfileReadMask::
-     * addressPermittedForLocation()`) for the CURRENT primary location,
-     * at THIS publish — a later change to either takes effect on the
-     * next publish, exactly like `contact_details`'s own resolved values.
+     * display), AND, for `address` only, the SAME privacy predicate
+     * (WebsiteAddressPrivacyGate) already applied above when resolving
+     * `contact_details`. This method's own address here is still only a
+     * FROZEN, publish-time value — the render path re-checks that SAME
+     * gate again, live, on every public request, so a permission
+     * revoked afterward still withholds the address even though this
+     * value never changes until the next publish.
      *
      * `hours` is always omitted: no component on the published site
      * today ever visibly presents opening hours, so asserting them in

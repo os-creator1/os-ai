@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
+use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
 use App\Models\WebsiteRevision;
@@ -28,6 +29,7 @@ class WebsiteController extends Controller
 
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
+        private readonly WebsiteAddressPrivacyGate $privacyGate,
     ) {
     }
 
@@ -107,11 +109,18 @@ class WebsiteController extends Controller
             ? 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug'])
             : null;
 
+        // Contract §7.5 — same live, per-request address-privacy check
+        // App\Http\Middleware\ResolveCustomDomainWebsite applies for a
+        // custom domain: a revoked address permission must be withheld
+        // here too, since this platform-path response renders the exact
+        // same `contact_details` component.
+        $sections = $this->privacyGate->redactSections($page['sections'], $website->business);
+
         $response = response()->view('public.website.page', [
             'website' => $website,
             'websiteMeta' => $snapshot['website'],
             'page' => (object) array_merge($page, ['seo' => (object) $page['seo']]),
-            'sections' => $page['sections'],
+            'sections' => $sections,
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => false,

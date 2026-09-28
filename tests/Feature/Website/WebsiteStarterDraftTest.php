@@ -144,7 +144,7 @@ class WebsiteStarterDraftTest extends TestCase
         $this->assertSame('Guests loved it!', $reviewSection['data']['items'][0]['quote']);
     }
 
-    public function test_faq_credentials_answer_only_claims_the_verified_credentials(): void
+    public function test_faq_credentials_answer_only_states_the_verified_credentials(): void
     {
         [$customer, $business] = $this->entitledTenant();
         app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
@@ -159,7 +159,7 @@ class WebsiteStarterDraftTest extends TestCase
 
         $faqSections = $website->pages()->where('slug', 'photo-booth-faq')->firstOrFail()->sections;
         $faqItems = collect($faqSections)->firstWhere('type', 'faq')['data']['items'];
-        $answer = collect($faqItems)->firstWhere('question', 'Are you licensed, insured, or certified?');
+        $answer = collect($faqItems)->firstWhere('question', 'What credentials do you have?');
 
         $this->assertNotNull($answer);
         $this->assertStringContainsString('Licensed Contractor', $answer['answer']);
@@ -170,6 +170,38 @@ class WebsiteStarterDraftTest extends TestCase
         $aboutSections = $website->pages()->where('slug', 'photo-booth-about')->firstOrFail()->sections;
         $this->assertStringContainsString('Licensed Contractor', json_encode($aboutSections));
         $this->assertStringNotContainsString('Pending Certification', json_encode($aboutSections));
+    }
+
+    /**
+     * A verified credential proves only that the owner confirmed
+     * holding that exact saved LABEL — never that the label itself is a
+     * license, insurance policy, or certification. A label like
+     * "Chamber of Commerce Member" must never turn into an affirmative
+     * licensing/insurance/certification claim.
+     */
+    public function test_faq_credentials_question_never_infers_licensing_insurance_or_certification(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
+            'credentials' => [
+                ['label' => 'Chamber of Commerce Member', 'verified' => true],
+            ],
+            'years_operating' => 5,
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
+        $faqSections = app(WebsiteStarterDraftService::class)->create($business, 'clean')
+            ->pages()->where('slug', 'photo-booth-faq')->firstOrFail()->sections;
+        $faqItems = collect($faqSections)->firstWhere('type', 'faq')['data']['items'];
+        $answer = collect($faqItems)->firstWhere('question', 'What credentials do you have?');
+
+        $this->assertNotNull($answer);
+        $this->assertStringContainsString('Chamber of Commerce Member', $answer['answer']);
+        $this->assertStringNotContainsString('Yes', $answer['answer']);
+        $lowerAnswer = strtolower($answer['answer']);
+        $this->assertStringNotContainsString('licensed', $lowerAnswer);
+        $this->assertStringNotContainsString('insured', $lowerAnswer);
+        $this->assertStringNotContainsString('certified', $lowerAnswer);
+        $this->assertNull(collect($faqItems)->firstWhere('question', 'Are you licensed, insured, or certified?'));
     }
 
     public function test_faq_omits_the_credentials_question_when_no_saved_credential_is_verified(): void
@@ -186,7 +218,7 @@ class WebsiteStarterDraftTest extends TestCase
             ->pages()->where('slug', 'photo-booth-faq')->firstOrFail()->sections;
         $faqItems = collect($faqSections)->firstWhere('type', 'faq')['data']['items'];
 
-        $this->assertNull(collect($faqItems)->firstWhere('question', 'Are you licensed, insured, or certified?'));
+        $this->assertNull(collect($faqItems)->firstWhere('question', 'What credentials do you have?'));
         $this->assertStringNotContainsString('Pending Certification', json_encode($faqSections));
     }
 
