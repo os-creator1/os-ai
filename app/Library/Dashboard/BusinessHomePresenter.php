@@ -89,6 +89,13 @@ final class BusinessHomePresenter
      * where both bands render — keeping the query-budget addition to exactly
      * the one new indexed SELECT sub-slice 19.C's own MoveExplanation read
      * costs (DashboardQueryBudgetTest::BUSINESS_HOME_DASHBOARD_OWNED).
+     *
+     * SCOPED TO ONE present() CALL, NOT TO THIS OBJECT (R-31). This class
+     * carries no guarantee that a fresh instance is resolved per call —
+     * present() resets both fields to their initial state as its first
+     * statement, before anything below can read them, so a second present()
+     * call for a different Business or actor on the same instance can never
+     * read the first call's envelope.
      */
     private bool $envelopeResolved = false;
 
@@ -123,6 +130,14 @@ final class BusinessHomePresenter
      */
     public function present(CustomerContext $context, User $user, array $rangeInput = []): ?DashboardSnapshot
     {
+        // Contract 19 §5.8 R-31 — this presenter may be resolved once and
+        // reused across more than one present() call (this class carries no
+        // guarantee otherwise), and a memoized CooContextEnvelope built for
+        // one Business/actor must never leak into a later call for another.
+        // Reset at the top of every call, before anything below can read it.
+        $this->envelopeResolved = false;
+        $this->envelope = null;
+
         $candidate = $context->selectedBusiness;
         $workspace = $context->frameWorkspace();
 

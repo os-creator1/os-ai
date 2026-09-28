@@ -192,7 +192,7 @@ final class CooInsightGenerator
             return CooInsightOutcome::skipped(CooInsightOutcome::PROVIDER_FAILED);
         }
 
-        $statements = $this->validator->validate($result->content, $facts);
+        $statements = $this->validator->validate($result->content, $facts, $kind);
 
         if ($statements === null) {
             // Paid for and discarded: nothing a customer can see. The output

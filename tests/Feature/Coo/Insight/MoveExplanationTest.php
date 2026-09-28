@@ -60,7 +60,7 @@ class MoveExplanationTest extends TestCase
         $this->assertSame('google_connection_lost', $before['key']);
         $this->assertNull($before['explanation'], 'No cached explanation exists yet.');
 
-        $fakeAi = $this->bindFakeAi();
+        $fakeAi = $this->bindFakeAi('attention.google_connection_lost');
         $outcome = $this->generate($business);
 
         $this->assertSame(CooInsightOutcome::GENERATED, $outcome->status);
@@ -90,7 +90,7 @@ class MoveExplanationTest extends TestCase
         $before = $this->move($customer->user);
         $this->assertSame('opportunity', $before['key']);
 
-        $fakeAi = $this->bindFakeAi();
+        $fakeAi = $this->bindFakeAi('opportunity.missing_website');
         $outcome = $this->generate($business);
 
         $this->assertSame(CooInsightOutcome::GENERATED, $outcome->status);
@@ -126,7 +126,7 @@ class MoveExplanationTest extends TestCase
         $before = $this->move($customer->user);
         $this->assertNull($before, 'Nothing to recommend.');
 
-        $fakeAi = $this->bindFakeAi();
+        $fakeAi = $this->bindFakeAi('metric.new_contacts');
         $outcome = $this->generate($business);
 
         $this->assertSame(CooInsightOutcome::CONDITION_NOT_MET, $outcome->status);
@@ -141,7 +141,7 @@ class MoveExplanationTest extends TestCase
         $this->authenticateAs($customer);
         $this->move($customer->user);
 
-        $this->bindFakeAi();
+        $this->bindFakeAi('attention.google_connection_lost');
         $this->generate($business);
         $insight = CooInsight::query()->sole();
 
@@ -157,7 +157,7 @@ class MoveExplanationTest extends TestCase
         $this->authenticateAs($customer);
         $this->move($customer->user);
 
-        $fakeAi = $this->bindFakeAi();
+        $fakeAi = $this->bindFakeAi('attention.google_connection_lost');
         $this->generate($business);
         $this->assertSame(1, $fakeAi->callCount());
 
@@ -166,15 +166,89 @@ class MoveExplanationTest extends TestCase
         $this->assertSame(1, $fakeAi->callCount(), 'Reading Home never spends a second call.');
     }
 
+    /**
+     * Requested correction — a MoveExplanation whose only statement cites no
+     * fact at all (previously accepted, since an "unknown" statement needs no
+     * citation for a PerformanceDiagnosis) is now rejected outright: nothing
+     * is stored, and Home shows no explanation for the move at all, rather
+     * than an unfounded one.
+     */
+    public function test_an_ungrounded_response_is_rejected_and_never_displayed(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Ungrounded Venue', 'Ungrounded Account');
+        $this->googleConnection($business, GoogleConnectionState::Revoked);
+        $this->authenticateAs($customer);
+        $this->move($customer->user);
+
+        $fakeAi = new FakeAiCompletionClient();
+        $fakeAi->setDefaultResult(AiCompletionResult::success(json_encode(['statements' => [
+            ['class' => 'unknown', 'text' => 'These figures alone do not show what to do about it.', 'fact_refs' => []],
+        ]]), 'fixture-model-2026', 200, 40));
+        $this->app->instance(AiCompletionClient::class, $fakeAi);
+
+        $outcome = $this->generate($business);
+
+        $this->assertSame(CooInsightOutcome::OUTPUT_REJECTED, $outcome->status);
+        $this->assertSame(1, $fakeAi->callCount(), 'The provider was still paid for — rejection is a validator decision, not a refusal.');
+        $this->assertSame(0, CooInsight::query()->count(), 'An ungrounded answer is discarded, not stored.');
+
+        $move = $this->move($customer->user);
+        $this->assertSame('google_connection_lost', $move['key']);
+        $this->assertNull($move['explanation'], 'No explanation is displayed when none was ever grounded.');
+    }
+
+    /**
+     * The contract's own mutation test (§12 19.C): "a model returning a
+     * different action changes nothing on screen." The fake answer here
+     * names a completely different action (publishing the website) in its
+     * text while still citing a real fact_ref, so it passes validation and
+     * is stored — and the deterministic move is asserted, field by field, to
+     * be byte-for-byte the one BusinessHomePresenter::nextBestMove() already
+     * built before the explanation was ever read (R-1).
+     */
+    public function test_the_ai_never_changes_which_move_is_selected_even_when_its_text_describes_a_different_action(): void
+    {
+        [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Mutation Venue', 'Mutation Account');
+        $this->googleConnection($business, GoogleConnectionState::Revoked);
+        $this->authenticateAs($customer);
+
+        $before = $this->move($customer->user);
+        $this->assertSame('google_connection_lost', $before['key']);
+
+        $fakeAi = new FakeAiCompletionClient();
+        $fakeAi->setDefaultResult(AiCompletionResult::success(json_encode(['statements' => [
+            ['class' => 'unknown', 'text' => 'Publishing the website may matter more than this right now.', 'fact_refs' => ['attention.google_connection_lost']],
+        ]]), 'fixture-model-2026', 200, 40));
+        $this->app->instance(AiCompletionClient::class, $fakeAi);
+
+        $outcome = $this->generate($business);
+        $this->assertSame(CooInsightOutcome::GENERATED, $outcome->status, 'Precondition: the ungrounded-text answer is still stored — validation grounds fact_refs, not the model\'s opinion of which action matters.');
+
+        $after = $this->move($customer->user);
+        $this->assertSame($before['kind'], $after['kind']);
+        $this->assertSame($before['key'], $after['key'], 'A different action named in the AI text changes nothing on screen (R-1).');
+        $this->assertSame($before['headline'], $after['headline']);
+        $this->assertSame($before['actionLabel'], $after['actionLabel']);
+        $this->assertSame($before['actionUrl'], $after['actionUrl']);
+        $this->assertSame($before['why'], $after['why'], '"Why this?" stays deterministic and untouched.');
+        $this->assertNotNull($after['explanation'], 'The (differently-worded) explanation still attaches — it just changes nothing else.');
+    }
+
     // -----------------------------------------------------------------
     // Fixtures and helpers
     // -----------------------------------------------------------------
 
-    private function bindFakeAi(): FakeAiCompletionClient
+    /**
+     * A genuinely grounded, meaningful explanation citing $factRef — never an
+     * "unknown" statement with empty fact_refs, which Contract 19 §12 19.C's
+     * own grounding requirement now rejects for this kind (see
+     * test_an_ungrounded_response_is_rejected_and_never_displayed).
+     */
+    private function bindFakeAi(string $factRef): FakeAiCompletionClient
     {
         $fakeAi = new FakeAiCompletionClient();
         $fakeAi->setDefaultResult(AiCompletionResult::success(json_encode(['statements' => [
-            ['class' => 'unknown', 'text' => 'These figures alone do not show what to do about it.', 'fact_refs' => []],
+            ['class' => 'unknown', 'text' => 'This may be worth addressing first, though these figures alone do not settle it.', 'fact_refs' => [$factRef]],
         ]]), 'fixture-model-2026', 200, 40));
         $this->app->instance(AiCompletionClient::class, $fakeAi);
 
@@ -206,6 +280,12 @@ class MoveExplanationTest extends TestCase
         return $this->dashboardFor($user)->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move'] ?? null;
     }
 
+    /**
+     * Contract 19 §12 19.C's own grounding requirement: every displayed
+     * MoveExplanation statement cites at least one fact_ref, and every
+     * fact_ref cited resolves inside the row's own stored facts_snapshot —
+     * never merely "happens not to be empty".
+     */
     private function assertGroundedInFacts(CooInsight $insight): void
     {
         $refs = collect((array) ($insight->facts_snapshot['facts'] ?? []))
@@ -213,6 +293,8 @@ class MoveExplanationTest extends TestCase
             ->all();
 
         foreach ((array) $insight->output['statements'] as $statement) {
+            $this->assertNotEmpty($statement['fact_refs'], 'Every MoveExplanation statement must cite at least one fact_ref.');
+
             foreach ((array) $statement['fact_refs'] as $ref) {
                 $this->assertContains($ref, $refs, "fact_ref [{$ref}] must resolve inside facts_snapshot.");
             }
