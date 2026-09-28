@@ -2,6 +2,7 @@
 
 namespace App\Library\Coo\Insight;
 
+use App\Enums\Coo\CooInsightKind;
 use App\Enums\Coo\CooInsightStatementClass;
 use JsonException;
 
@@ -30,6 +31,15 @@ use JsonException;
  *    causal (§8.4), so there is no case in which causal wording is allowed —
  *    except the contract's own fixed disclaimer, "We can't tell whether
  *    {event} caused it.", which denies a cause rather than claiming one.
+ *
+ * Contract 19 §12 19.C — a MoveExplanation statement additionally REQUIRES at
+ * least one `fact_refs` entry, of any class, including `unknown`. Every other
+ * kind keeps the rule above exactly as it was: an `unknown` statement citing
+ * nothing is still accepted for a PerformanceDiagnosis, whose whole purpose
+ * includes saying plainly that the figures do not show a cause. A
+ * MoveExplanation is different in kind, not degree — its entire content is a
+ * claim about why a specific, named move is right, and a claim naming no fact
+ * at all is not an explanation of anything and must never reach a customer.
  */
 final class CooInsightOutputValidator
 {
@@ -42,10 +52,15 @@ final class CooInsightOutputValidator
     public const HEDGE_WORDS = ['may', 'likely', 'could'];
 
     /**
+     * @param  ?CooInsightKind  $kind  null keeps this method's long-standing
+     *   behavior (every existing caller). Contract 19 §12 19.C passes
+     *   CooInsightKind::MoveExplanation to require non-empty fact_refs;
+     *   every other kind, including an explicit PerformanceDiagnosis, is
+     *   completely unaffected.
      * @return array<int, array{class: string, text: string, fact_refs: array<int, string>}>|null
      *   the validated statements, or null when the output must be discarded
      */
-    public function validate(?string $raw, CooInsightFacts $facts): ?array
+    public function validate(?string $raw, CooInsightFacts $facts, ?CooInsightKind $kind = null): ?array
     {
         if ($raw === null || trim($raw) === '') {
             return null;
@@ -68,10 +83,11 @@ final class CooInsightOutputValidator
         }
 
         $allowedRefs = $facts->factRefs();
+        $requireGrounding = $kind === CooInsightKind::MoveExplanation;
         $validated = [];
 
         foreach ($statements as $statement) {
-            $clean = $this->statement($statement, $facts, $allowedRefs);
+            $clean = $this->statement($statement, $facts, $allowedRefs, $requireGrounding);
 
             if ($clean === null) {
                 return null;
@@ -87,7 +103,7 @@ final class CooInsightOutputValidator
      * @param  array<int, string>  $allowedRefs
      * @return array{class: string, text: string, fact_refs: array<int, string>}|null
      */
-    private function statement(mixed $statement, CooInsightFacts $facts, array $allowedRefs): ?array
+    private function statement(mixed $statement, CooInsightFacts $facts, array $allowedRefs, bool $requireGrounding): ?array
     {
         if (! is_array($statement) || array_is_list($statement)) {
             return null;
@@ -119,6 +135,10 @@ final class CooInsightOutputValidator
         }
 
         $refs = array_values(array_unique($refs));
+
+        if ($requireGrounding && $refs === []) {
+            return null;
+        }
 
         if ($this->claimsCause($text)) {
             return null;

@@ -75,13 +75,17 @@ final class CooInsightInvalidator
     /**
      * `context_changed` — the website was published, the Google connection was
      * made, lost or revoked, or the Business itself was updated. Every valid
-     * performance diagnosis of that Business described a context that moved.
+     * performance diagnosis of that Business described a context that moved,
+     * and so, per Contract 19 §12 19.C, did any cached MoveExplanation: a
+     * website/Google state change can raise or clear the very Attention type
+     * a cached explanation was about, or change which pool slot is even
+     * selected.
      */
     public function invalidateContext(int $businessId): int
     {
         return CooInsight::query()
             ->where('business_id', $businessId)
-            ->where('kind', CooInsightKind::PerformanceDiagnosis->value)
+            ->whereIn('kind', [CooInsightKind::PerformanceDiagnosis->value, CooInsightKind::MoveExplanation->value])
             ->whereNull('invalidated_at')
             ->update($this->stamp(CooInsightInvalidationReason::ContextChanged));
     }

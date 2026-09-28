@@ -47,7 +47,17 @@ class NicheBlueprintAdminControllerTest extends TestCase
 
     // ------------------------------------------------------------- fixtures
 
-    private function registerFakeAdapter(string $type = 'crm_pipeline', ?callable $validator = null): void
+    /**
+     * The default type is a distinct, test-only placeholder — NOT
+     * 'crm_pipeline'. Contract 20 Sub-slice D registered the real
+     * CrmPipelineComponentAdapter for that type in AppServiceProvider, and
+     * its validateDescriptor() genuinely rejects an arbitrary dummy payload.
+     * These generic "publish delegates to the publisher and succeeds"
+     * fixtures are about the HTTP/authorization layer, not the CRM adapter's
+     * own descriptor shape, so they register their own no-op adapter under a
+     * type the real registry does not claim.
+     */
+    private function registerFakeAdapter(string $type = 'test_generic_component', ?callable $validator = null): void
     {
         $registry = app(BlueprintComponentAdapterRegistry::class);
 
@@ -322,7 +332,7 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $this->registerFakeAdapter();
         $admin = $this->actingAsAdmin();
         [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
-        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'crm_pipeline', 'crm', ['x' => 1]);
+        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'test_generic_component', 'crm', ['x' => 1]);
 
         $this->post(route('admin.niche-blueprints.versions.publish', [$blueprint, $draft]))
             ->assertRedirect(route('admin.niche-blueprints.show', $blueprint))
@@ -370,7 +380,7 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $this->registerFakeAdapter();
         $admin = $this->actingAsAdmin();
         [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
-        $component = $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'crm_pipeline', 'crm', []);
+        $component = $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'test_generic_component', 'crm', []);
         $published = $this->publisher()->publishVersion($admin->id, $draft);
 
         $this->patch(route('admin.niche-blueprints.versions.update', [$blueprint, $published]), ['notes' => 'sneaky'])
@@ -378,7 +388,7 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $this->assertNull($published->fresh()->notes);
 
         $this->post(route('admin.niche-blueprints.components.store', [$blueprint, $published]), [
-            'component_key' => 'sneaked_in', 'component_type' => 'crm_pipeline', 'required_feature_key' => 'crm', 'payload_json' => '{}',
+            'component_key' => 'sneaked_in', 'component_type' => 'test_generic_component', 'required_feature_key' => 'crm', 'payload_json' => '{}',
         ])->assertSessionHas('flash_error');
         $this->assertNull(NicheBlueprintComponent::where('component_key', 'sneaked_in')->first());
 
@@ -401,7 +411,7 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $business = $this->createBusinessWithWorkspace($this->createCustomer(), $this->businessAttributes());
         $admin = $this->actingAsAdmin();
         [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
-        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'crm_pipeline', 'crm', []);
+        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'test_generic_component', 'crm', []);
 
         $this->post(route('admin.niche-blueprints.versions.publish', [$blueprint, $draft]))
             ->assertSessionHas('flash_success');
@@ -415,14 +425,14 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $this->registerFakeAdapter();
         $admin = $this->actingAsAdmin();
         [$blueprint, $draftV1] = $this->blueprintWithDraft($admin->id);
-        $componentV1 = $this->publisher()->addDraftComponent($admin->id, $draftV1, 'stays_the_same', 'crm_pipeline', 'crm', ['a' => 1]);
+        $componentV1 = $this->publisher()->addDraftComponent($admin->id, $draftV1, 'stays_the_same', 'test_generic_component', 'crm', ['a' => 1]);
         $this->post(route('admin.niche-blueprints.versions.publish', [$blueprint, $draftV1]))->assertSessionHas('flash_success');
 
         $v1Snapshot = $componentV1->fresh();
 
         $this->post(route('admin.niche-blueprints.versions.store', $blueprint), ['notes' => 'v2'])->assertSessionHas('flash_success');
         $draftV2 = $blueprint->versions()->where('state', 'draft')->firstOrFail();
-        $this->publisher()->addDraftComponent($admin->id, $draftV2, 'a_new_component', 'crm_pipeline', 'crm', []);
+        $this->publisher()->addDraftComponent($admin->id, $draftV2, 'a_new_component', 'test_generic_component', 'crm', []);
         $this->post(route('admin.niche-blueprints.versions.publish', [$blueprint, $draftV2]))->assertSessionHas('flash_success');
 
         $this->assertSame('superseded', $draftV1->fresh()->state->value);
@@ -441,7 +451,7 @@ class NicheBlueprintAdminControllerTest extends TestCase
         $this->registerFakeAdapter();
         $admin = $this->actingAsAdmin();
         [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
-        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'crm_pipeline', 'crm', []);
+        $this->publisher()->addDraftComponent($admin->id, $draft, 'k1', 'test_generic_component', 'crm', []);
         $published = $this->publisher()->publishVersion($admin->id, $draft);
 
         $this->post(route('admin.niche-blueprints.versions.supersede', [$blueprint, $published]))

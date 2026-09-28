@@ -6,7 +6,8 @@ use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiUsageCategory;
 
 /**
- * Contract §8.2 — the only four ways a COO insight is ever paid for.
+ * Contract §8.2 — the four ways a PerformanceDiagnosis insight is ever paid
+ * for, plus Contract 19 §12 19.C's own trigger for a MoveExplanation insight.
  */
 enum CooInsightTrigger: string
 {
@@ -22,7 +23,15 @@ enum CooInsightTrigger: string
     /** E-4 — the customer's own "Explain this change", once per subject per window. */
     case ExplainThisChange = 'e4_explain_this_change';
 
-    /** E-4 is the customer asking; E-1…E-3 are the product noticing. */
+    /**
+     * Contract 19 §12 19.C — whether the deterministic NextBestMoveSelector's
+     * current pick can be explained. Fired from the same background points as
+     * E-1/E-2 (the daily sweep and "work finished"); its own condition is
+     * simply "a move is currently selected", never E-1's material-signal gate.
+     */
+    case MoveExplanation = 'c19_move_explanation';
+
+    /** E-4 is the customer asking; every other trigger is the product noticing. */
     public function lane(): AiLane
     {
         return $this === self::ExplainThisChange ? AiLane::Interactive : AiLane::Product;
@@ -30,13 +39,23 @@ enum CooInsightTrigger: string
 
     public function category(): AiUsageCategory
     {
-        return $this === self::ExplainThisChange ? AiUsageCategory::CooInteractive : AiUsageCategory::CooDiagnosis;
+        return match ($this) {
+            self::ExplainThisChange => AiUsageCategory::CooInteractive,
+            self::MoveExplanation => AiUsageCategory::CooMoveExplanation,
+            self::MultiSignalChange, self::WorkFinished, self::MonthlyReview => AiUsageCategory::CooDiagnosis,
+        };
     }
 
-    /** Scheduled product work is never spent on a dormant Business (§8.1); a customer's own ask is. */
+    /** Every scheduled/background trigger is dormancy-gated (§8.1); a customer's own ask is not. */
     public function isDormancyGated(): bool
     {
         return $this !== self::ExplainThisChange;
+    }
+
+    /** Contract 19 §5.1 — which coo_insights.kind this trigger writes. */
+    public function kind(): CooInsightKind
+    {
+        return $this === self::MoveExplanation ? CooInsightKind::MoveExplanation : CooInsightKind::PerformanceDiagnosis;
     }
 
     /**

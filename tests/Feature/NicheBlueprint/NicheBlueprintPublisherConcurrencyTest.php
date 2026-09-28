@@ -36,6 +36,17 @@ class NicheBlueprintPublisherConcurrencyTest extends TestCase
 {
     private const RUNNER = __DIR__ . '/Support/concurrent_blueprint_runner.php';
 
+    /**
+     * A generic, fake component type for this suite's own fixture adapter —
+     * shared with concurrent_blueprint_runner.php, which must register the
+     * very same type in its own fresh container.
+     *
+     * Deliberately NOT 'crm_pipeline': Sub-slice D registers the real
+     * CrmPipelineComponentAdapter under that type in the same container-bound
+     * registry, and two adapters can never claim one component type (§10).
+     */
+    public const FAKE_TYPE = 'publisher_test_component';
+
     private array $createdUserIds = [];
 
     private array $createdBlueprintIds = [];
@@ -74,7 +85,7 @@ class NicheBlueprintPublisherConcurrencyTest extends TestCase
             {
                 public function componentType(): string
                 {
-                    return 'crm_pipeline';
+                    return NicheBlueprintPublisherConcurrencyTest::FAKE_TYPE;
                 }
 
                 public function validateDescriptor(array $payload): void
@@ -158,7 +169,7 @@ class NicheBlueprintPublisherConcurrencyTest extends TestCase
             'blueprint_version_id' => $versionId,
             'blueprint_id' => $blueprintId,
             'component_key' => $key,
-            'component_type' => 'crm_pipeline',
+            'component_type' => self::FAKE_TYPE,
             'required_feature_key' => 'crm',
             'payload' => json_encode(['pipeline_key' => 'sales']),
             'position' => 0,

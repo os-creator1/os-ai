@@ -36,7 +36,15 @@ class BlueprintTemplateLibraryControllerTest extends TestCase
         $this->ensureRequiredAppConfigRowsExist();
     }
 
-    private function registerFakeAdapter(string $type = 'crm_pipeline'): void
+    /**
+     * The default type is a distinct, test-only placeholder — NOT
+     * 'crm_pipeline'. Contract 20 Sub-slice D registered the real
+     * CrmPipelineComponentAdapter for that type, and its
+     * validateDescriptor() genuinely rejects an arbitrary dummy payload;
+     * these fixtures are about the read-only catalog surface, not the CRM
+     * adapter's own descriptor shape.
+     */
+    private function registerFakeAdapter(string $type = 'test_generic_component'): void
     {
         $registry = app(BlueprintComponentAdapterRegistry::class);
 
@@ -162,7 +170,7 @@ class BlueprintTemplateLibraryControllerTest extends TestCase
 
         $blueprint = $publisher->createBlueprint($admin->id, 'photo_booth', 'Photo Booth', null, 'photo_booth_service');
         $draft = $publisher->createDraftVersion($admin->id, $blueprint);
-        $publisher->addDraftComponent($admin->id, $draft, 'photo_booth_default_pipeline', 'crm_pipeline', 'crm', ['pipeline_key' => 'sales']);
+        $publisher->addDraftComponent($admin->id, $draft, 'photo_booth_default_pipeline', 'test_generic_component', 'crm', ['pipeline_key' => 'sales']);
         $published = $publisher->publishVersion($admin->id, $draft);
 
         $this->get(route('admin.template-library.index'))->assertOk()->assertSee('Photo Booth');
@@ -213,7 +221,7 @@ class BlueprintTemplateLibraryControllerTest extends TestCase
         $publisher = app(NicheBlueprintPublisher::class);
         $blueprint = $publisher->createBlueprint($admin->id, 'photo_booth', 'Photo Booth');
         $draft = $publisher->createDraftVersion($admin->id, $blueprint);
-        $publisher->addDraftComponent($admin->id, $draft, 'k1', 'crm_pipeline', 'crm', []);
+        $publisher->addDraftComponent($admin->id, $draft, 'k1', 'test_generic_component', 'crm', []);
         $published = $publisher->publishVersion($admin->id, $draft);
 
         DB::flushQueryLog();

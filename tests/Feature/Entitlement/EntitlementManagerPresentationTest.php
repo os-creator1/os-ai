@@ -280,7 +280,21 @@ class EntitlementManagerPresentationTest extends TestCase
         // Agency fixture Workspace like every other Available Business feature.
         $this->assertArrayHasKey(PlatformFeature::PackagesProducts->value, $result);
 
-        $this->assertCount(8, $result);
+        // Implementation Contract 17 Sub-slice G: PaymentsContracts flipped
+        // Planned -> Available (packaged into every tier) — genuinely true
+        // already; this assertion was simply never added when that flip
+        // landed, which is why it was missing from the count below too.
+        $this->assertArrayHasKey(PlatformFeature::PaymentsContracts->value, $result);
+
+        // Implementation Contract 18 Sub-slice H: SeoBasicVisibility and
+        // SeoModule both flipped Planned -> Available. Both are Business-
+        // scoped and packaged into every tier this Agency fixture holds
+        // (SeoBasicVisibility Core+Growth+Agency, SeoModule Growth+Agency),
+        // so both join this map.
+        $this->assertArrayHasKey(PlatformFeature::SeoBasicVisibility->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::SeoModule->value, $result);
+
+        $this->assertCount(11, $result);
     }
 
     /**

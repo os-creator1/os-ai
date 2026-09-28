@@ -16,8 +16,9 @@ use Tests\TestCase;
  * Contract 18 Sub-slice 18G §12/§15.G/§16 — the STRUCTURAL guarantees of the
  * Website SEO audit, proved by reading the source rather than by exercising
  * it: no write path to any Website table, no URL fetch, no crawler, no
- * provider, no AI, no auto-fix — and the whole surface still fail-closed
- * while both SEO features are Planned.
+ * provider, no AI, no auto-fix — plus the entitlement boundary now that
+ * Sub-slice H has flipped both SEO features to Available: Growth/Agency
+ * reach the audit, Core does not, and a foreign Business never does.
  */
 class SeoAuditBoundaryTest extends TestCase
 {
@@ -211,25 +212,35 @@ class SeoAuditBoundaryTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Fail-closed while Planned (T-SEO-TEN-*, T-SEO-LOCK-1).
+    // Entitlement boundary, now that Sub-slice H has flipped both features
+    // to Available (T-SEO-TEN-*, T-SEO-LOCK-1).
     // -----------------------------------------------------------------
 
-    public function test_both_seo_features_remain_planned(): void
+    public function test_both_seo_features_are_available_after_sub_slice_hs_flip(): void
     {
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
     }
 
-    public function test_the_audit_routes_are_404_for_a_fully_permitted_owner_while_planned(): void
+    public function test_the_audit_routes_reach_a_fully_permitted_growth_or_agency_owner_and_deny_core(): void
     {
-        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+        foreach ([WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
             $this->publishWebsite($business, [$this->snapshotPage('p1', 'Home')]);
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get(route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]))->assertNotFound();
-            $this->post(route('customer.workspaces.businesses.seo.audit.rerun', [$workspace->uid, $business->uid]))->assertNotFound();
+            $this->get(route('customer.workspaces.businesses.seo.audit.index', [$workspace->uid, $business->uid]))
+                ->assertOk();
         }
+
+        // seo_module is Growth+Agency only (contract §5.1); Core is denied
+        // exactly as before the flip.
+        [$core, $coreBusiness, $coreWorkspace] = $this->entitledTenant(WorkspacePlanTier::Core);
+        $this->publishWebsite($coreBusiness, [$this->snapshotPage('p1', 'Home')]);
+        $this->authenticateAsSeoCustomer($core);
+
+        $this->get(route('customer.workspaces.businesses.seo.audit.index', [$coreWorkspace->uid, $coreBusiness->uid]))->assertNotFound();
+        $this->post(route('customer.workspaces.businesses.seo.audit.rerun', [$coreWorkspace->uid, $coreBusiness->uid]))->assertNotFound();
     }
 
     public function test_a_foreign_business_is_404_through_the_audit_routes(): void

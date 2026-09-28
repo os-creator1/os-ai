@@ -13,6 +13,7 @@ use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Enums\Coo\SignalDirection;
+use App\Library\Coo\Context\CooContextEnvelope;
 use App\Library\Coo\Context\CooContextEnvelopeFactory;
 use App\Library\Coo\Insight\CooInsightDisplayReader;
 use App\Library\Coo\Insight\CooInsightExplainLimiter;
@@ -79,6 +80,27 @@ final class BusinessHomePresenter
 
     public const MAX_QUICK_ACTIONS = 4;
 
+    /**
+     * Contract 19 §5.8, §13.11 — one present() call renders one Business for
+     * one actor, so its CooContextEnvelope is the same value everywhere it is
+     * needed. Memoized here so insight() and, since 19.C, moveExplanation()
+     * share the one construction (LocationAccessGuard's Location read plus
+     * the durable capability read) rather than paying for it twice on a page
+     * where both bands render — keeping the query-budget addition to exactly
+     * the one new indexed SELECT sub-slice 19.C's own MoveExplanation read
+     * costs (DashboardQueryBudgetTest::BUSINESS_HOME_DASHBOARD_OWNED).
+     *
+     * SCOPED TO ONE present() CALL, NOT TO THIS OBJECT (R-31). This class
+     * carries no guarantee that a fresh instance is resolved per call —
+     * present() resets both fields to their initial state as its first
+     * statement, before anything below can read them, so a second present()
+     * call for a different Business or actor on the same instance can never
+     * read the first call's envelope.
+     */
+    private bool $envelopeResolved = false;
+
+    private ?CooContextEnvelope $envelope = null;
+
     public function __construct(
         private readonly CustomerShellComposer $shell,
         private readonly DashboardStatusReader $statusReader,
@@ -108,6 +130,14 @@ final class BusinessHomePresenter
      */
     public function present(CustomerContext $context, User $user, array $rangeInput = []): ?DashboardSnapshot
     {
+        // Contract 19 §5.8 R-31 — this presenter may be resolved once and
+        // reused across more than one present() call (this class carries no
+        // guarantee otherwise), and a memoized CooContextEnvelope built for
+        // one Business/actor must never leak into a later call for another.
+        // Reset at the top of every call, before anything below can read it.
+        $this->envelopeResolved = false;
+        $this->envelope = null;
+
         $candidate = $context->selectedBusiness;
         $workspace = $context->frameWorkspace();
 
@@ -235,6 +265,7 @@ final class BusinessHomePresenter
                         'window' => self::windowPhrase($selectedRange),
                         'unhealthyListings' => $status?->unhealthyGoogleLocations ?? 0,
                     ],
+                    $selectedRange,
                 );
             } catch (Throwable $e) {
                 report($e);
@@ -552,11 +583,17 @@ final class BusinessHomePresenter
      *
      * NO AI. "Why this?" is deterministic (§6.5).
      *
+     * Contract 19 §12 19.C — `payload['explanation']` is an AI-written note
+     * attached to this same, already-decided move: read-only, optional, and
+     * never able to change `kind`/`key`/`headline`/`actionUrl` above, which
+     * are computed first and do not depend on it in any way (R-1, the
+     * mutation-test guarantee).
+     *
      * @param  array<int, AttentionItem>  $attention
      * @param  array{awaiting: int, graceMinutes: int, failedRuns: int, window: string, unhealthyListings: int}  $facts
      * @return array<string, mixed>
      */
-    private function nextBestMove(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $attention, array $facts): array
+    private function nextBestMove(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $attention, array $facts, AnalyticsDateRange $range): array
     {
         $queue = config('opportunity.enabled', false)
             ? $this->opportunities->topForCustomer($business, self::RECOMMENDATION_QUEUE_CAP)
@@ -578,6 +615,7 @@ final class BusinessHomePresenter
                 'why' => $this->whyThis->forAttention($item->type, $item->text, $facts),
                 'actionLabel' => $item->actionLabel,
                 'actionUrl' => $item->url,
+                'explanation' => $this->moveExplanation($business, $context, $user, $entitlements, $move, $range),
             ];
         } elseif ($move !== null && $move->isOpportunity()) {
             $opportunity = $move->opportunity;
@@ -591,6 +629,7 @@ final class BusinessHomePresenter
                 'actionUrl' => $advisorOpensThisBusiness
                     ? $this->links->url($context, $user, $entitlements, 'customer.opportunities.show', [(string) $opportunity->id], ['business_advisor'])
                     : null,
+                'explanation' => $this->moveExplanation($business, $context, $user, $entitlements, $move, $range),
             ];
         }
 
@@ -605,6 +644,40 @@ final class BusinessHomePresenter
                     : null,
             ],
         ];
+    }
+
+    /**
+     * Contract 19 §12 19.C — "What we notice", for the deterministic move
+     * instead of the performance window: the one cached MoveExplanation for
+     * exactly this move, or nothing.
+     *
+     * READ ONLY, same guarantee as insight(): no AI client, no gateway, no
+     * job in CooInsightDisplayReader's dependency graph, so this never calls
+     * the provider and never spends anything because Home rendered. A failed
+     * read is the same as no explanation — never an error, and the
+     * deterministic move above is already fully built regardless.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function moveExplanation(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, NextBestMove $move, AnalyticsDateRange $range): ?array
+    {
+        if (! $entitlements->allows('ai_coo_basic')) {
+            return null;
+        }
+
+        try {
+            $envelope = $this->envelopeFor($business, $user, $context);
+
+            if ($envelope === null) {
+                return null;
+            }
+
+            return $this->insights->forNextBestMove($business, $move, $range, $envelope);
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
     }
 
     /**
@@ -756,7 +829,7 @@ final class BusinessHomePresenter
             // answer produced for one authorization set is never shown to
             // another, and when nothing matches Home simply renders without
             // an AI line (R-32): every deterministic band is unaffected.
-            $envelope = $this->envelopes->forActor($business, $user, $context->viewAs);
+            $envelope = $this->envelopeFor($business, $user, $context);
 
             if ($envelope === null) {
                 return null;
@@ -768,6 +841,17 @@ final class BusinessHomePresenter
 
             return null;
         }
+    }
+
+    /** @see $envelopeResolved */
+    private function envelopeFor(Business $business, User $user, CustomerContext $context): ?CooContextEnvelope
+    {
+        if (! $this->envelopeResolved) {
+            $this->envelope = $this->envelopes->forActor($business, $user, $context->viewAs);
+            $this->envelopeResolved = true;
+        }
+
+        return $this->envelope;
     }
 
     /**

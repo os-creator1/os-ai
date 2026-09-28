@@ -11,6 +11,11 @@
 
     The one action is linked only when the actor may open it; otherwise the
     move still shows, without a button, and nothing unauthorized is linked.
+
+    Contract 19 §12 19.C — "explanation" is an optional AI note ATTACHED to
+    this same, already-decided move: never a second recommendation, never
+    able to change which move is shown above, and simply absent (never an
+    error) when there is no cached explanation for it yet.
 --}}
 <section class="mb-2" aria-labelledby="dashboard-next-best-move-heading" data-band="next_best_move">
     <x-card>
@@ -44,6 +49,25 @@
                             @endforeach
                         </ul>
                     </details>
+                @endif
+
+                {{-- Contract 19 §12 19.C — an AI note attached to this move, never a
+                     second recommendation; absent whenever there is nothing cached. --}}
+                @if(($move['explanation'] ?? null) !== null)
+                    <div class="mt-1 pt-1 border-top" data-role="next-best-move-explanation">
+                        <p class="text-caption text-muted mb-50">
+                            <span data-role="ai-summary-label">AI note</span>
+                            · <span data-role="next-best-move-explanation-updated">{{ $move['explanation']['updated'] }}</span>
+                        </p>
+                        <ul class="list-unstyled mb-0" data-role="next-best-move-explanation-statements">
+                            @foreach($move['explanation']['statements'] as $statement)
+                                <li class="mb-50" data-role="next-best-move-explanation-statement" data-class="{{ $statement['class'] }}">
+                                    <strong data-role="next-best-move-explanation-certainty">{{ $statement['label'] }}:</strong>
+                                    <span>{{ $statement['text'] }}</span>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </div>
                 @endif
             </div>
         @endif
