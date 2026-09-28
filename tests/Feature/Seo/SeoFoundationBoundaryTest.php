@@ -114,9 +114,13 @@ class SeoFoundationBoundaryTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // The post-floor selector (zero / one / many) is intact. The floor is
-    // simulated as passed by the test-only subclass; the feature is NOT
-    // flipped (Sub-slice H owns that).
+    // The post-floor selector (zero / one / many) is intact. Sub-slice H
+    // has now flipped the real floor to Available (proved above), so the
+    // bypass here is no longer standing in for a Planned feature — it is a
+    // deliberate isolation choice, the same one every "once the floor is
+    // passed" test in this file already makes, so these tests exercise the
+    // selector logic alone, independent of which tier or capability set is
+    // authenticated.
     // -----------------------------------------------------------------
 
     public function test_once_the_floor_is_passed_the_capability_check_still_applies(): void

@@ -78,22 +78,36 @@ final class PlatformFeatureRegistry
         // still denied by EntitlementManager, and no trial state exists.
         PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Available,
         // Implementation Contract 18, Sub-slice H — the entitlement flip,
-        // after Sub-slices A (foundation/Overview/readers), D (Keywords),
-        // E (Citations), F (Reviews) and G (technical/Website SEO audit)
-        // were each built, merged and independently verified, meeting the
-        // same evidentiary bar every flip above is held to: a real,
-        // executable, Business-scoped surface now exists for both keys
+        // after Sub-slice A (foundation/Overview/readers) and every
+        // sub-slice it fronts that is actually built were merged and
+        // independently verified, meeting the same evidentiary bar every
+        // flip above is held to: a real, executable, Business-scoped
+        // surface now exists for both keys
         // (App\Http\Controllers\Customer\Business\{SeoController,
         // SeoKeywordsController,SeoCitationController,SeoReviewsController,
         // SeoAuditController} and their seo_keywords/seo_citations/
         // seo_location_review_links/seo_review_requests/seo_audit_runs/
-        // seo_audit_findings schema). Sub-slices B/C (the GBP connection
-        // product discriminator and Search Console) are NOT built — no
-        // OD-2 authorization exists for either — so H proceeds without
-        // Search Console exactly as contract §15.H anticipates: no
-        // Search Console file, route or config exists, so nothing beyond
-        // it is exposed by this flip. Plan packaging already existed for
-        // both keys (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php:
+        // seo_audit_findings schema). Corrected per independent review —
+        // an earlier revision of this comment wrongly stated Sub-slice B
+        // was unbuilt:
+        //   - Sub-slice B (the GBP connection product discriminator, PR
+        //     #384) IS built and merged: GoogleConnectionProduct, the
+        //     product column on business_google_connections, product-
+        //     scoped GBP connection access, and a product-carrying OAuth
+        //     state, with a reserved (unused) SearchConsole discriminator
+        //     value.
+        //   - D (Keywords), E (Citations), F (Reviews) and G (technical/
+        //     Website SEO audit) are built.
+        //   - Sub-slice C (Search Console) is the one NOT built: its
+        //     external Google gates (OD-4 verification, OD-5 data-use
+        //     sign-off) remain unresolved, and Sub-slice B being merged
+        //     does not itself authorize C.
+        // So H performs only the final availability/navigation/
+        // integration flip for what is actually built, without pretending
+        // Search Console exists: no Search Console file, route or config
+        // exists, so nothing beyond the built sub-slices is exposed by
+        // this flip. Plan packaging already existed for both keys
+        // (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php:
         // SeoBasicVisibility Core+Growth+Agency, SeoModule Growth+Agency
         // only) and is unchanged; no new packaging or classification
         // migration is needed (contract §10.3).
