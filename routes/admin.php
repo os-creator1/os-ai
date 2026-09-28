@@ -829,6 +829,29 @@
         | constraint shape as {workspace} above.
         |
         */
+        /*
+        |--------------------------------------------------------------------------
+        | Public marketing homepage content (Public Marketing Homepage contract)
+        |--------------------------------------------------------------------------
+        |
+        | Owner-editable hero copy, FAQ, and video testimonial slots for the
+        | public marketing homepage. Gated by the existing 'general settings'
+        | ability, same as branding.
+        |
+        */
+        Route::prefix('marketing-content')->name('marketing-content.')->group(function () {
+            Route::get('/', 'MarketingContentController@index')->name('index');
+            Route::post('hero', 'MarketingContentController@updateHero')->name('hero.update');
+
+            Route::post('faqs', 'MarketingContentController@storeFaq')->name('faqs.store');
+            Route::put('faqs/{faq}', 'MarketingContentController@updateFaq')->name('faqs.update');
+            Route::delete('faqs/{faq}', 'MarketingContentController@destroyFaq')->name('faqs.destroy');
+
+            Route::post('testimonials', 'MarketingContentController@storeTestimonial')->name('testimonials.store');
+            Route::post('testimonials/{testimonial}', 'MarketingContentController@updateTestimonial')->name('testimonials.update');
+            Route::delete('testimonials/{testimonial}', 'MarketingContentController@destroyTestimonial')->name('testimonials.destroy');
+        });
+
         Route::prefix('theme-presets')->name('theme-presets.')->group(function () {
             Route::get('/', 'PlatformThemePresetController@index')->name('index');
             Route::post('/', 'PlatformThemePresetController@store')->name('store');
