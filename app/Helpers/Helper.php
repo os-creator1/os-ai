@@ -927,6 +927,35 @@
                                 'icon'       => 'life-buoy',
                             ],
                             [
+                                // Phone Numbers + A2P lane — messaging
+                                // contract §13.4's tracking surface for
+                                // number port-out requests. Read-only;
+                                // 'admin_only' is the same additional
+                                // is_admin boundary the sibling entry above
+                                // uses, for the same reason.
+                                'url'        => url(config('app.admin_path') . '/messaging-port-out-requests'),
+                                'slug'       => config('app.admin_path') . '/messaging-port-out-requests',
+                                'name'       => 'Messaging Port-Out Requests',
+                                'i18n'       => 'Messaging Port-Out Requests',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'arrow-right-circle',
+                            ],
+                            [
+                                // Phone Numbers + A2P lane — messaging
+                                // contract §13.2/§13.3's suspended-number
+                                // release surface. Same 'admin_only'
+                                // boundary as its two siblings above, for
+                                // the same reason.
+                                'url'        => url(config('app.admin_path') . '/messaging-number-lifecycle'),
+                                'slug'       => config('app.admin_path') . '/messaging-number-lifecycle',
+                                'name'       => 'Messaging Number Lifecycle',
+                                'i18n'       => 'Messaging Number Lifecycle',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'pause-circle',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
                                 'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
                                 'name'   => 'Additional Slot Agreements',

@@ -217,6 +217,10 @@
             </x-card>
         @endif
     @endif
+
+    <div class="mt-2">
+        @include('customer.settings.text-messaging._port-out-card')
+    </div>
 @endsection
 
 @section('page-script')
