@@ -4,11 +4,15 @@ namespace Tests\Feature\Workspace;
 
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\PlatformBilling\PlatformSubscriptionManager;
 use App\Models\Business;
+use App\Models\PlatformSubscription;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
+use Tests\Feature\PlatformBilling\Concerns\CreatesPlatformSubscriptions;
 use Tests\TestCase;
 
 /**
@@ -22,10 +26,19 @@ use Tests\TestCase;
  * pointed straight back to this same route — an infinite loop, since
  * draftClientActivationUrl() is Agency-invited-client only. Root cause:
  * nothing in the product ever activated a self-signup Business at all.
+ *
+ * ChatGPT review correction — an assigned plan alone does not prove this is
+ * an old broken V1 self-signup: Contract 21 explicitly supports
+ * complimentary/manually-assigned Workspaces with no Stripe subscription at
+ * all. The self-heal below therefore also requires PROVENANCE — a local
+ * PlatformSubscription for this exact Workspace whose current status still
+ * grantsAccess() — never used as a feature/access authority (that stays
+ * workspace_plan_assignments alone), only as proof this specific Draft
+ * Business is a paid V1 self-signup the pre-fix defect stranded.
  */
 class SelfSignupBusinessActivationRedirectTest extends TestCase
 {
-    use CreatesCustomerContextFixtures;
+    use CreatesPlatformSubscriptions;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -34,19 +47,29 @@ class SelfSignupBusinessActivationRedirectTest extends TestCase
 
         $this->platformAdminId();
         $this->ensureRequiredAppConfigRowsExist();
+        $this->bindFakeStripe();
     }
 
     /**
+     * The realistic stuck-account shape: a real assigned Growth plan AND a
+     * real, provider-confirmed, access-granting local PlatformSubscription
+     * for the same Workspace (subscribedWorkspace() drives the actual §7
+     * signup spine — start checkout, complete it, confirm from provider
+     * truth, assign the plan) — with the Business forced back to Draft to
+     * reproduce exactly what the pre-fix defect left behind: everything
+     * else about this account is genuinely paid, only the Business was
+     * never activated.
+     *
      * @return array{customer: \App\Models\Customer, business: Business, workspace: \App\Models\Workspace}
      */
     private function stuckSelfSignupAccount(): array
     {
-        $fixture = $this->createIndependentWorkspaceBusiness(status: BusinessStatus::Draft);
-        app(EntitlementManager::class)->assignFirstPlan(
-            $fixture['workspace'], WorkspacePlanTier::Growth, $this->platformAdminId(), 'test fixture', true, 0
-        );
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $business = $this->addBusiness($fixture['customer'], $fixture['workspace'], 'Stuck Business', BusinessStatus::Draft);
 
-        return $fixture;
+        $this->assertTrue($fixture['subscription']->status->grantsAccess(), 'Fixture sanity: the subscription must genuinely grant access.');
+
+        return ['customer' => $fixture['customer'], 'business' => $business, 'workspace' => $fixture['workspace']];
     }
 
     public function test_a_stuck_self_signup_account_is_self_healed_and_reaches_business_settings(): void
@@ -83,14 +106,58 @@ class SelfSignupBusinessActivationRedirectTest extends TestCase
     }
 
     /**
+     * ChatGPT review correction (Finding 2) — a complimentary or otherwise
+     * manually-assigned Workspace (Contract 21's own supported shape) has a
+     * real WorkspacePlanAssignment but NO PlatformSubscription row at all:
+     * there is no provider-confirmed V1 signup this Draft Business could be
+     * the stranded remainder of. Visiting this page must never activate it.
+     */
+    public function test_a_complimentary_assigned_workspace_with_no_subscription_is_never_self_healed(): void
+    {
+        $fixture = $this->createIndependentWorkspaceBusiness(status: BusinessStatus::Draft);
+        app(EntitlementManager::class)->assignFirstPlan(
+            $fixture['workspace'], WorkspacePlanTier::Growth, $this->platformAdminId(), 'complimentary fixture', true, 0
+        );
+
+        $this->authenticateAs($fixture['customer']);
+
+        $response = $this->get(route('customer.workspaces.show', $fixture['workspace']->uid));
+
+        $response->assertRedirect(route('user.home'));
+        $this->assertSame(BusinessStatus::Draft, Business::find($fixture['business']->id)->status);
+    }
+
+    /**
+     * ChatGPT review correction (Finding 2) — a PlatformSubscription that
+     * exists but whose CURRENT local status no longer grantsAccess() (here,
+     * Canceled) proves the opposite of what the self-heal requires: this
+     * account is not, or no longer, paid. It must not be waved through
+     * merely because a subscription row happens to exist.
+     */
+    public function test_a_non_granting_subscription_is_never_self_healed(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $business = $this->addBusiness($fixture['customer'], $fixture['workspace'], 'Lapsed Business', BusinessStatus::Draft);
+        $fixture['subscription']->forceFill(['status' => PlatformSubscriptionStatus::Canceled])->save();
+
+        $this->authenticateAs($fixture['customer']);
+
+        $response = $this->get(route('customer.workspaces.show', $fixture['workspace']->uid));
+
+        $response->assertRedirect(route('user.home'));
+        $this->assertSame(BusinessStatus::Draft, Business::find($business->id)->status);
+    }
+
+    /**
      * A genuine Agency-managed Client Workspace must never be self-healed
      * through this path — activation there is deliberately the client
      * owner's own explicit confirmation step over real placeholder data
-     * (ClientBusinessActivationController), never an automatic flip. This
-     * constructs the (currently synthetic, since Client Workspaces carry no
-     * billing today) edge case of an assigned plan coexisting with an
-     * active relationship, to prove the relationship check really does
-     * take precedence over the self-heal.
+     * (ClientBusinessActivationController), never an automatic flip. Gives
+     * the Client Workspace a real, access-granting PlatformSubscription too
+     * (the (currently synthetic, since Client Workspaces carry no billing
+     * today) provenance the self-heal would otherwise accept), so the
+     * relationship check is proven to take precedence in its own right,
+     * never merely riding on a missing subscription.
      */
     public function test_an_agency_managed_client_workspace_is_never_self_healed(): void
     {
@@ -99,6 +166,7 @@ class SelfSignupBusinessActivationRedirectTest extends TestCase
         app(EntitlementManager::class)->assignFirstPlan(
             $managed['clientWorkspace'], WorkspacePlanTier::Growth, $this->platformAdminId(), 'test fixture', true, 0
         );
+        $this->givePlatformSubscription($managed['clientWorkspace'], PlatformSubscriptionStatus::Active);
 
         $this->authenticateAs($managed['clientOwner']);
 
@@ -106,5 +174,30 @@ class SelfSignupBusinessActivationRedirectTest extends TestCase
 
         $response->assertRedirect(route('user.home'));
         $this->assertSame(BusinessStatus::Draft, Business::find($managed['clientBusiness']->id)->status);
+    }
+
+    /**
+     * A real, provider-confirmed PlatformSubscription for a Workspace that
+     * already has its plan assigned some other way (assignFirstPlan()
+     * directly, not through Checkout) — drives the same startCheckout() /
+     * completeCheckout() / confirmCheckoutSession() spine subscribedWorkspace()
+     * uses internally, just against an EXISTING Workspace rather than a
+     * freshly-created one, so every NOT-NULL/unique column
+     * (local_idempotency_key, billing_cycle_snapshot, uid, ...) is filled
+     * exactly as it would be in production. Used only to prove the
+     * self-heal's relationship-check independently of the "no subscription
+     * at all" confound — never a realistic signup fixture on its own.
+     */
+    private function givePlatformSubscription(Workspace $workspace, PlatformSubscriptionStatus $status): PlatformSubscription
+    {
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth);
+        $manager = app(PlatformSubscriptionManager::class);
+
+        $session = $manager->startCheckout($workspace, $catalog, 'owner@example.test', 'https://app.test/done', 'https://app.test/cancel');
+        $this->stripe->completeCheckout($session->sessionId);
+        $subscription = $manager->confirmCheckoutSession($session->sessionId);
+        $subscription->forceFill(['status' => $status])->save();
+
+        return $subscription->refresh();
     }
 }

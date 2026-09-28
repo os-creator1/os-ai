@@ -44,6 +44,7 @@ use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Entitlement\WorkspacePlanPresenter;
 use App\Library\Navigation\CustomerMenuBuilder;
 use App\Library\PlatformBilling\CustomerSubscriptionPresenter;
+use App\Library\PlatformBilling\PlatformSubscriptionManager;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\AccountFrameAccess;
@@ -99,6 +100,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly BillingProfileManager $billingProfileManager,
         private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
         private readonly BusinessManager $businessManager,
+        private readonly PlatformSubscriptionManager $platformSubscriptionManager,
     ) {
     }
 
@@ -172,26 +174,32 @@ class WorkspaceController extends CustomerBaseController
             $notYetActive = $this->accessibleBusinesses($workspace, $userId);
 
             if ($notYetActive->isNotEmpty()) {
-                // Contract 21 §7 correction — reaching this branch already
-                // means the Workspace holds an assigned, gate-passing
-                // Core/Growth plan: isBusinessFirstAccount() above requires a
-                // resolved tier, which getWorkspaceEntitlementSummary() only
-                // ever returns for an assigned Workspace, and
-                // CustomerAccountAccessGate already refused an unusable
-                // assignment before this controller ever ran. So for a
-                // genuine self-signup Workspace (never an Agency-managed
-                // Client one — that keeps its own existing
-                // draftClientActivationUrl() path), the ONLY reason its one
-                // Business is still Draft is the pre-fix defect: nothing
-                // ever activated a self-signup Business at all
-                // (V1SignupManager::activateFromConfirmedSubscription() now
-                // does). Self-heal it here, the same idempotent step that
-                // seam performs, instead of sending the owner to Home —
-                // whose own primary action for this exact state was this
-                // very route (AccountHomePresenter::createUrl()), an
-                // infinite loop with no escape hatch.
+                // ChatGPT review correction — reaching this branch means the
+                // Workspace holds an assigned, gate-passing Core/Growth plan
+                // (isBusinessFirstAccount() above requires a resolved tier),
+                // but an assigned plan alone does not prove this is an old
+                // broken V1 self-signup: Contract 21 explicitly supports
+                // complimentary/manually-assigned Workspaces with no Stripe
+                // subscription at all, and those must never be silently
+                // activated just because the owner opened this page.
+                // workspace_plan_assignments stays the ONE access/entitlement
+                // authority — nothing here asks PlatformSubscription what
+                // features this Workspace gets. The subscription is read
+                // purely as PROVENANCE: proof this specific Draft Business is
+                // one of the paid V1 self-signups V1SignupManager::
+                // activateFromConfirmedSubscription() now activates on its
+                // own, and which this pre-fix defect left permanently stuck
+                // (nothing else in the product ever activated one). Only a
+                // local subscription row whose CURRENT status still
+                // grantsAccess() counts — a canceled, unpaid or paused one
+                // proves the opposite: this account is not, or no longer,
+                // paid, and must not be waved through.
+                $subscription = $this->platformSubscriptionManager->findForWorkspace($workspace);
+
                 if ($roleKey === 'owner'
                     && $notYetActive->count() === 1
+                    && $subscription !== null
+                    && $subscription->status->grantsAccess()
                     && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace((int) $workspace->id) === null) {
                     $draft = $notYetActive->first();
                     $this->businessManager->activateForConfirmedSignup($draft);
