@@ -2,6 +2,7 @@
 
 namespace App\Library\Calendar\ExternalCalendar\Contracts;
 
+use App\DTO\Calendar\ExternalCalendarNotificationRegistration;
 use App\DTO\Calendar\ExternalCalendarSyncPage;
 use App\DTO\Calendar\ExternalCalendarTokenGrant;
 use App\Enums\Calendar\ExternalCalendarProvider;
@@ -49,4 +50,26 @@ interface CalendarProviderClient
      * @throws ExternalCalendarProviderException
      */
     public function fetchIncrementalBusy(string $accessToken, string $cursor): ExternalCalendarSyncPage;
+
+    /**
+     * Review correction, §11/§12.F — establish the provider's own push
+     * mechanism (Google `events.watch`, Microsoft Graph `POST /subscriptions`)
+     * so the provider actually calls this application's webhook endpoint.
+     * $proofToken is echoed back by the provider on every later notification
+     * (Google's channel `token` header, Microsoft's `clientState`) and MUST
+     * be verified there before any pull.
+     *
+     * @throws ExternalCalendarProviderException
+     */
+    public function registerNotifications(string $accessToken, string $notificationUrl, string $proofToken, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration;
+
+    /**
+     * Best-effort provider-side teardown (Google `channels.stop`, Microsoft
+     * Graph `DELETE /subscriptions/{id}`). The caller treats any failure
+     * here as non-fatal — local credential/state destruction must never
+     * depend on this succeeding.
+     *
+     * @throws ExternalCalendarProviderException
+     */
+    public function unregisterNotifications(string $accessToken, string $registrationId, ?string $channelId): void;
 }

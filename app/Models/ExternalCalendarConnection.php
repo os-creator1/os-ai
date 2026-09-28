@@ -53,6 +53,9 @@ class ExternalCalendarConnection extends Model
         'revoked_at',
         'last_refreshed_at',
         'lock_version',
+        'notification_channel_id',
+        'notification_registration_id',
+        'notification_expires_at',
     ];
 
     protected $hidden = [
@@ -73,6 +76,7 @@ class ExternalCalendarConnection extends Model
         'revoked_at' => 'datetime',
         'last_refreshed_at' => 'datetime',
         'lock_version' => 'integer',
+        'notification_expires_at' => 'datetime',
     ];
 
     public function generateUid()

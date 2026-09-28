@@ -293,6 +293,17 @@ final class ExternalCalendarConnectionManager
                 'oauth_state_nonce' => null,
                 'oauth_state_expires_at' => null,
                 'failure_classification' => null,
+                // Review correction — the provider registration identity is
+                // exactly as much a piece of live authorization state as the
+                // credentials above: clearing it here (regardless of whether
+                // ExternalCalendarNotificationRegistrar::unregister()'s
+                // best-effort provider-side call succeeded) is what makes a
+                // stale, still-live provider registration harmless —
+                // ExternalCalendarWebhookController refuses any connection
+                // whose state is not Active before it ever reads these.
+                'notification_channel_id' => null,
+                'notification_registration_id' => null,
+                'notification_expires_at' => null,
             ];
 
             $attributes[$target === ExternalCalendarConnectionState::Revoked ? 'revoked_at' : 'disconnected_at'] = now();

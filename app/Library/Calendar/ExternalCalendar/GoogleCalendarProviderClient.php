@@ -3,6 +3,7 @@
 namespace App\Library\Calendar\ExternalCalendar;
 
 use App\DTO\Calendar\ExternalCalendarBusyEvent;
+use App\DTO\Calendar\ExternalCalendarNotificationRegistration;
 use App\DTO\Calendar\ExternalCalendarSyncPage;
 use App\DTO\Calendar\ExternalCalendarTokenGrant;
 use App\Enums\Calendar\ExternalCalendarProvider;
@@ -11,6 +12,7 @@ use App\Library\Calendar\ExternalCalendar\Contracts\CalendarProviderClient;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -35,6 +37,10 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
     private const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 
     private const EVENTS_ENDPOINT = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+
+    private const WATCH_ENDPOINT = 'https://www.googleapis.com/calendar/v3/calendars/primary/events/watch';
+
+    private const CHANNELS_STOP_ENDPOINT = 'https://www.googleapis.com/calendar/v3/channels/stop';
 
     public function provider(): ExternalCalendarProvider
     {
@@ -178,6 +184,57 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
         return new ExternalCalendarSyncPage($events, $nextSyncToken ?? $cursor, true);
     }
 
+    /**
+     * https://developers.google.com/calendar/api/guides/push — `events.watch`
+     * on the primary calendar. Google echoes `id` back as `X-Goog-Channel-ID`
+     * and `token` back as `X-Goog-Channel-Token` on every notification; the
+     * response's `resourceId` (opaque, provider-assigned) is required by
+     * `channels.stop` and is NOT the same as `id`. `expiration` is optional
+     * on the request (ms-epoch) — Google may grant a shorter one than asked.
+     */
+    public function registerNotifications(string $accessToken, string $notificationUrl, string $proofToken, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        $channelId = (string) Str::uuid();
+
+        $response = $this->postJsonAuthed($accessToken, self::WATCH_ENDPOINT, [
+            'id' => $channelId,
+            'type' => 'web_hook',
+            'address' => $notificationUrl,
+            'token' => $proofToken,
+            'expiration' => (string) $requestedExpiry->clone()->utc()->getTimestampMs(),
+        ]);
+
+        $resourceId = $response['resourceId'] ?? null;
+
+        if (! is_string($resourceId) || $resourceId === '') {
+            throw ExternalCalendarProviderException::unexpectedResponse();
+        }
+
+        $grantedExpiration = isset($response['expiration']) && is_string($response['expiration'])
+            ? Carbon::createFromTimestampMs((int) $response['expiration'])->utc()
+            : $requestedExpiry->clone()->utc();
+
+        return new ExternalCalendarNotificationRegistration($resourceId, $channelId, $grantedExpiration);
+    }
+
+    /**
+     * https://developers.google.com/calendar/api/guides/push#stopping-notifications
+     * — `channels.stop` needs BOTH the channel id and the resourceId; a
+     * missing channel id (nothing was ever successfully registered) is a
+     * harmless no-op, never an error.
+     */
+    public function unregisterNotifications(string $accessToken, string $registrationId, ?string $channelId): void
+    {
+        if ($channelId === null || $channelId === '') {
+            return;
+        }
+
+        $this->postJsonAuthed($accessToken, self::CHANNELS_STOP_ENDPOINT, [
+            'id' => $channelId,
+            'resourceId' => $registrationId,
+        ]);
+    }
+
     private function normalizeEvent(array $item): ExternalCalendarBusyEvent
     {
         $id = (string) ($item['id'] ?? '');
@@ -217,6 +274,21 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
                 ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
                 ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
                 ->post($url, $form);
+        } catch (Throwable) {
+            throw ExternalCalendarProviderException::timeout();
+        }
+
+        return $this->classified($response);
+    }
+
+    /** @return array<string, mixed> */
+    private function postJsonAuthed(string $accessToken, string $url, array $body): array
+    {
+        try {
+            $response = Http::withToken($accessToken)
+                ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
+                ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
+                ->post($url, $body);
         } catch (Throwable) {
             throw ExternalCalendarProviderException::timeout();
         }

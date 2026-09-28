@@ -7,6 +7,7 @@ use App\Exceptions\Calendar\ExternalCalendarConcurrencyException;
 use App\Exceptions\Calendar\ExternalCalendarConfigurationException;
 use App\Exceptions\Calendar\ExternalCalendarProviderException;
 use App\Library\Calendar\ExternalCalendar\ExternalCalendarConnectionManager;
+use App\Library\Calendar\ExternalCalendar\ExternalCalendarNotificationRegistrar;
 use App\Library\Calendar\ExternalCalendar\ExternalCalendarOAuthStateSigner;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -38,6 +39,7 @@ class ExternalCalendarConnectionController extends CustomerBaseController
     public function __construct(
         private readonly ExternalCalendarConnectionManager $connections,
         private readonly ExternalCalendarOAuthStateSigner $stateSigner,
+        private readonly ExternalCalendarNotificationRegistrar $registrar,
     ) {
     }
 
@@ -132,6 +134,13 @@ class ExternalCalendarConnectionController extends CustomerBaseController
             return $this->redirectWithError($exception->userMessage());
         }
 
+        // Best-effort, non-fatal: registers the actual provider push
+        // channel/subscription so notifications start arriving as close to
+        // immediately as possible. A failure here never fails the connect
+        // flow itself — the scheduled sweep retries registration, and
+        // polling remains the fallback either way.
+        $this->registrar->ensureRegistered($connection->fresh(), force: true);
+
         return redirect()
             ->route('customer.calendar-connection.show')
             ->with(['status' => 'success', 'message' => 'Calendar connected.']);
@@ -144,6 +153,13 @@ class ExternalCalendarConnectionController extends CustomerBaseController
         if ($connection === null) {
             return redirect()->route('customer.calendar-connection.show');
         }
+
+        // Best-effort provider-side teardown BEFORE local credentials are
+        // cleared — unregister() still needs a valid access token, which
+        // disconnect() below is about to destroy. If this fails, local
+        // destruction proceeds regardless (see ExternalCalendarNotificationRegistrar's
+        // own docblock and ExternalCalendarConnectionManager::endConnection()).
+        $this->registrar->unregister($connection);
 
         try {
             $this->connections->disconnect($connection, (int) Auth::id());

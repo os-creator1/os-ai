@@ -61,4 +61,18 @@ return [
         'stale_after_consecutive_failures' => env('CALENDAR_EXTERNAL_STALE_AFTER_FAILURES', 5),
     ],
 
+    // Review correction, §11/§12.F — provider push-notification channel
+    // (Google `events.watch`) / subscription (Microsoft Graph
+    // `POST /subscriptions`) lifetime. Google documents no fixed maximum for
+    // the `events` resource; Graph's own documented maximum for the `event`
+    // resource is exactly 10,080 minutes (7 days) — both default to that
+    // same conservative figure. `renewal_lead_hours` is how far ahead of the
+    // provider-granted expiration the scheduled sweep renews, so polling
+    // never silently becomes the only thing working.
+    'notifications' => [
+        'google_expiration_minutes' => env('CALENDAR_EXTERNAL_GOOGLE_NOTIFICATION_MINUTES', 10080),
+        'outlook_expiration_minutes' => env('CALENDAR_EXTERNAL_OUTLOOK_NOTIFICATION_MINUTES', 10080),
+        'renewal_lead_hours' => env('CALENDAR_EXTERNAL_NOTIFICATION_RENEWAL_LEAD_HOURS', 24),
+    ],
+
 ];

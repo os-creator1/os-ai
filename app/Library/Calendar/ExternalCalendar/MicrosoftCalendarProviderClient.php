@@ -3,6 +3,7 @@
 namespace App\Library\Calendar\ExternalCalendar;
 
 use App\DTO\Calendar\ExternalCalendarBusyEvent;
+use App\DTO\Calendar\ExternalCalendarNotificationRegistration;
 use App\DTO\Calendar\ExternalCalendarSyncPage;
 use App\DTO\Calendar\ExternalCalendarTokenGrant;
 use App\Enums\Calendar\ExternalCalendarProvider;
@@ -192,6 +193,65 @@ final class MicrosoftCalendarProviderClient implements CalendarProviderClient
         );
     }
 
+    /**
+     * https://learn.microsoft.com/graph/api/subscription-post-subscriptions
+     * — `POST /subscriptions` on `me/events`. `clientState` is REQUIRED and
+     * is echoed back verbatim on every notification body — this application
+     * sends its own deterministic ExternalCalendarWebhookToken HMAC as the
+     * value, so nothing new needs to be stored to verify it later. The
+     * granted `expirationDateTime` may be shorter than requested (the
+     * documented maximum for the `event` resource is 10,080 minutes / 7
+     * days) and is what the caller must persist and renew against.
+     */
+    public function registerNotifications(string $accessToken, string $notificationUrl, string $proofToken, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        $response = $this->postJsonAuthed($accessToken, self::GRAPH_BASE . '/subscriptions', [
+            'changeType' => 'created,updated,deleted',
+            'notificationUrl' => $notificationUrl,
+            'resource' => 'me/events',
+            'expirationDateTime' => $requestedExpiry->clone()->utc()->toIso8601ZuluString(),
+            'clientState' => $proofToken,
+        ]);
+
+        $id = $response['id'] ?? null;
+        $expirationDateTime = $response['expirationDateTime'] ?? null;
+
+        if (! is_string($id) || $id === '' || ! is_string($expirationDateTime)) {
+            throw ExternalCalendarProviderException::unexpectedResponse();
+        }
+
+        return new ExternalCalendarNotificationRegistration($id, null, Carbon::parse($expirationDateTime)->utc());
+    }
+
+    /**
+     * https://learn.microsoft.com/graph/api/subscription-delete
+     * — `DELETE /subscriptions/{id}`, 204 on success. A missing/already-gone
+     * subscription id is a harmless no-op, never an error.
+     */
+    public function unregisterNotifications(string $accessToken, string $registrationId, ?string $channelId): void
+    {
+        if ($registrationId === '') {
+            return;
+        }
+
+        try {
+            $response = Http::withToken($accessToken)
+                ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
+                ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
+                ->delete(self::GRAPH_BASE . '/subscriptions/' . $registrationId);
+        } catch (Throwable) {
+            throw ExternalCalendarProviderException::timeout();
+        }
+
+        // 404 here means the subscription is already gone (expired,
+        // provider-side cleanup, or already deleted) — not a failure.
+        if ($response->status() === 404) {
+            return;
+        }
+
+        $this->classified($response);
+    }
+
     private function authEndpoint(string $segment): string
     {
         $tenant = (string) config('calendar_external.outlook.tenant', 'common');
@@ -221,6 +281,21 @@ final class MicrosoftCalendarProviderClient implements CalendarProviderClient
                 ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
                 ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
                 ->post($url, $form);
+        } catch (Throwable) {
+            throw ExternalCalendarProviderException::timeout();
+        }
+
+        return $this->classified($response);
+    }
+
+    /** @return array<string, mixed> */
+    private function postJsonAuthed(string $accessToken, string $url, array $body): array
+    {
+        try {
+            $response = Http::withToken($accessToken)
+                ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
+                ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
+                ->post($url, $body);
         } catch (Throwable) {
             throw ExternalCalendarProviderException::timeout();
         }

@@ -2,12 +2,14 @@
 
 namespace Tests\Feature\Calendar\ExternalCalendar\Fakes;
 
+use App\DTO\Calendar\ExternalCalendarNotificationRegistration;
 use App\DTO\Calendar\ExternalCalendarSyncPage;
 use App\DTO\Calendar\ExternalCalendarTokenGrant;
 use App\Enums\Calendar\ExternalCalendarProvider;
 use App\Exceptions\Calendar\ExternalCalendarProviderException;
 use App\Library\Calendar\ExternalCalendar\Contracts\CalendarProviderClient;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Str;
 
 /**
  * Implementation Contract 15 §12.F — a deterministic fake provider client
@@ -44,6 +46,22 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
 
     /** @var array<int, string> access tokens the caller passed to a fetch* call. */
     public array $observedAccessTokens = [];
+
+    public ?ExternalCalendarNotificationRegistration $registrationResult = null;
+
+    public ?ExternalCalendarProviderException $throwOnRegister = null;
+
+    public int $registerCalls = 0;
+
+    /** @var array<int, array{notificationUrl: string, proofToken: string, requestedExpiry: CarbonInterface}> */
+    public array $registerRequests = [];
+
+    public int $unregisterCalls = 0;
+
+    /** @var array<int, array{registrationId: string, channelId: ?string}> */
+    public array $unregisterRequests = [];
+
+    public ?ExternalCalendarProviderException $throwOnUnregister = null;
 
     public function __construct(private readonly ExternalCalendarProvider $providerEnum)
     {
@@ -105,6 +123,32 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
         $this->observedAccessTokens[] = $accessToken;
 
         return $this->dequeue($this->incrementalBusyQueue, new ExternalCalendarSyncPage([], $cursor, true));
+    }
+
+    public function registerNotifications(string $accessToken, string $notificationUrl, string $proofToken, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        $this->registerCalls++;
+        $this->registerRequests[] = ['notificationUrl' => $notificationUrl, 'proofToken' => $proofToken, 'requestedExpiry' => $requestedExpiry];
+
+        if ($this->throwOnRegister !== null) {
+            throw $this->throwOnRegister;
+        }
+
+        return $this->registrationResult ?? new ExternalCalendarNotificationRegistration(
+            registrationId: 'fake-registration-' . Str::uuid(),
+            channelId: $this->providerEnum === ExternalCalendarProvider::Google ? 'fake-channel-' . Str::uuid() : null,
+            expiresAt: $requestedExpiry,
+        );
+    }
+
+    public function unregisterNotifications(string $accessToken, string $registrationId, ?string $channelId): void
+    {
+        $this->unregisterCalls++;
+        $this->unregisterRequests[] = ['registrationId' => $registrationId, 'channelId' => $channelId];
+
+        if ($this->throwOnUnregister !== null) {
+            throw $this->throwOnUnregister;
+        }
     }
 
     /** @param array<int, ExternalCalendarSyncPage|ExternalCalendarProviderException> $queue */
