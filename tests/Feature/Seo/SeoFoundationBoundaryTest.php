@@ -27,73 +27,73 @@ class SeoFoundationBoundaryTest extends TestCase
     use CreatesSeoFixtures;
 
     // -----------------------------------------------------------------
-    // Planned => fail-closed through entitlement (RFC-004).
+    // Entitlement, now that Sub-slice H has flipped seo_basic_visibility
+    // to Available for every tier (RFC-004).
     // -----------------------------------------------------------------
 
-    public function test_both_seo_features_remain_planned(): void
+    public function test_both_seo_features_are_available_after_sub_slice_hs_flip(): void
     {
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
     }
 
-    public function test_the_overview_is_a_404_for_every_tier_while_the_feature_is_planned(): void
+    /**
+     * seo_basic_visibility is Core+Growth+Agency (contract §5.1), so the
+     * real controller — no bypass — now reaches every tier.
+     */
+    public function test_the_overview_reaches_every_tier_now_the_feature_is_available(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
             $this->createLocation($business);
-            // Even a fully-permitted owner with full tenancy is refused: the
-            // real controller is unreachable until Sub-slice H flips it.
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get($this->seoUrl($workspace, $business))->assertNotFound();
+            $this->get($this->seoUrl($workspace, $business))->assertOk();
         }
     }
 
-    public function test_the_bare_entry_is_a_404_for_every_tier_while_the_feature_is_planned(): void
+    public function test_the_bare_entry_reaches_every_tier_now_the_feature_is_available(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
-            [$customer, $business] = $this->entitledTenant($tier);
+            [$customer, $business, $workspace] = $this->entitledTenant($tier);
             $this->createLocation($business);
-            // A fully-permitted owner with full tenancy: still no SEO surface.
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get(route('customer.seo.index'))->assertNotFound();
+            // Exactly one accessible Business redirects straight through
+            // (the same zero/one/many selector proven with the bypass
+            // below, now exercised through the real, Available floor).
+            $this->get(route('customer.seo.index'))
+                ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
         }
     }
 
-    public function test_the_bare_entry_is_a_404_without_view_seo_too_so_the_surface_is_not_revealed(): void
+    /**
+     * The availability floor no longer needs to hide the surface — it is
+     * genuinely available — so the capability gate now behaves exactly
+     * like every other SEO/GBP route: holding view_seo reaches the bare
+     * entry, lacking it is a 401 (never a 404, which would falsely claim
+     * the Business itself does not exist).
+     */
+    public function test_the_capability_gate_applies_independently_once_the_feature_is_available(): void
     {
-        // The availability floor runs BEFORE the capability check. If it did
-        // not, a caller lacking view_seo would get a 401 while one holding it
-        // got a 404 — and that difference would prove the surface exists.
-        [$holder, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        [$holder, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $this->createLocation($business);
         [$lacking] = $this->entitledTenant(WorkspacePlanTier::Growth);
 
         $this->authenticateAsSeoCustomer($holder);
-        $holderStatus = $this->get(route('customer.seo.index'))->assertNotFound()->getStatusCode();
+        $this->get(route('customer.seo.index'))
+            ->assertRedirect(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]));
 
         $this->authenticateAsSeoCustomer($lacking, ['view_google_business_profile', 'website']);
-        $lackingStatus = $this->get(route('customer.seo.index'))->assertNotFound()->getStatusCode();
+        $this->get(route('customer.seo.index'))->assertUnauthorized();
 
-        $this->assertSame($holderStatus, $lackingStatus, 'Holding view_seo must make no observable difference while Planned.');
-
-        // A customer with no tenancy and no SEO permission at all: same answer.
+        // A stranger with no tenancy and no SEO permission at all: also 401
+        // (Route::has('customer.seo.index') carries no tenant parameter, so
+        // there is no Business to 404 against — the capability gate alone
+        // answers).
         $stranger = $this->createCustomer();
         $this->authenticateAsSeoCustomer($stranger, []);
-        $this->get(route('customer.seo.index'))->assertNotFound();
-    }
-
-    public function test_the_bare_entry_exposes_no_route_into_the_overview_while_planned(): void
-    {
-        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
-        $this->authenticateAsSeoCustomer($customer);
-
-        $content = $this->get(route('customer.seo.index'))->assertNotFound()->getContent();
-
-        $this->assertStringNotContainsString('Choose a Business to continue', $content);
-        $this->assertStringNotContainsString('No Business available yet', $content);
-        $this->assertStringNotContainsString(route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]), $content);
+        $this->get(route('customer.seo.index'))->assertUnauthorized();
     }
 
     public function test_the_production_controller_uses_the_registry_as_its_availability_floor(): void
@@ -191,10 +191,25 @@ class SeoFoundationBoundaryTest extends TestCase
     // Independence: tenancy, entitlement and capability are separate.
     // -----------------------------------------------------------------
 
+    /**
+     * seo_basic_visibility is now Available for every tier, so there is no
+     * plan tier left that is naturally unentitled to the Overview (unlike
+     * seo_module, which SeoAuditBoundaryTest/etc. still prove Core cannot
+     * reach). A genuine loss of entitlement is therefore simulated the same
+     * way a real plan downgrade would produce it — disableBusinessFeature()
+     * — rather than relying on a tier that no longer exists.
+     */
     public function test_the_unentitled_real_controller_refuses_even_with_tenancy_and_capability(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $this->authenticateAsSeoCustomer($customer);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->disableBusinessFeature(
+            $business,
+            PlatformFeature::SeoBasicVisibility,
+            (int) $customer->user_id,
+            'SeoFoundationBoundaryTest coverage.',
+        );
 
         $this->get($this->seoUrl($workspace, $business))->assertNotFound();
     }

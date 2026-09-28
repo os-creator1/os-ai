@@ -77,9 +77,29 @@ final class PlatformFeatureRegistry
         // and is unchanged; an unassigned, inactive or suspended plan is
         // still denied by EntitlementManager, and no trial state exists.
         PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Planned,
+        // Implementation Contract 18, Sub-slice H — the entitlement flip,
+        // after Sub-slices A (foundation/Overview/readers), D (Keywords),
+        // E (Citations), F (Reviews) and G (technical/Website SEO audit)
+        // were each built, merged and independently verified, meeting the
+        // same evidentiary bar every flip above is held to: a real,
+        // executable, Business-scoped surface now exists for both keys
+        // (App\Http\Controllers\Customer\Business\{SeoController,
+        // SeoKeywordsController,SeoCitationController,SeoReviewsController,
+        // SeoAuditController} and their seo_keywords/seo_citations/
+        // seo_location_review_links/seo_review_requests/seo_audit_runs/
+        // seo_audit_findings schema). Sub-slices B/C (the GBP connection
+        // product discriminator and Search Console) are NOT built — no
+        // OD-2 authorization exists for either — so H proceeds without
+        // Search Console exactly as contract §15.H anticipates: no
+        // Search Console file, route or config exists, so nothing beyond
+        // it is exposed by this flip. Plan packaging already existed for
+        // both keys (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php:
+        // SeoBasicVisibility Core+Growth+Agency, SeoModule Growth+Agency
+        // only) and is unchanged; no new packaging or classification
+        // migration is needed (contract §10.3).
+        PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Available,
         PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
-        PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Planned,

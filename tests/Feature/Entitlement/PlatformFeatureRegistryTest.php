@@ -29,9 +29,7 @@ class PlatformFeatureRegistryTest extends TestCase
     {
         $planned = [
             PlatformFeature::Forms,
-            PlatformFeature::SeoBasicVisibility,
             PlatformFeature::AdsBasicVisibility,
-            PlatformFeature::SeoModule,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
             PlatformFeature::WhiteLabel,
@@ -41,10 +39,12 @@ class PlatformFeatureRegistryTest extends TestCase
             // asserts it is Available.)
             // (PaymentsContracts left this list at Contract 17 Sub-slice G's final
             // flip; test_payments_contracts_is_available_after_sub_slice_gs_final_flip
-            // asserts it is Available.)
+            // asserts it is Available — merged in from origin/main, which
+            // independently fixed the same stale assertion this branch had
+            // found and documented as a pre-existing, out-of-scope defect.)
         ];
 
-        $this->assertCount(8, $planned);
+        $this->assertCount(6, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -76,6 +76,29 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PackagesProducts->value));
+    }
+
+    /**
+     * Implementation Contract 18, Sub-slice H: both SEO keys are Planned
+     * through Sub-slices A/D/E/F/G (schema, readers and full customer HTTP
+     * surfaces with no entitlement query ever answering yes), flipped to
+     * Available only once every built sub-slice's own focused tests and the
+     * cross-cutting entitlement/navigation/View-as matrix passed. Search
+     * Console (Sub-slices B/C) is not built, so this flip exposes nothing
+     * beyond what already exists: Overview, Keywords (Core+), and the
+     * Google Business Profile section (existing pages), Citations, Reviews,
+     * and the Website SEO audit (Growth+).
+     */
+    public function test_seo_features_are_available_after_sub_slice_hs_flip(): void
+    {
+        $this->assertSame('seo_basic_visibility', PlatformFeature::SeoBasicVisibility->value);
+        $this->assertSame('seo_module', PlatformFeature::SeoModule->value);
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoModule->value));
     }
 
     public function test_payments_contracts_is_available_after_sub_slice_gs_final_flip(): void

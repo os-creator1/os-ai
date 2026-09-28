@@ -58,7 +58,9 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'analytics', 'settings'] as $expected) {
+        // Contract 18 §5.1 — seo_basic_visibility is Core+Growth+Agency, so
+        // the SEO entry (Overview, Search keywords) is offered even here.
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
@@ -68,6 +70,16 @@ class CustomerNavigationTreeTest extends TestCase
 
         // The D-20 exemplar: Core's catalog excludes the GBP module.
         $this->assertNotContains('gbp', $keys, 'Core has no Get found.');
+
+        // Contract 18 §5.1 — seo_module (Site Audit, Citations, Reviews) is
+        // Growth+Agency only; Core keeps only the seo_basic_visibility
+        // children (Overview, Search keywords).
+        foreach (['seo-audit', 'seo-citations', 'seo-reviews'] as $growthOnly) {
+            $this->assertNotContains($growthOnly, $keys, "Core has no [{$growthOnly}].");
+        }
+        foreach (['seo-overview', 'seo-keywords'] as $basic) {
+            $this->assertContains($basic, $keys, "Core must still offer [{$basic}].");
+        }
     }
 
     /**
@@ -97,7 +109,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 
@@ -106,6 +118,7 @@ class CustomerNavigationTreeTest extends TestCase
         }
 
         $this->assertStringContainsString('Get found', $this->shellText($html));
+        $this->assertStringContainsString('Site Audit', $this->shellText($html));
     }
 
     /**
