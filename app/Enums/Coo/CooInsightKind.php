@@ -5,8 +5,10 @@ namespace App\Enums\Coo;
 /**
  * Contract §9.1 — what a cached COO insight is about.
  *
- * AI-3 writes only `PerformanceDiagnosis`. `MoveExplanation` is reserved by
- * the contract and deliberately unused until a slice defines its subject.
+ * AI-3 writes `PerformanceDiagnosis`. Contract 19 sub-slice 19.C activates
+ * `MoveExplanation`: an AI explanation of the deterministic
+ * NextBestMoveSelector pick (see NextBestMoveSubject for its subject_type/
+ * subject_id). Never a competing recommendation (R-1).
  */
 enum CooInsightKind: string
 {

@@ -192,6 +192,7 @@ return [
     'category_routes' => [
         'coo_diagnosis' => 'routine',
         'coo_interactive' => 'routine',
+        'coo_move_explanation' => 'routine',
         'conversation_compaction' => 'compaction',
         'website_generation' => 'routine',
         'campaign_message_draft' => 'routine',

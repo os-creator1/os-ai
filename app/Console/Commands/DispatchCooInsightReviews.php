@@ -11,14 +11,18 @@ use Illuminate\Console\Command;
 /**
  * Contract §8.2 (slice AI-3) — the scheduled COO insight triggers.
  *
- *   daily                   → E-1, "multi-signal change"
+ *   daily                   → E-1, "multi-signal change", plus Contract 19
+ *                             §12 19.C's MoveExplanation (same daily cadence:
+ *                             whether the currently selected move can be
+ *                             explained is worth re-asking once a day)
  *   daily --monthly         → E-3, "monthly deeper review" (scheduled once a month)
  *
  * It only queues. Each GenerateCooInsight decides for itself, off-request, in
  * the generator's cheapest-refusal-first order: AI off, not entitled, dormant,
  * condition not met (E-1: fewer than two material metrics or a rule explains
- * them; E-3: fingerprint unchanged since the last insight), identical facts
- * already cached. Most Businesses cost one entitlement check and nothing else.
+ * them; E-3: fingerprint unchanged since the last insight; MoveExplanation: no
+ * move currently selected), identical facts already cached. Most Businesses
+ * cost one entitlement check and nothing else.
  *
  * BOUNDED. Active Business ids arrive in keyset pages (id > the last seen),
  * never by OFFSET; --limit caps one invocation. With AI switched off the
@@ -52,7 +56,8 @@ class DispatchCooInsightReviews extends Command
             return self::INVALID;
         }
 
-        $trigger = $this->option('monthly') ? CooInsightTrigger::MonthlyReview : CooInsightTrigger::MultiSignalChange;
+        $monthly = (bool) $this->option('monthly');
+        $trigger = $monthly ? CooInsightTrigger::MonthlyReview : CooInsightTrigger::MultiSignalChange;
         $afterId = 0;
         $queued = 0;
 
@@ -71,6 +76,11 @@ class DispatchCooInsightReviews extends Command
             foreach ($ids as $id) {
                 $afterId = (int) $id;
                 GenerateCooInsight::dispatch((int) $id, $trigger->value);
+
+                if (! $monthly) {
+                    GenerateCooInsight::dispatch((int) $id, CooInsightTrigger::MoveExplanation->value);
+                }
+
                 $queued++;
             }
         }

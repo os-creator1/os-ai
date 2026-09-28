@@ -5,6 +5,7 @@ namespace App\Library\Coo\Insight;
 use App\Enums\Coo\CooInsightKind;
 use App\Enums\Coo\CooInsightOrigin;
 use App\Enums\Coo\CooInsightTrigger;
+use App\Enums\Dashboard\AttentionType;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Ai\AiBusinessActivityGate;
 use App\Library\Ai\AiGateway;
@@ -14,6 +15,7 @@ use App\Library\Ai\AiUsageLedgerManager;
 use App\Library\Ai\Enums\AiModelRoute;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Coo\Context\CooContextEnvelope;
+use App\Library\Coo\NextBestMoveSelector;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Business;
 use App\Models\CooInsight;
@@ -62,6 +64,7 @@ final class CooInsightGenerator
         private readonly AiUsageLedgerManager $ledger,
         private readonly EntitlementManager $entitlements,
         private readonly AiBusinessActivityGate $activity,
+        private readonly NextBestMoveSelector $moveSelector,
     ) {
     }
 
@@ -101,7 +104,7 @@ final class CooInsightGenerator
             return CooInsightOutcome::skipped(CooInsightOutcome::CONTEXT_MISMATCH);
         }
 
-        $kind = CooInsightKind::PerformanceDiagnosis;
+        $kind = $trigger->kind();
         $promptVersion = (int) config('coo.insight.prompt_version');
         $policyVersion = (int) config('coo.insight.policy_version');
 
@@ -112,7 +115,21 @@ final class CooInsightGenerator
         // whether or not anything is generated below.
         $this->invalidator->invalidateChangedSignals((int) $business->id, $kind, $facts->periodKey, $fingerprint, $promptVersion, $policyVersion);
 
-        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion, $envelope)) {
+        // Contract 19 §12 19.C — a MoveExplanation row is about whichever
+        // move NextBestMoveSelector currently picks (R-1: this reads that
+        // pick, it never influences it). Every other kind is about the
+        // Business itself, unchanged since AI-3.
+        $subject = $this->subjectFor($kind, $business, $envelope, $facts);
+
+        if (! $this->conditionHolds($trigger, $business, $facts, $fingerprint, $promptVersion, $policyVersion, $envelope, $subject)) {
+            return CooInsightOutcome::skipped(CooInsightOutcome::CONDITION_NOT_MET);
+        }
+
+        // subjectFor() returning null already failed conditionHolds() for
+        // MoveExplanation above; every other kind always returns non-null.
+        // This second check is belt-and-braces against that coupling ever
+        // drifting, not a live branch today.
+        if ($subject === null) {
             return CooInsightOutcome::skipped(CooInsightOutcome::CONDITION_NOT_MET);
         }
 
@@ -125,8 +142,8 @@ final class CooInsightGenerator
             'origin' => $origin->value,
             'actor_user_id' => $actorUserId,
             'kind' => $kind->value,
-            'subject_type' => CooInsight::SUBJECT_BUSINESS,
-            'subject_id' => (int) $business->id,
+            'subject_type' => $subject['type'],
+            'subject_id' => $subject['id'],
             'signal_fingerprint' => $fingerprint,
             'prompt_version' => $promptVersion,
             'policy_version' => $policyVersion,
@@ -152,7 +169,7 @@ final class CooInsightGenerator
                 category: $category,
                 lane: $trigger->lane(),
                 route: $this->route($trigger, $facts),
-                messages: $this->prompts->messages($facts),
+                messages: $this->prompts->messages($facts, $subject['explains']),
                 maxOutputTokens: max(1, (int) config('coo.insight.max_output_tokens')),
                 idempotencyKey: $keyPrefix . ($family['attempts'] + 1),
                 actorUserId: $actorUserId,
@@ -191,7 +208,9 @@ final class CooInsightGenerator
         try {
             $insight = CooInsight::query()->create($identity + $envelope->insightColumns() + [
                 'period_key' => $facts->periodKey,
-                'facts_snapshot' => $facts->forPrompt(),
+                'facts_snapshot' => $subject['explains'] === null
+                    ? $facts->forPrompt()
+                    : $facts->forPrompt() + ['explains' => $subject['explains']],
                 'output' => ['statements' => $statements],
                 'policy_version' => $policyVersion,
                 'model_route' => ($entry?->model_route ?? $this->route($trigger, $facts))->value,
@@ -259,10 +278,16 @@ final class CooInsightGenerator
         return $query->exists();
     }
 
-    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion, CooContextEnvelope $envelope): bool
+    /** @param  array{type: string, id: int, explains: ?string}|null  $subject */
+    private function conditionHolds(CooInsightTrigger $trigger, Business $business, CooInsightFacts $facts, string $fingerprint, int $promptVersion, int $policyVersion, CooContextEnvelope $envelope, ?array $subject): bool
     {
         return match ($trigger) {
-            // E-1, and E-2's "E-1 still holds afterwards".
+            // E-1, and E-2's "E-1 still holds afterwards". Contract 19 §3.3(14)
+            // suppresses PerformanceDiagnosis whenever a deterministic
+            // Attention/Opportunity account already exists — narrowed, not
+            // removed, by MoveExplanation's own arm below, which has no such
+            // check: an AI note may accompany a raised Attention item while
+            // the deterministic text stays primary (§12 19.C).
             CooInsightTrigger::MultiSignalChange, CooInsightTrigger::WorkFinished => count($facts->materialMetricKeys()) >= 2
                 && ! $facts->hasDeterministicExplanation(),
 
@@ -291,7 +316,46 @@ final class CooInsightGenerator
             // E-4 — the customer asked; the once-per-window limit is enforced
             // where they asked, before this job was ever queued.
             CooInsightTrigger::ExplainThisChange => true,
+
+            // Contract 19 §12 19.C — simply "is a move currently selected".
+            // Never hasDeterministicExplanation(): explaining a status
+            // exception is this trigger's entire purpose.
+            CooInsightTrigger::MoveExplanation => $subject !== null,
         };
+    }
+
+    /**
+     * Contract 19 §5.1, §12 19.C — the subject of the row this generation
+     * would write. Every kind but MoveExplanation is about the Business
+     * itself, exactly as AI-3 shipped it. A MoveExplanation row is about
+     * whichever move NextBestMoveSelector's own fixed order currently picks —
+     * this method reads that pick (via the same authorized facts/queue-head
+     * read the fact composition above already performed) and never decides
+     * it (R-1).
+     *
+     * @return array{type: string, id: int, explains: ?string}|null null only
+     *   for MoveExplanation, when nothing is currently selected.
+     */
+    private function subjectFor(CooInsightKind $kind, Business $business, CooContextEnvelope $envelope, CooInsightFacts $facts): ?array
+    {
+        if ($kind !== CooInsightKind::MoveExplanation) {
+            return ['type' => CooInsight::SUBJECT_BUSINESS, 'id' => (int) $business->id, 'explains' => null];
+        }
+
+        $queueHead = $this->factsReader->queueHead($business, $envelope);
+
+        $raised = array_values(array_filter(array_map(
+            static fn (string $value): ?AttentionType => AttentionType::tryFrom($value),
+            $facts->attention,
+        )));
+
+        $poolKey = $this->moveSelector->selectPoolKey($raised, $queueHead !== null);
+
+        if ($poolKey === null) {
+            return null;
+        }
+
+        return NextBestMoveSubject::forPoolKey($poolKey, $queueHead);
     }
 
     /**

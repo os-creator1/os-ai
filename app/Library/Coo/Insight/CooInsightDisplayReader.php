@@ -11,6 +11,7 @@ use App\Library\Ai\AiUsageReadModel;
 use App\Library\Ai\Enums\AiUsageState;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Coo\Context\CooContextEnvelope;
+use App\Library\Coo\NextBestMove;
 use App\Models\Business;
 use App\Models\CooInsight;
 use Illuminate\Support\Carbon;
@@ -65,7 +66,49 @@ final class CooInsightDisplayReader
             return null;
         }
 
-        $insight = CooInsight::query()
+        return $this->render(
+            $business,
+            $this->selectableInsight($business, $envelope, CooInsightKind::PerformanceDiagnosis, CooInsight::SUBJECT_BUSINESS, (int) $business->id, $range->cacheKey()),
+        );
+    }
+
+    /**
+     * Contract 19 §12 19.C — the cached explanation, if any, of the move
+     * NextBestMoveSelector already picked. `$move` is never trusted as an
+     * authorization claim; it only names which subject to look for. Same
+     * R-22/R-31/R-32 discipline as forHome(): exact fingerprint equality, no
+     * fallback, null when nothing matches.
+     *
+     * @return array{statements: array<int, array{class: string, label: string, text: string}>, updated: string, generated_at: string}|null
+     */
+    public function forNextBestMove(Business $business, NextBestMove $move, AnalyticsDateRange $range, CooContextEnvelope $envelope): ?array
+    {
+        if ($envelope->businessId !== (int) $business->id) {
+            return null;
+        }
+
+        $subject = NextBestMoveSubject::forMove($move);
+
+        if ($subject === null) {
+            return null;
+        }
+
+        return $this->render(
+            $business,
+            $this->selectableInsight($business, $envelope, CooInsightKind::MoveExplanation, $subject['type'], $subject['id'], $range->cacheKey()),
+        );
+    }
+
+    /**
+     * Contract 19 §5.8 — the one query shape every kind's Home read shares:
+     * exact fingerprint equality (R-22, R-31), no invalidated row, not a
+     * stale prompt/policy version, and the §5.9 origin rule (a background row
+     * belongs to nobody and is readable by any exactly-matching scope; a
+     * human's own answer belongs to that human alone).
+     */
+    private function selectableInsight(Business $business, CooContextEnvelope $envelope, CooInsightKind $kind, string $subjectType, int $subjectId, string $periodKey): ?CooInsight
+    {
+        return CooInsight::query()
             ->where('scope', $envelope->scope->value)
             // Contract 19 §5.8 R-22 — the fingerprint compared here was
             // recomputed from the live envelope by the caller. The stored copy
@@ -73,10 +116,10 @@ final class CooInsightDisplayReader
             // the live claim must match, exactly (R-31).
             ->where('authorization_scope_fingerprint', $envelope->authorizationScopeFingerprint)
             ->where('business_id', (int) $business->id)
-            ->where('kind', CooInsightKind::PerformanceDiagnosis->value)
-            ->where('subject_type', CooInsight::SUBJECT_BUSINESS)
-            ->where('subject_id', (int) $business->id)
-            ->where('period_key', $range->cacheKey())
+            ->where('kind', $kind->value)
+            ->where('subject_type', $subjectType)
+            ->where('subject_id', $subjectId)
+            ->where('period_key', $periodKey)
             ->where('prompt_version', (int) config('coo.insight.prompt_version'))
             ->where('policy_version', (int) config('coo.insight.policy_version'))
             ->whereNull('invalidated_at')
@@ -97,9 +140,15 @@ final class CooInsightDisplayReader
             ->orderByDesc('generated_at')
             ->orderByDesc('id')
             ->first(['id', 'business_id', 'workspace_id', 'output', 'generated_at', 'expires_at']);
+    }
 
-        // R-32 — no fallback. When nothing matches exactly, Home renders
-        // without an AI insight; it never relaxes a component of the
+    /**
+     * @return array{statements: array<int, array{class: string, label: string, text: string}>, updated: string, generated_at: string}|null
+     */
+    private function render(Business $business, ?CooInsight $insight): ?array
+    {
+        // R-32 — no fallback. When nothing matches exactly, the caller
+        // renders without an AI line; it never relaxes a component of the
         // fingerprint, never ignores one, and never degrades to business_id.
         if ($insight === null) {
             return null;

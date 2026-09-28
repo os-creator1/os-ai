@@ -63,8 +63,16 @@ class DashboardQueryBudgetTest extends TestCase
      * Both are flat: neither grows with Businesses, Locations, contacts,
      * conversations or messages, which the doubling test below proves. The
      * insight read itself is still ONE indexed, LIMIT 1 statement.
+     *
+     * Contract 19 sub-slice 19.C raised it from 12 to 13: ONE more indexed,
+     * LIMIT 1 statement, for the cached MoveExplanation of whichever move
+     * NextBestMoveSelector picked (BusinessHomePresenter::moveExplanation()).
+     * Its CooContextEnvelope is NOT a third construction — envelopeFor()
+     * memoizes the one 19.A envelope build (the two reads above) across both
+     * the next-best-move band and the headlines band's own insight() read, so
+     * this sub-slice's entire cost is the one new SELECT.
      */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 12;
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 13;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
