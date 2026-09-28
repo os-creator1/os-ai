@@ -9,6 +9,7 @@ use App\Library\Website\Domains\DomainProvisioningException;
 use App\Library\Website\Domains\WebsiteDomainService;
 use App\Library\Website\WebsiteFormPresets;
 use App\Library\Website\WebsitePublisher;
+use App\Models\BusinessLocation;
 use App\Models\Website;
 use App\Models\WebsiteDomain;
 use App\Models\WebsiteForm;
@@ -160,6 +161,470 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $response->assertOk();
         $this->assertStringContainsString('https://sitemap-domain.test/about', $response->getContent());
         $this->assertStringNotContainsString($website->public_id, $response->getContent());
+    }
+
+    public function test_sitemap_excludes_pages_marked_noindex(): void
+    {
+        // Search Central's own sitemap guidance: include only the URLs
+        // you want to see in search results. A page the owner marked
+        // noindex is never a URL this sitemap should ask Google to
+        // discover, even though the platform-path sitemap (a different,
+        // never-indexable surface) still lists every page regardless.
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        $this->subPage($website, 'about');
+        $this->subPage($website, 'hidden', ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'sitemap-noindex.test');
+
+        $response = $this->get('http://'.$domain->domain.'/sitemap');
+
+        $response->assertOk();
+        $this->assertStringContainsString('https://sitemap-noindex.test/about', $response->getContent());
+        $this->assertStringNotContainsString('https://sitemap-noindex.test/hidden', $response->getContent());
+    }
+
+    public function test_canonical_tag_self_references_the_active_domain_and_survives_a_pages_own_noindex(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        $this->subPage($website, 'private-page', ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'canonical-self.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-self.test/">', false);
+
+        // Canonical answers "what is the one URL for this content",
+        // which is independent of whether THIS page is indexable —
+        // Google treats the two as compatible, not contradictory.
+        $this->get('http://'.$domain->domain.'/private-page')
+            ->assertOk()
+            ->assertSee('<link rel="canonical" href="https://canonical-self.test/private-page">', false)
+            ->assertSee('noindex, follow', false);
+    }
+
+    public function test_local_business_structured_data_uses_only_confirmed_visible_facts(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'region' => 'TX',
+            'postal_code' => '78701',
+            'country_code' => 'US',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+                'tuesday' => [],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        // A published `contact_details` section is what makes phone/
+        // email/address genuinely visible on the site — without one,
+        // JSON-LD must omit them regardless of the saved Business/
+        // Location facts (see the dedicated visibility tests below).
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-confirmed.test');
+
+        $response = $this->get('http://'.$domain->domain.'/');
+
+        $response->assertOk()->assertSee('application/ld+json', false);
+        $jsonLd = $this->extractJsonLd($response->getContent());
+        $this->assertSame('LocalBusiness', $jsonLd['@type']);
+        $this->assertSame($business->name, $jsonLd['name']);
+        $this->assertSame('https://jsonld-confirmed.test/', $jsonLd['url']);
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
+        // No component on the published site ever presents opening
+        // hours, so structured data never claims them either.
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+        $this->assertArrayNotHasKey('aggregateRating', $jsonLd);
+        $this->assertArrayNotHasKey('review', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_reflects_only_the_published_snapshot_not_live_changes(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'region' => 'TX',
+            'postal_code' => '78701',
+            'country_code' => 'US',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+                'tuesday' => [],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-immutable.test');
+
+        // Live changes AFTER publishing, with no republish — the public
+        // page must keep showing the snapshot taken at publish time, not
+        // these new values, exactly like every other published fact.
+        $business->update(['phone' => '+15559998888', 'email' => 'changed@example.test']);
+        $location->update([
+            'address_line_1' => '999 Other Ave',
+            'city' => 'Dallas',
+            'region' => 'TX',
+            'postal_code' => '75201',
+        ]);
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+        $encoded = json_encode($jsonLd);
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
+        $this->assertSame('78701', $jsonLd['address']['postalCode']);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+
+        $this->assertStringNotContainsString('+15559998888', $encoded);
+        $this->assertStringNotContainsString('changed@example.test', $encoded);
+        $this->assertStringNotContainsString('999 Other Ave', $encoded);
+        $this->assertStringNotContainsString('Dallas', $encoded);
+        $this->assertStringNotContainsString('75201', $encoded);
+    }
+
+    /**
+     * Two different rules meet here (contract §7.3 vs §7.5): removing
+     * phone/email live, with no republish, does NOT retroactively hide
+     * them — they stay frozen from publish time like every other
+     * ordinary fact. Revoking address privacy (`public_address`) is the
+     * one exception: it suppresses the address immediately, on the very
+     * next request, unlike phone/email.
+     */
+    public function test_local_business_structured_data_freezes_phone_and_email_but_immediately_suppresses_a_revoked_address(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-removed.test');
+
+        // Removed/revoked after publishing, with no republish.
+        $business->update(['phone' => null, 'email' => null]);
+        $location->update(['public_address' => false, 'hours' => []]);
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertArrayNotHasKey('address', $jsonLd);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_never_reveals_a_private_address(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Austin',
+            'public_address' => false,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        // A published contact_details section DOES choose to display the
+        // address — this test proves the SEO privacy predicate
+        // (GoogleBusinessProfileReadMask::addressPermittedForLocation())
+        // still blocks it from structured data even so, since a
+        // service-area location's address is never safe to broadcast in
+        // machine-readable metadata regardless of the owner's page-level
+        // display choice.
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-private.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertArrayNotHasKey('address', $jsonLd);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_phone_when_its_show_phone_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_phone' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-phone.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertArrayNotHasKey('telephone', $jsonLd);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+    }
+
+    public function test_local_business_structured_data_omits_email_when_its_show_email_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_email' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-email.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertArrayNotHasKey('email', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_address_when_its_show_address_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_address' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-address.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertArrayNotHasKey('address', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_all_contact_facts_when_no_contact_details_section_is_published(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        // Hero only — no contact_details section anywhere on the
+        // published site, so nothing displays a phone/email/address.
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-no-contact-section.test');
+
+        $response = $this->get('http://'.$domain->domain.'/');
+
+        $response->assertOk()->assertSee('application/ld+json', false);
+        $jsonLd = $this->extractJsonLd($response->getContent());
+
+        $this->assertSame($business->name, $jsonLd['name']);
+        $this->assertArrayNotHasKey('telephone', $jsonLd);
+        $this->assertArrayNotHasKey('email', $jsonLd);
+        $this->assertArrayNotHasKey('address', $jsonLd);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_is_absent_from_a_noindexed_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['noindex' => true]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-noindex.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertDontSee('application/ld+json', false);
+    }
+
+    /**
+     * The visible `contact_details` HTML must apply the exact same
+     * address-privacy predicate the LocalBusiness JSON-LD gate already
+     * uses — a service-area location's address is never safe to publish
+     * just because the owner checked "Show address".
+     */
+    public function test_contact_details_html_withholds_a_private_address_even_when_show_address_is_checked(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => false,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-private-address.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('website-contact-details', false)
+            ->assertDontSee('123 Main St')
+            ->assertDontSee('Austin');
+    }
+
+    public function test_contact_details_html_shows_a_permitted_address_when_show_address_is_checked(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-permitted-address.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('123 Main St')
+            ->assertSee('Austin');
+    }
+
+    /**
+     * Contract §7.5 — address privacy is the one narrow exception to
+     * §7.3's usual "next publish" freeze: revoking `public_address`,
+     * with no republish, must suppress the address on the VERY NEXT
+     * public request, in both visible HTML and LocalBusiness JSON-LD —
+     * never wait for a republish, since revealing a withdrawn address is
+     * a privacy incident, not ordinary staleness.
+     */
+    public function test_contact_details_address_privacy_revoked_without_republishing_is_suppressed_on_the_next_request(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-revoked-address.test');
+
+        // Initial publication: permitted, so it appears in both places.
+        $firstResponse = $this->get('http://'.$domain->domain.'/');
+        $firstResponse->assertOk()->assertSee('123 Main St');
+        $this->assertSame('123 Main St', $this->extractJsonLd($firstResponse->getContent())['address']['streetAddress']);
+
+        // Revoked with no republish — must disappear on the very next
+        // request, from HTML and JSON-LD alike. Phone (an ordinary,
+        // non-privacy resolved value) is unaffected and keeps showing.
+        $location->update(['public_address' => false]);
+
+        $response = $this->get('http://'.$domain->domain.'/');
+        $response->assertOk()->assertDontSee('123 Main St')->assertSee('+15550001234');
+        $this->assertArrayNotHasKey('address', $this->extractJsonLd($response->getContent()));
+    }
+
+    /**
+     * Contract §7.5 — the live gate applies no matter WHICH revision is
+     * currently served: rolling back to an older revision that was
+     * itself published while the address was still permitted must not
+     * resurrect it once privacy has since been revoked. Revision rows
+     * stay untouched; only what a response is built from is redacted.
+     */
+    public function test_contact_details_address_privacy_revocation_survives_a_rollback_to_an_older_permitted_revision(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        $publisher = app(WebsitePublisher::class);
+        $firstRevision = $publisher->publish($website, $this->platformAdminId());
+
+        $this->subPage($website, 'about');
+        $publisher->publish($website->fresh(), $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-rollback-address.test');
+
+        $location->update(['public_address' => false]);
+        $publisher->rollback($website, $firstRevision->uid);
+
+        // $firstRevision's OWN frozen snapshot still carries the address
+        // (it was permitted when that revision was published) — the
+        // live gate must withhold it anyway, on this now-current
+        // revision, without ever mutating that revision row.
+        $this->get('http://'.$domain->domain.'/')->assertOk()->assertDontSee('123 Main St');
+        $this->assertSame('123 Main St', $firstRevision->fresh()->snapshot['website']['localBusiness']['address']['line1']);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function extractJsonLd(string $html): array
+    {
+        $this->assertMatchesRegularExpression('#<script type="application/ld\+json">(.+?)</script>#s', $html);
+        preg_match('#<script type="application/ld\+json">(.+?)</script>#s', $html, $matches);
+
+        return json_decode($matches[1], true);
     }
 
     public function test_the_platforms_own_host_is_unaffected_by_custom_domain_resolution(): void

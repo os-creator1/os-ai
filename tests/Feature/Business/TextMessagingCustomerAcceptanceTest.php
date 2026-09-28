@@ -36,6 +36,13 @@ use Tests\TestCase;
  * attempt, and cross-business refusal of the order action specifically
  * (the one step the existing cross-business test did not cover).
  *
+ * Review correction — exercises the toll-free (number-first) sequence
+ * throughout: Telnyx's own toll-free verification submission requires the
+ * number to already be owned, so toll-free's order-then-verify sequence
+ * is unchanged by that correction. TextMessagingLocalVerificationSequenceTest
+ * is this file's own sibling for the NEW local (10DLC) verify-first
+ * sequence that correction introduced.
+ *
  * FakeProvisioningAdapter (search/order/registration) and
  * FakeMessagingAdapter (the resulting send) throughout — no real Telnyx
  * call, credential, or production gate anywhere in this file.
@@ -95,7 +102,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
     private function searchAndOrder(Business $business, $workspace): void
     {
         $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
-            'number_type' => 'local',
+            'number_type' => 'toll_free',
         ])->assertOk();
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
@@ -113,7 +120,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
     {
         $fpa = $this->bindFakeProvisioningAdapter();
         $fma = $this->bindFakeAdapter();
-        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551900', PhoneNumberType::Local, 'candidate-ref-acceptance-1'));
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551900', PhoneNumberType::TollFree, 'candidate-ref-acceptance-1'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -128,16 +135,19 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
         $show->assertSee('Not started'); // no registration submitted yet
 
         // 2. Enter and submit the correct registration for this number's
-        // regime (local -> 10DLC, via BusinessMessagingRegistrationService
-        // routing on number_type — never guessed by this test).
+        // regime (toll-free -> Telnyx toll-free verification, via
+        // BusinessMessagingRegistrationService routing on number_type —
+        // never guessed by this test). Toll-free's own submission requires
+        // the already-owned number (review correction), which this
+        // Business now has from step 1.
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]))
             ->assertSessionHas('status', 'success');
 
         $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
         $this->assertSame(MessagingRegistrationStatus::Pending, $registration->status);
-        $this->assertNotNull($registration->provider_brand_id, '10DLC submission must produce a brand id.');
-        $this->assertNotNull($registration->provider_campaign_id, '10DLC submission must produce a campaign id.');
+        $this->assertNotNull($registration->provider_registration_id, 'Toll-free submission must produce a bare registration id.');
+        $this->assertNull($registration->provider_brand_id, 'Toll-free has no brand/campaign concept.');
 
         $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]))
             ->assertSee('Pending review');
@@ -184,12 +194,12 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
             'messaging.managed_messaging_provisioning_enabled' => true,
             'services.telnyx.api_key' => 'fixture_key_not_a_real_credential',
         ]);
-        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551901', PhoneNumberType::Local, 'candidate-ref-acceptance-2'));
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551901', PhoneNumberType::TollFree, 'candidate-ref-acceptance-2'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
-        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'local']);
+        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'toll_free']);
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
         $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), [
@@ -211,7 +221,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
     public function test_a_rejected_registration_can_be_corrected_and_resubmitted_to_approval(): void
     {
         $fpa = $this->bindFakeProvisioningAdapter();
-        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551902', PhoneNumberType::Local, 'candidate-ref-acceptance-3'));
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551902', PhoneNumberType::TollFree, 'candidate-ref-acceptance-3'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -230,7 +240,9 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
 
         $rejectedPage = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $rejectedPage->assertSee('Needs attention');
-        $rejectedPage->assertSee('The reviewer did not approve this submission');
+        // No reason was scripted on this rejection — the view must say so
+        // explicitly, never paraphrase a reason that was never supplied.
+        $rejectedPage->assertSee('The carrier did not supply a detailed reason for this rejection');
 
         // Correcting clears the rejection and returns to not_started.
         $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload([
@@ -263,7 +275,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
     public function test_a_second_order_attempt_after_already_having_a_number_is_refused(): void
     {
         $fpa = $this->bindFakeProvisioningAdapter();
-        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551903', PhoneNumberType::Local, 'candidate-ref-acceptance-4'));
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551903', PhoneNumberType::TollFree, 'candidate-ref-acceptance-4'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -274,7 +286,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
         // A second search/order attempt against the SAME, now-active
         // Business is refused before ever reaching the provider again —
         // guardNoExistingNumber() fires first.
-        $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'local'])
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'toll_free'])
             ->assertNotFound();
         $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), [
             'candidate_token' => 'stale-or-forged-token-irrelevant-here',
@@ -295,7 +307,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
     public function test_business_a_cannot_order_a_number_for_business_b(): void
     {
         $fpa = $this->bindFakeProvisioningAdapter();
-        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551904', PhoneNumberType::Local, 'candidate-ref-acceptance-5'));
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155551904', PhoneNumberType::TollFree, 'candidate-ref-acceptance-5'));
 
         [$customerA, , $workspaceA] = $this->tenant(WorkspacePlanTier::Growth, 'Business A', 'Workspace A');
         [$customerB, $businessB, $workspaceB] = $this->tenant(WorkspacePlanTier::Growth, 'Business B', 'Workspace B');
@@ -303,7 +315,7 @@ class TextMessagingCustomerAcceptanceTest extends TestCase
         // Business B genuinely searches for and receives a valid token on
         // its OWN route first.
         $this->authenticateAs($customerB);
-        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceB->uid, $businessB->uid]), ['number_type' => 'local']);
+        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceB->uid, $businessB->uid]), ['number_type' => 'toll_free']);
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
         // Business A attempts to spend that token against Business B's own
