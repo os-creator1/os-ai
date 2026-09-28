@@ -354,7 +354,7 @@ final class WebsiteStarterDraftService
         }
 
         $form = $this->ensurePhotoBoothQuoteForm($website);
-        $sections[] = ['type' => 'form', 'data' => ['heading' => 'Request a free quote', 'form_uid' => $form->uid]];
+        $sections[] = ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => $form->uid]];
 
         $this->pages->createPage($website, [
             'title' => 'Contact',
@@ -362,7 +362,10 @@ final class WebsiteStarterDraftService
             'is_home' => false,
             'sections' => $sections,
             'seo_title' => Str::limit('Contact | ' . $business->name, 70, ''),
-            'meta_description' => Str::limit('Get in touch with ' . $business->name . ' or request a free quote.', 160, ''),
+            // Never "free quote": whether a quote is free is not a
+            // saved fact anywhere on the Business or its pricing
+            // method, so this never claims it either.
+            'meta_description' => Str::limit('Get in touch with ' . $business->name . ' or request a quote.', 160, ''),
             'noindex' => true,
         ]);
     }
@@ -390,7 +393,7 @@ final class WebsiteStarterDraftService
         return match ($method) {
             BusinessPricingMethod::Fixed => 'We offer fixed, upfront pricing.',
             BusinessPricingMethod::Hourly => 'We price by the hour.',
-            BusinessPricingMethod::QuoteOnly => 'Pricing depends on your event — request a free quote and we will get back to you.',
+            BusinessPricingMethod::QuoteOnly => 'Pricing depends on your event — request a quote and we will get back to you.',
             BusinessPricingMethod::PackageTiers => 'We offer tiered packages to fit different budgets and events.',
         };
     }
@@ -416,7 +419,10 @@ final class WebsiteStarterDraftService
         }
 
         if ($location->city) {
-            return 'We are based in ' . collect([$location->city, $location->region])->filter()->implode(', ') . ' and serve the surrounding area.';
+            // Only WHERE the business is based is a confirmed fact here
+            // (no service_area_cities/radius is set) — never a coverage
+            // claim we cannot back up with a saved fact.
+            return 'We are based in ' . collect([$location->city, $location->region])->filter()->implode(', ') . '.';
         }
 
         return 'Contact us to confirm whether we cover your area.';
@@ -426,7 +432,11 @@ final class WebsiteStarterDraftService
     {
         $target = $this->contactTarget($business);
 
-        return $target !== null ? 'Request a quote through this site, or reach us directly using the contact details above.' : null;
+        // Never "above"/"below": this item's own position among the
+        // FAQ page's sections can change (createFaqPage() only ever
+        // appends contact_details after the faq section today, but
+        // this answer must stay correct even if that ever changes).
+        return $target !== null ? 'Request a quote through this site, or reach us directly using the contact details on this page.' : null;
     }
 
     /**

@@ -2,10 +2,6 @@
 
 namespace App\Library\Website\Seo;
 
-use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
-use App\Models\Business;
-use App\Models\BusinessLocation;
-
 /**
  * Website Generation + Hosting — closes the gap Implementation Contract
  * 18 §3.2/§3.6 recorded as a Website-module limitation ("no JSON-LD ...
@@ -14,15 +10,17 @@ use App\Models\BusinessLocation;
  * already-visible facts only — never rankings, reviews, ratings, or
  * anything the owner has not saved.
  *
- * Every fact here already appears on the site: `name`/`telephone`/
- * `email` are the same Business columns the `contact_details` section
- * (contract §7.3) resolves; the address uses the SAME privacy predicate
- * GBP/SEO already rely on (`GoogleBusinessProfileReadMask::
- * addressPermittedForLocation()`, contract §23) rather than a looser,
- * separately-invented gate — this is a stricter check than
- * `contact_details`'s own `show_address` toggle, never a laxer one.
- * Hours are read only from `business_locations.hours`, a structured,
- * directly-entered fact, never a Knowledge Profile narrative claim.
+ * PURE presentation shaping only — never reads a live Business or
+ * Location model. Every fact it is given already went through
+ * App\Library\Website\WebsiteSnapshotBuilder::localBusinessFacts() at
+ * publish time, which is where the privacy decision (address permitted
+ * for this location?) and the "what counts as a confirmed fact" line
+ * are actually drawn, once, and frozen into the published snapshot —
+ * exactly like `contact_details`'s own resolved values. A live Business/
+ * Location change after publishing therefore never changes what an
+ * already-published page's structured data shows, until the next
+ * publish, the same guarantee every other published fact on the site
+ * already has.
  *
  * Deliberately excluded, per the task that authorized this class and
  * Google's own structured-data policy (no fabricated/irrelevant markup):
@@ -45,17 +43,15 @@ use App\Models\BusinessLocation;
  */
 final class WebsiteLocalBusinessStructuredData
 {
-    public function __construct(
-        private readonly GoogleBusinessProfileReadMask $addressPredicate,
-    ) {}
-
     /**
-     * @return ?array<string, mixed> null only when the business has no
-     *                               usable name — schema.org requires one
+     * @param  array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}  $facts
+     *                                                                                                                            the frozen snapshot facts from WebsiteSnapshotBuilder::localBusinessFacts() — never a live model
+     * @return ?array<string, mixed> null only when the published
+     *                               snapshot carries no usable business name — schema.org requires one
      */
-    public function build(Business $business, ?BusinessLocation $location, string $canonicalUrl): ?array
+    public function build(array $facts, string $canonicalUrl): ?array
     {
-        $name = trim((string) $business->name);
+        $name = trim((string) ($facts['name'] ?? ''));
 
         if ($name === '') {
             return null;
@@ -68,51 +64,62 @@ final class WebsiteLocalBusinessStructuredData
             'url' => $canonicalUrl,
         ];
 
-        if ($business->phone) {
-            $data['telephone'] = $business->phone;
+        if (! empty($facts['telephone'])) {
+            $data['telephone'] = $facts['telephone'];
         }
 
-        if ($business->email && filter_var($business->email, FILTER_VALIDATE_EMAIL)) {
-            $data['email'] = $business->email;
+        if (! empty($facts['email'])) {
+            $data['email'] = $facts['email'];
         }
 
-        if ($location !== null && $this->addressPredicate->addressPermittedForLocation($location)) {
-            $address = array_filter([
-                '@type' => 'PostalAddress',
-                'streetAddress' => trim(collect([$location->address_line_1, $location->address_line_2])->filter()->implode(', ')) ?: null,
-                'addressLocality' => $location->city,
-                'addressRegion' => $location->region,
-                'postalCode' => $location->postal_code,
-                'addressCountry' => $location->country_code,
-            ], fn ($value) => $value !== null && $value !== '');
+        $address = $this->postalAddress($facts['address'] ?? null);
+        if ($address !== null) {
+            $data['address'] = $address;
+        }
 
-            if (isset($address['streetAddress']) || isset($address['addressLocality'])) {
-                $data['address'] = $address;
-            }
-
-            $hours = $this->openingHoursSpecification($location);
-            if ($hours !== []) {
-                $data['openingHoursSpecification'] = $hours;
-            }
+        $hours = $this->openingHoursSpecification($facts['hours'] ?? null);
+        if ($hours !== []) {
+            $data['openingHoursSpecification'] = $hours;
         }
 
         return $data;
     }
 
     /**
-     * `business_locations.hours`: `{monday: [{open,close}, ...], ...}`,
-     * an empty array meaning "closed that day", `"24:00"` the
-     * end-of-day sentinel — see BusinessKnowledgeProfileManager's own
-     * writer for this exact shape. Never read for a day/location that
-     * has no confirmed hours (`hours` null, or the key absent).
+     * @param  ?array{line1: ?string, line2: ?string, city: ?string, region: ?string, postal_code: ?string, country_code: ?string}  $address
+     * @return ?array<string, string>
+     */
+    private function postalAddress(?array $address): ?array
+    {
+        if ($address === null) {
+            return null;
+        }
+
+        $shaped = array_filter([
+            '@type' => 'PostalAddress',
+            'streetAddress' => trim(collect([$address['line1'] ?? null, $address['line2'] ?? null])->filter()->implode(', ')) ?: null,
+            'addressLocality' => $address['city'] ?? null,
+            'addressRegion' => $address['region'] ?? null,
+            'postalCode' => $address['postal_code'] ?? null,
+            'addressCountry' => $address['country_code'] ?? null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        return isset($shaped['streetAddress']) || isset($shaped['addressLocality']) ? $shaped : null;
+    }
+
+    /**
+     * `hours`: the frozen, verbatim copy of `business_locations.hours`
+     * at publish time — `{monday: [{open,close}, ...], ...}`, an empty
+     * array meaning "closed that day", `"24:00"` the end-of-day
+     * sentinel (see BusinessKnowledgeProfileManager's own writer for
+     * this exact shape). Never read for a day that has no confirmed
+     * hours (the day's key absent, or `hours` itself null).
      *
      * @return array<int, array<string, string>>
      */
-    private function openingHoursSpecification(BusinessLocation $location): array
+    private function openingHoursSpecification(?array $hours): array
     {
-        $hours = $location->hours;
-
-        if (! is_array($hours)) {
+        if ($hours === null) {
             return [];
         }
 

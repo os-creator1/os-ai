@@ -3,6 +3,8 @@
 namespace App\Library\Website;
 
 use App\Enums\Website\WebsiteSectionType;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask;
+use App\Models\Business;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
 use App\Models\WebsiteForm;
@@ -12,17 +14,25 @@ use Carbon\Carbon;
  * Website Generation + Hosting Slice A contract §11/§14. Builds the
  * self-contained, versioned snapshot JSON stored on a WebsiteRevision.
  * Plain scalars/arrays only — no executable class names, no serialized
- * Eloquent models. `contact_details` (contract §7.3) is the one
- * deliberate live-read exception: its boolean flags are copied
- * unchanged, and the Business's CURRENT phone/email/primary-location
- * address are resolved and copied into the snapshot at build time —
+ * Eloquent models. `contact_details` (contract §7.3) and the site-wide
+ * `localBusiness` facts below are the two deliberate live-read
+ * exceptions: their values are resolved from CURRENT Business/Location
+ * state and copied into the snapshot at BUILD (publish) time only —
  * the decision of what to display re-reads Business state on the next
  * publish, but the already-published snapshot's values never change
- * themselves.
+ * themselves, no matter what changes on the Business/Location
+ * afterward. This is what makes the public LocalBusiness structured
+ * data (App\Library\Website\Seo\WebsiteLocalBusinessStructuredData)
+ * safe to build purely from this frozen data — it never reads a live
+ * model.
  */
 final class WebsiteSnapshotBuilder
 {
     public const SCHEMA_VERSION = 1;
+
+    public function __construct(
+        private readonly GoogleBusinessProfileReadMask $addressPredicate,
+    ) {}
 
     public function build(Website $website): array
     {
@@ -98,6 +108,7 @@ final class WebsiteSnapshotBuilder
             'website' => [
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
+                'localBusiness' => $this->localBusinessFacts($business),
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
@@ -143,5 +154,60 @@ final class WebsiteSnapshotBuilder
             $location->region,
             $location->postal_code,
         ])->filter()->implode(', ');
+    }
+
+    /**
+     * Neutral, schema.org-agnostic facts for
+     * App\Library\Website\Seo\WebsiteLocalBusinessStructuredData to
+     * shape into JSON-LD at render time — this method makes every
+     * privacy/currency decision once, here, at publish time; that
+     * class only ever formats what it is given. `address` is included
+     * only when the SAME privacy predicate GBP/SEO already rely on
+     * (`GoogleBusinessProfileReadMask::addressPermittedForLocation()`)
+     * permits it for the CURRENT primary location, at THIS publish —
+     * a later change to that setting takes effect on the next publish,
+     * exactly like `contact_details`'s own `show_address` above.
+     *
+     * @return array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}
+     */
+    private function localBusinessFacts(?Business $business): array
+    {
+        if ($business === null) {
+            return ['name' => null, 'telephone' => null, 'email' => null, 'address' => null, 'hours' => null];
+        }
+
+        $name = trim((string) $business->name);
+        $email = $business->email && filter_var($business->email, FILTER_VALIDATE_EMAIL) ? $business->email : null;
+
+        $location = $business->primaryLocation;
+        $address = null;
+        $hours = null;
+
+        if ($location !== null && $location->isActive() && $this->addressPredicate->addressPermittedForLocation($location)) {
+            $address = [
+                'line1' => $location->address_line_1,
+                'line2' => $location->address_line_2,
+                'city' => $location->city,
+                'region' => $location->region,
+                'postal_code' => $location->postal_code,
+                'country_code' => $location->country_code,
+            ];
+        }
+
+        // Hours are a structured operational fact, not an address —
+        // shown regardless of the address-privacy predicate above (a
+        // service-area business with no public street address may
+        // still have confirmed, publishable hours).
+        if ($location !== null && $location->isActive() && is_array($location->hours)) {
+            $hours = $location->hours;
+        }
+
+        return [
+            'name' => $name !== '' ? $name : null,
+            'telephone' => $business->phone ?: null,
+            'email' => $email,
+            'address' => $address,
+            'hours' => $hours,
+        ];
     }
 }

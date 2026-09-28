@@ -253,6 +253,104 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $this->assertArrayNotHasKey('review', $jsonLd);
     }
 
+    public function test_local_business_structured_data_reflects_only_the_published_snapshot_not_live_changes(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'region' => 'TX',
+            'postal_code' => '78701',
+            'country_code' => 'US',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+                'tuesday' => [],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-immutable.test');
+
+        // Live changes AFTER publishing, with no republish — the public
+        // page must keep showing the snapshot taken at publish time, not
+        // these new values, exactly like every other published fact.
+        $business->update(['phone' => '+15559998888', 'email' => 'changed@example.test']);
+        $location->update([
+            'address_line_1' => '999 Other Ave',
+            'city' => 'Dallas',
+            'region' => 'TX',
+            'postal_code' => '75201',
+            'hours' => [
+                'monday' => [['open' => '01:00', 'close' => '02:00']],
+                'tuesday' => [['open' => '01:00', 'close' => '02:00']],
+            ],
+        ]);
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+        $encoded = json_encode($jsonLd);
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
+        $this->assertSame('78701', $jsonLd['address']['postalCode']);
+        $this->assertSame([
+            '@type' => 'OpeningHoursSpecification',
+            'dayOfWeek' => 'https://schema.org/Monday',
+            'opens' => '09:00',
+            'closes' => '17:00',
+        ], $jsonLd['openingHoursSpecification'][0]);
+        $this->assertCount(1, $jsonLd['openingHoursSpecification']);
+
+        $this->assertStringNotContainsString('+15559998888', $encoded);
+        $this->assertStringNotContainsString('changed@example.test', $encoded);
+        $this->assertStringNotContainsString('999 Other Ave', $encoded);
+        $this->assertStringNotContainsString('Dallas', $encoded);
+        $this->assertStringNotContainsString('75201', $encoded);
+        $this->assertStringNotContainsString('01:00', $encoded);
+    }
+
+    public function test_local_business_structured_data_is_absent_after_business_and_location_are_removed_post_publish(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+            'hours' => [
+                'monday' => [['open' => '09:00', 'close' => '17:00']],
+            ],
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-removed.test');
+
+        // Removed after publishing, with no republish — the public page
+        // must still show the values frozen into the published snapshot.
+        $business->update(['phone' => null, 'email' => null]);
+        $location->update(['public_address' => false, 'hours' => []]);
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+        $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
+        $this->assertNotEmpty($jsonLd['openingHoursSpecification']);
+    }
+
     public function test_local_business_structured_data_never_reveals_a_private_address(): void
     {
         [, $business] = $this->entitledTenant();

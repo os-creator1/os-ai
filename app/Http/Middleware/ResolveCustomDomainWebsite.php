@@ -162,21 +162,20 @@ class ResolveCustomDomainWebsite
 
         $indexable = ! ($page['seo']['noindex'] ?? false);
 
-        // LocalBusiness structured data mirrors the page's own
-        // indexability: never rendered on a page the owner has marked
-        // noindex, so Google's structured-data guidance ("reflect
-        // visible, intended-for-search content") is never in tension
-        // with the robots directive on the very same response.
-        $localBusinessJsonLd = null;
-        if ($indexable && $website->business !== null) {
-            $business = $website->business;
-            $location = $business->primaryLocation()->first();
-            $localBusinessJsonLd = $this->structuredData->build(
-                $business,
-                $location !== null && $location->isActive() ? $location : null,
-                $canonicalUrl,
-            );
-        }
+        // LocalBusiness structured data is built ONLY from the frozen
+        // snapshot's own localBusiness facts (WebsiteSnapshotBuilder::
+        // localBusinessFacts(), computed once at publish time) — never
+        // a live Business/Location read here. A phone/address/hours
+        // change made after publishing, or never confirmed at publish
+        // time, never appears until the next publish, exactly like
+        // every other published fact on the site. Also mirrors the
+        // page's own indexability: never rendered on a page the owner
+        // has marked noindex, so Google's structured-data guidance
+        // ("reflect visible, intended-for-search content") is never in
+        // tension with the robots directive on the same response.
+        $localBusinessJsonLd = $indexable
+            ? $this->structuredData->build($snapshot['website']['localBusiness'] ?? [], $canonicalUrl)
+            : null;
 
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
