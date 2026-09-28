@@ -151,10 +151,17 @@ class PublicDocumentLinkTest extends TestCase
 
     public function test_an_unentitled_account_gets_the_same_refusal_as_a_bad_token(): void
     {
-        // Deliberately NO allowPublicEntitlement(): Payments & Contracts is
-        // `Planned` until Sub-slice G, so this is the real production answer.
+        // Payments & Contracts is `Available` and packaged into every plan
+        // tier since Sub-slice G's final flip, so `sendableTenant()` alone no
+        // longer produces a genuinely unentitled Business. denyPublicEntitlement()
+        // forces a real denial through the same guard step EntitlementManager
+        // would use, so this still proves §6.3.1: the link is not an
+        // entitlement bypass.
+        $this->allowPublicEntitlement();
         $tenant = $this->sendableTenant();
         [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
+
+        $this->denyPublicEntitlement();
 
         $this->assertUniformRefusal($this->get($this->publicUrl($document, $token)), 'unentitled account');
     }

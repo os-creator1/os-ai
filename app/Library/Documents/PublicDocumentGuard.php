@@ -187,9 +187,9 @@ class PublicDocumentGuard
 
     /**
      * §6.3.1 check 3. Its own method for exactly one reason: a test may
-     * replace THIS step alone (the feature is `Planned` until Sub-slice G,
-     * so EntitlementManager denies it for every tier and the public surface
-     * is unreachable by design) without weakening any other check. The
+     * replace THIS step alone — proving §6.3.1 in isolation, in either
+     * direction, via `SendsDocuments::allowPublicEntitlement()` /
+     * `denyPublicEntitlement()` — without weakening any other check. The
      * actor id is the Business's own owning customer — server-derived,
      * never anything a browser supplied — exactly as
      * PublicBookingController does for the Calendar feature.

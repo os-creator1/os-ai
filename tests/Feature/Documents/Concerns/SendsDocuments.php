@@ -30,11 +30,15 @@ trait SendsDocuments
     use CreatesCustomerContextFixtures;
 
     /**
-     * Payments & Contracts is `Planned` until Sub-slice G, so EntitlementManager
-     * denies it for every tier and the public surface is unreachable by design.
-     * This replaces EXACTLY that one step of the guard — the token check, the
-     * account-lifecycle check, the Location check and every document-lifecycle
-     * check still run the unmodified production code.
+     * Payments & Contracts was `Planned` through Sub-slices A-F; Sub-slice G's
+     * final flip made it `Available` and packaged into every plan tier
+     * (PlatformFeatureRegistry, `2026_09_25_100012_seed_payments_contracts_
+     * plan_packaging.php`), so `sendableTenant()` is genuinely entitled today
+     * and most tests need no override at all. This helper still exists to
+     * isolate EXACTLY the entitlement step of the guard from every other
+     * check when a test wants that in isolation — the token check, the
+     * account-lifecycle check, the Location check and every document-
+     * lifecycle check still run the unmodified production code.
      */
     protected function allowPublicEntitlement(): void
     {
@@ -45,6 +49,28 @@ trait SendsDocuments
             protected function entitlementAllows(Workspace $workspace, Business $business): bool
             {
                 return true;
+            }
+        });
+    }
+
+    /**
+     * The counterpart of {@see allowPublicEntitlement()} — forces the
+     * entitlement step of the guard to refuse, so a test can prove §6.3.1
+     * ("the link is NOT an account or entitlement bypass") against a real
+     * denial. Now that every plan tier is entitled (see above), an actually
+     * unentitled Business no longer occurs from tier selection alone, so
+     * this replaces the same single guard step `allowPublicEntitlement()`
+     * does, in the other direction.
+     */
+    protected function denyPublicEntitlement(): void
+    {
+        $this->app->bind(PublicDocumentGuard::class, fn ($app) => new class(
+            $app->make(CustomerAccountAccessGuard::class),
+            $app->make(EntitlementManager::class),
+        ) extends PublicDocumentGuard {
+            protected function entitlementAllows(Workspace $workspace, Business $business): bool
+            {
+                return false;
             }
         });
     }
