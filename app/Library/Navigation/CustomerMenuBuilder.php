@@ -325,14 +325,30 @@ final class CustomerMenuBuilder
     /**
      * Contract 18 §14.2, Sub-slice H — the SEO group. The parent shows
      * exactly when `seo_basic_visibility` is allowed and `view_seo` is
-     * held (Overview and Search keywords are Core+); its Growth+ children
-     * (Website SEO audit, Citations, Reviews) additionally require
-     * `seo_module`, and the folded-in "Get found" child keeps its own
-     * independent `google_business_profile_module` gate, exactly as it had
-     * as a top-level entry. A child whose route is not registered or whose
-     * gate refuses is silently absent — the SAME `item()`/`entitled()`
-     * machinery every other entry uses, so visibility here is no more an
-     * authorization boundary than anywhere else in this class.
+     * held — proved by requiring the Overview item itself, never a second,
+     * hand-rolled capability check that could drift from it. Overview and
+     * Search keywords are Core+; the Growth+ children (Website SEO audit,
+     * Citations, Reviews) additionally require `seo_module`, and the
+     * folded-in "Get found" child keeps its own independent
+     * `google_business_profile_module` gate, exactly as it had as a
+     * top-level entry — deliberately NOT behind `view_seo`, since it is
+     * still GBP's own permission. A child whose route is not registered or
+     * whose gate refuses is silently absent — the SAME `item()`/
+     * `entitled()` machinery every other entry uses, so visibility here is
+     * no more an authorization boundary than anywhere else in this class.
+     *
+     * REVIEW CORRECTION: an earlier revision gated the PARENT on
+     * `seo_basic_visibility` alone and built Overview as one child among
+     * several. Because "Get found" carries its own independent gate, an
+     * actor with `google_business_profile_module` but WITHOUT `view_seo`
+     * could lose every `view_seo`-gated child yet still have a non-empty
+     * `$children` array (Get found survives alone) — so the parent
+     * rendered, pointing its own URL at the Overview route, which then
+     * refused that same actor (401) the moment they clicked it. Requiring
+     * the Overview item FIRST, and returning null for the whole group when
+     * it is null, makes the parent's existence and its landing URL
+     * inherit Overview's own route/capability/View-As/tenancy-address
+     * shape by construction — there is no second policy to drift.
      *
      * Built outside `item()` because `item()` has no children parameter;
      * every child is still produced by the ordinary `item()`/`entitled()`
@@ -345,10 +361,16 @@ final class CustomerMenuBuilder
             return null;
         }
 
+        $overview = $this->item($user, 'seo-overview', 'Overview', 'bar-chart-2', ['view_seo'], 'customer.workspaces.businesses.seo.index', $scoped, $current, [
+            'customer.workspaces.businesses.seo.index', 'customer.seo.',
+        ]);
+
+        if ($overview === null) {
+            return null;
+        }
+
         $children = array_values(array_filter([
-            $this->item($user, 'seo-overview', 'Overview', 'bar-chart-2', ['view_seo'], 'customer.workspaces.businesses.seo.index', $scoped, $current, [
-                'customer.workspaces.businesses.seo.index', 'customer.seo.',
-            ]),
+            $overview,
             $this->item($user, 'seo-keywords', 'Search keywords', 'hash', ['view_seo'], 'customer.workspaces.businesses.seo.keywords.index', $scoped, $current, [
                 'customer.workspaces.businesses.seo.keywords.',
             ]),
@@ -366,15 +388,7 @@ final class CustomerMenuBuilder
             ])),
         ]));
 
-        if ($children === []) {
-            return null;
-        }
-
-        $overviewUrl = Route::has('customer.workspaces.businesses.seo.index')
-            ? route('customer.workspaces.businesses.seo.index', $scoped)
-            : null;
-
-        return new MenuItem('seo', 'SEO', $overviewUrl, 'trending-up', false, $children);
+        return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
     }
 
     /**

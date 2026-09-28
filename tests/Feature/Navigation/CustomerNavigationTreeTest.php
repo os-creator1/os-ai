@@ -826,6 +826,62 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertNotContains('gbp', $this->menuKeys($this->home()->assertOk()->getContent()));
     }
 
+    /**
+     * Review correction — Contract 18 §14.2: the SEO parent entry itself
+     * requires `view_seo`, not merely `seo_basic_visibility`. An earlier
+     * revision gated the parent on entitlement alone and built Overview as
+     * one child among several; because the folded-in "Get found" child
+     * carries its own independent `google_business_profile_module` +
+     * `view_google_business_profile` gate, an actor who held that but
+     * lacked `view_seo` could still end up with a non-empty SEO group (Get
+     * found survives alone) whose own URL pointed at the `view_seo`-gated
+     * Overview route — a click-through the actor could never actually
+     * use. Navigation is cosmetic, never the security boundary (Overview
+     * itself still 401s such an actor directly), but a cosmetic surface
+     * that offers a link it cannot honour is still a defect.
+     */
+    public function test_the_seo_group_requires_view_seo_even_when_get_found_would_otherwise_survive_alone(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+
+        // seo_basic_visibility, seo_module and google_business_profile_module
+        // are all entitled on Growth by the real seeded catalog — the
+        // precondition every assertion below depends on.
+        $this->authenticateAs($customer, ['view_google_business_profile']);
+
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        $this->assertNotContains('seo', $keys, 'The SEO parent must not render without view_seo, even though Get found alone would otherwise keep its children non-empty.');
+        $this->assertNotContains('gbp', $keys, 'Get found must not be orphaned into the shell outside the SEO group it now belongs to.');
+
+        $this->assertStringNotContainsString(
+            route('customer.workspaces.businesses.seo.index', [$workspace->uid, $business->uid]),
+            $this->sidebarHtml($this->home()->assertOk()->getContent()),
+            'No link anywhere in the sidebar may point at a route this actor cannot open.',
+        );
+    }
+
+    /**
+     * The complementary case: `view_seo` without
+     * `view_google_business_profile`. The SEO parent and its
+     * seo_basic_visibility/seo_module children remain; only the
+     * independently-gated "Get found" child is absent.
+     */
+    public function test_the_seo_group_renders_without_get_found_when_the_actor_lacks_the_gbp_permission(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+
+        $this->authenticateAs($customer, ['view_seo', 'manage_seo']);
+
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        foreach (['seo', 'seo-overview', 'seo-keywords', 'seo-audit', 'seo-citations', 'seo-reviews'] as $expected) {
+            $this->assertContains($expected, $keys, "[{$expected}] must still render with view_seo held.");
+        }
+
+        $this->assertNotContains('gbp', $keys, 'Get found requires its own view_google_business_profile permission, independent of view_seo.');
+    }
+
     /** §13 #17 — Contacts is deliberately NOT entitlement-gated. */
     public function test_contacts_is_visible_for_every_tier(): void
     {
