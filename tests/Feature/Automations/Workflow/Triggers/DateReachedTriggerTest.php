@@ -17,6 +17,7 @@ use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Automations\Concerns\CreatesAutomationFixtures;
@@ -473,6 +474,72 @@ class DateReachedTriggerTest extends TestCase
     // -----------------------------------------------------------------
     // The command around it
     // -----------------------------------------------------------------
+
+    /**
+     * §8.2 — `automation:workflows-date-sweep` must be REGISTERED with
+     * Artisan, not merely exist as a class file.
+     *
+     * This is the one check the other command tests in this file cannot
+     * provide: `$this->artisan('automation:workflows-date-sweep')` only
+     * proves the command runs once PHPUnit already knows it exists — it
+     * would throw `CommandNotFoundException` identically whether the class
+     * was missing from `App\Console\Kernel::$commands` (this repository's
+     * actual failure mode once) or never written at all, and a reader
+     * chasing that exception has to rediscover the Kernel-wiring root cause
+     * from scratch. Asserting registration directly, by name, is what turns
+     * "the command doesn't exist" into an assertion failure that names
+     * exactly what's missing, and it is also the cheapest possible guard:
+     * no fixture, no schema, no query — just Artisan's own command list.
+     *
+     * TWO INDEPENDENT CHECKS, DELIBERATELY. `Kernel::commands()` wires this
+     * command two ways — the explicit `$commands` array entry, and
+     * `$this->load(__DIR__.'/Commands')`'s directory auto-discovery, which
+     * would independently pick the same class up even with the array entry
+     * removed. A behavioural check alone (asking Artisan whether the
+     * command exists) can therefore stay green through a regression that
+     * removes only the array entry, if auto-discovery still finds the file
+     * on disk. So this test checks BOTH: that Artisan actually answers to
+     * the command by name (proves the end-to-end wiring really works,
+     * whichever path provided it), and that the exact array entry this
+     * command was added by is still present in Kernel's source (proves that
+     * SPECIFIC seam wasn't quietly dropped, even in an environment where
+     * auto-discovery would otherwise paper over its absence).
+     *
+     * Sibling commands are asserted alongside it so a future regression in
+     * either direction — a sibling silently dropped from the same array
+     * seam, or a whole worktree's cache/registration path breaking — fails
+     * here first, not three tests later as a bare "command not found".
+     */
+    public function test_the_sweep_command_is_registered_with_artisan(): void
+    {
+        Artisan::call('list'); // forces command registration, as `artisan list` does.
+        $registered = array_keys(Artisan::all());
+
+        $this->assertContains(
+            'automation:workflows-date-sweep',
+            $registered,
+            'automation:workflows-date-sweep is not registered with Artisan — check '
+            . 'App\Console\Kernel::$commands includes '
+            . '\App\Console\Commands\Automation\SweepDateReachedWorkflows::class.',
+        );
+
+        // The two siblings it was added beside, so a shared regression in
+        // the registration seam itself (not just this one entry) is caught
+        // too.
+        $this->assertContains('automation:workflows-recover-stalled', $registered);
+        $this->assertContains('automation:workflows-resume-due', $registered);
+
+        // The specific array entry, independent of whether directory
+        // auto-discovery would also have found the class.
+        $commands = (new \ReflectionClass(\App\Console\Kernel::class))->getDefaultProperties()['commands'] ?? [];
+
+        $this->assertContains(
+            \App\Console\Commands\Automation\SweepDateReachedWorkflows::class,
+            $commands,
+            'App\Console\Kernel::$commands is missing SweepDateReachedWorkflows::class — '
+            . 'without it, this command depends entirely on directory auto-discovery.',
+        );
+    }
 
     public function test_the_command_sweeps_and_reports(): void
     {
