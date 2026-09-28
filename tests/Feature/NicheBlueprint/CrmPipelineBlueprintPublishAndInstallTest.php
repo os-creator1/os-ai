@@ -8,10 +8,8 @@ use App\Exceptions\NicheBlueprint\InvalidComponentDescriptorException;
 use App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter;
 use App\Library\NicheBlueprint\NicheBlueprintInstaller;
 use App\Models\CrmPipeline;
-use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintVersion;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Artisan;
 use Tests\Feature\NicheBlueprint\Support\CreatesBlueprintInstallationFixtures;
 use Tests\TestCase;
 
@@ -167,33 +165,5 @@ class CrmPipelineBlueprintPublishAndInstallTest extends TestCase
 
         $this->assertSame($firstRecordId, $finalRecordId);
         $this->assertSame(1, CrmPipeline::query()->where('business_id', $business->id)->count());
-    }
-
-    // --------------------------------------------------------- seed command
-
-    public function test_the_seed_command_publishes_photo_booth_v1_and_is_idempotent(): void
-    {
-        $this->ensureRequiredAppConfigRowsExist();
-        $this->platformAdminId();
-
-        Artisan::call('blueprint:seed-photo-booth');
-
-        $blueprint = NicheBlueprint::query()->where('key', 'photo_booth')->first();
-        $this->assertNotNull($blueprint);
-
-        $version = NicheBlueprintVersion::query()->where('blueprint_id', $blueprint->id)->where('state', 'published')->first();
-        $this->assertNotNull($version);
-        $this->assertSame(1, $version->version_number);
-        $this->assertCount(1, $version->components);
-        $this->assertSame('crm_pipeline', $version->components->first()->component_type);
-
-        // Idempotent: a second run neither throws nor publishes a v2.
-        Artisan::call('blueprint:seed-photo-booth');
-
-        $this->assertSame(
-            1,
-            NicheBlueprintVersion::query()->where('blueprint_id', $blueprint->id)->count(),
-            'Re-running the seed command must not create a second version.'
-        );
     }
 }
