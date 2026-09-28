@@ -8,6 +8,8 @@ use App\Enums\Workspace\LocationAccessScope;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Website\Domains\DnsVerifier;
+use App\Library\Website\Domains\ForgeDomainProvisioner;
 use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\AppConfig;
 use App\Models\Business;
@@ -228,6 +230,47 @@ trait CreatesWebsiteFixtures
         $mock->shouldReceive('lastRefusalReason')->andReturn(null);
         $mock->shouldReceive('complete')->andReturn($responseJson);
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        return $mock;
+    }
+
+    /**
+     * Website Generation + Hosting Slice B (custom domains) — a real DNS
+     * lookup is genuine outbound network I/O and is never performed in
+     * this test suite; every test that touches domain verification
+     * binds this double first.
+     */
+    protected function fakeDnsVerifier(bool $hasTxtRecord = true): \Mockery\MockInterface
+    {
+        $mock = \Mockery::mock(DnsVerifier::class);
+        $mock->shouldReceive('hasTxtRecord')->andReturn($hasTxtRecord);
+        $this->app->instance(DnsVerifier::class, $mock);
+
+        return $mock;
+    }
+
+    /**
+     * The real Forge API is never called in this test suite (see
+     * ForgeDomainProvisionerTest for the one file that exercises this
+     * class's own HTTP-building/parsing logic, against Http::fake()
+     * fixtures) — every test that reaches WebsiteDomainService binds
+     * this double first and sets its own expectations for
+     * requestCertificate()/certificateStatus().
+     */
+    protected function fakeDomainProvisioner(): \Mockery\MockInterface
+    {
+        $mock = \Mockery::mock(ForgeDomainProvisioner::class);
+        // Default, lenient expectations for the calls
+        // WebsiteDomainService::provisionCertificate()/remove() always
+        // make — tests that care about asserting one (e.g. ->once())
+        // or its exact argument still can, by declaring their own
+        // expectation afterwards, which Mockery lets override a default.
+        // attachDomain() must default to a non-null string: it becomes
+        // forge_domain_id, and WebsiteDomainService reuses that value
+        // (rather than re-attaching) on any later call for the same row.
+        $mock->shouldReceive('attachDomain')->andReturn('forge-domain-fixture-default')->byDefault();
+        $mock->shouldReceive('detachDomain')->byDefault();
+        $this->app->instance(ForgeDomainProvisioner::class, $mock);
 
         return $mock;
     }

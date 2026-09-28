@@ -15,9 +15,11 @@
     use App\Http\Middleware\PreventRequestsDuringMaintenance;
     use App\Http\Middleware\RedirectIfAuthenticated;
     use App\Http\Middleware\RedirectIfNotValid;
+    use App\Http\Middleware\ResolveCustomDomainWebsite;
     use App\Http\Middleware\ResolveCustomerContext;
     use App\Http\Middleware\SubAccountRestriction;
     use App\Http\Middleware\TrimStrings;
+    use App\Http\Middleware\TrustHosts;
     use App\Http\Middleware\TrustProxies;
     use App\Http\Middleware\TwoFactor;
     use App\Http\Middleware\VerifyCsrfToken;
@@ -54,8 +56,16 @@
             TrimStrings::class,
             ConvertEmptyStringsToNull::class,
             TrustProxies::class,
+            TrustHosts::class,
             HandleCors::class,
             PreventRequestsDuringMaintenance::class,
+            // Website Generation + Hosting Slice B (contract §40.1) — must
+            // run after TrustHosts above (host validation already applied)
+            // and is itself a GLOBAL, not route-group, middleware: a real
+            // custom-domain page slug matches no registered platform
+            // route, so this has to run before the router ever tries to
+            // match one, or it 404s before this middleware gets a turn.
+            ResolveCustomDomainWebsite::class,
         ];
 
         /**
