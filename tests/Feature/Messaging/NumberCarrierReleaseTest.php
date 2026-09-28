@@ -202,15 +202,19 @@ class NumberCarrierReleaseTest extends TestCase
         );
     }
 
-    public function test_a_404_from_the_carrier_is_treated_as_confirmed(): void
+    /**
+     * The manager trusts whatever CarrierReleaseOutcome the adapter
+     * returns — it has no opinion on HOW that was verified. Confirmed via
+     * a retry (e.g. TelnyxProvisioningAdapter's own lookup-already-deleted
+     * path, covered at the adapter level in TelnyxProvisioningAdapterTest)
+     * must transition to Released exactly like a fresh, direct
+     * confirmation does.
+     */
+    public function test_a_confirmed_outcome_from_a_retry_transitions_to_released_just_like_a_fresh_confirmation(): void
     {
-        // Standard idempotent-DELETE semantics: the carrier saying the
-        // number is not present is exactly the end state a release call
-        // wants, e.g. after an earlier attempt's own response was lost to
-        // a local timeout before this platform ever recorded it.
         $fake = $this->bindFakeProvisioningAdapter();
-        $number = $this->decidedNumber('fake_number_404_1');
-        $fake->scriptReleaseOutcome('fake_number_404_1', CarrierReleaseOutcome::Confirmed);
+        $number = $this->decidedNumber('fake_number_retry_confirm_1');
+        $fake->scriptReleaseOutcome('fake_number_retry_confirm_1', CarrierReleaseOutcome::Confirmed);
 
         $this->manager()->confirmCarrierRelease($number->fresh(), $this->actorId(), 'Retry after a lost response.');
 

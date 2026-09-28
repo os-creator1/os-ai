@@ -324,38 +324,134 @@ class TelnyxProvisioningAdapterTest extends TestCase
     // Phone Numbers + A2P lane — the carrier-release boundary.
     // Deliberately does NOT reserveFunding(): releasing a number is not a
     // purchase, so this is tested without any wallet fixture at all.
+    //
+    // Review correction — releaseNumber() now verifies twice before ever
+    // reporting Confirmed: a GET lookup that must identity-match first,
+    // then a DELETE whose own response must confirm both identity and
+    // deleted state. A DELETE 404 is never, by itself, proof of a prior
+    // successful release.
     // -----------------------------------------------------------------
 
-    public function test_release_number_hits_the_confirmed_delete_endpoint_and_confirms_on_2xx(): void
+    public function test_release_number_confirms_only_once_the_lookup_matches_and_the_delete_response_confirms_deletion(): void
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_1' => Http::response(['data' => ['id' => 'pn_release_fixture_1']], 200),
+            'api.telnyx.com/v2/phone_numbers/pn_valid_1' => function ($request) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => ['id' => 'pn_valid_1', 'phone_number' => '+14155550700', 'status' => 'active']], 200);
+                }
+
+                return Http::response(['data' => ['id' => 'pn_valid_1', 'phone_number' => '+14155550700', 'status' => 'deleted']], 200);
+            },
         ]);
 
-        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_1', '+14155550600'));
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_valid_1', '+14155550700'));
 
         $this->assertSame(CarrierReleaseOutcome::Confirmed, $result->outcome);
-        Http::assertSent(fn ($request) => $request->method() === 'DELETE' && str_contains($request->url(), '/phone_numbers/pn_release_fixture_1'));
+        Http::assertSent(fn ($request) => $request->method() === 'GET' && str_contains($request->url(), '/phone_numbers/pn_valid_1'));
+        Http::assertSent(fn ($request) => $request->method() === 'DELETE' && str_contains($request->url(), '/phone_numbers/pn_valid_1'));
     }
 
-    public function test_release_number_treats_a_404_as_confirmed(): void
+    /**
+     * The mismatched-provider-ID case: the stored reference resolves to a
+     * DIFFERENT phone number at the carrier than this platform believes it
+     * is releasing. DELETE must never even be attempted.
+     */
+    public function test_release_number_refuses_to_delete_when_the_lookup_phone_number_does_not_match(): void
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_2' => Http::response(['errors' => [['title' => 'Not Found']]], 404),
+            'api.telnyx.com/v2/phone_numbers/pn_mismatch_1' => Http::response(['data' => ['id' => 'pn_mismatch_1', 'phone_number' => '+19995551234', 'status' => 'active']], 200),
         ]);
 
-        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_2', '+14155550601'));
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_mismatch_1', '+14155550701'));
 
-        $this->assertSame(CarrierReleaseOutcome::Confirmed, $result->outcome);
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('lookup_phone_number_mismatch', $result->detail);
+        Http::assertNotSent(fn ($request) => $request->method() === 'DELETE');
     }
 
-    public function test_release_number_never_guesses_confirmed_for_any_other_error_status(): void
+    /**
+     * A DELETE 404 must remain NotConfirmed even when the prior lookup
+     * matched — it is not proof of a prior successful release.
+     */
+    public function test_release_number_treats_a_delete_404_as_not_confirmed(): void
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_3' => Http::response(['errors' => [['title' => 'Unauthorized']]], 401),
+            'api.telnyx.com/v2/phone_numbers/pn_delete_404_1' => function ($request) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => ['id' => 'pn_delete_404_1', 'phone_number' => '+14155550702', 'status' => 'active']], 200);
+                }
+
+                return Http::response(['errors' => [['title' => 'Not Found']]], 404);
+            },
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_delete_404_1', '+14155550702'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('delete_not_found', $result->detail);
+    }
+
+    /**
+     * A 2xx delete response that does not itself confirm identity/deleted
+     * state is ambiguous — never guessed as a success.
+     */
+    public function test_release_number_treats_an_ambiguous_2xx_delete_response_as_not_confirmed(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_ambiguous_1' => function ($request) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => ['id' => 'pn_ambiguous_1', 'phone_number' => '+14155550703', 'status' => 'active']], 200);
+                }
+
+                // 2xx, but the response never confirms the deleted state.
+                return Http::response(['data' => ['id' => 'pn_ambiguous_1', 'phone_number' => '+14155550703', 'status' => 'active']], 200);
+            },
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_ambiguous_1', '+14155550703'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('delete_response_ambiguous', $result->detail);
+    }
+
+    /**
+     * A 2xx delete response naming a DIFFERENT phone number than expected
+     * is likewise ambiguous, even though the HTTP call itself succeeded.
+     */
+    public function test_release_number_treats_a_delete_response_identity_mismatch_as_not_confirmed(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_delete_mismatch_1' => function ($request) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => ['id' => 'pn_delete_mismatch_1', 'phone_number' => '+14155550704', 'status' => 'active']], 200);
+                }
+
+                return Http::response(['data' => ['id' => 'pn_delete_mismatch_1', 'phone_number' => '+19995559999', 'status' => 'deleted']], 200);
+            },
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_delete_mismatch_1', '+14155550704'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('delete_response_ambiguous', $result->detail);
+    }
+
+    public function test_release_number_never_guesses_confirmed_for_any_other_delete_error_status(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_release_fixture_3' => function ($request) {
+                if ($request->method() === 'GET') {
+                    return Http::response(['data' => ['id' => 'pn_release_fixture_3', 'phone_number' => '+14155550602', 'status' => 'active']], 200);
+                }
+
+                return Http::response(['errors' => [['title' => 'Unauthorized']]], 401);
+            },
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_3', '+14155550602'));
@@ -373,6 +469,46 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_release_fixture_4', '+14155550603'));
 
         $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
-        $this->assertSame('transport_error', $result->detail);
+        $this->assertSame('lookup_transport_error', $result->detail);
+    }
+
+    /**
+     * A 404 on the LOOKUP itself is likewise never guessed as "already
+     * deleted" — there is no identity to verify against, so DELETE is
+     * never attempted either.
+     */
+    public function test_release_number_treats_a_lookup_404_as_not_confirmed(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_lookup_404_1' => Http::response(['errors' => [['title' => 'Not Found']]], 404),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_lookup_404_1', '+14155550705'));
+
+        $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
+        $this->assertSame('lookup_not_found', $result->detail);
+        Http::assertNotSent(fn ($request) => $request->method() === 'DELETE');
+    }
+
+    /**
+     * A retry after an earlier attempt's own response was lost to this
+     * platform's network/timeout: the lookup itself already shows the
+     * number deleted, with a matching identity. Confirmed WITHOUT a
+     * second, redundant delete call — verified via retrieval, never
+     * guessed from a delete 404.
+     */
+    public function test_release_number_confirms_from_the_lookup_alone_when_already_deleted(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/phone_numbers/pn_already_deleted_1' => Http::response(['data' => ['id' => 'pn_already_deleted_1', 'phone_number' => '+14155550706', 'status' => 'deleted']], 200),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->releaseNumber(new NumberReleaseQuery('pn_already_deleted_1', '+14155550706'));
+
+        $this->assertSame(CarrierReleaseOutcome::Confirmed, $result->outcome);
+        $this->assertSame('lookup_already_deleted', $result->detail);
+        Http::assertNotSent(fn ($request) => $request->method() === 'DELETE');
     }
 }

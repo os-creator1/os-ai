@@ -85,41 +85,79 @@ use Illuminate\Support\Str;
  *                                                      ("reject", "declin", "fail") is used
  *                                                      and everything else stays Pending —
  *                                                      never guessed Approved.
- *   - DELETE /phone_numbers/{id}                       CONFIRMED path (Phone Numbers +
- *                                                      A2P lane, carrier-release
- *                                                      boundary — developers.telnyx.com/
- *                                                      api/numbers/delete-phone-number).
- *                                                      A successful (2xx) response is
- *                                                      Telnyx's own confirmation the
- *                                                      number left this account. A 404
- *                                                      is ALSO treated as confirmed —
- *                                                      standard idempotent-DELETE
- *                                                      semantics: Telnyx saying the
- *                                                      number is not present is exactly
- *                                                      the end state a release call
- *                                                      wants, and it is what a retry
- *                                                      after an earlier attempt's
- *                                                      response was lost to this
- *                                                      platform's own network/timeout
- *                                                      would see. Telnyx's own support
- *                                                      documentation additionally states
- *                                                      a deleted number then sits
- *                                                      through a hold/ageing period
- *                                                      before anyone else can buy it —
- *                                                      that is the carrier's own
- *                                                      internal process and has no
- *                                                      bearing on this platform's own
- *                                                      "no longer ours" determination,
- *                                                      which releaseNumber() treats as
- *                                                      final the moment either response
- *                                                      shape above is observed. Every
- *                                                      other response, or a transport-
- *                                                      level exception/timeout, is
- *                                                      NotConfirmed — never guessed as a
- *                                                      success, mirroring this class's
- *                                                      own "never guess Approved"
- *                                                      discipline for registration
- *                                                      status.
+ *   - GET    /phone_numbers/{id}                       CONFIRMED path (developers.telnyx.com/
+ *   - DELETE /phone_numbers/{id}                       api-reference/phone-number-configurations/
+ *                                                      retrieve-a-phone-number and
+ *                                                      .../api/numbers/delete-phone-number
+ *                                                      — Phone Numbers + A2P lane
+ *                                                      carrier-release boundary).
+ *
+ *                                                      Review correction — a bare 2xx or a
+ *                                                      bare 404 on the DELETE call is NOT
+ *                                                      by itself proof of anything: a 2xx
+ *                                                      could echo the wrong resource (a
+ *                                                      stale/corrupted provider reference
+ *                                                      pointing at someone else's number),
+ *                                                      and a 404 could mean the reference
+ *                                                      was always wrong, not that this
+ *                                                      platform's own prior attempt
+ *                                                      actually succeeded. releaseNumber()
+ *                                                      therefore verifies twice before
+ *                                                      ever reporting Confirmed:
+ *
+ *                                                      1. GET the resource by
+ *                                                         providerPhoneNumberId first.
+ *                                                         Its own documented `phone_number`
+ *                                                         field must match
+ *                                                         $query->phoneNumber exactly — a
+ *                                                         mismatch means the stored
+ *                                                         reference does not identify the
+ *                                                         number this platform believes it
+ *                                                         is releasing, and this method
+ *                                                         refuses to proceed to DELETE at
+ *                                                         all (NotConfirmed). A 404 here is
+ *                                                         likewise NotConfirmed, never
+ *                                                         guessed as "already deleted" —
+ *                                                         there is no identity to verify
+ *                                                         against. If the lookup's own
+ *                                                         documented `status` field already
+ *                                                         reads "deleted" AND the identity
+ *                                                         matches, that alone is Confirmed
+ *                                                         (the safe way to recognize a
+ *                                                         retry after an earlier attempt's
+ *                                                         own response was lost to this
+ *                                                         platform's network/timeout —
+ *                                                         verified via retrieval, never
+ *                                                         guessed from a delete 404).
+ *                                                      2. Only once identity is verified
+ *                                                         and the number is not already
+ *                                                         confirmed deleted does this method
+ *                                                         call DELETE. A 404 here is ALWAYS
+ *                                                         NotConfirmed — per this
+ *                                                         correction, never treated as
+ *                                                         confirmed on its own. A 2xx
+ *                                                         response is Confirmed only once
+ *                                                         its own `id`/`phone_number` still
+ *                                                         match AND its `status` field
+ *                                                         reads "deleted"; any 2xx response
+ *                                                         that cannot be verified that way
+ *                                                         is ambiguous and NotConfirmed —
+ *                                                         never guessed as a success.
+ *
+ *                                                      Every other response, or a
+ *                                                      transport-level exception/timeout at
+ *                                                      either step, is likewise
+ *                                                      NotConfirmed — mirroring this
+ *                                                      class's own "never guess Approved"
+ *                                                      discipline for registration status.
+ *                                                      Telnyx's own support documentation
+ *                                                      additionally states a deleted number
+ *                                                      then sits through a hold/ageing
+ *                                                      period before anyone else can buy
+ *                                                      it — that is the carrier's own
+ *                                                      internal process and has no bearing
+ *                                                      on this platform's own "no longer
+ *                                                      ours" determination.
  *
  * None of this can run with a real credential today regardless: every
  * write path here also requires config('messaging.managed_messaging_provisioning_enabled')
@@ -294,30 +332,113 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     /**
      * Phone Numbers + A2P lane — see this class's own docblock for the
-     * endpoint verification. Deliberately does NOT go through
-     * reserveFunding(): releasing a number is not a purchase, and this
-     * contract has no "release fee" concept — the wallet is never touched
-     * here. Never mutates any local record; NumberLifecycleManager::
+     * full endpoint/verification rationale. Deliberately does NOT go
+     * through reserveFunding(): releasing a number is not a purchase, and
+     * this contract has no "release fee" concept — the wallet is never
+     * touched here. Never mutates any local record; NumberLifecycleManager::
      * confirmCarrierRelease() is the only writer of the resulting local
      * state, under its own row lock.
+     *
+     * Two verified steps, never a single trusting call: a lookup that must
+     * identity-match before anything is deleted, then a delete whose own
+     * response must confirm both identity and deleted state before this
+     * method ever reports Confirmed. A 404 at either step is NotConfirmed
+     * — it is never treated as proof that a prior release already
+     * succeeded.
      */
     public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult
     {
+        $lookup = $this->lookUpNumber($query);
+
+        if ($lookup instanceof CarrierReleaseResult) {
+            // A definitive outcome already — either a verified prior
+            // deletion (Confirmed) or a lookup failure/mismatch
+            // (NotConfirmed). Either way, DELETE is never called.
+            return $lookup;
+        }
+
+        // $lookup is the resource's own current status string here — the
+        // identity already matched, and it does not yet read "deleted".
         try {
             $response = $this->client()->delete(self::API_BASE . '/phone_numbers/' . $query->providerPhoneNumberId);
         } catch (\Throwable) {
-            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'transport_error');
-        }
-
-        if ($response->successful()) {
-            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'http_' . $response->status());
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_transport_error');
         }
 
         if ($response->status() === 404) {
-            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'http_404_already_removed');
+            // Never proof of a prior successful release on its own — the
+            // reference could simply be wrong. NumberLifecycleManager
+            // records this as a visible, retryable failure rather than
+            // ever guessing the number is gone.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_not_found');
         }
 
-        return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'http_' . $response->status());
+        if (! $response->successful()) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_http_' . $response->status());
+        }
+
+        $responseId = $response->json('data.id');
+        $responsePhoneNumber = $response->json('data.phone_number');
+        $responseStatus = strtolower((string) $response->json('data.status', ''));
+
+        $identityConfirmed = ($responseId === null || (string) $responseId === $query->providerPhoneNumberId)
+            && $responsePhoneNumber === $query->phoneNumber;
+
+        if (! $identityConfirmed || $responseStatus !== 'deleted') {
+            // A 2xx response that does not itself confirm WHICH resource
+            // was deleted, or does not confirm it was actually deleted, is
+            // ambiguous — never guessed as a success.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'delete_response_ambiguous');
+        }
+
+        return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'delete_confirmed');
+    }
+
+    /**
+     * Retrieves the resource and verifies its identity before any delete
+     * is ever attempted. Returns a definitive CarrierReleaseResult when
+     * there is nothing left for releaseNumber() to do (a lookup failure,
+     * an identity mismatch, or a lookup that already shows the number
+     * deleted); otherwise returns the resource's own current status string
+     * so releaseNumber() knows it is safe to proceed to DELETE.
+     */
+    private function lookUpNumber(NumberReleaseQuery $query): CarrierReleaseResult|string
+    {
+        try {
+            $response = $this->client()->get(self::API_BASE . '/phone_numbers/' . $query->providerPhoneNumberId);
+        } catch (\Throwable) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_transport_error');
+        }
+
+        if ($response->status() === 404) {
+            // Not, by itself, evidence of anything — never guessed as
+            // "already deleted" without a matching identity to verify.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_not_found');
+        }
+
+        if (! $response->successful()) {
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_http_' . $response->status());
+        }
+
+        $phoneNumber = $response->json('data.phone_number');
+
+        if ($phoneNumber !== $query->phoneNumber) {
+            // The stored provider reference does not identify the number
+            // this platform believes it is releasing — refuses to
+            // proceed to DELETE at all.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::NotConfirmed, 'lookup_phone_number_mismatch');
+        }
+
+        $status = strtolower((string) $response->json('data.status', ''));
+
+        if ($status === 'deleted') {
+            // Verified via retrieval, never guessed from a delete 404 —
+            // the safe way to recognize a retry after an earlier attempt's
+            // own response was lost to this platform's own network/timeout.
+            return new CarrierReleaseResult(CarrierReleaseOutcome::Confirmed, 'lookup_already_deleted');
+        }
+
+        return $status;
     }
 
     private function submitTenDlcRegistration(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
