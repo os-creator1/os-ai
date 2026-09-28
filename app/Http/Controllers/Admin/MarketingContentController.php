@@ -6,6 +6,7 @@ use App\Http\Requests\Admin\SaveMarketingFaqRequest;
 use App\Http\Requests\Admin\SaveMarketingTestimonialRequest;
 use App\Http\Requests\Admin\UpdateMarketingHeroCopyRequest;
 use App\Library\Marketing\MarketingTestimonialAssetService;
+use App\Library\Marketing\YoutubeUrlParser;
 use App\Models\MarketingContentSettings;
 use App\Models\MarketingFaq;
 use App\Models\MarketingTestimonial;
@@ -99,13 +100,17 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        if (! $request->hasFile('poster_image')) {
+        $youtubeId = $request->filled('video_url') ? YoutubeUrlParser::extractVideoId($request->input('video_url')) : null;
+
+        if (! $request->hasFile('poster_image') && $youtubeId === null) {
             return back()
-                ->withErrors(['poster_image' => 'A poster image is required for a new testimonial.'])
+                ->withErrors(['poster_image' => 'A poster image is required, unless you provide a YouTube video link.'])
                 ->withInput();
         }
 
-        $posterPath = $this->testimonialAssets->store($request->file('poster_image'));
+        $posterPath = $request->hasFile('poster_image')
+            ? $this->testimonialAssets->store($request->file('poster_image'))
+            : null;
 
         MarketingTestimonial::query()->create([
             ...$request->safe()->except('poster_image'),
@@ -126,14 +131,25 @@ class MarketingContentController extends AdminBaseController
         $testimonial->fill($request->safe()->except('poster_image'));
         $testimonial->is_visible = $request->boolean('is_visible');
 
+        $previousPath = $testimonial->getOriginal('poster_image_path');
+
         if ($request->hasFile('poster_image')) {
-            $previousPath = $testimonial->poster_image_path;
             $testimonial->poster_image_path = $this->testimonialAssets->store($request->file('poster_image'));
-            $testimonial->save();
-            $this->testimonialAssets->deleteIfOwned($previousPath);
-        } else {
-            $testimonial->save();
         }
+
+        if (! $testimonial->hasDisplayableMedia()) {
+            return back()
+                ->withErrors(['poster_image' => 'A poster image is required, unless you provide a YouTube video link.'])
+                ->withInput();
+        }
+
+        $testimonial->save();
+
+        // Content-hashed filenames mean re-uploading the same photo, or two
+        // testimonials sharing one photo, can leave `$previousPath` equal to
+        // the file this (or another) row still needs. Only remove it once no
+        // testimonial — including this one, post-save — references it.
+        $this->deletePosterIfOrphaned($previousPath);
 
         return redirect()
             ->route('admin.marketing-content.index')
@@ -144,12 +160,35 @@ class MarketingContentController extends AdminBaseController
     {
         $this->authorize('general settings');
 
-        $this->testimonialAssets->deleteIfOwned($testimonial->poster_image_path);
+        $posterPath = $testimonial->poster_image_path;
         $testimonial->delete();
+        $this->deletePosterIfOrphaned($posterPath);
 
         return redirect()
             ->route('admin.marketing-content.index')
             ->with('success', 'Testimonial removed.');
+    }
+
+    /**
+     * Deletes a testimonial poster file only when no `marketing_testimonials`
+     * row — checked against current database state, after the triggering
+     * save/delete has already been committed — still points at it. Guards
+     * against exactly two ways content-hashed filenames can be shared: an
+     * unchanged re-upload (the "previous" path is still this row's current
+     * path) and two different testimonials pointing at the same uploaded
+     * photo (deleting or replacing one must not orphan the other's image).
+     */
+    private function deletePosterIfOrphaned(?string $path): void
+    {
+        if (blank($path)) {
+            return;
+        }
+
+        $stillReferenced = MarketingTestimonial::query()->where('poster_image_path', $path)->exists();
+
+        if (! $stillReferenced) {
+            $this->testimonialAssets->deleteIfOwned($path);
+        }
     }
 
     /**

@@ -209,4 +209,52 @@ class PublicHomepageTest extends TestCase
         $response->assertSee('href="https://videos.example.test/feedback.mp4"', false);
         $response->assertSee('marketing-testimonial-card__play', false);
     }
+
+    /**
+     * Correction: a testimonial hosted on YouTube needs no poster upload at
+     * all — its own thumbnail stands in, and clicking plays it inline via
+     * a privacy-enhanced (youtube-nocookie.com) embed built from a safely
+     * parsed video ID. The player itself must not be present until clicked.
+     */
+    public function test_a_youtube_testimonial_with_no_poster_renders_a_click_to_play_button(): void
+    {
+        MarketingTestimonial::query()->create([
+            'name' => 'YouTube Person',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image_path' => null,
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'is_visible' => true,
+            'position' => 1,
+        ]);
+
+        $response = $this->get('/');
+
+        $response->assertOk();
+        $response->assertSee('YouTube Person', false);
+        $response->assertSee('data-marketing-youtube-id="dQw4w9WgXcQ"', false);
+        $response->assertSee('marketing-testimonial-card__play', false);
+        // The YouTube thumbnail stands in for a poster — no upload needed.
+        $response->assertSee('img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg', false);
+        // Never a clickable "#" link, and never an <iframe> before a click.
+        $response->assertDontSee('href="#"', false);
+        $response->assertDontSee('<iframe', false);
+    }
+
+    public function test_a_youtube_testimonial_with_an_uploaded_poster_still_uses_that_poster(): void
+    {
+        MarketingTestimonial::query()->create([
+            'name' => 'YouTube With Poster',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image_path' => 'images/marketing/testimonials/fake.png',
+            'video_url' => 'https://youtu.be/dQw4w9WgXcQ',
+            'is_visible' => true,
+            'position' => 1,
+        ]);
+
+        $response = $this->get('/');
+
+        $response->assertOk();
+        $response->assertSee('images/marketing/testimonials/fake.png', false);
+        $response->assertSee('data-marketing-youtube-id="dQw4w9WgXcQ"', false);
+    }
 }

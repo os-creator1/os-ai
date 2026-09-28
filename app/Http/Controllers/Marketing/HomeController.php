@@ -29,7 +29,11 @@ class HomeController extends Controller
             'plans' => $this->plans->sellablePlans(),
             'settings' => MarketingContentSettings::current(),
             'faqs' => MarketingFaq::visibleOrdered()->get(),
-            'testimonials' => MarketingTestimonial::visibleOrdered()->whereNotNull('poster_image_path')->get(),
+            // A visible testimonial only ever renders once it has something
+            // to actually show: an uploaded poster, or a YouTube link (whose
+            // own thumbnail stands in for a poster) — see
+            // MarketingTestimonial::hasDisplayableMedia().
+            'testimonials' => MarketingTestimonial::visibleOrdered()->get()->filter->hasDisplayableMedia()->values(),
         ]);
     }
 }

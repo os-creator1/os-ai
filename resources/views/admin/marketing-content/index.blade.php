@@ -142,7 +142,8 @@
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label text-label">Video URL</label>
-                                    <input type="url" name="video_url" class="form-control" maxlength="2048" value="{{ old('video_url', $testimonial->video_url) }}" placeholder="https://...">
+                                    <input type="url" name="video_url" class="form-control" maxlength="2048" value="{{ old('video_url', $testimonial->video_url) }}" placeholder="https://www.youtube.com/watch?v=...">
+                                    <p class="form-text text-caption">A YouTube link plays inline on the homepage using its own thumbnail — no poster upload needed.</p>
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label text-label">Transcript / caption</label>
@@ -168,7 +169,7 @@
                         <button type="submit" class="btn btn-sm btn-link text-danger">Remove</button>
                     </form>
                 @empty
-                    <p class="text-muted">No testimonials yet. Add one below once you have a real name, poster image, and approved wording.</p>
+                    <p class="text-muted">No testimonials yet. Add one below once you have a real name, approved wording, and either a poster image or a YouTube video link.</p>
                 @endforelse
 
                 <hr>
@@ -179,7 +180,8 @@
                     <div class="row">
                         <div class="col-md-3">
                             <label class="form-label text-label">Poster image</label>
-                            <input type="file" name="poster_image" class="form-control" accept="image/png,image/jpeg,image/webp" required>
+                            <input type="file" name="poster_image" class="form-control" accept="image/png,image/jpeg,image/webp">
+                            <p class="form-text text-caption">Not required for a YouTube video link — its own thumbnail is used.</p>
                         </div>
                         <div class="col-md-9">
                             <div class="mb-2">
@@ -193,7 +195,8 @@
                             </div>
                             <div class="mb-2">
                                 <label class="form-label text-label">Video URL</label>
-                                <input type="url" name="video_url" class="form-control" maxlength="2048" placeholder="https://...">
+                                <input type="url" name="video_url" class="form-control" maxlength="2048" placeholder="https://www.youtube.com/watch?v=...">
+                                <p class="form-text text-caption">A YouTube link plays inline on the homepage. A poster image is required if this is left blank, or if the link is not YouTube.</p>
                             </div>
                             <div class="mb-2">
                                 <label class="form-label text-label">Transcript / caption</label>

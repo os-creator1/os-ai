@@ -487,6 +487,25 @@
     font-size: 1.1rem;
 }
 
+/* Reset <button> chrome for the click-to-play YouTube poster — it must
+   look and lay out identically to the plain <div>/<a> poster variants. */
+button.marketing-testimonial-card__poster {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+}
+
+.marketing-testimonial-card__iframe {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border: 0;
+}
+
 .marketing-testimonial-card__body {
     padding: 18px 20px;
 }
