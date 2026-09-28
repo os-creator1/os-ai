@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
+use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
 use App\Models\WebsiteRevision;
@@ -28,6 +29,7 @@ class WebsiteController extends Controller
 
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
+        private readonly WebsiteAddressPrivacyGate $privacyGate,
     ) {
     }
 
@@ -94,14 +96,35 @@ class WebsiteController extends Controller
         $assetsByUid = collect($snapshot['assets'] ?? [])->keyBy('uid')->all();
         $formsByUid = collect($snapshot['forms'] ?? [])->keyBy('uid')->all();
 
+        // This platform-path response is never indexable (the header
+        // below is unconditional), but when the Business also has a
+        // live custom domain, this exact content is also served there
+        // under a different URL — pointing the canonical tag at that
+        // one true address, on both hosts, is what actually prevents
+        // the two from ever competing as duplicate content (contract 18
+        // §3.2 G-3's gap). With no active domain, there is no better
+        // canonical than this URL itself, so the tag is simply omitted.
+        $domain = $website->activePrimaryDomain();
+        $canonicalUrl = $domain !== null
+            ? 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug'])
+            : null;
+
+        // Contract §7.5 — same live, per-request address-privacy check
+        // App\Http\Middleware\ResolveCustomDomainWebsite applies for a
+        // custom domain: a revoked address permission must be withheld
+        // here too, since this platform-path response renders the exact
+        // same `contact_details` component.
+        $sections = $this->privacyGate->redactSections($page['sections'], $website->business);
+
         $response = response()->view('public.website.page', [
             'website' => $website,
             'websiteMeta' => $snapshot['website'],
             'page' => (object) array_merge($page, ['seo' => (object) $page['seo']]),
-            'sections' => $page['sections'],
+            'sections' => $sections,
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => false,
+            'canonicalUrl' => $canonicalUrl,
             // Public navigation is built only from the immutable revision.
             'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
                 'uid' => $candidate['uid'],
