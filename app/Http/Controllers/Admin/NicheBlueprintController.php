@@ -125,10 +125,36 @@ class NicheBlueprintController extends AdminBaseController
                 PlatformFeature::cases(),
                 fn (PlatformFeature $feature) => PlatformFeatureRegistry::isBusinessScoped($feature->value)
             )),
-            'verticals' => BusinessVertical::query()->where('is_active', true)->orderBy('display_name')->get(),
+            'verticals' => $this->verticalChoicesFor($blueprint),
             'industries' => BusinessIndustry::cases(),
             'breadcrumbs' => $this->breadcrumbs([['name' => $blueprint->display_name]]),
         ]);
+    }
+
+    /**
+     * Every active vertical, plus this Blueprint's own CURRENT vertical even
+     * if it has since been deactivated. §7.1's resolution keeps working from
+     * `broad_industry` for a Blueprint whose vertical went inactive, but the
+     * edit form must still be able to show and retain that value — dropping
+     * it from the choices would leave nothing for the browser to resubmit
+     * when the operator saves an unrelated field, silently detaching the
+     * vertical (NicheBlueprintPublisher::updateBlueprintIdentity() is what
+     * actually allows retaining it unchanged; this only makes sure the
+     * current value is a selectable option in the first place).
+     *
+     * @return \Illuminate\Support\Collection<int, BusinessVertical>
+     */
+    private function verticalChoicesFor(NicheBlueprint $blueprint): \Illuminate\Support\Collection
+    {
+        $active = BusinessVertical::query()->where('is_active', true)->orderBy('display_name')->get();
+
+        if ($blueprint->vertical_key === null || $active->contains('key', $blueprint->vertical_key)) {
+            return $active;
+        }
+
+        $current = BusinessVertical::query()->where('key', $blueprint->vertical_key)->first();
+
+        return $current === null ? $active : $active->push($current);
     }
 
     public function update(UpdateNicheBlueprintRequest $request, NicheBlueprint $blueprint): RedirectResponse

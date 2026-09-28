@@ -9,6 +9,7 @@ use App\Library\NicheBlueprint\Adapters\InstalledComponentReference;
 use App\Library\NicheBlueprint\NicheBlueprintPublisher;
 use App\Models\AppConfig;
 use App\Models\Business;
+use App\Models\BusinessVertical;
 use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\NicheBlueprintVersion;
@@ -488,5 +489,200 @@ class NicheBlueprintAdminControllerTest extends TestCase
                 $this->assertStringNotContainsString('template-library', strtolower($name));
             }
         }
+    }
+
+    // ------------------------------------------------- route-binding misses
+    //
+    // Review finding 1. A syntactically valid identifier that resolves to no
+    // row lets ModelNotFoundException reach App\Exceptions\Handler, which
+    // renders that as a literal 500 in every non-local environment
+    // (config('app.env') !== 'local'), never a 404. These exercise the
+    // REAL HTTP pipeline (no withoutExceptionHandling()), so a regression
+    // here is caught as a 500, not merely as an uncaught exception.
+
+    public function test_nonexistent_blueprint_uuid_returns_404_not_500(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->get(route('admin.niche-blueprints.show', ['blueprint' => (string) Str::uuid()]))
+            ->assertNotFound();
+    }
+
+    public function test_existing_blueprint_with_nonexistent_version_uuid_returns_404_not_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $blueprint = $this->publisher()->createBlueprint($admin->id, 'photo_booth', 'Photo Booth');
+
+        $this->patch(
+            route('admin.niche-blueprints.versions.update', ['blueprint' => $blueprint, 'version' => (string) Str::uuid()]),
+            ['notes' => 'x']
+        )->assertNotFound();
+
+        $this->post(
+            route('admin.niche-blueprints.versions.publish', ['blueprint' => $blueprint, 'version' => (string) Str::uuid()])
+        )->assertNotFound();
+    }
+
+    public function test_existing_version_with_nonexistent_numeric_component_returns_404_not_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
+
+        $this->patch(
+            route('admin.niche-blueprints.components.update', ['blueprint' => $blueprint, 'version' => $draft, 'component' => 999999999]),
+            ['position' => 1]
+        )->assertNotFound();
+
+        $this->delete(
+            route('admin.niche-blueprints.components.destroy', ['blueprint' => $blueprint, 'version' => $draft, 'component' => 999999999])
+        )->assertNotFound();
+    }
+
+    /**
+     * The existing belongs-to checks (assertVersionBelongsToBlueprint() /
+     * assertComponentBelongsToVersion()) are a DIFFERENT failure than a
+     * route-binding miss — both resolve genuinely, just mismatched — and
+     * must keep working exactly as before this fix.
+     */
+    public function test_a_resolved_but_mismatched_version_still_404s_via_the_belongs_to_check(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $blueprintA = $this->publisher()->createBlueprint($admin->id, 'blueprint_a', 'Blueprint A');
+        $blueprintB = $this->publisher()->createBlueprint($admin->id, 'blueprint_b', 'Blueprint B');
+        $draftB = $this->publisher()->createDraftVersion($admin->id, $blueprintB);
+
+        $this->patch(
+            route('admin.niche-blueprints.versions.update', ['blueprint' => $blueprintA, 'version' => $draftB]),
+            ['notes' => 'x']
+        )->assertNotFound();
+    }
+
+    // ---------------------------------------- duplicate identity (finding 2)
+
+    public function test_duplicate_blueprint_key_via_http_is_refused_without_a_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $this->publisher()->createBlueprint($admin->id, 'photo_booth', 'Photo Booth');
+
+        $this->post(route('admin.niche-blueprints.store'), [
+            'key' => 'photo_booth',
+            'display_name' => 'A Second Photo Booth',
+        ])
+            ->assertRedirect(route('admin.niche-blueprints.create'))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame(1, NicheBlueprint::where('key', 'photo_booth')->count());
+    }
+
+    public function test_duplicate_vertical_via_http_is_refused_without_a_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $vertical = BusinessVertical::create([
+            'key' => 'photo_booth_vertical', 'display_name' => 'Photo Booth Vertical', 'is_active' => true,
+        ]);
+        $this->publisher()->createBlueprint($admin->id, 'photo_booth', 'Photo Booth', $vertical->key);
+
+        $this->post(route('admin.niche-blueprints.store'), [
+            'key' => 'weddings',
+            'display_name' => 'Weddings',
+            'vertical_key' => $vertical->key,
+        ])
+            ->assertRedirect(route('admin.niche-blueprints.create'))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame(1, NicheBlueprint::where('vertical_key', $vertical->key)->count());
+        $this->assertNull(NicheBlueprint::where('key', 'weddings')->first());
+    }
+
+    public function test_updating_blueprint_onto_another_blueprints_vertical_via_http_is_refused_without_a_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $verticalA = BusinessVertical::create(['key' => 'vertical_a', 'display_name' => 'Vertical A', 'is_active' => true]);
+        $verticalB = BusinessVertical::create(['key' => 'vertical_b', 'display_name' => 'Vertical B', 'is_active' => true]);
+        $blueprintA = $this->publisher()->createBlueprint($admin->id, 'blueprint_a', 'Blueprint A', $verticalA->key);
+        $blueprintB = $this->publisher()->createBlueprint($admin->id, 'blueprint_b', 'Blueprint B', $verticalB->key);
+
+        $this->patch(route('admin.niche-blueprints.update', $blueprintB), [
+            'display_name' => 'Blueprint B',
+            'vertical_key' => $verticalA->key,
+        ])
+            ->assertRedirect(route('admin.niche-blueprints.show', $blueprintB))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame($verticalA->key, $blueprintA->fresh()->vertical_key);
+        $this->assertSame($verticalB->key, $blueprintB->fresh()->vertical_key, 'The refused update must leave the row unchanged.');
+    }
+
+    // ------------------------------------ inactive current vertical (finding 3)
+
+    public function test_show_page_displays_and_retains_a_now_inactive_current_vertical(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $vertical = BusinessVertical::create([
+            'key' => 'legacy_vertical', 'display_name' => 'Legacy Vertical', 'is_active' => true,
+        ]);
+        $blueprint = $this->publisher()->createBlueprint($admin->id, 'photo_booth', 'Photo Booth', $vertical->key);
+
+        $vertical->update(['is_active' => false]);
+
+        // The deactivated vertical is still rendered as a selectable, selected option.
+        $html = $this->get(route('admin.niche-blueprints.show', $blueprint))->assertOk()->getContent();
+        $this->assertStringContainsString('value="legacy_vertical"', $html);
+        $this->assertMatchesRegularExpression('/<option value="legacy_vertical"[^>]*selected/', $html);
+
+        // Saving an unrelated field must not detach it.
+        $this->patch(route('admin.niche-blueprints.update', $blueprint), [
+            'display_name' => 'Renamed Photo Booth',
+            'vertical_key' => $vertical->key,
+        ])
+            ->assertRedirect(route('admin.niche-blueprints.show', $blueprint))
+            ->assertSessionHas('flash_success');
+
+        $fresh = $blueprint->fresh();
+        $this->assertSame('Renamed Photo Booth', $fresh->display_name);
+        $this->assertSame('legacy_vertical', $fresh->vertical_key);
+
+        // A DIFFERENT Blueprint still cannot be pointed at that inactive vertical.
+        $other = $this->publisher()->createBlueprint($admin->id, 'other_blueprint', 'Other Blueprint');
+        $this->patch(route('admin.niche-blueprints.update', $other), [
+            'display_name' => 'Other Blueprint',
+            'vertical_key' => $vertical->key,
+        ])->assertSessionHas('flash_error');
+
+        $this->assertNull($other->fresh()->vertical_key);
+    }
+
+    // ---------------------------- out-of-vocabulary feature key (finding 4)
+
+    public function test_editing_a_draft_component_preserves_an_out_of_vocabulary_feature_key(): void
+    {
+        $admin = $this->actingAsAdmin();
+        [$blueprint, $draft] = $this->blueprintWithDraft($admin->id);
+
+        // The draft-authoring seam itself deliberately permits an unknown
+        // required_feature_key (Contract 20 §6.2/§15) — only publish refuses it.
+        $component = $this->publisher()->addDraftComponent(
+            $admin->id, $draft, 'k1', 'test_generic_component', 'not_a_real_feature_key', []
+        );
+
+        $html = $this->get(route('admin.niche-blueprints.show', $blueprint))->assertOk()->getContent();
+        $this->assertStringContainsString('value="not_a_real_feature_key"', $html);
+        $this->assertMatchesRegularExpression('/<option value="not_a_real_feature_key"[^>]*selected/', $html);
+
+        // Editing only the payload/position must leave the feature key untouched.
+        $this->patch(route('admin.niche-blueprints.components.update', [$blueprint, $draft, $component]), [
+            'position' => 3,
+            'payload_json' => json_encode(['x' => 1]),
+        ])->assertRedirect(route('admin.niche-blueprints.show', $blueprint));
+
+        $fresh = $component->fresh();
+        $this->assertSame('not_a_real_feature_key', $fresh->required_feature_key);
+        $this->assertSame(3, $fresh->position);
+
+        // Publish's own gate (§6.2 gate 3, unknown PlatformFeature) is still
+        // the one place this is ever finally rejected — never draft authoring.
+        $this->post(route('admin.niche-blueprints.versions.publish', [$blueprint, $draft]))
+            ->assertSessionHas('flash_error');
+        $this->assertSame('draft', $draft->fresh()->state->value);
     }
 }

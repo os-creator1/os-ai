@@ -239,4 +239,29 @@ class BlueprintTemplateLibraryControllerTest extends TestCase
 
         $this->assertSame([], array_values($writes), 'The Template Library surface must issue no write query.');
     }
+
+    // ------------------------------------------------- route-binding misses
+    //
+    // Review finding 1 — same boundary as NicheBlueprintAdminControllerTest:
+    // a route-model-binding miss must render as a real HTTP 404, not the
+    // literal 500 App\Exceptions\Handler renders for an uncaught
+    // ModelNotFoundException outside the local environment.
+
+    public function test_nonexistent_blueprint_returns_404_not_500(): void
+    {
+        $this->actingAsAdmin();
+
+        $this->get(route('admin.template-library.show', ['blueprint' => (string) Str::uuid()]))
+            ->assertNotFound();
+    }
+
+    public function test_nonexistent_version_returns_404_not_500(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $publisher = app(NicheBlueprintPublisher::class);
+        $blueprint = $publisher->createBlueprint($admin->id, 'photo_booth', 'Photo Booth');
+
+        $this->get(route('admin.template-library.versions.show', ['blueprint' => $blueprint, 'version' => (string) Str::uuid()]))
+            ->assertNotFound();
+    }
 }

@@ -79,7 +79,7 @@
                             <select name="vertical_key" class="form-select">
                                 <option value="">(none)</option>
                                 @foreach ($verticals as $vertical)
-                                    <option value="{{ $vertical->key }}" @selected(old('vertical_key', $blueprint->vertical_key) === $vertical->key)>{{ $vertical->display_name }}</option>
+                                    <option value="{{ $vertical->key }}" @selected(old('vertical_key', $blueprint->vertical_key) === $vertical->key)>{{ $vertical->display_name }}{{ $vertical->is_active ? '' : ' (inactive — current value, kept unless changed)' }}</option>
                                 @endforeach
                             </select>
                         </div>
@@ -162,7 +162,21 @@
                                                     <input type="text" name="component_type" class="form-control form-control-sm" value="{{ $component->component_type }}">
                                                 </div>
                                                 <div class="col-md-2">
+                                                    @php
+                                                        $currentFeatureInVocabulary = collect($businessScopedFeatures)->contains(fn ($feature) => $feature->value === $component->required_feature_key);
+                                                    @endphp
                                                     <select name="required_feature_key" class="form-select form-select-sm">
+                                                        @unless ($currentFeatureInVocabulary)
+                                                            {{-- Contract 20 §6.2/§15 — draft authoring deliberately permits an
+                                                                 unknown or Workspace-scoped required_feature_key; only publish
+                                                                 refuses it. The persisted current value must stay selectable and
+                                                                 selected here, or editing any other field on this component
+                                                                 (payload, position) would silently overwrite it with whichever
+                                                                 Business-scoped option happens to render first. --}}
+                                                            <option value="{{ $component->required_feature_key }}" selected>
+                                                                {{ $component->required_feature_key }} (current / invalid until corrected)
+                                                            </option>
+                                                        @endunless
                                                         @foreach ($businessScopedFeatures as $feature)
                                                             <option value="{{ $feature->value }}" @selected($component->required_feature_key === $feature->value)>
                                                                 {{ $feature->value }} ({{ \App\Library\Entitlement\PlatformFeatureRegistry::isAvailable($feature->value) ? 'Available' : 'Planned' }})
