@@ -16,4 +16,6 @@ enum NumberLifecycleEventType: string
     case ReleaseNoticeDelivered = 'release_notice_delivered';
     case ReleaseNoticeDeliveryFailed = 'release_notice_delivery_failed';
     case ReleaseDecided = 'release_decided';
+    case CarrierReleaseConfirmed = 'carrier_release_confirmed';
+    case CarrierReleaseAttemptFailed = 'carrier_release_attempt_failed';
 }

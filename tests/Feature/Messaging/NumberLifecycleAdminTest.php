@@ -3,7 +3,10 @@
 namespace Tests\Feature\Messaging;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Helpers\Helper;
+use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
+use App\Library\Messaging\FakeProvisioningAdapter;
 use App\Models\AppConfig;
 use App\Models\BusinessMessagingNumber;
 use App\Models\User;
@@ -89,6 +92,35 @@ class NumberLifecycleAdminTest extends TestCase
         ]);
 
         return $number->fresh();
+    }
+
+    /** A number with an already-recorded release decision and a real provider
+     * reference — eligible for the confirm-carrier-release action itself.
+     */
+    private function decidedNumber(?string $providerNumberReference = 'fake_number_admin_1'): BusinessMessagingNumber
+    {
+        $business = $this->makeBusiness();
+        $number = $this->attachNumber($this->attachIdentity($business), $this->uniqueNumber(), true, BusinessMessagingNumberStatus::Suspended, $providerNumberReference);
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update([
+            'grace_expires_at' => now()->subDay(),
+            'release_notice_delivered_at' => now()->subDays(8),
+            'release_decided_at' => now(),
+        ]);
+
+        return $number->fresh();
+    }
+
+    private function bindFakeProvisioningAdapter(): FakeProvisioningAdapter
+    {
+        $fake = new FakeProvisioningAdapter();
+        $this->app->instance(MessagingProvisioningAdapter::class, $fake);
+        config([
+            'messaging.managed_messaging_enabled' => true,
+            'messaging.managed_messaging_provisioning_enabled' => true,
+            'services.telnyx.api_key' => 'fixture_key_not_a_real_credential',
+        ]);
+
+        return $fake;
     }
 
     // =================================================================
@@ -235,6 +267,130 @@ class NumberLifecycleAdminTest extends TestCase
 
         $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
         $this->assertNull($number->fresh()->release_decided_at);
+    }
+
+    // =================================================================
+    // Confirm carrier release — the real, later, separate action. Only
+    // ever reachable after a decision is already recorded; the only path
+    // that can transition status to Released.
+    // =================================================================
+
+    public function test_a_guest_cannot_confirm_carrier_release(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted by an unauthenticated request.',
+        ])->assertUnauthorized();
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+    }
+
+    public function test_a_customer_cannot_confirm_carrier_release_even_with_backend_permissions_in_session(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber();
+        $customer = $this->createCustomer();
+        $this->withSession(['permissions' => collect(['access backend', 'access_backend'])]);
+        $this->actingAs($customer->user);
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted by a customer account.',
+        ])->assertUnauthorized();
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+    }
+
+    public function test_an_administrator_can_confirm_a_carrier_release_for_an_eligible_number(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber();
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Confirmed with the carrier now.',
+        ])
+            ->assertRedirect(route('admin.messaging-number-lifecycle.index'))
+            ->assertSessionHas('flash_success');
+
+        $number->refresh();
+        $this->assertSame(BusinessMessagingNumberStatus::Released, $number->status);
+        $this->assertNotNull($number->released_at);
+    }
+
+    public function test_confirm_carrier_release_requires_a_note(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber();
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+        ])->assertSessionHasErrors('note');
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+    }
+
+    public function test_confirm_carrier_release_requires_the_confirmation_checkbox(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber();
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'note' => 'Forgot to tick the box.',
+        ])->assertSessionHasErrors('release_confirmed');
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+    }
+
+    public function test_confirm_carrier_release_is_refused_without_a_recorded_decision(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $number = $this->releaseEligibleNumber();
+        DB::table('business_messaging_numbers')->where('id', $number->id)->update(['provider_number_reference' => 'fake_number_admin_2']);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted without a decision.',
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
+    }
+
+    public function test_confirm_carrier_release_surfaces_a_not_confirmed_carrier_response_as_a_flash_error(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $number = $this->decidedNumber('fake_number_admin_notconfirmed');
+        $fake->scriptReleaseOutcome('fake_number_admin_notconfirmed', CarrierReleaseOutcome::NotConfirmed);
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted release.',
+        ])->assertSessionHas('flash_error');
+
+        $number->refresh();
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->status);
+        $this->assertNotNull($number->carrier_release_failed_at);
+    }
+
+    public function test_confirm_carrier_release_is_unavailable_when_provisioning_is_not_configured(): void
+    {
+        $number = $this->decidedNumber();
+        $this->actingAsAdmin();
+
+        $this->post(route('admin.messaging-number-lifecycle.confirm-carrier-release', $number->id), [
+            'release_confirmed' => '1',
+            'note' => 'Attempted without configuration.',
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(BusinessMessagingNumberStatus::Suspended, $number->fresh()->status);
     }
 
     // =================================================================
