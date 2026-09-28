@@ -217,13 +217,24 @@ final class WebsiteDraftPageService
             foreach (['primary_cta', 'secondary_cta'] as $ctaKey) {
                 $cta = $section['data'][$ctaKey] ?? null;
 
-                if (is_array($cta) && empty($cta['label']) && empty($cta['url'])) {
+                if (is_array($cta) && self::isBlankCtaValue($cta['label'] ?? null) && self::isBlankCtaValue($cta['url'] ?? null)) {
                     unset($sections[$index]['data'][$ctaKey]);
                 }
             }
         }
 
         return $sections;
+    }
+
+    /**
+     * Matches the `required_with` rule's own notion of blank (null, or a
+     * string that trims to empty) rather than PHP's `empty()`, which also
+     * treats the legitimate value "0" as blank and would otherwise let a
+     * half-filled `label: "0"` CTA disappear instead of failing validation.
+     */
+    private static function isBlankCtaValue(mixed $value): bool
+    {
+        return $value === null || (is_string($value) && trim($value) === '');
     }
 
     private function clearExistingHomepage(Website $website): void

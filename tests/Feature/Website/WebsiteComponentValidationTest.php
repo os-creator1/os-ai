@@ -304,6 +304,32 @@ class WebsiteComponentValidationTest extends TestCase
         $this->assertDatabaseMissing('website_pages', ['website_id' => $website->id]);
     }
 
+    /**
+     * A label of the literal string "0" is a genuine, validation-legitimate
+     * value (`required_with` treats "0" as present, not blank), so a CTA
+     * with label "0" and no url is a half-filled mistake, not an untouched
+     * one, and must still fail validation like any other half-filled CTA.
+     */
+    public function test_a_hero_cta_with_a_literal_zero_label_still_fails_validation_when_url_is_blank(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        $hero = $this->section('hero', [
+            'primary_cta' => ['label' => '0', 'url' => ''],
+        ]);
+
+        $response = $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Home',
+            'is_home' => true,
+            'sections' => [$hero],
+        ]);
+
+        $response->assertSessionHasErrors('sections.0.primary_cta.url');
+        $this->assertDatabaseMissing('website_pages', ['website_id' => $website->id]);
+    }
+
     // ---------------------------------------------------------------
     // (d) section order is preserved through a save+publish round trip
     // ---------------------------------------------------------------
