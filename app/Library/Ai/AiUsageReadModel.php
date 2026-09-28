@@ -37,6 +37,8 @@ final class AiUsageReadModel
         'ai_usage_ledger.uid',
         'ai_usage_ledger.workspace_id',
         'ai_usage_ledger.business_id',
+        'ai_usage_ledger.scope_type',
+        'ai_usage_ledger.scope_id',
         'ai_usage_ledger.category',
         'ai_usage_ledger.lane',
         'ai_usage_ledger.model_route',
@@ -61,7 +63,7 @@ final class AiUsageReadModel
     /**
      * The Workspace's own standing this period. A period that has not been
      * opened yet has spent nothing, and its cap is the policy's — the same
-     * rule AiUsageLedgerManager::enforcedWorkspaceCapMicrousd() applies, so
+     * rule AiUsageLedgerManager::enforcedCapMicrousd() applies, so
      * the page and the gateway can never disagree about which cap counts.
      *
      * WHICH REFUSALS SPEAK FOR THE WORKSPACE. §11.3 counts a `budget_exhausted`

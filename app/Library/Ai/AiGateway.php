@@ -6,14 +6,18 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Ai\Contracts\AiCompletionClient;
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Ai\Enums\AiScope;
 use App\Library\Entitlement\EntitlementManager;
+use App\Models\AiUsagePeriod;
 
 /**
  * Contract §10.1 — `AiGateway::complete(AiRequest): AiResult` is the
  * ONLY way the application reaches a model (§19.3, D-6, T-AI-GATE-1).
  * Every call is gated, priced, reserved, executed and settled through
  * this one path, whatever the caller — a COO job, a controller, or a
- * queued reply worker.
+ * queued reply worker. Contract §5.7a, §6.7 — Platform scope goes
+ * through this SAME path: one gateway, one router, one reservation
+ * protocol, one ledger, one settle path, no second anything.
  */
 final class AiGateway
 {
@@ -24,11 +28,14 @@ final class AiGateway
         private readonly AiCompletionClient $completionClient,
         private readonly EntitlementManager $entitlements,
         private readonly AiBusinessActivityGate $activityGate,
+        private readonly PlatformAiAuthority $platformAuthority,
     ) {
     }
 
     public function complete(AiRequest $request): AiResult
     {
+        $isPlatform = $request->scope === AiScope::Platform;
+
         // Gate 1 (§10.1 step 1): the platform kill switch. No policy is
         // even resolved, and nothing is recorded — this is the one
         // circumstance where AI is entirely off, not merely out of
@@ -37,15 +44,20 @@ final class AiGateway
             return AiResult::refused(AiRefusalReason::AiDisabled);
         }
 
-        // Gate 2 (§10.1 step 2): resolve the Workspace's budget policy.
-        // An unassigned, inactive or suspended plan resolves to a zero
-        // cap (T-BUD-6). This is refused unconditionally, even while
-        // §19.3's observation-mode bypass is on for the three
-        // pre-existing categories: that bypass exists to preserve
-        // EXISTING behaviour for a Workspace that legitimately has a
-        // budget it is merely exceeding, never to let a Workspace with
-        // no valid plan at all through "for observation".
-        $policy = $this->policyResolver->resolveFor($request->workspace);
+        // Gate 2 (§10.1 step 2): resolve the budget policy. Platform scope
+        // (§5.7a D) resolves its own finite, config-derived cap — no
+        // customer plan lookup occurs, and EntitlementManager is not
+        // consulted at all. An unassigned, inactive or suspended plan (or
+        // an absent/non-positive Platform cap) resolves to a zero cap
+        // (T-BUD-6). This is refused unconditionally, even while §19.3's
+        // observation-mode bypass is on for the three pre-existing
+        // categories: that bypass exists to preserve EXISTING behaviour for
+        // a Workspace that legitimately has a budget it is merely
+        // exceeding, never to let a Workspace with no valid plan (or a
+        // misconfigured Platform cap) through "for observation".
+        $policy = $isPlatform
+            ? $this->policyResolver->resolveForPlatform()
+            : $this->policyResolver->resolveFor($request->workspace);
 
         if ($policy->workspaceCapMicrousd === 0) {
             return AiResult::refused(AiRefusalReason::BudgetExhausted);
@@ -58,7 +70,9 @@ final class AiGateway
         // call. The three categories that pre-date the gateway are
         // deliberately NOT put behind this feature: they shipped without
         // it, and moving them behind it would remove working product.
-        if ($request->category->requiresCooEntitlement()) {
+        // Never consulted at Platform scope (§5.7a D): there is no
+        // Business to entitle, and no fabricated one is created (R-19).
+        if (! $isPlatform && $request->category->requiresCooEntitlement()) {
             if ($request->business === null) {
                 // `ai_coo_basic` is a Business-scoped feature; COO work with
                 // no Business has nothing to entitle.
@@ -99,8 +113,10 @@ final class AiGateway
         // refuse — or, worse, withhold reasoning that the period could
         // still afford. A period that does not exist yet has no snapshot,
         // and the newly configured cap is the right answer for it.
-        $enforcedCap = $this->ledger->enforcedWorkspaceCapMicrousd($request->workspace->id, $policy);
-        $peeked = $this->ledger->peekWorkspaceCommittedAndReserved($request->workspace->id, $policy->periodKey);
+        $primaryScopeType = $isPlatform ? AiUsagePeriod::SCOPE_PLATFORM : AiUsagePeriod::SCOPE_WORKSPACE;
+        $primaryScopeId = $isPlatform ? AiUsageLedgerManager::platformScopeId() : $request->workspace->id;
+        $enforcedCap = $this->ledger->enforcedCapMicrousd($primaryScopeType, $primaryScopeId, $policy);
+        $peeked = $this->ledger->peekCommittedAndReserved($primaryScopeType, $primaryScopeId, $policy->periodKey);
         $remaining = max(0, $enforcedCap - $peeked);
         $route = $this->router->resolveAffordableRoute($request->route, $remaining);
 
@@ -142,6 +158,21 @@ final class AiGateway
         // categories are never eligible for this bypass.
         $bypassCapEnforcement = ! $request->category->isAlwaysHardEnforced()
             && ! (bool) config('ai.enforce_budgets_for_existing_categories');
+
+        // Gate 3b (§5.7a C, §6.7, R-28) — the SECOND authority boundary, run
+        // fresh, immediately before the reservation and therefore before any
+        // provider call. Boundary 1 (no client-selectable actor id; the
+        // actor is derived only from the authenticated server principal)
+        // lives at the HTTP layer that constructs a Platform AiRequest, not
+        // here. This is independent of that boundary and does not replace
+        // it: it re-reads the named User row's `is_admin` right now, so a
+        // miswired route, an authenticated non-admin, or an admin demoted or
+        // deleted between enqueue and this very call is refused before
+        // anything is reserved and before any provider call — no authority
+        // is ever trusted from the request itself.
+        if ($isPlatform && ! $this->platformAuthority->authorize((int) $request->actorUserId)) {
+            return AiResult::refused(AiRefusalReason::PlatformAuthorityDenied);
+        }
 
         // Gate 4 (§10.1 step 4): the authoritative, locked reserve.
         ['entry' => $entry, 'refused' => $refused] = $this->ledger->reserve($request, $policy, $estimate, $bypassCapEnforcement);

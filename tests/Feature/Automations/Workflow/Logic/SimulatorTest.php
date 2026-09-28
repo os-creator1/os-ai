@@ -138,11 +138,6 @@ class SimulatorTest extends TestCase
 
     public function test_a_full_simulation_changes_no_row_and_sends_nothing(): void
     {
-        Queue::fake();
-        Bus::fake();
-        Notification::fake();
-        Http::fake();
-
         [$business, $group, $contact, $fields] = $this->tenantWithIdentity(['FIRST_NAME' => 'Ada']);
 
         // One of everything: a real send, a real field write, a real
@@ -160,6 +155,15 @@ class SimulatorTest extends TestCase
                 [$this->recordedStep('no message'), $this->endStep()],
             ),
         ]);
+
+        // The fakes bracket only what this test is actually about — the
+        // simulation itself — not tenant fixture setup or publishing, either
+        // of which may legitimately dispatch other domains' own onboarding
+        // work (e.g. Niche Blueprint installation on Business creation).
+        Queue::fake();
+        Bus::fake();
+        Notification::fake();
+        Http::fake();
 
         $before = $this->rowCounts();
         $beforeContact = DB::table('contacts')->where('id', $contact->id)->first();
@@ -244,14 +248,18 @@ class SimulatorTest extends TestCase
 
     public function test_no_job_is_queued_and_no_wait_is_entered(): void
     {
-        Queue::fake();
-
         [$business, $group, $contact] = $this->tenantWithIdentity();
         [, $version] = $this->publishBody($business, $group, [
             $this->waitStep(3, 'days'),
             $this->recordedStep('after the wait'),
             $this->endStep(),
         ]);
+
+        // Faked only around the simulation itself — not tenant fixture setup
+        // or publishing, either of which may legitimately dispatch other
+        // domains' own onboarding work (e.g. Niche Blueprint installation on
+        // Business creation), which this test is not about.
+        Queue::fake();
 
         $result = $this->simulator()->simulate($version, $contact);
 

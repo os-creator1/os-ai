@@ -2,13 +2,20 @@
 
 namespace Tests\Feature\Messaging;
 
+use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\BusinessMessagingRegistrationService;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Library\Messaging\FakeProvisioningAdapter;
+use App\Library\Messaging\TelnyxProvisioningAdapter;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\BusinessMessagingRegistration;
+use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
@@ -39,7 +46,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
     private function service(): BusinessMessagingRegistrationService
     {
-        return new BusinessMessagingRegistrationService();
+        return app(BusinessMessagingRegistrationService::class);
     }
 
     private function payload(array $overrides = []): array
@@ -133,6 +140,29 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertNotNull($submitted->provider_brand_id);
         $this->assertNotNull($submitted->provider_campaign_id);
         $this->assertNotNull($submitted->submitted_at);
+        // Review correction — a local (10DLC) submission has no number yet
+        // in this scenario (makeBusiness() attaches none); the submission
+        // must never invent one.
+        $this->assertNull($fake->submittedRegistrations[0]->phoneNumber);
+    }
+
+    /**
+     * Review correction — toll-free's own submission requires the
+     * already-owned number being verified; submit() must resolve it from
+     * the Business's own primary number, never leave it null when one
+     * genuinely exists.
+     */
+    public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $this->attachNumber($this->attachIdentity($business), '+18005550199');
+        $registration = $this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free']));
+
+        $this->service()->submit($registration);
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame('+18005550199', $fake->submittedRegistrations[0]->phoneNumber);
     }
 
     /**
@@ -211,6 +241,26 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
         $this->assertSame(MessagingRegistrationStatus::Rejected, $refreshed->status);
         $this->assertNotNull($refreshed->rejected_at);
+        $this->assertNull($refreshed->rejection_reason, 'No reason was scripted — must never be guessed.');
+    }
+
+    /**
+     * Review correction — refreshRegistrationStatus() now returns the
+     * whole RegistrationStatusResult; a Rejected answer that carries a
+     * carrier-supplied reason must have that reason stored, never
+     * silently dropped.
+     */
+    public function test_refresh_stores_the_carrier_supplied_rejection_reason_when_present(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected, 'Sample message missing required opt-out language.');
+
+        $refreshed = $this->service()->refreshStatus($registration);
+
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $refreshed->status);
+        $this->assertSame('Sample message missing required opt-out language.', $refreshed->rejection_reason);
     }
 
     public function test_refresh_without_a_prior_submission_is_a_no_op(): void
@@ -309,5 +359,103 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         }
 
         $this->assertSame('Harbor Lane Studios LLC', $registration->fresh()->legal_business_name);
+    }
+
+    // =================================================================
+    // Review correction — chargeDisclosureFor() must never claim business
+    // verification is free: TelnyxProvisioningAdapter genuinely reserves
+    // wallet funds for both regimes. The unconfigured state (no owner has
+    // ever approved a rate) is truthfully disclosed as such, and a real
+    // configured rate is shown exactly as configured — never invented.
+    // =================================================================
+
+    private function createActorUserId(): int
+    {
+        return User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+    }
+
+    /**
+     * Mirrors TelnyxProvisioningAdapterTest's own fixture sequence exactly
+     * (a real UsageMeter row, then setActiveRate(), then
+     * activateMetering()) — no retail price is invented here either.
+     */
+    private function configureRateFor(string $featureKey, string $retailRateMicro, string $unitLabel): void
+    {
+        if (Currency::query()->count() === 0) {
+            Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        }
+
+        $actorId = $this->createActorUserId();
+        $currencyId = Currency::query()->first()->id;
+
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $featureKey,
+            'feature_key' => PlatformFeature::MessagingTransport->value,
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'description' => 'Review correction fixture meter (test-only).',
+            'updated_by_user_id' => $actorId,
+        ]);
+
+        $wallet = app(UsageWalletManager::class);
+        $wallet->setActiveRate($featureKey, $retailRateMicro, '0', $unitLabel, $currencyId, $actorId, 'Test rate activation.');
+        $wallet->activateMetering($featureKey, $actorId, 'Test metering activation.');
+    }
+
+    public function test_charge_disclosure_for_local_states_no_fee_configured_when_no_rate_exists(): void
+    {
+        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::Local);
+
+        $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
+    }
+
+    public function test_charge_disclosure_for_toll_free_states_no_fee_configured_when_no_rate_exists(): void
+    {
+        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
+
+        $this->assertSame('No fee is currently configured for business verification in this environment.', $disclosure);
+    }
+
+    public function test_charge_disclosure_for_local_shows_the_real_configured_rate_never_an_invented_one(): void
+    {
+        $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, '2500000', 'registration');
+
+        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::Local);
+
+        $this->assertStringContainsString('USD 2.50', $disclosure);
+        $this->assertStringContainsString('per registration', $disclosure);
+        $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
+    }
+
+    public function test_charge_disclosure_for_toll_free_shows_the_real_configured_rate_never_an_invented_one(): void
+    {
+        $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION, '1500000', 'verification');
+
+        $disclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
+
+        $this->assertStringContainsString('USD 1.50', $disclosure);
+        $this->assertStringContainsString('per verification', $disclosure);
+        $this->assertStringNotContainsString('No fee is currently configured', $disclosure);
+    }
+
+    /**
+     * The two feature keys are genuinely distinct meters — configuring one
+     * regime's rate must never leak into the other's disclosure.
+     */
+    public function test_charge_disclosure_keeps_local_and_toll_free_rates_independent(): void
+    {
+        $this->configureRateFor(TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION, '2500000', 'registration');
+
+        $tollFreeDisclosure = $this->service()->chargeDisclosureFor(PhoneNumberType::TollFree);
+
+        $this->assertSame('No fee is currently configured for business verification in this environment.', $tollFreeDisclosure);
     }
 }

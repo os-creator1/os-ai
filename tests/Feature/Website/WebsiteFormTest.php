@@ -343,6 +343,30 @@ class WebsiteFormTest extends TestCase
             ->assertSee('jamie@example.test');
     }
 
+    /**
+     * The submit controller already flashes `status`/`message` on
+     * success (WebsiteFormController::submit()) — this proves the page
+     * the visitor lands back on actually DISPLAYS it, not merely that
+     * the flash data exists in the session.
+     */
+    public function test_a_successful_submission_shows_a_visible_confirmation_on_the_page_the_visitor_returns_to(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $form = $this->createQuoteForm($website);
+        $page = $this->publishFormPage($website, $form);
+        $pageUrl = route('public.website.page', [$website->public_id, $page->slug]);
+
+        $this->withHeaders(['referer' => $pageUrl])
+            ->post($this->submitRoute($website, $form, $page), [
+                'name' => 'Jamie Rivera',
+                'phone' => '5551234567',
+            ])
+            ->assertRedirect($pageUrl);
+
+        $this->get($pageUrl)->assertSee('Thanks — we received your request and will be in touch soon.');
+    }
+
     public function test_a_posted_page_slug_is_ignored_the_server_derives_it_from_the_published_page(): void
     {
         [, $business] = $this->entitledTenant();

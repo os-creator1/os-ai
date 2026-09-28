@@ -23,6 +23,7 @@
     use App\Jobs\Ai\ExpireStaleAiReservations;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
+    use App\Jobs\Messaging\RefreshPendingCampaignAssignments;
     use App\Jobs\Messaging\RefreshPendingMessagingRegistrations;
     use App\Jobs\Usage\ExpireStaleUsageReservations;
     use App\Jobs\Usage\FinalizeSlotAgreementCancellation;
@@ -56,6 +57,7 @@
             RunAutomation::class,
             \App\Console\Commands\Automation\RecoverStalledWorkflowEnrollments::class,
             \App\Console\Commands\Automation\ResumeDueWorkflowEnrollments::class,
+            \App\Console\Commands\Automation\SweepDateReachedWorkflows::class,
             SMPPDLRReports::class,
             RunEveryTenSeconds::class,
             CleanDatabase::class,
@@ -231,6 +233,15 @@
             // provider round trip on one run can never stack with the
             // next tick.
             $schedule->job(new RefreshPendingMessagingRegistrations())->everyFifteenMinutes()->withoutOverlapping();
+
+            // Review correction — the same cadence, for the same reason:
+            // a local number's own carrier-side campaign assignment task
+            // (Telnyx's own assignment endpoint returns a background task,
+            // never an immediate confirmation) needs a reachable
+            // mechanism to ever resolve Requested to Confirmed or Failed,
+            // or a number would stay Requested — and therefore never
+            // Ready — forever.
+            $schedule->job(new RefreshPendingCampaignAssignments())->everyFifteenMinutes()->withoutOverlapping();
         }
 
         /**

@@ -3,13 +3,17 @@
 namespace App\Library\Messaging;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
+use App\Library\Dashboard\DashboardMoney;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
+use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
 
 /**
@@ -24,6 +28,11 @@ use Carbon\CarbonImmutable;
  */
 class BusinessMessagingRegistrationService
 {
+    public function __construct(
+        private readonly BusinessMessagingIdentityResolver $identities,
+        private readonly UsageMeterRepository $meters,
+    ) {
+    }
     /**
      * @param  array<string, mixed>  $data  already-validated form input,
      *                                      keyed exactly like the model's
@@ -89,7 +98,15 @@ class BusinessMessagingRegistrationService
     {
         $adapter = app(MessagingProvisioningAdapter::class);
 
-        $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration));
+        // Review correction — a toll-free submission's own request body
+        // must name the already-owned number being verified
+        // (MessagingRegistrationSubmission::$phoneNumber); a local (10DLC)
+        // submission has no such requirement and may genuinely be
+        // submitted before any number exists, so $phoneNumber stays null
+        // there — never resolved, never required.
+        $phoneNumber = $this->primaryPhoneNumberFor($registration->business);
+
+        $result = $adapter->submitRegistration(MessagingRegistrationSubmission::fromModel($registration, $phoneNumber));
 
         $registration->update([
             'provider_brand_id' => $result->providerBrandId,
@@ -101,6 +118,21 @@ class BusinessMessagingRegistrationService
         ]);
 
         return $registration->fresh();
+    }
+
+    private function primaryPhoneNumberFor(Business $business): ?string
+    {
+        $identity = $this->identities->resolveForBusiness($business);
+
+        if ($identity === null) {
+            return null;
+        }
+
+        try {
+            return $this->identities->resolvePrimaryNumber($identity)->phone_number;
+        } catch (MessagingIdentityConflictException) {
+            return null;
+        }
     }
 
     /**
@@ -125,18 +157,23 @@ class BusinessMessagingRegistrationService
             return $registration;
         }
 
-        $status = $adapter->refreshRegistrationStatus($query);
+        $result = $adapter->refreshRegistrationStatus($query);
 
-        if ($status === $registration->status) {
+        if ($result->status === $registration->status) {
             return $registration;
         }
 
-        $attributes = ['status' => $status->value];
+        $attributes = ['status' => $result->status->value];
 
-        if ($status === MessagingRegistrationStatus::Approved) {
+        if ($result->status === MessagingRegistrationStatus::Approved) {
             $attributes['approved_at'] = CarbonImmutable::now();
-        } elseif ($status === MessagingRegistrationStatus::Rejected) {
+        } elseif ($result->status === MessagingRegistrationStatus::Rejected) {
             $attributes['rejected_at'] = CarbonImmutable::now();
+            // Review correction — the carrier-supplied reason, when the
+            // adapter's own response actually carried one; null when it
+            // did not, so the customer sees an explicit "no detailed
+            // reason was supplied" message rather than nothing at all.
+            $attributes['rejection_reason'] = $result->rejectionReason;
         }
 
         $registration->update($attributes);
@@ -168,5 +205,35 @@ class BusinessMessagingRegistrationService
                     }
                 }
             });
+    }
+
+    /**
+     * Review correction — TelnyxProvisioningAdapter reserves real wallet
+     * funds for both FEATURE_TEN_DLC_REGISTRATION and
+     * FEATURE_TOLL_FREE_VERIFICATION before ever submitting a
+     * registration; business verification was never actually free, and
+     * this platform must never claim otherwise. Reads the SAME meter/rate
+     * UsageWalletManager::reserve() would itself apply — never a second,
+     * invented pricing source — and states plainly when none is
+     * configured, which is the true state of every environment today (no
+     * owner has approved a commercial rate for either feature key yet).
+     */
+    public function chargeDisclosureFor(PhoneNumberType $numberType): string
+    {
+        $meterKey = $numberType === PhoneNumberType::TollFree
+            ? TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION
+            : TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION;
+
+        $meter = $this->meters->findByMeterKey($meterKey);
+
+        if ($meter === null || ! $meter->is_metered || $meter->activeRate === null) {
+            return 'No fee is currently configured for business verification in this environment.';
+        }
+
+        $rate = $meter->activeRate;
+        $amount = DashboardMoney::format((string) $rate->retail_rate_micro, $rate->currency?->code);
+        $unit = $rate->unit_label !== null && $rate->unit_label !== '' ? ' per ' . $rate->unit_label : '';
+
+        return sprintf('Business verification currently costs %s%s.', $amount, $unit);
     }
 }
