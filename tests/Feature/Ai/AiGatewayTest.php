@@ -367,6 +367,8 @@ class AiGatewayTest extends TestCase
         $entry = AiUsageLedgerEntry::create([
             'workspace_id' => $workspace->id,
             'business_id' => null,
+            'scope_type' => AiUsagePeriod::SCOPE_WORKSPACE,
+            'scope_id' => $workspace->id,
             'category' => AiUsageCategory::WebsiteGeneration,
             'lane' => AiLane::Product,
             'model_route' => AiModelRoute::Routine,
@@ -409,6 +411,8 @@ class AiGatewayTest extends TestCase
 
         $entry = AiUsageLedgerEntry::create([
             'workspace_id' => $workspace->id,
+            'scope_type' => AiUsagePeriod::SCOPE_WORKSPACE,
+            'scope_id' => $workspace->id,
             'category' => AiUsageCategory::WebsiteGeneration,
             'lane' => AiLane::Product,
             'model_route' => AiModelRoute::Routine,
@@ -673,7 +677,11 @@ class AiGatewayTest extends TestCase
         // use these same round numbers for their own, unrelated amounts,
         // and a literal there says nothing about whether the AI budget
         // system duplicates its own numbers.
-        $amounts = ['1_500_000', '5_000_000', '10_000_000', '25_000_000', '6_000_000'];
+        // R-29, sub-slice 19.H0 — the platform monthly cap default is a
+        // budget amount exactly like the Workspace policy caps above, so it
+        // is covered here too; AiBudgetPolicyResolver stays the only reader
+        // of config('ai.platform.*'), never exempted.
+        $amounts = ['1_500_000', '5_000_000', '10_000_000', '25_000_000', '6_000_000', '20_000_000'];
         $scannedPaths = array_merge(
             iterator_to_array((new \Symfony\Component\Finder\Finder())->files()->in(app_path('Library/Ai'))->name('*.php')),
             [

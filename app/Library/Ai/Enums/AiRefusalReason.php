@@ -18,4 +18,11 @@ enum AiRefusalReason: string
     case BudgetExhausted = 'budget_exhausted';
     case InteractiveShareExhausted = 'interactive_share_exhausted';
     case NoRouteAffordable = 'no_route_affordable';
+
+    /**
+     * Contract §5.7a C, §6.7, R-28 — a Platform request whose `actorUserId`
+     * does not resolve, on a freshly read `User` row, to `is_admin`. Refused
+     * before any reservation and before any provider call.
+     */
+    case PlatformAuthorityDenied = 'platform_authority_denied';
 }

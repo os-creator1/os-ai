@@ -4,6 +4,7 @@ namespace App\Library\Ai;
 
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Ai\Exceptions\AiPlatformBudgetMisconfiguredException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Workspace;
 use Illuminate\Support\Carbon;
@@ -69,6 +70,41 @@ final class AiBudgetPolicyResolver
             workspaceCapMicrousd: (int) $budget['workspace_cap_microusd'],
             businessCapMicrousd: $budget['business_cap_microusd'] !== null ? (int) $budget['business_cap_microusd'] : null,
             interactiveShareBps: (int) $budget['interactive_share_bps'],
+        );
+    }
+
+    /**
+     * Contract §5.7a D — the platform policy path. No customer plan lookup
+     * occurs; `EntitlementManager` is not consulted at all. All six
+     * `AiBudgetPolicy` fields are supplied, none omitted, none defaulted.
+     *
+     * Fail closed in both dimensions (§5.7a D):
+     *  - an absent, non-numeric or non-positive monthly cap resolves to a
+     *    zero `workspaceCapMicrousd`, which the gateway already treats as
+     *    "refuse every call" — the same zero-cap semantics `unassigned`
+     *    already relies on;
+     *  - an `interactive_share_bps` outside `0…10000` raises
+     *    {@see AiPlatformBudgetMisconfiguredException} rather than being
+     *    clamped or left to become an unbounded interactive lane.
+     */
+    public function resolveForPlatform(): AiBudgetPolicy
+    {
+        $rawCap = config('ai.platform.monthly_cap_microusd');
+        $cap = is_numeric($rawCap) && (int) $rawCap > 0 ? (int) $rawCap : 0;
+
+        $rawShareBps = config('ai.platform.interactive_share_bps');
+
+        if (! is_numeric($rawShareBps) || (int) $rawShareBps < 0 || (int) $rawShareBps > 10_000) {
+            throw AiPlatformBudgetMisconfiguredException::invalidInteractiveShareBps();
+        }
+
+        return new AiBudgetPolicy(
+            policyKey: 'platform',
+            policyVersion: (int) config('ai.policy_version'),
+            periodKey: $this->currentCalendarMonthKey(),
+            workspaceCapMicrousd: $cap,
+            businessCapMicrousd: null,
+            interactiveShareBps: (int) $rawShareBps,
         );
     }
 

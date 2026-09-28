@@ -234,6 +234,7 @@ class AiRefusalScopeTest extends TestCase
         [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency);
         $id = DB::table('ai_usage_ledger')->insertGetId([
             'uid' => (string) Str::uuid(), 'workspace_id' => $workspace->id, 'business_id' => $business->id,
+            'scope_type' => 'workspace', 'scope_id' => $workspace->id,
             'category' => 'website_generation', 'lane' => 'product', 'model_route' => 'routine', 'provider' => 'openai',
             'price_version' => 1, 'status' => 'refused', 'refusal_reason' => 'budget_exhausted',
             'estimated_cost_microusd' => 10, 'period_key' => self::PERIOD, 'idempotency_key' => 'legacy:' . Str::uuid(),
