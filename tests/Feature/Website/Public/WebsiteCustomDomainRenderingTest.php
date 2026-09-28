@@ -228,7 +228,11 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $location->is_primary = true;
         $location->save();
         $website = $this->createWebsite($business);
-        $this->homePage($website);
+        // A published `contact_details` section is what makes phone/
+        // email/address genuinely visible on the site — without one,
+        // JSON-LD must omit them regardless of the saved Business/
+        // Location facts (see the dedicated visibility tests below).
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'jsonld-confirmed.test');
 
@@ -243,12 +247,9 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $this->assertSame('hello@example.test', $jsonLd['email']);
         $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
         $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
-        $this->assertSame([
-            '@type' => 'OpeningHoursSpecification',
-            'dayOfWeek' => 'https://schema.org/Monday',
-            'opens' => '09:00',
-            'closes' => '17:00',
-        ], $jsonLd['openingHoursSpecification'][0]);
+        // No component on the published site ever presents opening
+        // hours, so structured data never claims them either.
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
         $this->assertArrayNotHasKey('aggregateRating', $jsonLd);
         $this->assertArrayNotHasKey('review', $jsonLd);
     }
@@ -274,7 +275,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $location->is_primary = true;
         $location->save();
         $website = $this->createWebsite($business);
-        $this->homePage($website);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'jsonld-immutable.test');
 
@@ -287,10 +288,6 @@ class WebsiteCustomDomainRenderingTest extends TestCase
             'city' => 'Dallas',
             'region' => 'TX',
             'postal_code' => '75201',
-            'hours' => [
-                'monday' => [['open' => '01:00', 'close' => '02:00']],
-                'tuesday' => [['open' => '01:00', 'close' => '02:00']],
-            ],
         ]);
 
         $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
@@ -301,20 +298,13 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
         $this->assertSame('Austin', $jsonLd['address']['addressLocality']);
         $this->assertSame('78701', $jsonLd['address']['postalCode']);
-        $this->assertSame([
-            '@type' => 'OpeningHoursSpecification',
-            'dayOfWeek' => 'https://schema.org/Monday',
-            'opens' => '09:00',
-            'closes' => '17:00',
-        ], $jsonLd['openingHoursSpecification'][0]);
-        $this->assertCount(1, $jsonLd['openingHoursSpecification']);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
 
         $this->assertStringNotContainsString('+15559998888', $encoded);
         $this->assertStringNotContainsString('changed@example.test', $encoded);
         $this->assertStringNotContainsString('999 Other Ave', $encoded);
         $this->assertStringNotContainsString('Dallas', $encoded);
         $this->assertStringNotContainsString('75201', $encoded);
-        $this->assertStringNotContainsString('01:00', $encoded);
     }
 
     public function test_local_business_structured_data_is_absent_after_business_and_location_are_removed_post_publish(): void
@@ -334,7 +324,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $location->is_primary = true;
         $location->save();
         $website = $this->createWebsite($business);
-        $this->homePage($website);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'jsonld-removed.test');
 
@@ -348,7 +338,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $this->assertSame('+15550001234', $jsonLd['telephone']);
         $this->assertSame('hello@example.test', $jsonLd['email']);
         $this->assertSame('123 Main St', $jsonLd['address']['streetAddress']);
-        $this->assertNotEmpty($jsonLd['openingHoursSpecification']);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
     }
 
     public function test_local_business_structured_data_never_reveals_a_private_address(): void
@@ -363,12 +353,111 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         $location->is_primary = true;
         $location->save();
         $website = $this->createWebsite($business);
-        $this->homePage($website);
+        // A published contact_details section DOES choose to display the
+        // address — this test proves the SEO privacy predicate
+        // (GoogleBusinessProfileReadMask::addressPermittedForLocation())
+        // still blocks it from structured data even so, since a
+        // service-area location's address is never safe to broadcast in
+        // machine-readable metadata regardless of the owner's page-level
+        // display choice.
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
         app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
         $domain = $this->activeDomain($website, 'jsonld-private.test');
 
         $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
 
+        $this->assertArrayNotHasKey('address', $jsonLd);
+        $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_phone_when_its_show_phone_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_phone' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-phone.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertArrayNotHasKey('telephone', $jsonLd);
+        $this->assertSame('hello@example.test', $jsonLd['email']);
+    }
+
+    public function test_local_business_structured_data_omits_email_when_its_show_email_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_email' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-email.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertArrayNotHasKey('email', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_address_when_its_show_address_toggle_is_off(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, [
+            'sections' => [$this->section('hero'), $this->section('contact_details', ['show_address' => false])],
+        ]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-hidden-address.test');
+
+        $jsonLd = $this->extractJsonLd($this->get('http://'.$domain->domain.'/')->getContent());
+
+        $this->assertSame('+15550001234', $jsonLd['telephone']);
+        $this->assertArrayNotHasKey('address', $jsonLd);
+    }
+
+    public function test_local_business_structured_data_omits_all_contact_facts_when_no_contact_details_section_is_published(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $business->update(['phone' => '+15550001234', 'email' => 'hello@example.test']);
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        // Hero only — no contact_details section anywhere on the
+        // published site, so nothing displays a phone/email/address.
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'jsonld-no-contact-section.test');
+
+        $response = $this->get('http://'.$domain->domain.'/');
+
+        $response->assertOk()->assertSee('application/ld+json', false);
+        $jsonLd = $this->extractJsonLd($response->getContent());
+
+        $this->assertSame($business->name, $jsonLd['name']);
+        $this->assertArrayNotHasKey('telephone', $jsonLd);
+        $this->assertArrayNotHasKey('email', $jsonLd);
         $this->assertArrayNotHasKey('address', $jsonLd);
         $this->assertArrayNotHasKey('openingHoursSpecification', $jsonLd);
     }

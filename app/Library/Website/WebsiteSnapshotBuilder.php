@@ -108,12 +108,46 @@ final class WebsiteSnapshotBuilder
             'website' => [
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
-                'localBusiness' => $this->localBusinessFacts($business),
+                'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots)),
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
             'forms' => $forms,
         ];
+    }
+
+    /**
+     * Scans every page just built above for its own `contact_details`
+     * section(s) — the one place a visitor can actually see a phone,
+     * email, or address on this site — and reports which of those three
+     * facts at least one section's owner-controlled Show phone/Show
+     * email/Show address toggle actually reveals. LocalBusiness JSON-LD
+     * must never assert a fact the owner never chose to display, even
+     * when it is otherwise a true, saved Business/Location value: a
+     * turned-off toggle, or a website with no `contact_details` section
+     * at all, means that fact is omitted from structured data too.
+     *
+     * @param  array<int, array{sections: array<int, array{type: string, data: array}>}>  $pageSnapshots
+     * @return array{phone: bool, email: bool, address: bool}
+     */
+    private function visibleContactFacts(array $pageSnapshots): array
+    {
+        $visible = ['phone' => false, 'email' => false, 'address' => false];
+
+        foreach ($pageSnapshots as $page) {
+            foreach ($page['sections'] as $section) {
+                if ($section['type'] !== WebsiteSectionType::ContactDetails->value) {
+                    continue;
+                }
+
+                $resolved = $section['data']['resolved'] ?? [];
+                $visible['phone'] = $visible['phone'] || ! empty($resolved['phone']);
+                $visible['email'] = $visible['email'] || ! empty($resolved['email']);
+                $visible['address'] = $visible['address'] || ! empty($resolved['address']);
+            }
+        }
+
+        return $visible;
     }
 
     private function assetUidsIn(?WebsiteSectionType $type, array $data): array
@@ -161,16 +195,27 @@ final class WebsiteSnapshotBuilder
      * App\Library\Website\Seo\WebsiteLocalBusinessStructuredData to
      * shape into JSON-LD at render time — this method makes every
      * privacy/currency decision once, here, at publish time; that
-     * class only ever formats what it is given. `address` is included
-     * only when the SAME privacy predicate GBP/SEO already rely on
-     * (`GoogleBusinessProfileReadMask::addressPermittedForLocation()`)
-     * permits it for the CURRENT primary location, at THIS publish —
-     * a later change to that setting takes effect on the next publish,
-     * exactly like `contact_details`'s own `show_address` above.
+     * class only ever formats what it is given.
      *
+     * `telephone`/`email`/`address` are each gated behind TWO
+     * independent checks, both required: `$visibleContact` (was this
+     * fact actually shown to a visitor via a published `contact_details`
+     * section's own Show phone/Show email/Show address toggle? — never
+     * claim in machine-readable metadata what the page itself doesn't
+     * display) AND, for `address` only, the SAME privacy predicate GBP/
+     * SEO already rely on (`GoogleBusinessProfileReadMask::
+     * addressPermittedForLocation()`) for the CURRENT primary location,
+     * at THIS publish — a later change to either takes effect on the
+     * next publish, exactly like `contact_details`'s own resolved values.
+     *
+     * `hours` is always omitted: no component on the published site
+     * today ever visibly presents opening hours, so asserting them in
+     * structured data would itself be an undisplayed claim.
+     *
+     * @param  array{phone: bool, email: bool, address: bool}  $visibleContact
      * @return array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}
      */
-    private function localBusinessFacts(?Business $business): array
+    private function localBusinessFacts(?Business $business, array $visibleContact): array
     {
         if ($business === null) {
             return ['name' => null, 'telephone' => null, 'email' => null, 'address' => null, 'hours' => null];
@@ -181,9 +226,10 @@ final class WebsiteSnapshotBuilder
 
         $location = $business->primaryLocation;
         $address = null;
-        $hours = null;
 
-        if ($location !== null && $location->isActive() && $this->addressPredicate->addressPermittedForLocation($location)) {
+        if ($visibleContact['address']
+            && $location !== null && $location->isActive()
+            && $this->addressPredicate->addressPermittedForLocation($location)) {
             $address = [
                 'line1' => $location->address_line_1,
                 'line2' => $location->address_line_2,
@@ -194,20 +240,12 @@ final class WebsiteSnapshotBuilder
             ];
         }
 
-        // Hours are a structured operational fact, not an address —
-        // shown regardless of the address-privacy predicate above (a
-        // service-area business with no public street address may
-        // still have confirmed, publishable hours).
-        if ($location !== null && $location->isActive() && is_array($location->hours)) {
-            $hours = $location->hours;
-        }
-
         return [
             'name' => $name !== '' ? $name : null,
-            'telephone' => $business->phone ?: null,
-            'email' => $email,
+            'telephone' => $visibleContact['phone'] ? ($business->phone ?: null) : null,
+            'email' => $visibleContact['email'] ? $email : null,
             'address' => $address,
-            'hours' => $hours,
+            'hours' => null,
         ];
     }
 }
