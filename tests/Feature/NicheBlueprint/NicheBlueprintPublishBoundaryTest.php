@@ -34,6 +34,18 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
     use RefreshDatabase;
 
     /**
+     * A generic, fake component type for this suite's own fixture adapter.
+     *
+     * Deliberately NOT 'crm_pipeline': Sub-slice D registers the real
+     * CrmPipelineComponentAdapter under that type in the same container-bound
+     * registry this suite resolves via app(), and two adapters can never
+     * claim one component type (§10). Nothing in this boundary test is
+     * specific to the CRM pipeline adapter — it proves publishing never
+     * writes outside the three Blueprint tables, for ANY registered adapter.
+     */
+    public const FAKE_TYPE = 'boundary_test_component';
+
+    /**
      * Every Business-owned or target-module table a Blueprint could ever
      * install into, plus the installation record itself. Publishing must
      * write to none of them.
@@ -75,7 +87,7 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
             {
                 public function componentType(): string
                 {
-                    return 'crm_pipeline';
+                    return NicheBlueprintPublishBoundaryTest::FAKE_TYPE;
                 }
 
                 public function validateDescriptor(array $payload): void
@@ -101,7 +113,7 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
     private function draftWithComponent(NicheBlueprint $blueprint, string $key = 'photo_booth_default_pipeline'): NicheBlueprintVersion
     {
         $draft = $this->publisher->createDraftVersion($this->adminId, $blueprint);
-        $this->publisher->addDraftComponent($this->adminId, $draft, $key, 'crm_pipeline', 'crm', ['pipeline_key' => 'sales']);
+        $this->publisher->addDraftComponent($this->adminId, $draft, $key, self::FAKE_TYPE, 'crm', ['pipeline_key' => 'sales']);
 
         return $draft;
     }
@@ -215,12 +227,12 @@ class NicheBlueprintPublishBoundaryTest extends TestCase
             $this->publisher->updateDraftNotes($this->adminId, $draft, 'release note');
 
             $component = $this->publisher->addDraftComponent(
-                $this->adminId, $draft, 'photo_booth_default_pipeline', 'crm_pipeline', 'crm', ['pipeline_key' => 'sales']
+                $this->adminId, $draft, 'photo_booth_default_pipeline', self::FAKE_TYPE, 'crm', ['pipeline_key' => 'sales']
             );
             $this->publisher->updateDraftComponent($this->adminId, $component, ['position' => 3]);
 
             $spare = $this->publisher->addDraftComponent(
-                $this->adminId, $draft, 'spare_component', 'crm_pipeline', 'crm', []
+                $this->adminId, $draft, 'spare_component', self::FAKE_TYPE, 'crm', []
             );
             $this->publisher->removeDraftComponent($this->adminId, $spare);
 

@@ -44,7 +44,17 @@ class NicheBlueprintPublisherTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const TYPE = 'crm_pipeline';
+    /**
+     * A generic, fake component type for this suite's own fixture adapter.
+     *
+     * Deliberately NOT 'crm_pipeline': Sub-slice D registers the real
+     * CrmPipelineComponentAdapter under that type in the same container-bound
+     * registry this suite resolves via app(), and two adapters can never
+     * claim one component type (§10). This suite's own gates (§6.2) are
+     * about ANY component type having a registered, validating adapter — the
+     * exact string used to prove that is incidental to what it tests.
+     */
+    private const TYPE = 'publisher_test_component';
 
     private NicheBlueprintPublisher $publisher;
 
