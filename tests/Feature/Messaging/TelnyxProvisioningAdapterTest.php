@@ -758,16 +758,29 @@ class TelnyxProvisioningAdapterTest extends TestCase
     // to an already-approved 10DLC campaign.
     // -----------------------------------------------------------------
 
+    /**
+     * Second review correction — Telnyx's own documented response for this
+     * endpoint is a top-level {messagingProfileId, taskId, campaignId, ...}
+     * body (HTTP 202), never nested under a "data" key (verified against
+     * Telnyx's own published SDK type definitions; see this test's own
+     * class docblock and TelnyxProvisioningAdapter's own for the
+     * verification source and citation). This fixture previously used the
+     * same incorrect {data: {taskId: ...}} wrapper the adapter itself
+     * incorrectly read, so the two bugs cancelled out and this test passed
+     * despite the adapter never being able to read a real taskId from a
+     * genuine Telnyx response.
+     */
     public function test_assign_messaging_profile_to_campaign_hits_the_confirmed_endpoint_and_reports_requested(): void
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['data' => ['taskId' => 'task_fixture_1']]),
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['taskId' => 'task_fixture_1', 'messagingProfileId' => 'mp_fixture_1', 'campaignId' => 'campaign_fixture_1'], 202),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->assignMessagingProfileToCampaign('mp_fixture_1', 'campaign_fixture_1');
 
         $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome);
+        $this->assertSame('task_fixture_1', $result->taskId);
         Http::assertSent(fn ($request) => $request->method() === 'POST'
             && str_contains($request->url(), '/10dlc/phoneNumberAssignmentByProfile')
             && $request['messagingProfileId'] === 'mp_fixture_1'
@@ -796,7 +809,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['data' => []]),
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['messagingProfileId' => 'mp_fixture_3', 'campaignId' => 'campaign_fixture_3'], 202),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->assignMessagingProfileToCampaign('mp_fixture_3', 'campaign_fixture_3');
@@ -820,7 +833,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => Http::response(['records' => [
                 ['taskId' => 'task_fixture_4', 'phoneNumber' => '+14155550100', 'status' => 'completed'],
             ]]),
         ]);
@@ -828,15 +841,19 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_4', '+14155550100');
 
         $this->assertSame(CampaignAssignmentOutcome::Confirmed, $result->outcome);
+        // Second review correction — an explicit, generous page size is
+        // requested rather than trusting an undocumented default, so a
+        // task's own records can never be silently split across pages.
         Http::assertSent(fn ($request) => $request->method() === 'GET'
-            && str_contains($request->url(), '/10dlc/phoneNumberAssignmentByProfile/task_fixture_4/phoneNumbers'));
+            && str_contains($request->url(), '/10dlc/phoneNumberAssignmentByProfile/task_fixture_4/phoneNumbers')
+            && str_contains($request->url(), 'recordsPerPage='));
     }
 
     public function test_check_campaign_assignment_status_reports_failed_on_a_failed_record(): void
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => Http::response(['records' => [
                 ['taskId' => 'task_fixture_5', 'phoneNumber' => '+14155550101', 'status' => 'failed'],
             ]]),
         ]);
@@ -855,7 +872,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => Http::response(['records' => [
                 ['taskId' => 'task_fixture_6', 'phoneNumber' => '+14155550102', 'status' => 'processing'],
             ]]),
         ]);
@@ -869,7 +886,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => Http::response(['records' => [
                 ['taskId' => 'task_fixture_7', 'phoneNumber' => '+14155559999', 'status' => 'completed'],
             ]]),
         ]);
@@ -883,7 +900,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['errors' => [['title' => 'Internal Server Error']]], 500),
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => Http::response(['errors' => [['title' => 'Internal Server Error']]], 500),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_8', '+14155550104');
@@ -895,7 +912,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
     {
         $this->enableProvisioning();
         Http::fake([
-            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => fn () => throw new \Illuminate\Http\Client\ConnectionException('Simulated network failure.'),
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers*' => fn () => throw new \Illuminate\Http\Client\ConnectionException('Simulated network failure.'),
         ]);
 
         $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_9', '+14155550105');

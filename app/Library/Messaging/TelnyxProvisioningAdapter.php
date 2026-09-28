@@ -122,12 +122,29 @@ use Illuminate\Support\Str;
  *                                                      the sequence this platform now
  *                                                      supports: business verification
  *                                                      completed before any number is
- *                                                      purchased. Confirmed response shape
- *                                                      returns a background `taskId`, never
- *                                                      an immediate confirmation — see
- *                                                      CampaignAssignmentOutcome's own
- *                                                      docblock. A 2xx response with no
- *                                                      usable `taskId` is Failed, never
+ *                                                      purchased. A successful call returns
+ *                                                      HTTP 202 with `taskId` (plus
+ *                                                      `messagingProfileId` and
+ *                                                      `campaignId`/`tcrCampaignId`) as
+ *                                                      TOP-LEVEL response fields — NOT nested
+ *                                                      under a `data` key. Second review
+ *                                                      correction — the original
+ *                                                      implementation read `data.taskId`,
+ *                                                      which Telnyx's own response never
+ *                                                      populates, so a real call would always
+ *                                                      have reported Failed('missing_task_id')
+ *                                                      regardless of the genuine outcome;
+ *                                                      verified against Telnyx's own published
+ *                                                      SDK type definitions
+ *                                                      (github.com/team-telnyx/telnyx-node,
+ *                                                      PhoneNumberAssignmentByProfileAssignResponse)
+ *                                                      since developers.telnyx.com is not
+ *                                                      reachable from this environment's
+ *                                                      egress proxy. `taskId` is a background
+ *                                                      task, never an immediate confirmation —
+ *                                                      see CampaignAssignmentOutcome's own
+ *                                                      docblock. A 2xx response with no usable
+ *                                                      top-level `taskId` is Failed, never
  *                                                      Requested — this platform could never
  *                                                      poll for completion without one.
  *   - GET    /10dlc/phoneNumberAssignmentByProfile/     CONFIRMED path (developers.telnyx.com/
@@ -137,14 +154,17 @@ use Illuminate\Support\Str;
  *                                                      actually polls this task to
  *                                                      completion (checkCampaignAssignmentStatus()),
  *                                                      matched by this exact phone number
- *                                                      within the response's own `records`
- *                                                      array rather than trusting the
- *                                                      overall-task-level status endpoint
- *                                                      (GET .../{taskId}, also documented,
- *                                                      but a coarser signal this platform's
- *                                                      own one-number-per-task usage does not
- *                                                      need). Documented per-record `status`
- *                                                      values include "completed" and
+ *                                                      within the response's own top-level
+ *                                                      `records` array (confirmed unwrapped,
+ *                                                      via the same SDK type definitions cited
+ *                                                      above — PhoneNumberAssignmentByProfile
+ *                                                      RetrievePhoneNumberStatusResponse) rather
+ *                                                      than trusting the overall-task-level
+ *                                                      status endpoint (GET .../{taskId}, also
+ *                                                      documented, but a coarser signal this
+ *                                                      platform's own one-number-per-task usage
+ *                                                      does not need). Documented per-record
+ *                                                      `status` values include "completed" and
  *                                                      "failed" — only these two ever leave
  *                                                      Requested; every other value (the
  *                                                      documented in-progress states, an
@@ -152,6 +172,43 @@ use Illuminate\Support\Str;
  *                                                      non-2xx response, or a transport
  *                                                      exception) reports Requested again —
  *                                                      never guessed as terminal.
+ *
+ *                                                      Second review correction — this
+ *                                                      endpoint accepts `page`/`recordsPerPage`
+ *                                                      query parameters and neither the
+ *                                                      published SDK types nor Telnyx's own
+ *                                                      support documentation state a default
+ *                                                      page size, so checkCampaignAssignmentStatus()
+ *                                                      now passes `recordsPerPage` explicitly
+ *                                                      (comfortably above this platform's own
+ *                                                      real usage) rather than trusting an
+ *                                                      unstated default to include every
+ *                                                      record. This platform's own structural
+ *                                                      invariant makes a single generous page
+ *                                                      sufficient regardless: provisionNumber()
+ *                                                      below always creates a brand-new
+ *                                                      Messaging Profile per number order (POST
+ *                                                      /messaging_profiles, one call per
+ *                                                      order), and BusinessMessagingIdentityResolver::
+ *                                                      attachNumber() — the only production
+ *                                                      call site that ever attaches a number to
+ *                                                      an identity/profile — is reachable only
+ *                                                      once per identity (guardNoExistingNumber()
+ *                                                      in TextMessagingController refuses a
+ *                                                      second order once an identity already
+ *                                                      exists, and provisionNumber() itself
+ *                                                      always reserves a FRESH identity before
+ *                                                      ever calling the adapter). A Messaging
+ *                                                      Profile this platform creates therefore
+ *                                                      never holds more than the one phone
+ *                                                      number checkCampaignAssignmentStatus()
+ *                                                      is looking for, so its task's own
+ *                                                      `records` array never has more than one
+ *                                                      entry to page through in the first
+ *                                                      place — the explicit page size is
+ *                                                      defense in depth against that invariant
+ *                                                      ever quietly changing, not a fix for an
+ *                                                      observed pagination gap.
  *   - GET    /phone_numbers/{id}                       CONFIRMED path (developers.telnyx.com/
  *   - DELETE /phone_numbers/{id}                       api-reference/phone-number-configurations/
  *                                                      retrieve-a-phone-number and
@@ -434,6 +491,12 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * goes through reserveFunding(): this links an already-purchased
      * number's already-created Messaging Profile to an already-approved
      * campaign — no new resource is purchased here.
+     *
+     * Second review correction — `taskId` is a TOP-LEVEL response field,
+     * never nested under `data`; see this class's own docblock for the
+     * verification source. Reading `data.taskId` (the original
+     * implementation) would silently read null on every real call and
+     * report every genuine success as Failed('missing_task_id').
      */
     public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult
     {
@@ -450,7 +513,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'http_' . $response->status());
         }
 
-        $taskId = $response->json('data.taskId');
+        $taskId = $response->json('taskId');
 
         if (! is_string($taskId) || $taskId === '') {
             // A 2xx response with no usable task id leaves this platform
@@ -467,17 +530,22 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * Review correction — see this class's own docblock and the
      * interface's own for the confirmed completion mechanism: GET
      * /10dlc/phoneNumberAssignmentByProfile/{taskId}/phoneNumbers, whose
-     * documented response shape is {records: [{taskId, phoneNumber,
-     * status}, ...]} — one record per number in the (potentially
-     * multi-number) task. This platform only ever assigns one number per
-     * task, but still matches by $phoneNumber explicitly rather than
-     * trusting record order, in case Telnyx's own response ever includes
-     * more than this platform expects.
+     * documented response shape is a top-level {records: [{taskId,
+     * phoneNumber, status}, ...]} — one record per number in the task.
+     * This platform's own provisionNumber()/attachNumber() invariant (see
+     * this class's own docblock) means a task this platform created never
+     * actually holds more than one number, but this still matches by
+     * $phoneNumber explicitly rather than trusting record order or count,
+     * and still requests a generous explicit `recordsPerPage` rather than
+     * relying on an undocumented default — belt and braces, not a fix for
+     * an observed gap.
      */
     public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult
     {
         try {
-            $response = $this->client()->get(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile/' . $taskId . '/phoneNumbers');
+            $response = $this->client()->get(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile/' . $taskId . '/phoneNumbers', [
+                'recordsPerPage' => 50,
+            ]);
         } catch (\Throwable) {
             return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_transport_error');
         }
