@@ -16,6 +16,7 @@ enum AiUsageCategory: string
 {
     case CooDiagnosis = 'coo_diagnosis';
     case CooInteractive = 'coo_interactive';
+    case CooMoveExplanation = 'coo_move_explanation';
     case ConversationCompaction = 'conversation_compaction';
     case WebsiteGeneration = 'website_generation';
     case CampaignMessageDraft = 'campaign_message_draft';
@@ -30,7 +31,7 @@ enum AiUsageCategory: string
     public function isAlwaysHardEnforced(): bool
     {
         return match ($this) {
-            self::CooDiagnosis, self::CooInteractive, self::ConversationCompaction => true,
+            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction => true,
             self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
         };
     }
@@ -45,7 +46,7 @@ enum AiUsageCategory: string
     public function requiresCooEntitlement(): bool
     {
         return match ($this) {
-            self::CooDiagnosis, self::CooInteractive, self::ConversationCompaction => true,
+            self::CooDiagnosis, self::CooInteractive, self::CooMoveExplanation, self::ConversationCompaction => true,
             self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
         };
     }
@@ -65,7 +66,7 @@ enum AiUsageCategory: string
     public function isDormancyGated(): bool
     {
         return match ($this) {
-            self::CooDiagnosis, self::ConversationCompaction => true,
+            self::CooDiagnosis, self::CooMoveExplanation, self::ConversationCompaction => true,
             self::CooInteractive, self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
         };
     }

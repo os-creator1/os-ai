@@ -93,6 +93,25 @@ final class CooInsightFactsReader
     ) {
     }
 
+    /**
+     * Contract 19 §12 19.C — the RFC-002 queue head, for deriving a
+     * MoveExplanation row's subject (NextBestMoveSubject). The exact same
+     * authorization gate as completeFacts()/businessWideFactsOnly(): an
+     * Opportunity is Location-suspect (see class docblock), so it is read
+     * only at complete Location coverage, and null otherwise — the same R-7
+     * decision the fact composition above makes, never a second one.
+     */
+    public function queueHead(Business $business, CooContextEnvelope $envelope): ?Opportunity
+    {
+        $authorization = CooFactAuthorization::resolve($envelope, $this->everyLocationIdOf($business));
+
+        if (! $authorization->mayComposeLocationBoundFacts()) {
+            return null;
+        }
+
+        return $this->opportunities->topForCustomer($business, 1)->first();
+    }
+
     public function read(Business $business, AnalyticsDateRange $current, CooContextEnvelope $envelope): CooInsightFacts
     {
         $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));

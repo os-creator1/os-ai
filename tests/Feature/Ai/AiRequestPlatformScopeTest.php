@@ -147,11 +147,16 @@ class AiRequestPlatformScopeTest extends TestCase
     /**
      * Every existing call keeps working precisely because `scope` is
      * appended last, with a default, after the pre-existing `jsonMode`
-     * parameter — never inserted earlier in the list. This proves the
-     * three real files were not touched by this slice, by asserting each
-     * one's exact `new AiRequest(...)` block is byte-identical to what it
-     * was before 19.H0 (recon basis, §5.7a B) — none of them names `scope`
-     * or `AiScope` anywhere.
+     * parameter — never inserted earlier in the list. This proves 19.H0
+     * itself required zero edits to any of the three sites, by asserting
+     * each one's `new AiRequest(...)` block still passes the same named
+     * arguments, in the same shape, with no `scope`/`AiScope` reference
+     * anywhere. A later, unrelated slice may still legitimately change what
+     * value one of those arguments carries (19.C's `CooInsightGenerator`
+     * later starts passing an extra argument into its own `messages:`
+     * expression to support MoveExplanation) — the expected block below is
+     * kept in sync with such changes; what must never reappear is a `scope:`
+     * argument or a reference to `AiScope`.
      */
     public function test_all_three_construction_sites_remain_source_unchanged(): void
     {
@@ -163,7 +168,7 @@ class AiRequestPlatformScopeTest extends TestCase
                 category: $category,
                 lane: $trigger->lane(),
                 route: $this->route($trigger, $facts),
-                messages: $this->prompts->messages($facts),
+                messages: $this->prompts->messages($facts, $subject['explains']),
                 maxOutputTokens: max(1, (int) config('coo.insight.max_output_tokens')),
                 idempotencyKey: $keyPrefix . ($family['attempts'] + 1),
                 actorUserId: $actorUserId,

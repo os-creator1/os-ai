@@ -17,20 +17,37 @@ namespace App\Library\Coo\Insight;
 final class CooInsightPromptBuilder
 {
     /**
+     * @param  string|null  $explains  Contract 19 §12 19.C — the fact_ref of
+     *   the deterministic move NextBestMoveSelector already picked. Null for
+     *   a PerformanceDiagnosis insight. Naming it steers the model toward
+     *   explaining THAT move; it does not relax grounding — fact_refs is
+     *   still validated against $facts->factRefs() exactly as always, and
+     *   the deterministic pick itself never comes from this prompt or its
+     *   answer (R-1).
      * @return array<int, array{role: string, content: string}>
      */
-    public function messages(CooInsightFacts $facts): array
+    public function messages(CooInsightFacts $facts, ?string $explains = null): array
     {
+        $payload = $facts->forPrompt();
+
+        if ($explains !== null) {
+            $payload['explains'] = $explains;
+        }
+
         return [
-            ['role' => 'system', 'content' => $this->instructions()],
-            ['role' => 'user', 'content' => CooInsightFacts::canonicalJson($facts->forPrompt())],
+            ['role' => 'system', 'content' => $this->instructions($explains)],
+            ['role' => 'user', 'content' => CooInsightFacts::canonicalJson($payload)],
         ];
     }
 
-    private function instructions(): string
+    private function instructions(?string $explains): string
     {
+        $task = $explains === null
+            ? 'You summarise the performance facts of one local business for its owner.'
+            : 'A local business\'s software has already chosen its one recommended next action, named by the user message\'s "explains" field. You explain, to the business owner, why that action makes sense right now. You do not recommend, choose or suggest a different action — only explain the one already chosen.';
+
         return implode("\n", [
-            'You summarise the performance facts of one local business for its owner.',
+            $task,
             'Use only the facts in the user message. Do not add numbers, events, names or advice that are not in them.',
             'Reply with one JSON object and nothing else, exactly this shape:',
             '{"statements":[{"class":"known","text":"...","fact_refs":["metric.new_contacts"]}]}',
