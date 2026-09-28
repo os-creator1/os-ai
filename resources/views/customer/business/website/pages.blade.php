@@ -9,6 +9,7 @@
             <span>
                 <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid]) }}">Photos</x-button>
                 <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Forms</x-button>
+                <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]) }}">Domains</x-button>
                 <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.create', [$workspaceUid, $businessUid]) }}">Add page</x-button>
             </span>
         </div>

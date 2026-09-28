@@ -1613,6 +1613,14 @@
             Route::get('/forms', 'Business\WebsiteFormsController@home')->name('forms.index');
             Route::post('/forms', 'Business\WebsiteFormsController@store')->name('forms.store');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
+
+            Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');
+            Route::post('/domains', 'Business\WebsiteDomainController@store')->name('domains.store');
+            Route::post('/domains/{domainUid}/verify', 'Business\WebsiteDomainController@verify')->name('domains.verify');
+            Route::post('/domains/{domainUid}/provision', 'Business\WebsiteDomainController@provision')->name('domains.provision');
+            Route::post('/domains/{domainUid}/check-certificate', 'Business\WebsiteDomainController@checkCertificate')->name('domains.checkCertificate');
+            Route::post('/domains/{domainUid}/make-primary', 'Business\WebsiteDomainController@makePrimary')->name('domains.makePrimary');
+            Route::delete('/domains/{domainUid}', 'Business\WebsiteDomainController@destroy')->name('domains.destroy');
         });
 
         /*
@@ -1710,6 +1718,11 @@
             // see AnalyticsController's own overview: operational messaging
             // metrics live here now, never on the Results page).
             Route::get('/delivery-usage', 'Business\TextMessagingController@deliveryUsage')->name('delivery-usage');
+
+            // STATE 3 — port a number out (messaging contract §13.4). Records
+            // and tracks the request only; see PortOutRequestManager.
+            Route::post('/number/port-out', 'Business\TextMessagingController@requestPortOut')->name('number.port-out.request');
+            Route::post('/number/port-out/cancel', 'Business\TextMessagingController@cancelPortOutRequest')->name('number.port-out.cancel');
         });
 
         /*

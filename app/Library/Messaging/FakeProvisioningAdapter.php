@@ -2,11 +2,14 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
@@ -48,6 +51,12 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
 
     /** Scripted refreshRegistrationStatus() answer, keyed by RegistrationStatusQuery::key(). */
     public array $registrationStatuses = [];
+
+    /** @var list<NumberReleaseQuery> every releaseNumber() call, in order. */
+    public array $releaseAttempts = [];
+
+    /** Scripted releaseNumber() outcome, keyed by providerPhoneNumberId; defaults to Confirmed. */
+    public array $releaseOutcomes = [];
 
     private int $numberCounter = 0;
 
@@ -110,6 +119,29 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
     public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
     {
         return $this->registrationStatuses[$query->key()] ?? MessagingRegistrationStatus::Pending;
+    }
+
+    public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult
+    {
+        $this->releaseAttempts[] = $query;
+
+        $outcome = $this->releaseOutcomes[$query->providerPhoneNumberId] ?? CarrierReleaseOutcome::Confirmed;
+
+        return new CarrierReleaseResult(
+            $outcome,
+            $outcome === CarrierReleaseOutcome::Confirmed ? 'fake_confirmed' : 'fake_not_confirmed',
+        );
+    }
+
+    /**
+     * Test helper — scripts this exact provider reference's next
+     * releaseNumber() outcome. Never a global "always fail" switch: keyed
+     * per reference so a test exercising two numbers at once can script
+     * each independently.
+     */
+    public function scriptReleaseOutcome(string $providerPhoneNumberId, CarrierReleaseOutcome $outcome): void
+    {
+        $this->releaseOutcomes[$providerPhoneNumberId] = $outcome;
     }
 
     /**

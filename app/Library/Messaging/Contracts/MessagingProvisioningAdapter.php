@@ -4,7 +4,9 @@ namespace App\Library\Messaging\Contracts;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
+use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
@@ -21,9 +23,10 @@ use App\Models\Business;
  * lifecycles, and a future adapter could plausibly implement one without
  * the other.
  *
- * Exactly four methods, each provider-neutral: no Telnyx-specific
- * parameter (rate center, TCR vetting tier, ...) crosses this boundary —
- * only what STATE 1/2 of the customer-facing hub actually need.
+ * Five methods, each provider-neutral: no Telnyx-specific parameter (rate
+ * center, TCR vetting tier, ...) crosses this boundary — only what
+ * STATE 1/2 of the customer-facing hub and the Phone Numbers + A2P lane's
+ * own carrier-release boundary actually need.
  *
  * "Never fake a successful purchase" (the product requirement) is a
  * structural guarantee of this interface's shape, not a runtime check:
@@ -70,4 +73,22 @@ interface MessagingProvisioningAdapter
      * fictitious) "/campaign/{id}" call.
      */
     public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus;
+
+    /**
+     * Phone Numbers + A2P lane — the carrier-release boundary. Attempts to
+     * remove the number from the provider account and returns whether the
+     * carrier itself confirmed that. Never throws to signal an ordinary
+     * "not confirmed" outcome (a non-2xx response) — only a genuine
+     * transport-level failure a caller cannot otherwise observe may
+     * propagate as an exception; NumberLifecycleManager::
+     * confirmCarrierRelease() treats either the same way (NotConfirmed,
+     * never released).
+     *
+     * Only ever called with a number this platform's own records show as
+     * Suspended, already decided for release, and free of any active
+     * port-out request — this method itself has no opinion on local
+     * eligibility and performs no local write; it is purely the provider
+     * round trip.
+     */
+    public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult;
 }

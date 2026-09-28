@@ -85,6 +85,12 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
      * No regression to the registry: every pre-existing case keeps its
      * availability, and ProspectOutreach stays the sole Workspace-scoped
      * exception.
+     *
+     * PlatformFeature::Calendar moved from Planned to Available in
+     * PlatformFeatureRegistry (the canonical booking engine and
+     * authenticated calendar now form one flow, contract 388) — that flip
+     * is intentional and predates this GBP slice, so it belongs in the
+     * "still Available" group, not "still Planned".
      */
     public function test_existing_registry_entries_are_unchanged(): void
     {
@@ -94,6 +100,7 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
             PlatformFeature::Automations,
             PlatformFeature::ProspectOutreach,
             PlatformFeature::WebsiteGeneration,
+            PlatformFeature::Calendar,
         ] as $available) {
             $this->assertTrue(
                 PlatformFeatureRegistry::isAvailable($available->value),
@@ -105,7 +112,6 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
             PlatformFeature::SeoModule,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
-            PlatformFeature::Calendar,
             PlatformFeature::Forms,
         ] as $planned) {
             $this->assertFalse(

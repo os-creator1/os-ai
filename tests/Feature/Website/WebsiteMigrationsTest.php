@@ -92,6 +92,23 @@ class WebsiteMigrationsTest extends TestCase
         ]));
     }
 
+    public function test_website_domains_table_has_documented_columns(): void
+    {
+        $this->assertTrue(Schema::hasColumns('website_domains', [
+            'uid',
+            'website_id',
+            'domain',
+            'is_primary',
+            'status',
+            'verification_token',
+            'failure_reason',
+            'certificate_reference',
+            'verified_at',
+            'activated_at',
+            'last_checked_at',
+        ]));
+    }
+
     /**
      * Standalone round-trip: runs the real down()/up() dance for all 5
      * migrations in isolation, outside RefreshDatabase's transaction
@@ -120,6 +137,9 @@ class WebsiteMigrationsTest extends TestCase
             // own isolation now has to unwind and rebuild them too.
             'website_form_submissions' => database_path('migrations/2026_10_06_120001_create_website_form_submissions_table.php'),
             'website_forms' => database_path('migrations/2026_10_06_120000_create_website_forms_table.php'),
+            // Slice B (custom domains) added one more table that FKs
+            // straight to `websites` — same reasoning, same fix.
+            'website_domains' => database_path('migrations/2026_10_08_120000_create_website_domains_table.php'),
         ];
 
         $websites = require $paths['websites'];
@@ -129,11 +149,15 @@ class WebsiteMigrationsTest extends TestCase
         $assets = require $paths['website_assets'];
         $formSubmissions = require $paths['website_form_submissions'];
         $forms = require $paths['website_forms'];
+        $domains = require $paths['website_domains'];
 
         try {
-            // Reverse order: form submissions, then forms, then assets,
-            // then the published_revision_id column/FK, then revisions,
-            // then pages, then websites.
+            // Reverse order: domains, then form submissions, then forms,
+            // then assets, then the published_revision_id column/FK,
+            // then revisions, then pages, then websites.
+            $domains->down();
+            $this->assertFalse(Schema::hasTable('website_domains'));
+
             $formSubmissions->down();
             $this->assertFalse(Schema::hasTable('website_form_submissions'));
 
@@ -157,11 +181,11 @@ class WebsiteMigrationsTest extends TestCase
             $this->assertFalse(Schema::hasTable('websites'));
         } finally {
             // Forward order: websites, pages, revisions,
-            // published_revision_id, assets, forms, form submissions —
-            // restore the schema so RefreshDatabase's transaction
-            // rollback for THIS test doesn't leave the next test file
-            // with a mismatched schema (these are raw DDL changes
-            // outside any transaction).
+            // published_revision_id, assets, forms, form submissions,
+            // domains — restore the schema so RefreshDatabase's
+            // transaction rollback for THIS test doesn't leave the next
+            // test file with a mismatched schema (these are raw DDL
+            // changes outside any transaction).
             $websites->up();
             $pages->up();
             $revisions->up();
@@ -169,6 +193,7 @@ class WebsiteMigrationsTest extends TestCase
             $assets->up();
             $forms->up();
             $formSubmissions->up();
+            $domains->up();
         }
 
         $this->assertTrue(Schema::hasTable('websites'));
@@ -177,6 +202,7 @@ class WebsiteMigrationsTest extends TestCase
         $this->assertTrue(Schema::hasTable('website_assets'));
         $this->assertTrue(Schema::hasTable('website_forms'));
         $this->assertTrue(Schema::hasTable('website_form_submissions'));
+        $this->assertTrue(Schema::hasTable('website_domains'));
         $this->assertTrue(Schema::hasColumn('websites', 'published_revision_id'));
     }
 }

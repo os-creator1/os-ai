@@ -52,5 +52,8 @@
                 </x-button>
             </x-card>
         </div>
+        <div class="col-md-6 mb-2">
+            @include('customer.settings.text-messaging._port-out-card')
+        </div>
     </div>
 @endsection
