@@ -137,11 +137,10 @@
 
                             <h5>Estimated cost</h5>
                             <p class="mb-1"><strong>Payer:</strong> {{ ucfirst(str_replace('_', ' ', $costEstimate['payerType'])) }}</p>
-                            @if ($costEstimate['amountMinorUpperBound'] !== null)
+                            @if ($costEstimate['formattedAmount'] !== null)
                                 <p class="mb-1">
                                     <strong>Estimated amount:</strong>
-                                    up to {{ number_format($costEstimate['amountMinorUpperBound']) }}
-                                    {{ $costEstimate['currencyCode'] ?? '' }}
+                                    up to {{ $costEstimate['formattedAmount'] }}
                                 </p>
                             @endif
                             @if ($costEstimate['unitCount'] !== null)

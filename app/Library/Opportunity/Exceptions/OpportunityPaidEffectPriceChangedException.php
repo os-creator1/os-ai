@@ -11,18 +11,23 @@ namespace App\Library\Opportunity\Exceptions;
  *
  * A ceiling is never silently raised (R-3): this refuses the execution
  * attempt rather than honour the new, higher figure. Because it extends
- * OpportunityAuthorityRevokedException, the execution is recorded failed and
- * — since every paid_effect action also fails
- * OpportunityActionRegistry::mayRetryUnderOriginalApproval() — the customer
- * must request a fresh approval, priced at the new figure, before it can run
- * (RFC-002 §5.4(4)'s existing re-approval rule, unchanged by this slice).
+ * OpportunityPaidEffectReapprovalRequiredException,
+ * OpportunityManager::returnPaidEffectToAwaitingApproval() catches it and
+ * returns the Opportunity directly to `awaiting_approval` with a freshly
+ * computed estimate at the new figure — never the generic §5.4(2) failure
+ * path back to `open`, and never the old approval silently honoured.
  */
-class OpportunityPaidEffectPriceChangedException extends OpportunityAuthorityRevokedException
+class OpportunityPaidEffectPriceChangedException extends OpportunityPaidEffectReapprovalRequiredException
 {
     public static function forAction(int $opportunityId, string $actionKey): self
     {
         return new self(
             "Action [{$actionKey}] on Opportunity [{$opportunityId}] now costs more than the approved ceiling, or its price version changed."
         );
+    }
+
+    public function reapprovalReasonCode(): string
+    {
+        return 'paid_effect_price_changed';
     }
 }

@@ -284,17 +284,23 @@ final class OpportunityAuthorityGuard
      * ceiling. At confirmation there is no execution yet; its snapshot is
      * compared with that approval record on each execution attempt.
      *
-     * Implementation Contract 19 §12 19.E — $liveEstimate is the SAME
+     * Implementation Contract 19 §12 19.E, R-3 — $liveEstimate is the SAME
      * ActionCostEstimator recomputation OpportunityManager::
      * beginExecutionAttempt() takes immediately before this call, passed in
      * rather than resolved here so this guard stays a pure comparison over
-     * caller-supplied values (matching every other gate in this class). It
-     * is null whenever no live recomputation was possible — every action
-     * with no configured meter, which today is every registered action —
-     * and the check below is then skipped entirely, preserving exactly
-     * 19.D's own stored-snapshot-only behaviour. When it is non-null, R-3's
-     * three live checks run: same payer, no higher price/no retired price
-     * version, and the wallet still covers it.
+     * caller-supplied values (matching every other gate in this class). At
+     * approval time ($execution === null) it is not consulted at all — the
+     * snapshot completeness check above is the whole check. At EXECUTION
+     * time ($execution !== null) for a `paid_effect` action, a null
+     * $liveEstimate is refused outright: "no current estimate" means the
+     * meter, rate or pricing configuration that priced this action at
+     * approval time has since disappeared or become unresolvable, and this
+     * guard can no longer prove the action is still within what was
+     * approved. That is never reinterpreted as free or unchanged — it fails
+     * exactly like a missing approval-time estimate (§12 19.E). A non-null
+     * live estimate is checked with R-3's three live comparisons: same
+     * payer, no higher price/no retired price version, and the wallet still
+     * covers it.
      */
     public function assertPaidEffectIsCovered(
         Opportunity $lockedOpportunity,
@@ -333,8 +339,23 @@ final class OpportunityAuthorityGuard
             );
         }
 
-        if ($execution === null || $liveEstimate === null) {
+        if ($execution === null) {
+            // The approval-time call: the stored/about-to-be-stored snapshot
+            // check above is the whole check here. There is no prior
+            // execution attempt to recompute against yet.
             return;
+        }
+
+        if ($liveEstimate === null) {
+            // R-3 — execution recomputes the estimate from LIVE state.
+            // "No current estimate" is not "no change": it means the meter,
+            // rate or pricing configuration that made this action priceable
+            // has disappeared or become unresolvable since approval, and
+            // this guard can no longer PROVE the paid action is still
+            // within what was approved. That is refused exactly like a
+            // missing approval-time estimate — never silently treated as
+            // free or unchanged.
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
         }
 
         $ceiling = ActionCostEstimate::fromSnapshot($approval);

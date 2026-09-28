@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Http\Requests\Opportunity\ConfigureOpportunityActionRequest;
 use App\Http\Requests\Opportunity\SnoozeOpportunityRequest;
+use App\Library\Catalog\CatalogMoney;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
@@ -478,7 +479,7 @@ class OpportunityController extends Controller
      * action is not `paid_effect` (every shipped action today, add_phone
      * included) — never a fabricated zero-cost estimate.
      *
-     * @return array{payerType: string, amountMinorUpperBound: ?int, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool}|null
+     * @return array{payerType: string, amountMinorUpperBound: ?int, formattedAmount: ?string, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool}|null
      */
     private function safeCostEstimate(Opportunity $opportunity, Business $business): ?array
     {
@@ -511,12 +512,23 @@ class OpportunityController extends Controller
         return $estimate === null ? null : $this->safeEstimateFields($estimate);
     }
 
-    /** @return array{payerType: string, amountMinorUpperBound: ?int, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool} */
+    /**
+     * `formattedAmount` is the actual major-currency figure a human reads
+     * ("USD 1.24", never "124 USD") — computed once here, from the exact
+     * minor-unit integer plus the currency's own exponent
+     * ({@see CatalogMoney::format()}, reused rather than duplicated), so
+     * the view never does its own currency arithmetic.
+     *
+     * @return array{payerType: string, amountMinorUpperBound: ?int, formattedAmount: ?string, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool}
+     */
     private function safeEstimateFields(ActionCostEstimate $estimate): array
     {
         return [
             'payerType' => $estimate->payerType->value,
             'amountMinorUpperBound' => $estimate->amountMinorUpperBound,
+            'formattedAmount' => $estimate->amountMinorUpperBound === null
+                ? null
+                : CatalogMoney::format($estimate->amountMinorUpperBound, $estimate->currencyCode),
             'unitCount' => $estimate->unitCount,
             'unitKind' => $estimate->unitKind,
             'currencyCode' => $estimate->currencyCode,

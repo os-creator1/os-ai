@@ -3,12 +3,15 @@
 namespace Tests\Feature\Opportunity;
 
 use App\Enums\Usage\PayerType;
+use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Library\Opportunity\ActionCostEstimate;
 use App\Library\Opportunity\ActionCostEstimator;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPayerChangedException;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPriceChangedException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectReapprovalRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectWalletInsufficientException;
+use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityActionHash;
 use App\Library\Opportunity\OpportunityActionRegistry;
 use App\Library\Opportunity\OpportunityAuthorityGuard;
@@ -41,10 +44,22 @@ use Tests\TestCase;
  *    piece of new orchestration 19.D did not have, so it is the one piece
  *    worth an integration-level proof.
  *
- * 19.D's own tests (OpportunityApprovalLifecycleHardeningTest) are the proof
- * that a null $liveEstimate — every registered action today, add_phone
- * included, since none names a meter — falls back to the pre-19.E
- * stored-snapshot-only behaviour unchanged; they are not duplicated here.
+ * CORRECTION (post-review). A null `$liveEstimate` for a genuinely
+ * `paid_effect` action at EXECUTION time (an execution row is present) is
+ * NOT "unchanged" — it now fails closed
+ * (`OpportunityPaidEffectEstimateMissingException`), because "no current
+ * estimate" means this guard can no longer prove the action is still within
+ * what was approved (R-3). Every registered action today, add_phone
+ * included, is not `paid_effect`, so `assertPaidEffectIsCovered()` never
+ * reaches that check for it — this correction changes behaviour only for a
+ * genuinely `paid_effect` action, none of which is configured in
+ * production. A price or payer change at execution time returns the
+ * Opportunity to `awaiting_approval` with a freshly computed estimate
+ * (`OpportunityManager::returnPaidEffectToAwaitingApproval()`) rather than
+ * the generic §5.4(2) failure lifecycle — both proved below, using the same
+ * synthetic-action-key technique this file already established, since no
+ * real paid_effect action exists to exercise the full registered-action
+ * path end to end (R-0).
  */
 class OpportunityPaidEffectCostEstimateTest extends TestCase
 {
@@ -255,6 +270,275 @@ class OpportunityPaidEffectCostEstimateTest extends TestCase
 
         $this->assertSame('succeeded', $execution->fresh()->status->value);
         $this->assertSame('+15551234567', $business->fresh()->phone);
+    }
+
+    // =================================================================
+    // Display — the true major-currency amount, never the raw minor figure
+    // =================================================================
+
+    /**
+     * Correction (Contract 19 §5.3 review) — the approving human reads the
+     * real major-currency amount ("USD 2.50"), never the bare minor-unit
+     * integer ("250 USD" would mean $250.00, not $2.50). The stored/
+     * snapshotted field itself stays the exact minor-unit integer
+     * unchanged — only the presentation layer converts it, via the same
+     * {@see \App\Library\Catalog\CatalogMoney::format()} formatter reused
+     * rather than duplicated.
+     */
+    public function test_the_display_field_shows_the_true_major_currency_amount(): void
+    {
+        $estimate = $this->liveEstimate(amountMinorUpperBound: 250); // 250 minor units = $2.50
+
+        $method = new \ReflectionMethod(\App\Http\Controllers\Customer\OpportunityController::class, 'safeEstimateFields');
+        $method->setAccessible(true);
+        $controller = app(\App\Http\Controllers\Customer\OpportunityController::class);
+
+        $fields = $method->invoke($controller, $estimate);
+
+        $this->assertSame('USD 2.50', $fields['formattedAmount'], '250 minor units of USD must display as $2.50, never as "250 USD".');
+        $this->assertSame(250, $fields['amountMinorUpperBound'], 'The stored/snapshotted field itself remains the exact minor-unit integer.');
+    }
+
+    public function test_a_null_amount_has_no_formatted_display(): void
+    {
+        $estimate = new ActionCostEstimate(
+            payerType: PayerType::Workspace,
+            payerWorkspaceId: 42,
+            currencyCode: null,
+            amountMinorUpperBound: null,
+            unitCount: 5,
+            unitKind: 'units',
+            basis: ActionCostEstimate::BASIS_UPPER_BOUND,
+            priceVersion: 'test-v1',
+            estimatedAt: Carbon::now(),
+            expiresAt: Carbon::now()->addHour(),
+            walletSufficient: true,
+        );
+
+        $method = new \ReflectionMethod(\App\Http\Controllers\Customer\OpportunityController::class, 'safeEstimateFields');
+        $method->setAccessible(true);
+        $controller = app(\App\Http\Controllers\Customer\OpportunityController::class);
+
+        $fields = $method->invoke($controller, $estimate);
+
+        $this->assertNull($fields['formattedAmount']);
+    }
+
+    // =================================================================
+    // Correction — a null live estimate at EXECUTION time now fails closed
+    // =================================================================
+
+    /**
+     * Before this correction, `assertPaidEffectIsCovered()` silently
+     * `return`ed whenever `$liveEstimate` was null and an execution was
+     * present — treating "the pricing configuration has become
+     * unresolvable since approval" as "nothing changed". R-3 requires the
+     * opposite: execution recomputes from LIVE state, and "no current
+     * estimate" must refuse, never pass.
+     */
+    public function test_a_null_live_estimate_at_execution_time_now_fails_closed(): void
+    {
+        [, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+
+        $guard = app(OpportunityAuthorityGuard::class);
+
+        // The approval-time call (no execution yet) is unaffected: the
+        // stored snapshot alone is what is checked.
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action');
+
+        // The execution-time call with a null live estimate must now
+        // refuse — this is the exact behaviour the correction changes.
+        $this->expectException(OpportunityPaidEffectEstimateMissingException::class);
+
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh(), null);
+    }
+
+    // =================================================================
+    // Correction — a price/payer change reapproves with a fresh estimate,
+    // rather than the generic §5.4(2) failure lifecycle
+    // =================================================================
+
+    /**
+     * OpportunityManager::returnPaidEffectToAwaitingApproval() in isolation
+     * — the same technique this file already established: a real
+     * approved/confirmed add_phone pair, its execution's action_key
+     * relabelled to the synthetic 'unregistered_paid_action' (hasPaidEffect
+     * fails open for any unregistered key) so a swapped-in mocked
+     * ActionCostEstimator can be consulted, exactly mirroring how
+     * estimatePaidEffectForApproval() is already tested above.
+     */
+    public function test_a_price_change_reapproves_with_a_fresh_estimate_and_a_typed_reason(): void
+    {
+        [, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $execution->update(['action_key' => 'unregistered_paid_action']);
+
+        $newEstimate = $this->liveEstimate(amountMinorUpperBound: 999, priceVersion: 'test-v2');
+        $estimator = Mockery::mock(ActionCostEstimator::class);
+        $estimator->shouldReceive('estimateForAction')->once()->andReturn($newEstimate);
+        $this->app->instance(ActionCostEstimator::class, $estimator);
+
+        $reason = OpportunityPaidEffectPriceChangedException::forAction((int) $opportunity->id, 'unregistered_paid_action');
+
+        $updated = app(OpportunityManager::class)->returnPaidEffectToAwaitingApproval($execution->fresh(), $reason);
+
+        // 6/7 — awaiting_approval, carrying the NEW live estimate.
+        $this->assertSame(OpportunityStatus::AwaitingApproval, $updated->status);
+        $this->assertSame(999, $updated->action_cost_amount_minor_upper_bound);
+        $this->assertSame('test-v2', $updated->action_cost_price_version);
+
+        // 8 — the OLD ceiling (250, test-v1) is gone, never silently
+        // honoured as still approved.
+        $this->assertNotSame(250, $updated->action_cost_amount_minor_upper_bound);
+        $this->assertNotSame('test-v1', $updated->action_cost_price_version);
+
+        // 5 — the pending attempt is terminal, with its own distinct reason.
+        $this->assertSame(OpportunityActionExecutionStatus::Failed, $execution->fresh()->status);
+        $this->assertNull($execution->fresh()->started_at, 'The execution never reached running.');
+
+        // 9 — a typed, auditable transition reason.
+        $this->assertDatabaseHas('opportunity_transitions', [
+            'opportunity_id' => $opportunity->id,
+            'from_status' => 'in_progress',
+            'to_status' => 'awaiting_approval',
+            'reason_code' => 'paid_effect_price_changed',
+        ]);
+    }
+
+    /**
+     * The same principle applies to a payer change: a new payer never
+     * inherits the old payer's approval — the Opportunity returns to
+     * awaiting_approval priced against the NEW payer, under its own typed
+     * reason.
+     */
+    public function test_a_payer_change_reapproves_with_a_fresh_estimate_against_the_new_payer(): void
+    {
+        [, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $execution->update(['action_key' => 'unregistered_paid_action']);
+
+        $newEstimate = $this->liveEstimate(payerType: PayerType::AgencyRebill, payerWorkspaceId: 777);
+        $estimator = Mockery::mock(ActionCostEstimator::class);
+        $estimator->shouldReceive('estimateForAction')->once()->andReturn($newEstimate);
+        $this->app->instance(ActionCostEstimator::class, $estimator);
+
+        $reason = OpportunityPaidEffectPayerChangedException::forAction((int) $opportunity->id, 'unregistered_paid_action');
+
+        $updated = app(OpportunityManager::class)->returnPaidEffectToAwaitingApproval($execution->fresh(), $reason);
+
+        $this->assertSame(OpportunityStatus::AwaitingApproval, $updated->status);
+        $this->assertSame('agency_rebill', $updated->action_cost_payer_type);
+        $this->assertSame(777, $updated->action_cost_payer_workspace_id);
+        $this->assertNotSame('workspace', $updated->action_cost_payer_type, 'The old payer is never silently kept.');
+
+        $this->assertDatabaseHas('opportunity_transitions', [
+            'opportunity_id' => $opportunity->id,
+            'reason_code' => 'paid_effect_payer_changed',
+        ]);
+    }
+
+    /**
+     * FAILS CLOSED, NOT SOFTLY — wallet insufficient. If the fresh recompute
+     * this reapproval attempt performs is itself now wallet-insufficient,
+     * this must NOT enter awaiting_approval with a known-bad figure: it
+     * throws, and nothing is written.
+     */
+    public function test_reapproval_fails_closed_when_the_fresh_estimate_is_now_wallet_insufficient(): void
+    {
+        [, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $execution->update(['action_key' => 'unregistered_paid_action']);
+
+        $estimator = Mockery::mock(ActionCostEstimator::class);
+        $estimator->shouldReceive('estimateForAction')->once()->andReturn($this->liveEstimate(walletSufficient: false));
+        $this->app->instance(ActionCostEstimator::class, $estimator);
+
+        $reason = OpportunityPaidEffectPriceChangedException::forAction((int) $opportunity->id, 'unregistered_paid_action');
+
+        try {
+            app(OpportunityManager::class)->returnPaidEffectToAwaitingApproval($execution->fresh(), $reason);
+            $this->fail('A wallet-insufficient reapproval attempt must throw.');
+        } catch (OpportunityPaidEffectWalletInsufficientException) {
+            $this->assertTrue(true);
+        }
+
+        // Nothing was half-written: the whole attempt rolled back.
+        $this->assertSame(OpportunityStatus::InProgress, $opportunity->fresh()->status);
+        $this->assertSame(OpportunityActionExecutionStatus::Pending, $execution->fresh()->status);
+    }
+
+    /**
+     * FAILS CLOSED, NOT SOFTLY — no estimate at all. Never fabricate a
+     * replacement estimate merely to enter awaiting_approval.
+     */
+    public function test_reapproval_fails_closed_when_no_fresh_estimate_is_available_at_all(): void
+    {
+        [, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $execution->update(['action_key' => 'unregistered_paid_action']);
+
+        $estimator = Mockery::mock(ActionCostEstimator::class);
+        $estimator->shouldReceive('estimateForAction')->once()->andReturn(null);
+        $this->app->instance(ActionCostEstimator::class, $estimator);
+
+        $reason = OpportunityPaidEffectPriceChangedException::forAction((int) $opportunity->id, 'unregistered_paid_action');
+
+        try {
+            app(OpportunityManager::class)->returnPaidEffectToAwaitingApproval($execution->fresh(), $reason);
+            $this->fail('A reapproval attempt with no resolvable estimate must throw.');
+        } catch (OpportunityPaidEffectEstimateMissingException) {
+            $this->assertTrue(true);
+        }
+
+        $this->assertSame(OpportunityStatus::InProgress, $opportunity->fresh()->status);
+        $this->assertSame(OpportunityActionExecutionStatus::Pending, $execution->fresh()->status);
+    }
+
+    // =================================================================
+    // ExecuteOpportunityAction — the job routes a reapproval-required
+    // refusal correctly, and never invokes the handler
+    // =================================================================
+
+    public function test_the_job_routes_a_reapproval_required_refusal_without_invoking_the_handler(): void
+    {
+        [$business, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $reason = OpportunityPaidEffectPriceChangedException::forAction((int) $opportunity->id, 'add_phone');
+
+        $this->partialMock(OpportunityManager::class, function ($mock) use ($opportunity, $reason) {
+            $mock->shouldReceive('beginExecutionAttempt')->once()->andThrow($reason);
+            $mock->shouldReceive('returnPaidEffectToAwaitingApproval')->once()->andReturn($opportunity->fresh());
+            $mock->shouldNotReceive('recordExecutionResult');
+        });
+
+        // OpportunityActionExecutor is final (cannot be mocked as a plain
+        // type-hinted double); the REAL instance is used instead — since
+        // beginExecutionAttempt() is stubbed to throw before ever reaching
+        // it, it is never called regardless, and the proof that it never
+        // ran is the Business row itself staying untouched below.
+        (new ExecuteOpportunityAction((int) $execution->id))->handle(app(OpportunityManager::class), app(OpportunityActionExecutor::class));
+
+        $this->assertNull($business->fresh()->phone, 'The handler was never invoked.');
+    }
+
+    /**
+     * When the reapproval attempt ITSELF is blocked (wallet now
+     * insufficient, or no estimate at all), the job falls back to the
+     * ordinary §5.4(2) failure lifecycle rather than leaving the
+     * Opportunity in a half-handled state.
+     */
+    public function test_the_job_falls_back_to_the_generic_failure_path_when_reapproval_is_itself_blocked(): void
+    {
+        [$business, $opportunity, $execution] = $this->approvedWithCostSnapshot($this->ceilingSnapshot());
+        $reason = OpportunityPaidEffectPriceChangedException::forAction((int) $opportunity->id, 'add_phone');
+        $blocked = OpportunityPaidEffectWalletInsufficientException::forAction((int) $opportunity->id, 'add_phone');
+
+        $this->partialMock(OpportunityManager::class, function ($mock) use ($execution, $reason, $blocked) {
+            $mock->shouldReceive('beginExecutionAttempt')->once()->andThrow($reason);
+            $mock->shouldReceive('returnPaidEffectToAwaitingApproval')->once()->andThrow($blocked);
+            $mock->shouldReceive('recordExecutionResult')
+                ->once()
+                ->with(Mockery::on(fn ($e) => $e->id === $execution->id), false, 'Opportunity action state no longer matched the approved action.');
+        });
+
+        (new ExecuteOpportunityAction((int) $execution->id))->handle(app(OpportunityManager::class), app(OpportunityActionExecutor::class));
+
+        $this->assertNull($business->fresh()->phone, 'The handler was never invoked.');
     }
 
     // -----------------------------------------------------------------

@@ -21,16 +21,20 @@ use Illuminate\Support\Carbon;
  * from model output (R-4), and never constructed by a controller from
  * request input.
  *
- * UNIT NOTE. `amountMinorUpperBound` (and every other RFC-005 monetary
- * figure this object reads: retail_rate_micro, available_balance_micro) is
- * carried in this codebase's one existing monetary unit throughout RFC-005
- * — its own "micro" convention — despite the schema column's
- * `_minor_upper_bound` name (Implementation Contract 19 §8's own naming).
- * RFC-005 defines no separate decimal-currency (cents) conversion utility
- * anywhere in the codebase; inventing one here, for exactly one caller,
- * would itself be the kind of invented rate/conversion this slice is
- * chartered not to add. A future slice that needs true minor-unit display
- * is free to add that conversion as its own reviewed change.
+ * UNIT NOTE. `amountMinorUpperBound` is exactly what its name says: the
+ * payer currency's real ISO MINOR units (cents for USD/EUR, whole yen for
+ * JPY — Contract 19 §5.3), converted from RFC-005's internal micro-unit
+ * pricing by {@see \App\Library\Money\MicroAmountConverter}, which defers
+ * to the shared, provider-neutral {@see \App\Library\Money\CurrencyExponent}
+ * for the currency's exponent rather than inventing or duplicating a
+ * currency-decimal table here. Every OTHER RFC-005 figure this object's
+ * builder reads before that conversion (`retail_rate_micro`,
+ * `available_balance_micro`) stays in RFC-005's own micro convention —
+ * wallet sufficiency in particular is always decided against the exact
+ * micro balance, never against this rounded minor-unit display figure. The
+ * conversion rounds UP (ceiling), never down: this field is a promise that
+ * the true cost is at most this many minor units, and flooring a
+ * fractional minor unit would silently understate that ceiling.
  *
  * `basis` is always `upper_bound`: the quantity priced is the action's own
  * fixed estimated unit count (never a live-metered actual), so the figure

@@ -5,6 +5,9 @@ namespace App\Jobs\Opportunity;
 use App\DTO\Opportunity\OpportunityExecutionAttempt;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionVerificationException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectReapprovalRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectWalletInsufficientException;
 use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityManager;
 use App\Models\OpportunityActionExecution;
@@ -85,6 +88,36 @@ class ExecuteOpportunityAction implements ShouldQueue, ShouldQueueAfterCommit
             DB::transaction(function () use ($manager, $executor, $execution) {
                 try {
                     $attempt = $manager->beginExecutionAttempt($execution);
+                } catch (OpportunityPaidEffectReapprovalRequiredException $e) {
+                    // Contract 19 §5.3 R-3, §12 19.E — a live price or payer
+                    // change, specifically. The execution never reached
+                    // running, so nothing was mutated. Rather than the
+                    // generic failure lifecycle (back to `open`), the
+                    // Opportunity returns to `awaiting_approval` carrying a
+                    // FRESH estimate for the customer to confirm again.
+                    Log::error('ExecuteOpportunityAction found a paid-effect price or payer change requiring reapproval', [
+                        'execution_id' => $execution->id,
+                        'exception' => $e,
+                    ]);
+
+                    try {
+                        $manager->returnPaidEffectToAwaitingApproval($execution, $e);
+                    } catch (OpportunityPaidEffectWalletInsufficientException|OpportunityPaidEffectEstimateMissingException $stillBlocked) {
+                        // The fresh recompute itself cannot produce a real,
+                        // sufficient estimate (funds now short, or pricing
+                        // configuration vanished entirely). There is no
+                        // honest figure to show in awaiting_approval, so
+                        // this falls back to the ordinary §5.4(2) failure
+                        // path instead of fabricating one.
+                        Log::error('ExecuteOpportunityAction could not produce a fresh estimate for reapproval', [
+                            'execution_id' => $execution->id,
+                            'exception' => $stillBlocked,
+                        ]);
+
+                        $manager->recordExecutionResult($execution, false, self::SAFE_SUMMARY_STATE_MISMATCH);
+                    }
+
+                    return;
                 } catch (OpportunityActionNotExecutableException $e) {
                     // A genuine §30.1 step 3 pre-invocation mismatch: the
                     // execution never reached running, so nothing was

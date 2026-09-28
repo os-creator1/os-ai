@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Library\Opportunity;
 
+use App\Library\Money\Exceptions\UnsupportedCurrencyException;
+use App\Library\Money\MicroAmountConverter;
 use App\Library\Usage\EffectivePayerResolver;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
@@ -91,7 +93,12 @@ class ActionCostEstimator
             return null;
         }
 
-        $amount = (int) UsageWalletManager::bcRoundHalfUp(
+        // RFC-005's own internal unit throughout: micro-units (1 micro =
+        // 1/1,000,000 of the currency's major unit). Every wallet/pricing
+        // comparison below stays in this unit — it is converted to the
+        // currency's real minor units ONLY at the very end, for the one
+        // field Contract 19 §5.3 defines as minor units.
+        $amountMicro = (int) UsageWalletManager::bcRoundHalfUp(
             bcmul((string) $rate->retail_rate_micro, $quantity, 10),
             '1',
         );
@@ -106,17 +113,38 @@ class ActionCostEstimator
         $payer = $this->payers->resolve($business);
         $payerWorkspaceId = $payer->providerCustomerWorkspaceId ?? (int) $business->workspace_id;
 
+        // Wallet sufficiency is decided against the EXACT RFC-005 micro
+        // balance, never the rounded/ceiled minor-unit display figure —
+        // the two are different concepts and must never be conflated.
         $wallet = $this->wallets->findByBusinessId((int) $business->id);
-        $walletSufficient = $wallet !== null && (int) $wallet->available_balance_micro >= $amount;
+        $walletSufficient = $wallet !== null && (int) $wallet->available_balance_micro >= $amountMicro;
 
         $rate->loadMissing('currency');
+        $currencyCode = $rate->currency?->code;
+
+        // §5.3 — the customer-facing ceiling is currency MINOR units, never
+        // this codebase's internal micro convention (R-4: no invented
+        // conversion, no float). A currency this codebase cannot express in
+        // minor units at all is a pricing fact we do not have, exactly like
+        // a missing rate — the whole estimate is refused rather than
+        // showing a number with no honest unit (NEVER INVENTS).
+        if ($currencyCode === null) {
+            return null;
+        }
+
+        try {
+            $amountMinorUpperBound = MicroAmountConverter::ceilToMinorUnits($amountMicro, $currencyCode);
+        } catch (UnsupportedCurrencyException) {
+            return null;
+        }
+
         $now = Carbon::now();
 
         return new ActionCostEstimate(
             payerType: $payer->payerType,
             payerWorkspaceId: $payerWorkspaceId,
-            currencyCode: $rate->currency?->code,
-            amountMinorUpperBound: $amount,
+            currencyCode: $currencyCode,
+            amountMinorUpperBound: $amountMinorUpperBound,
             unitCount: null,
             unitKind: $rate->unit_label,
             basis: ActionCostEstimate::BASIS_UPPER_BOUND,
