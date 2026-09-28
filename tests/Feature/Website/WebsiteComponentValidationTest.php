@@ -248,6 +248,62 @@ class WebsiteComponentValidationTest extends TestCase
         $this->assertDatabaseMissing('website_pages', ['website_id' => $website->id]);
     }
 
+    /**
+     * The page editor's hero fields for Primary/Secondary button always
+     * render, so an owner who never touches them submits `primary_cta`/
+     * `secondary_cta` as a fully-blank {label: '', url: ''} object —
+     * indistinguishable, in intent, from never adding a button at all.
+     * This must save successfully, exactly like a hero the owner never
+     * gave any button to, and never persist an empty cta object.
+     */
+    public function test_a_heros_untouched_blank_primary_and_secondary_cta_are_dropped_and_save_succeeds(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        $hero = $this->section('hero', [
+            'primary_cta' => ['label' => '', 'url' => ''],
+            'secondary_cta' => ['label' => '', 'url' => ''],
+        ]);
+
+        $response = $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Home',
+            'is_home' => true,
+            'sections' => [$hero],
+        ]);
+
+        $response->assertRedirect()->assertSessionHasNoErrors();
+        $page = $website->pages()->where('is_home', true)->firstOrFail();
+        $this->assertArrayNotHasKey('primary_cta', $page->sections[0]['data']);
+        $this->assertArrayNotHasKey('secondary_cta', $page->sections[0]['data']);
+    }
+
+    /**
+     * The fix above must never swallow a genuine mistake: a button the
+     * owner actually started filling in (one field set, the other left
+     * blank) still fails validation exactly as before.
+     */
+    public function test_a_heros_partially_filled_primary_cta_still_fails_validation(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->authenticateAsCustomer($customer);
+
+        $hero = $this->section('hero', [
+            'primary_cta' => ['label' => 'Book now', 'url' => ''],
+        ]);
+
+        $response = $this->post(route('customer.workspaces.businesses.website.pages.store', [$workspace->uid, $business->uid]), [
+            'title' => 'Home',
+            'is_home' => true,
+            'sections' => [$hero],
+        ]);
+
+        $response->assertSessionHasErrors('sections.0.primary_cta.url');
+        $this->assertDatabaseMissing('website_pages', ['website_id' => $website->id]);
+    }
+
     // ---------------------------------------------------------------
     // (d) section order is preserved through a save+publish round trip
     // ---------------------------------------------------------------
