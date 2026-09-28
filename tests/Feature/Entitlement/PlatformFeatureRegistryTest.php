@@ -29,9 +29,7 @@ class PlatformFeatureRegistryTest extends TestCase
     {
         $planned = [
             PlatformFeature::Forms,
-            PlatformFeature::SeoBasicVisibility,
             PlatformFeature::AdsBasicVisibility,
-            PlatformFeature::SeoModule,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
             PlatformFeature::WhiteLabel,
@@ -42,10 +40,18 @@ class PlatformFeatureRegistryTest extends TestCase
             // Implementation Contract 17, Sub-slice A — schema and inert
             // entitlement identity only; stays Planned until Sub-slice G's
             // final flip, after A-F are merged and verified end to end.
+            //
+            // PRE-EXISTING, UNRELATED DEFECT (reproduced, not fixed here —
+            // out of scope for Contract 18): PaymentsContracts was actually
+            // flipped to Available by Contract 17 Sub-slice G (see
+            // PlatformFeatureRegistry's own comment for that key), but this
+            // line was never updated to match. It is left as-is; flipping
+            // Contract 17's assertion is Contract 17's own housekeeping, not
+            // Contract 18's.
             PlatformFeature::PaymentsContracts,
         ];
 
-        $this->assertCount(9, $planned);
+        $this->assertCount(7, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -77,6 +83,29 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PackagesProducts->value));
+    }
+
+    /**
+     * Implementation Contract 18, Sub-slice H: both SEO keys are Planned
+     * through Sub-slices A/D/E/F/G (schema, readers and full customer HTTP
+     * surfaces with no entitlement query ever answering yes), flipped to
+     * Available only once every built sub-slice's own focused tests and the
+     * cross-cutting entitlement/navigation/View-as matrix passed. Search
+     * Console (Sub-slices B/C) is not built, so this flip exposes nothing
+     * beyond what already exists: Overview, Keywords (Core+), and the
+     * Google Business Profile section (existing pages), Citations, Reviews,
+     * and the Website SEO audit (Growth+).
+     */
+    public function test_seo_features_are_available_after_sub_slice_hs_flip(): void
+    {
+        $this->assertSame('seo_basic_visibility', PlatformFeature::SeoBasicVisibility->value);
+        $this->assertSame('seo_module', PlatformFeature::SeoModule->value);
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoModule->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void

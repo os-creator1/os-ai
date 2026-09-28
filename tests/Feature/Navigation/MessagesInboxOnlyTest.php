@@ -134,11 +134,23 @@ class MessagesInboxOnlyTest extends TestCase
     private function assertConversationsIsOneEntry(string $html, string $label): void
     {
         $keys = $this->menuKeys($html);
+        $sidebar = $this->sidebarHtml($html);
 
         $this->assertContains('conversations', $keys, "{$label}: Conversations renders.");
         $this->assertNotContains('messages', $keys, "{$label}: no Messages group.");
         $this->assertNotContains('inbox', $keys, "{$label}: no Inbox child.");
-        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($html), "{$label}: nothing expands.");
+
+        // Scoped to the Conversations entry itself, not the whole sidebar:
+        // Contract 18 Sub-slice H legitimately added the SEO group
+        // (data-nav-key="seo"), so "has-sub" now appears elsewhere in the
+        // sidebar too. What this test actually guards is that Conversations
+        // specifically never expands into a Messages/Inbox submenu.
+        $this->assertSame(
+            1,
+            preg_match('/<li class="([^"]*)" data-nav-key="conversations">/', $sidebar, $match),
+            "{$label}: Conversations renders as a sidebar item.",
+        );
+        $this->assertStringNotContainsString('has-sub', $match[1], "{$label}: Conversations must not expand.");
     }
 
     private function navHref(string $html, string $key): string

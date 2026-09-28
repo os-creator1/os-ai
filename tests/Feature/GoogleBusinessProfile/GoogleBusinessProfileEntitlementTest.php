@@ -91,6 +91,12 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
      * authenticated calendar now form one flow, contract 388) — that flip
      * is intentional and predates this GBP slice, so it belongs in the
      * "still Available" group, not "still Planned".
+     *
+     * PlatformFeature::SeoModule moved from Planned to Available by
+     * Contract 18 Sub-slice H (the SEO expansion's entitlement flip, after
+     * Sub-slices A/D/E/F/G were built, merged and verified) — also
+     * intentional and unrelated to GBP, so it too belongs in "still
+     * Available" now.
      */
     public function test_existing_registry_entries_are_unchanged(): void
     {
@@ -101,6 +107,7 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
             PlatformFeature::ProspectOutreach,
             PlatformFeature::WebsiteGeneration,
             PlatformFeature::Calendar,
+            PlatformFeature::SeoModule,
         ] as $available) {
             $this->assertTrue(
                 PlatformFeatureRegistry::isAvailable($available->value),
@@ -109,7 +116,6 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         }
 
         foreach ([
-            PlatformFeature::SeoModule,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
             PlatformFeature::Forms,

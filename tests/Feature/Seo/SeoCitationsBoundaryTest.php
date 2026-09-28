@@ -27,32 +27,42 @@ class SeoCitationsBoundaryTest extends TestCase
     use CreatesSeoCitationFixtures;
 
     // -----------------------------------------------------------------
-    // Planned => fail-closed. Sub-slice 18E flips NOTHING.
+    // Entitlement, now that Sub-slice H has flipped SeoModule to Available.
+    // Sub-slice 18E itself flipped nothing — this is H's own flip, exercised
+    // here the same way SeoAuditBoundaryTest exercises it for the audit.
     // -----------------------------------------------------------------
 
-    public function test_both_seo_features_remain_planned_and_no_platform_feature_was_added(): void
+    public function test_both_seo_features_are_available_and_no_platform_feature_was_added(): void
     {
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
         // No case was added: the total is pinned by EntitlementEnumsTest, and
         // §10.3 says Citations uses the existing SeoModule case.
         $this->assertNotContains('seo_citations', array_map(fn (PlatformFeature $feature) => $feature->value, PlatformFeature::cases()));
     }
 
-    public function test_the_real_citations_routes_are_404_for_every_tier_while_seo_module_is_planned(): void
+    public function test_the_real_citations_routes_reach_growth_and_agency_and_deny_core(): void
     {
-        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+        foreach ([WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
-            $location = $this->publicStorefront($business);
+            $this->publicStorefront($business);
             $this->authenticateAsSeoCustomer($customer);
 
-            $this->get($this->citationsUrl($workspace, $business))->assertNotFound();
-            $this->from($this->citationsUrl($workspace, $business))
-                ->put($this->citationUpdateUrl($workspace, $business, (string) $location->uid, 'bing_places'), $this->citationInput())
-                ->assertNotFound();
+            $this->get($this->citationsUrl($workspace, $business))->assertOk();
         }
 
-        $this->assertSame(0, \App\Models\SeoCitation::query()->count(), 'A fail-closed write must persist nothing.');
+        // seo_module is Growth+Agency only (contract §5.1); Core is denied
+        // exactly as before the flip, and a refused write persists nothing.
+        [$core, $coreBusiness, $coreWorkspace] = $this->entitledTenant(WorkspacePlanTier::Core);
+        $coreLocation = $this->publicStorefront($coreBusiness);
+        $this->authenticateAsSeoCustomer($core);
+
+        $this->get($this->citationsUrl($coreWorkspace, $coreBusiness))->assertNotFound();
+        $this->from($this->citationsUrl($coreWorkspace, $coreBusiness))
+            ->put($this->citationUpdateUrl($coreWorkspace, $coreBusiness, (string) $coreLocation->uid, 'bing_places'), $this->citationInput())
+            ->assertNotFound();
+
+        $this->assertSame(0, \App\Models\SeoCitation::query()->where('business_id', $coreBusiness->id)->count(), 'A fail-closed write must persist nothing.');
     }
 
     public function test_the_production_controller_gates_on_the_seo_module_feature_not_the_overview_feature(): void
