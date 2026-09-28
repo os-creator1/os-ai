@@ -96,7 +96,18 @@
                             $translation = $menu->i18n;
                             }
                             $permission = explode('|', $menu->access);
+
+                            // Contract 20 §12.F/§18.F — 'admin_only' is the same
+                            // additive, opt-in second boundary
+                            // panels/submenu.blade.php already enforces for
+                            // nested items (Phone Numbers + A2P lane), extended
+                            // here to top-level entries. Absent for every
+                            // pre-existing item, so this changes nothing for
+                            // them.
+                            $passesAdminOnlyBoundary = empty($menu->admin_only)
+                                || (auth()->check() && (bool) (auth()->user()->is_admin ?? false));
                         @endphp
+                        @if ($passesAdminOnlyBoundary)
                         @canany($permission, auth()->user())
 
                             <li class="nav-item {{ isset($menu->slug) &&  str_contains(request()->path(),$menu->slug) ? 'active' : '' }} {{ $custom_classes }}">
@@ -115,6 +126,7 @@
                                 @endif
                             </li>
                         @endcanany
+                        @endif
                     @endif
                 @endforeach
             @endif

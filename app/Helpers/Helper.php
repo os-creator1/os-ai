@@ -560,6 +560,43 @@
                         'access' => 'access backend',
                     ],
                     [
+                        // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
+                        // the Platform Owner's Niche Blueprint authoring surface.
+                        // Deliberately a SEPARATE top-level entry from Template
+                        // Library below, per Blueprint §30's own wording: the two
+                        // share the same underlying domain authority
+                        // (NicheBlueprintPublisher) but are distinct product
+                        // surfaces and must never collapse into one link.
+                        // 'admin_only' is the same additional is_admin boundary
+                        // the Usage Billing submenu's admin-only entries use —
+                        // extended to top-level entries by this same slice
+                        // (resources/views/panels/sidebar.blade.php) because
+                        // every route here is EnsureUserIsAdministrator-gated
+                        // and the 'access' gate alone does not guarantee that.
+                        'url'        => url(config('app.admin_path') . '/niche-blueprints'),
+                        'slug'       => config('app.admin_path') . '/niche-blueprints',
+                        'name'       => 'Niche Blueprints',
+                        'i18n'       => 'Niche Blueprints',
+                        'icon'       => 'layers',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
+                        // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
+                        // the Platform Owner's read-only Template Library catalog
+                        // surface, backed by the same niche_blueprint_* rows as
+                        // Niche Blueprints above. See that entry's comment for why
+                        // this is a separate top-level link rather than a submenu
+                        // item of it.
+                        'url'        => url(config('app.admin_path') . '/template-library'),
+                        'slug'       => config('app.admin_path') . '/template-library',
+                        'name'       => 'Template Library',
+                        'i18n'       => 'Template Library',
+                        'icon'       => 'book-open',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
                         'url'     => '',
                         'name'    => 'Customer',
                         'icon'    => 'users',

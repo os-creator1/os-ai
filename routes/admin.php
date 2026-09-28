@@ -861,4 +861,73 @@
             Route::delete('{font}', 'PlatformThemeFontController@destroy')->name('destroy');
             Route::get('{font}/preview', 'PlatformThemeFontController@servePreview')->name('preview');
         });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Niche Blueprints + Template Library (Contract 20 §12.F / §18.F)
+        |--------------------------------------------------------------------------
+        |
+        | Blueprint §30 names TWO distinct Platform Owner sidebar surfaces —
+        | "Niche Blueprints" and "Template Library" — sharing the same
+        | underlying domain authority (NicheBlueprintPublisher, Sub-slice B)
+        | but never collapsed into one route group or one controller.
+        |
+        | Niche Blueprints is the authoring surface: create/inspect a
+        | Blueprint, manage its single draft version and components, publish,
+        | supersede. EVERY write goes through NicheBlueprintPublisher — no
+        | route here ever touches a niche_blueprint_* table directly.
+        |
+        | Template Library is the read-only catalog surface: inspect Blueprint
+        | identities, their published/draft/superseded versions and component
+        | inventory, in an admin-readable representation. It owns no writes at
+        | all and no second persistence model — it reads the exact same
+        | niche_blueprints/niche_blueprint_versions/niche_blueprint_components
+        | rows Niche Blueprints authors.
+        |
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape as
+        | workspace-plan-catalog.index above, and the same
+        | EnsureUserIsAdministrator + 'can:access backend' defense-in-depth as
+        | every other entry in this group. No Agency or customer path exists
+        | to either surface (§6.1, §15).
+        |
+        */
+        Route::prefix('niche-blueprints')->name('niche-blueprints.')->group(function () {
+            Route::get('/', 'NicheBlueprintController@index')->name('index');
+            Route::get('create', 'NicheBlueprintController@create')->name('create');
+            Route::post('/', 'NicheBlueprintController@store')->name('store');
+
+            Route::prefix('{blueprint}')->whereUuid('blueprint')->group(function () {
+                Route::get('/', 'NicheBlueprintController@show')->name('show');
+                Route::patch('/', 'NicheBlueprintController@update')->name('update');
+                Route::post('activate', 'NicheBlueprintController@activate')->name('activate');
+                Route::post('deactivate', 'NicheBlueprintController@deactivate')->name('deactivate');
+
+                Route::post('versions', 'NicheBlueprintController@storeVersion')->name('versions.store');
+
+                Route::prefix('versions/{version}')->whereUuid('version')->group(function () {
+                    Route::patch('/', 'NicheBlueprintController@updateVersion')->name('versions.update');
+                    Route::delete('/', 'NicheBlueprintController@destroyVersion')->name('versions.destroy');
+                    Route::post('publish', 'NicheBlueprintController@publishVersion')->name('versions.publish');
+                    Route::post('supersede', 'NicheBlueprintController@supersedeVersion')->name('versions.supersede');
+
+                    Route::post('components', 'NicheBlueprintController@storeComponent')->name('components.store');
+
+                    Route::prefix('components/{component}')->whereNumber('component')->group(function () {
+                        Route::patch('/', 'NicheBlueprintController@updateComponent')->name('components.update');
+                        Route::delete('/', 'NicheBlueprintController@destroyComponent')->name('components.destroy');
+                    });
+                });
+            });
+        });
+
+        Route::prefix('template-library')->name('template-library.')->group(function () {
+            Route::get('/', 'BlueprintTemplateLibraryController@index')->name('index');
+
+            Route::prefix('{blueprint}')->whereUuid('blueprint')->group(function () {
+                Route::get('/', 'BlueprintTemplateLibraryController@show')->name('show');
+                Route::get('versions/{version}', 'BlueprintTemplateLibraryController@showVersion')
+                    ->whereUuid('version')
+                    ->name('versions.show');
+            });
+        });
     });

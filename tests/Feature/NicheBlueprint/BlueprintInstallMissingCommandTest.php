@@ -523,9 +523,12 @@ class BlueprintInstallMissingCommandTest extends TestCase
             'The first real adapter is Sub-slice D, not this one.'
         );
 
-        // Neither name appears anywhere under app/ either, so the absence is
-        // of the surface itself and not merely of one class file.
-        foreach (['NicheBlueprintController', 'CrmPipelineComponentAdapter'] as $symbol) {
+        // Sub-slice F landed the PLATFORM OWNER admin surface, so the bare
+        // class name 'NicheBlueprintController' now legitimately appears
+        // under app/ (App\Http\Controllers\Admin\NicheBlueprintController).
+        // The fully-qualified Customer namespace fragment is what must still
+        // be absent everywhere — that is Sub-slice E, still not built.
+        foreach (['Customer\\Business\\NicheBlueprintController', 'CrmPipelineComponentAdapter'] as $symbol) {
             $this->assertSame([], $this->appFilesMentioning($symbol));
         }
 
