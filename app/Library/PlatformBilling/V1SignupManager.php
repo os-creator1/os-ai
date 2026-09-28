@@ -229,6 +229,19 @@ final class V1SignupManager
             return false;
         }
 
+        // The Business this same provisioning step already created (Contract
+        // 21 §7's "one Business per Workspace") has been sitting Draft since
+        // provision() — nothing else in the product ever activates a
+        // self-signup Business. Run every time this seam does, not only on a
+        // freshly-made assignment, so a re-delivered webhook or a repeated
+        // Checkout-return visit also repairs an account this defect left
+        // stuck before the fix.
+        $business = Business::query()->where('workspace_id', $workspace->id)->first();
+
+        if ($business !== null) {
+            $this->businesses->activateForConfirmedSignup($business);
+        }
+
         if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
             return true;
         }

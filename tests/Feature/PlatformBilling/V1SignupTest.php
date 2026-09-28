@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\PlatformBilling;
 
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\CustomerAccountAccessState;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
@@ -96,6 +97,34 @@ class V1SignupTest extends TestCase
         // ...and the account is usable.
         $this->assertSame(CustomerAccountAccessState::Usable,
             app(CustomerAccountAccessResolver::class)->resolve($workspace)->state);
+    }
+
+    /**
+     * Manual acceptance defect 1 (P0) — createForCustomerInWorkspace() always
+     * provisions a self-signup Business Draft, and before this fix nothing
+     * anywhere ever moved it to Active: activateClientBusiness() exists only
+     * for the unrelated Agency-invited-client path. Every V1 self-signup
+     * account was permanently stuck Draft even after paying.
+     */
+    public function test_completing_signup_activates_the_newly_provisioned_business(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth);
+        $customer = $this->createCustomer();
+
+        $session = $this->signup()->startSubscription($customer, $this->draft(), $catalog, 'https://a', 'https://b');
+
+        $workspace = Workspace::query()->where('owner_user_id', $customer->user_id)->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $this->assertSame(BusinessStatus::Draft, $business->status, 'Provisioning creates the Business Draft, before any payment is confirmed.');
+
+        $this->stripe->completeCheckout($session->sessionId);
+        $this->signup()->completeSignup($session->sessionId);
+
+        $business->refresh();
+        $this->assertSame(BusinessStatus::Active, $business->status);
+        $this->assertNotNull($business->activated_at);
     }
 
     public function test_an_abandoned_checkout_leaves_no_paid_state(): void

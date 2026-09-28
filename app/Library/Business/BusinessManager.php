@@ -235,6 +235,30 @@ class BusinessManager
     }
 
     /**
+     * V1 self-signup's own activation step (Implementation Contract 21 §7).
+     * Unlike activateClientBusiness()'s Agency-invited-client case, the
+     * Business a self-signup Workspace provisions already carries the real
+     * identity the owner entered at signup — there is no placeholder to
+     * correct — so activation is only ever the Draft -> Active transition
+     * itself, made the moment the platform subscription that pays for it is
+     * provider-confirmed (V1SignupManager::activateFromConfirmedSubscription(),
+     * the one seam both the Checkout-return request and the billing webhook
+     * call). Idempotent and safe to call on every re-entry into that seam: a
+     * Business that is not currently Draft (already Active from an earlier
+     * call) is left untouched.
+     */
+    public function activateForConfirmedSignup(Business $business): void
+    {
+        DB::transaction(function () use ($business): void {
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked !== null && $locked->status === BusinessStatus::Draft) {
+                $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+            }
+        });
+    }
+
+    /**
      * Update an already-existing business. Always re-checks ownership.
      */
     public function updateBusiness(Customer $customer, Business $business, array $attributes): Business

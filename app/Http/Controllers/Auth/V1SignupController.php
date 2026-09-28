@@ -14,6 +14,7 @@ use App\Models\PlatformSubscription;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\UserRepository;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -205,6 +206,14 @@ class V1SignupController extends Controller
         ], true);
 
         $customer = Customer::query()->where('user_id', $user->id)->firstOrFail();
+
+        // UserRepository::store() is the existing register() primitive minus
+        // register()'s own two legacy side effects (see the docblock above) —
+        // it was never meant to also skip the standard Laravel Registered
+        // event, which EventServiceProvider already maps to the email
+        // verification listener. Without this, V1 signup silently sent no
+        // verification email at all.
+        event(new Registered($user));
 
         Auth::login($user, true);
 

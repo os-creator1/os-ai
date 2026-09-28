@@ -37,6 +37,7 @@ use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Business\BusinessManager;
 use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
@@ -97,6 +98,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly EntitlementManager $entitlementManager,
         private readonly BillingProfileManager $billingProfileManager,
         private readonly \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository $agencyClientRelationshipRepository,
+        private readonly BusinessManager $businessManager,
     ) {
     }
 
@@ -167,7 +169,36 @@ class WorkspaceController extends CustomerBaseController
                 return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $business->uid]);
             }
 
-            if ($this->accessibleBusinesses($workspace, $userId)->isNotEmpty()) {
+            $notYetActive = $this->accessibleBusinesses($workspace, $userId);
+
+            if ($notYetActive->isNotEmpty()) {
+                // Contract 21 §7 correction — reaching this branch already
+                // means the Workspace holds an assigned, gate-passing
+                // Core/Growth plan: isBusinessFirstAccount() above requires a
+                // resolved tier, which getWorkspaceEntitlementSummary() only
+                // ever returns for an assigned Workspace, and
+                // CustomerAccountAccessGate already refused an unusable
+                // assignment before this controller ever ran. So for a
+                // genuine self-signup Workspace (never an Agency-managed
+                // Client one — that keeps its own existing
+                // draftClientActivationUrl() path), the ONLY reason its one
+                // Business is still Draft is the pre-fix defect: nothing
+                // ever activated a self-signup Business at all
+                // (V1SignupManager::activateFromConfirmedSubscription() now
+                // does). Self-heal it here, the same idempotent step that
+                // seam performs, instead of sending the owner to Home —
+                // whose own primary action for this exact state was this
+                // very route (AccountHomePresenter::createUrl()), an
+                // infinite loop with no escape hatch.
+                if ($roleKey === 'owner'
+                    && $notYetActive->count() === 1
+                    && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace((int) $workspace->id) === null) {
+                    $draft = $notYetActive->first();
+                    $this->businessManager->activateForConfirmedSignup($draft);
+
+                    return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $draft->uid]);
+                }
+
                 // Its Business exists but is not active yet (just created, or
                 // still being set up). Home says exactly that and what to do
                 // next; a second Business is never the answer.

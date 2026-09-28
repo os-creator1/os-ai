@@ -11,6 +11,7 @@
     use App\Library\Conversations\ConversationContextReader;
     use App\Library\Conversations\ConversationHistoryWriter;
     use App\Library\Conversations\ConversationSendFailureReason;
+    use App\Library\Entitlement\CustomerAccountAccessResolver;
     use App\Library\Entitlement\EntitlementManager;
     use App\Library\Navigation\CustomerContext;
     use App\Library\Timeline\ContactActivityTimeline;
@@ -85,7 +86,27 @@
             private readonly WorkspaceRepository $workspaceRepository,
             private readonly WorkspaceManager $workspaceManager,
             private readonly EntitlementManager $entitlementManager,
+            private readonly CustomerAccountAccessResolver $accessResolver,
         ) {
+        }
+
+        /**
+         * V1 correction — the `activeSubscription()` gates below read only the
+         * legacy Ultimate SMS Customer/Subscription tables, which no V1
+         * self-signup account ever populates (it bills through the newer
+         * platform WorkspacePlanAssignment instead), so every V1 account was
+         * hard-blocked here regardless of a genuinely active subscription.
+         * This reuses CustomerAccountAccessResolver's own "assigned and not
+         * locked" truth (Trial and a still-running Grace both count) rather
+         * than re-deriving it, and is additive: a legacy activeSubscription()
+         * is checked by the caller first, so nothing changes for an account
+         * that still has one.
+         */
+        private function hasActivePlatformSubscription(Business $business): bool
+        {
+            $workspace = $this->workspaceRepository->findById((int) $business->workspace_id);
+
+            return $workspace !== null && $this->accessResolver->hasActiveSubscription($workspace);
         }
 
         // =================================================================
@@ -197,7 +218,7 @@
             // — read from the Business's owning customer, never the actor.
             $activeSubscription = $business->customer?->activeSubscription();
 
-            if (! $activeSubscription) {
+            if (! $activeSubscription && ! $this->hasActivePlatformSubscription($business)) {
                 return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
                     'status'  => 'error',
                     'message' => __('locale.customer.no_active_subscription'),
@@ -207,7 +228,7 @@
             $phone_numbers = PhoneNumbers::where('business_id', $business->id)->where('status', 'assigned')->cursor();
 
             $coverage = CustomerBasedPricingPlan::where('user_id', $business->customer_id)->where('status', true)->cursor();
-            if ($coverage->count() < 1) {
+            if ($coverage->count() < 1 && $activeSubscription) {
                 $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)->where('status', true)->cursor();
             }
 
@@ -289,7 +310,7 @@
 
             $activeSubscription = $owner->customer->activeSubscription();
 
-            if (! $activeSubscription) {
+            if (! $activeSubscription && ! $this->hasActivePlatformSubscription($business)) {
                 return $back(__('locale.customer.no_active_subscription'));
             }
 
@@ -298,7 +319,7 @@
                 ->with('sendingServer')
                 ->first();
 
-            if (! $coverage) {
+            if (! $coverage && $activeSubscription) {
                 $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)
                     ->where('status', true)
                     ->with('sendingServer')
