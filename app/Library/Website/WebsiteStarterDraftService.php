@@ -228,7 +228,7 @@ final class WebsiteStarterDraftService
 
         $promise = [];
         if ($profile !== null && in_array(BusinessKnowledgeProfileFieldKey::Credentials->value, $confirmed, true) && $profile->credentials) {
-            $labels = collect($profile->credentials)->pluck('label')->filter()->implode(', ');
+            $labels = $this->verifiedCredentialLabels($profile->credentials);
             if ($labels !== '') {
                 $promise[] = 'Credentials: ' . $labels . '.';
             }
@@ -293,7 +293,10 @@ final class WebsiteStarterDraftService
         }
 
         if ($profile !== null && in_array(BusinessKnowledgeProfileFieldKey::Credentials->value, $confirmed, true) && $profile->credentials) {
-            $labels = collect($profile->credentials)->pluck('label')->filter()->implode(', ');
+            // Only a credential the owner marked `verified` supports a
+            // "Yes" claim here — an unverified label is still saved data,
+            // but not yet a confirmed fact this FAQ answer may assert.
+            $labels = $this->verifiedCredentialLabels($profile->credentials);
             if ($labels !== '') {
                 $confirmedItems[] = ['question' => 'Are you licensed, insured, or certified?', 'answer' => 'Yes: ' . $labels . '.'];
             }
@@ -437,6 +440,24 @@ final class WebsiteStarterDraftService
         // appends contact_details after the faq section today, but
         // this answer must stay correct even if that ever changes).
         return $target !== null ? 'Request a quote through this site, or reach us directly using the contact details on this page.' : null;
+    }
+
+    /**
+     * Each saved credential entry carries its own `verified` boolean
+     * (BusinessKnowledgeProfileManager::normalizeCredentials()) — an
+     * owner may record a credential before it's actually confirmed, so
+     * an unverified label is saved data but not yet a fact this starter
+     * copy may assert as true. Only verified labels ever appear here.
+     *
+     * @param  array<int, array{label: string, verified: bool}>  $credentials
+     */
+    private function verifiedCredentialLabels(array $credentials): string
+    {
+        return collect($credentials)
+            ->filter(fn ($credential) => ($credential['verified'] ?? false) === true)
+            ->pluck('label')
+            ->filter()
+            ->implode(', ');
     }
 
     /**

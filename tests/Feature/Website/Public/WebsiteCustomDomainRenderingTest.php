@@ -477,6 +477,96 @@ class WebsiteCustomDomainRenderingTest extends TestCase
     }
 
     /**
+     * The visible `contact_details` HTML must apply the exact same
+     * address-privacy predicate the LocalBusiness JSON-LD gate already
+     * uses — a service-area location's address is never safe to publish
+     * just because the owner checked "Show address".
+     */
+    public function test_contact_details_html_withholds_a_private_address_even_when_show_address_is_checked(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => false,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-private-address.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('website-contact-details', false)
+            ->assertDontSee('123 Main St')
+            ->assertDontSee('Austin');
+    }
+
+    public function test_contact_details_html_shows_a_permitted_address_when_show_address_is_checked(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-permitted-address.test');
+
+        $this->get('http://'.$domain->domain.'/')
+            ->assertOk()
+            ->assertSee('123 Main St')
+            ->assertSee('Austin');
+    }
+
+    /**
+     * Mirrors the LocalBusiness JSON-LD immutability contract (§7.3):
+     * `contact_details`'s resolved values are frozen at publish time —
+     * revoking address privacy afterward, with no republish, must not
+     * retroactively change an already-published page's HTML. Only the
+     * NEXT publish re-applies the (now stricter) privacy decision.
+     */
+    public function test_contact_details_html_address_privacy_revoked_after_publish_takes_effect_on_the_next_publish_only(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'address_line_1' => '123 Main St',
+            'city' => 'Austin',
+            'public_address' => true,
+        ]);
+        $location->is_primary = true;
+        $location->save();
+        $website = $this->createWebsite($business);
+        $this->homePage($website, ['sections' => [$this->section('hero'), $this->section('contact_details')]]);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $domain = $this->activeDomain($website, 'contact-revoked-address.test');
+
+        // Revoked after publishing, with no republish — the already-
+        // published page must keep showing the frozen, once-permitted
+        // value, exactly like every other published fact.
+        $location->update(['public_address' => false]);
+
+        $this->get('http://'.$domain->domain.'/')->assertOk()->assertSee('123 Main St');
+
+        // The next publish re-reads current state and now withholds it.
+        app(WebsitePublisher::class)->publish($website->fresh(), $this->platformAdminId());
+
+        $this->get('http://'.$domain->domain.'/')->assertOk()->assertDontSee('123 Main St');
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function extractJsonLd(string $html): array

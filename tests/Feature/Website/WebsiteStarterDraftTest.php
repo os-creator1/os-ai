@@ -144,6 +144,52 @@ class WebsiteStarterDraftTest extends TestCase
         $this->assertSame('Guests loved it!', $reviewSection['data']['items'][0]['quote']);
     }
 
+    public function test_faq_credentials_answer_only_claims_the_verified_credentials(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
+            'credentials' => [
+                ['label' => 'Licensed Contractor', 'verified' => true],
+                ['label' => 'Pending Certification', 'verified' => false],
+            ],
+            'years_operating' => 5,
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
+        $website = app(WebsiteStarterDraftService::class)->create($business, 'clean');
+
+        $faqSections = $website->pages()->where('slug', 'photo-booth-faq')->firstOrFail()->sections;
+        $faqItems = collect($faqSections)->firstWhere('type', 'faq')['data']['items'];
+        $answer = collect($faqItems)->firstWhere('question', 'Are you licensed, insured, or certified?');
+
+        $this->assertNotNull($answer);
+        $this->assertStringContainsString('Licensed Contractor', $answer['answer']);
+        $this->assertStringNotContainsString('Pending Certification', $answer['answer']);
+
+        // The About page's "Our promise" section shares the exact same
+        // saved credentials — the same verified-only rule applies there.
+        $aboutSections = $website->pages()->where('slug', 'photo-booth-about')->firstOrFail()->sections;
+        $this->assertStringContainsString('Licensed Contractor', json_encode($aboutSections));
+        $this->assertStringNotContainsString('Pending Certification', json_encode($aboutSections));
+    }
+
+    public function test_faq_omits_the_credentials_question_when_no_saved_credential_is_verified(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
+            'credentials' => [
+                ['label' => 'Pending Certification', 'verified' => false],
+            ],
+            'years_operating' => 5,
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
+        $faqSections = app(WebsiteStarterDraftService::class)->create($business, 'clean')
+            ->pages()->where('slug', 'photo-booth-faq')->firstOrFail()->sections;
+        $faqItems = collect($faqSections)->firstWhere('type', 'faq')['data']['items'];
+
+        $this->assertNull(collect($faqItems)->firstWhere('question', 'Are you licensed, insured, or certified?'));
+        $this->assertStringNotContainsString('Pending Certification', json_encode($faqSections));
+    }
+
     public function test_blank_start_creates_no_page_or_design_theme(): void
     {
         [, $business] = $this->entitledTenant();

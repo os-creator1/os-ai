@@ -55,10 +55,17 @@ final class WebsiteSnapshotBuilder
                 }
 
                 if ($type === WebsiteSectionType::ContactDetails) {
+                    // `show_address` is the owner's display preference,
+                    // not a privacy override: an address this business/
+                    // location combination must never surface (the same
+                    // GoogleBusinessProfileReadMask predicate the
+                    // LocalBusiness JSON-LD gate below relies on) is
+                    // withheld from the visible HTML too, even when the
+                    // owner checked Show address.
                     $data['resolved'] = [
                         'phone' => $data['show_phone'] ? $business?->phone : null,
                         'email' => $data['show_email'] ? $business?->email : null,
-                        'address' => $data['show_address'] ? $this->formatAddress($business) : null,
+                        'address' => ($data['show_address'] && $this->addressPermitted($business)) ? $this->formatAddress($business) : null,
                     ];
                 }
 
@@ -191,6 +198,24 @@ final class WebsiteSnapshotBuilder
     }
 
     /**
+     * The ONE gate an address must pass before it may appear ANYWHERE
+     * on the published site — visible `contact_details` HTML and
+     * LocalBusiness JSON-LD both call this, so the two can never
+     * disagree about whether a given business/location's address is
+     * safe to publish. A `show_address` toggle is a display
+     * *preference*; it is never itself permission to reveal an address
+     * `GoogleBusinessProfileReadMask::addressPermittedForLocation()`
+     * would withhold (e.g. a service-area location with no public
+     * street address).
+     */
+    private function addressPermitted(?Business $business): bool
+    {
+        $location = $business?->primaryLocation;
+
+        return $location !== null && $location->isActive() && $this->addressPredicate->addressPermittedForLocation($location);
+    }
+
+    /**
      * Neutral, schema.org-agnostic facts for
      * App\Library\Website\Seo\WebsiteLocalBusinessStructuredData to
      * shape into JSON-LD at render time — this method makes every
@@ -227,9 +252,7 @@ final class WebsiteSnapshotBuilder
         $location = $business->primaryLocation;
         $address = null;
 
-        if ($visibleContact['address']
-            && $location !== null && $location->isActive()
-            && $this->addressPredicate->addressPermittedForLocation($location)) {
+        if ($visibleContact['address'] && $this->addressPermitted($business)) {
             $address = [
                 'line1' => $location->address_line_1,
                 'line2' => $location->address_line_2,
