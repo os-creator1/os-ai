@@ -17,7 +17,13 @@
     <x-card :padded="true" class="mb-2">
         <dl class="row mb-0">
             <dt class="col-sm-4">Phone number</dt>
-            <dd class="col-sm-8" data-role="phone-number">{{ $phoneNumber }}</dd>
+            <dd class="col-sm-8" data-role="phone-number">
+                {{-- Review correction — null here is the verify-first local
+                     sequence's own "no number yet" state: Telnyx genuinely
+                     supports completing business verification before a
+                     number is purchased, so this is not an error. --}}
+                {{ $phoneNumber ?? 'Not yet chosen — you\'ll pick this once your verification is approved.' }}
+            </dd>
 
             <dt class="col-sm-4">Messaging registration</dt>
             <dd class="col-sm-8">
@@ -44,13 +50,29 @@
             @case('rejected')
                 <x-alert variant="danger" icon="alert-circle" class="mt-2 mb-0" data-role="rejection-reason">
                     <strong class="d-block">This needs a correction</strong>
-                    {{ $registration->rejection_reason ?: 'The reviewer did not approve this submission. Please review the details below and try again.' }}
+                    {{-- Review correction — a specific, carrier-supplied
+                         reason when the provider's own response actually
+                         carried one; otherwise an EXPLICIT statement that
+                         none was supplied, never a message that reads as
+                         if a real reason were being paraphrased. --}}
+                    @if($registration->rejection_reason)
+                        {{ $registration->rejection_reason }}
+                    @else
+                        The carrier did not supply a detailed reason for this rejection. Please review the details below and try again.
+                    @endif
                 </x-alert>
                 @break
             @case('approved')
                 @break
             @default
-                <p class="text-caption text-muted mt-2 mb-0">Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step.</p>
+                <p class="text-caption text-muted mt-2 mb-0">
+                    Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step.
+                    @if($phoneNumber === null)
+                        Verifying your business is free — a charge for your number begins only once you choose it, after your verification is approved.
+                    @else
+                        Verifying your business is free; you have already been charged for this number.
+                    @endif
+                </p>
         @endswitch
     </x-card>
 

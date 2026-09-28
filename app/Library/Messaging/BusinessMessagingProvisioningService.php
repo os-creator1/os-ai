@@ -4,9 +4,11 @@ namespace App\Library\Messaging;
 
 use App\Enums\Messaging\BusinessMessagingIdentityStatus;
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\MessagingProvider;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CampaignAssignmentResult;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
@@ -165,5 +167,54 @@ class BusinessMessagingProvisioningService
 
             throw $e;
         }
+    }
+
+    /**
+     * Phone Numbers + A2P lane — the verify-first sequence's own final
+     * step: link a freshly purchased local number's own, just-created
+     * Messaging Profile to a 10DLC campaign this Business's business
+     * verification already had Approved BEFORE this number ever existed.
+     * Never a purchase, never funded — a pure linking call.
+     *
+     * A failed or not-yet-confirmed result is recorded here as a
+     * provisioning incident, exactly like number_attach_failed_after_provider_success
+     * above: the number itself is already genuinely purchased and charged
+     * by the time this runs, so that success must never be silently lost
+     * or retroactively undone just because this last linking step could
+     * not be confirmed.
+     */
+    public function assignToApprovedCampaign(Business $business, BusinessMessagingNumber $number, string $providerCampaignId): CampaignAssignmentResult
+    {
+        $messagingProfileId = $number->identity?->messaging_profile_id;
+
+        if ($messagingProfileId === null) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'missing_messaging_profile_id');
+        }
+
+        try {
+            $adapter = app(MessagingProvisioningAdapter::class);
+            $result = $adapter->assignMessagingProfileToCampaign($messagingProfileId, $providerCampaignId);
+        } catch (MessagingProviderNotConfiguredException) {
+            // Never reachable through the real controller flow (it only
+            // calls this once provisionNumber() has already succeeded in
+            // the very same request, so isAvailable() was already true) —
+            // caught anyway, since this method's own contract is "never
+            // block the number purchase's already-genuine success."
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'not_configured');
+        }
+
+        if ($result->outcome !== CampaignAssignmentOutcome::Requested) {
+            $this->incidents->record(
+                business: $business,
+                stage: 'campaign_assignment_request_failed',
+                messagingProfileId: $messagingProfileId,
+                providerPhoneNumberId: $number->provider_number_reference,
+                phoneNumber: $number->phone_number,
+                numberType: $number->number_type->value,
+                errorMessage: $result->detail,
+            );
+        }
+
+        return $result;
     }
 }

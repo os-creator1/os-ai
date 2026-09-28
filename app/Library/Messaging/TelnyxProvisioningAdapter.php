@@ -2,6 +2,7 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
@@ -14,12 +15,14 @@ use App\Exceptions\Usage\UsageMeterRateIntegrityException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CampaignAssignmentResult;
 use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
+use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Library\Messaging\Exceptions\MessagingFundingUnavailableException;
 use App\Library\Messaging\Exceptions\MessagingInsufficientFundsException;
@@ -63,18 +66,35 @@ use Illuminate\Support\Str;
  *                                                      Campaign" API reference pages.
  *                                                      Response field `campaignStatus`
  *                                                      confirmed by Telnyx's own "Get
- *                                                      My Campaign" API page; exact
- *                                                      non-ACTIVE status vocabulary
- *                                                      beyond ACTIVE/FAILED is NOT
- *                                                      independently confirmed field-
- *                                                      by-field — mapped conservatively
- *                                                      (unrecognised values stay Pending,
- *                                                      never guessed Approved).
+ *                                                      My Campaign" API page; the ACTIVE
+ *                                                      success value and the REJECTED/
+ *                                                      FAILED/DECLINED rejection family
+ *                                                      (matched by substring — covers the
+ *                                                      documented MNO_REJECTED,
+ *                                                      TCR_FAILED, TELNYX_FAILED and
+ *                                                      MNO_PROVISIONING_FAILED values
+ *                                                      none of which equalled this
+ *                                                      class's own original bare-string
+ *                                                      match) are the only ones this
+ *                                                      class treats as terminal;
+ *                                                      everything else stays Pending —
+ *                                                      never guessed Approved. A rejected
+ *                                                      campaign's reason is read from
+ *                                                      `failureReasons`/`reasons` when
+ *                                                      present (see extractReason()'s own
+ *                                                      docblock for the confirmation
+ *                                                      caveat); null otherwise.
  *   - POST /messaging_tollfree/verification/requests   CONFIRMED path (the original
  *   - GET  /messaging_tollfree/verification/requests/{id}
  *                                                      Implementation Round 1 guess —
  *                                                      /messaging_tollfree_verification_requests
  *                                                      — was wrong and is corrected here).
+ *                                                      Review correction — the submission
+ *                                                      body is documented to require a
+ *                                                      `phoneNumbers` array naming the
+ *                                                      already-owned number being
+ *                                                      verified; the original
+ *                                                      implementation omitted it entirely.
  *                                                      Response field `verificationStatus`
  *                                                      confirmed, with documented values
  *                                                      "Waiting for Telnyx" / "Waiting For
@@ -84,7 +104,30 @@ use Illuminate\Support\Str;
  *                                                      conservative substring match
  *                                                      ("reject", "declin", "fail") is used
  *                                                      and everything else stays Pending —
- *                                                      never guessed Approved.
+ *                                                      never guessed Approved. A rejected
+ *                                                      verification's reason is read from
+ *                                                      `declineReason`/`rejectionReason`/
+ *                                                      `reason` when present (support
+ *                                                      material repeatedly calls this a
+ *                                                      "decline reason"; the exact field
+ *                                                      name was not independently
+ *                                                      confirmable); null otherwise.
+ *   - POST /10dlc/phoneNumberAssignmentByProfile        CONFIRMED path (developers.telnyx.com/
+ *                                                      api/messaging/10dlc/post-assign-
+ *                                                      messaging-profile-to-campaign) — Phone
+ *                                                      Numbers + A2P lane, the step that
+ *                                                      links a freshly purchased local
+ *                                                      number's own Messaging Profile to an
+ *                                                      ALREADY-approved 10DLC campaign, for
+ *                                                      the sequence this platform now
+ *                                                      supports: business verification
+ *                                                      completed before any number is
+ *                                                      purchased. Confirmed response shape
+ *                                                      returns a background `taskId`, never
+ *                                                      an immediate confirmation — see
+ *                                                      CampaignAssignmentOutcome's own
+ *                                                      docblock; this platform does not yet
+ *                                                      poll that task to completion.
  *   - GET    /phone_numbers/{id}                       CONFIRMED path (developers.telnyx.com/
  *   - DELETE /phone_numbers/{id}                       api-reference/phone-number-configurations/
  *                                                      retrieve-a-phone-number and
@@ -349,13 +392,41 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
      * status endpoint per regime instead of one shared, and for toll-free
      * fictitious, "/campaign/{id}" call.
      */
-    public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->numberType === PhoneNumberType::TollFree) {
             return $this->refreshTollFreeVerificationStatus($query);
         }
 
         return $this->refreshTenDlcCampaignStatus($query);
+    }
+
+    /**
+     * Phone Numbers + A2P lane — see this class's own docblock and the
+     * interface's own for the endpoint/async-task rationale. Confirmed
+     * path: POST /10dlc/phoneNumberAssignmentByProfile, body
+     * {messagingProfileId, campaignId} (developers.telnyx.com/api/
+     * messaging/10dlc/post-assign-messaging-profile-to-campaign). Never
+     * goes through reserveFunding(): this links an already-purchased
+     * number's already-created Messaging Profile to an already-approved
+     * campaign — no new resource is purchased here.
+     */
+    public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult
+    {
+        try {
+            $response = $this->client()->post(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile', [
+                'messagingProfileId' => $messagingProfileId,
+                'campaignId' => $providerCampaignId,
+            ]);
+        } catch (\Throwable) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'transport_error');
+        }
+
+        if (! $response->successful()) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'http_' . $response->status());
+        }
+
+        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'task_' . ($response->json('data.taskId') ?? 'unknown'));
     }
 
     /**
@@ -563,6 +634,20 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
 
     private function submitTollFreeVerification(MessagingRegistrationSubmission $submission): RegistrationSubmissionResult
     {
+        // Review correction — Telnyx's toll-free verification genuinely
+        // cannot be submitted without the number already being verified
+        // (confirmed via current Telnyx documentation: the request body
+        // carries a `phoneNumbers` array, and Telnyx's own guidance warns
+        // the number must already be assigned to a messaging profile
+        // before submitting, or the submission must be started over). This
+        // platform's own controller never reaches this method without an
+        // already-owned number for a toll-free registration — this is a
+        // second, independent check at the adapter boundary, never trusted
+        // from the caller alone.
+        if ($submission->phoneNumber === null) {
+            throw new \RuntimeException('Toll-free verification cannot be submitted without an already-owned number.');
+        }
+
         $business = Business::query()->findOrFail($submission->businessId);
         $reservationId = $this->reserveFunding($business, self::FEATURE_TOLL_FREE_VERIFICATION);
 
@@ -582,6 +667,7 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
                 'optInWorkflow' => $submission->optInMethod,
                 'privacyPolicyUrl' => $submission->privacyPolicyUrl,
                 'termsAndConditionsUrl' => $submission->termsUrl,
+                'phoneNumbers' => [['phoneNumber' => $submission->phoneNumber]],
             ]);
 
             if (! $response->successful()) {
@@ -604,53 +690,122 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
         return new RegistrationSubmissionResult(null, null, $requestId, MessagingRegistrationStatus::Pending);
     }
 
-    private function refreshTenDlcCampaignStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    /**
+     * Review correction — the exact-equality REJECTED/FAILED/DECLINED
+     * match missed every real 10DLC failure status this additional
+     * research confirmed (team-telnyx's own public knowledge-base and
+     * Telnyx's release notes): MNO_REJECTED, TCR_FAILED, TELNYX_FAILED and
+     * MNO_PROVISIONING_FAILED are all genuine rejection states that never
+     * equalled the old bare strings, so a truly rejected campaign stayed
+     * Pending forever under the previous mapping. Matched conservatively
+     * by substring now (never the reverse: nothing that merely CONTAINS
+     * "ACTIVE" is treated as approved), and the "never guess Approved"
+     * discipline is unchanged — ACTIVE remains the one confirmed success
+     * value (confirmed independently via team-telnyx/knowledge-base); the
+     * originally-guessed APPROVED/VERIFIED aliases are kept only because
+     * removing an already-shipped, harmless allowance is not this
+     * correction's job.
+     *
+     * $reason is read from the first of several plausible field names
+     * this environment's egress limits prevented independently confirming
+     * field-by-field: `failureReasons` (an array, joined) and `reasons`
+     * (an array, joined — the name team-telnyx's own webhook-payload
+     * documentation uses for registration failures). Null when none of
+     * them are present — the caller then shows an explicit "no detailed
+     * reason was supplied" message, never a guessed one.
+     */
+    private function refreshTenDlcCampaignStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->providerCampaignId === null) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $response = $this->client()->get(self::API_BASE . '/10dlc/campaign/' . $query->providerCampaignId);
 
         if (! $response->successful()) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $status = strtoupper((string) $response->json('data.campaignStatus', $response->json('data.status', '')));
 
-        return match (true) {
-            $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED' => MessagingRegistrationStatus::Approved,
-            $status === 'FAILED' || $status === 'REJECTED' || $status === 'DECLINED' => MessagingRegistrationStatus::Rejected,
-            default => MessagingRegistrationStatus::Pending,
-        };
+        $isApproved = $status === 'ACTIVE' || $status === 'APPROVED' || $status === 'VERIFIED';
+        $isRejected = str_contains($status, 'REJECTED') || str_contains($status, 'FAILED') || str_contains($status, 'DECLINED');
+
+        if ($isApproved) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
+        }
+
+        if ($isRejected) {
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Rejected, $this->extractReason($response, ['data.failureReasons', 'data.reasons']));
+        }
+
+        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
     }
 
-    private function refreshTollFreeVerificationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    private function refreshTollFreeVerificationStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
         if ($query->providerRegistrationId === null) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $response = $this->client()->get(self::API_BASE . '/messaging_tollfree/verification/requests/' . $query->providerRegistrationId);
 
         if (! $response->successful()) {
-            return MessagingRegistrationStatus::Pending;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
         }
 
         $status = strtolower((string) $response->json('data.verificationStatus', $response->json('data.status', '')));
 
         if ($status === 'verified') {
-            return MessagingRegistrationStatus::Approved;
+            return new RegistrationStatusResult(MessagingRegistrationStatus::Approved);
         }
 
         if (str_contains($status, 'reject') || str_contains($status, 'declin') || str_contains($status, 'fail')) {
-            return MessagingRegistrationStatus::Rejected;
+            // Field name not independently confirmable in this environment
+            // (egress-limited, same constraint this class's own docblock
+            // already documents elsewhere) — support materials repeatedly
+            // call this a "decline reason", so `declineReason` is tried
+            // first, then the more generic names every other regime here
+            // already tries.
+            return new RegistrationStatusResult(
+                MessagingRegistrationStatus::Rejected,
+                $this->extractReason($response, ['data.declineReason', 'data.rejectionReason', 'data.reason']),
+            );
         }
 
         // Covers the confirmed documented pending states ("Waiting for
         // Telnyx", "Waiting For Customer") and any other value this
         // platform has not seen before — never guessed Approved.
-        return MessagingRegistrationStatus::Pending;
+        return new RegistrationStatusResult(MessagingRegistrationStatus::Pending);
+    }
+
+    /**
+     * Tries each field, in order, and returns the first non-blank one it
+     * finds — a string as-is, or an array of strings joined with "; ".
+     * Null when nothing usable is present, so the caller shows an
+     * explicit "no detailed reason was supplied" message rather than a
+     * guessed one.
+     *
+     * @param  list<string>  $fieldPaths
+     */
+    private function extractReason(\Illuminate\Http\Client\Response $response, array $fieldPaths): ?string
+    {
+        foreach ($fieldPaths as $path) {
+            $value = $response->json($path);
+
+            if (is_array($value)) {
+                $value = implode('; ', array_filter(array_map(
+                    fn ($item) => is_scalar($item) ? (string) $item : (is_array($item) ? ($item['reason'] ?? $item['message'] ?? null) : null),
+                    $value,
+                )));
+            }
+
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
     }
 
     /**

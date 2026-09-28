@@ -3,6 +3,7 @@
 namespace Tests\Feature\Messaging;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
@@ -120,7 +121,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => $availableMicro]);
     }
 
-    private function submission(Business $business, PhoneNumberType $numberType): MessagingRegistrationSubmission
+    private function submission(Business $business, PhoneNumberType $numberType, ?string $phoneNumber = null): MessagingRegistrationSubmission
     {
         return new MessagingRegistrationSubmission(
             businessId: $business->id,
@@ -143,6 +144,7 @@ class TelnyxProvisioningAdapterTest extends TestCase
             sampleMessage2: 'Harbor Lane: reminder, your appointment is tomorrow.',
             privacyPolicyUrl: 'https://harborlane.example/privacy',
             termsUrl: 'https://harborlane.example/terms',
+            phoneNumber: $phoneNumber,
         );
     }
 
@@ -258,13 +260,74 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_1']]),
         ]);
 
-        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree));
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100'));
 
         $this->assertNull($result->providerBrandId);
         $this->assertNull($result->providerCampaignId);
         $this->assertSame('tfv_fixture_1', $result->providerRegistrationId);
         Http::assertSent(fn ($request) => str_contains($request->url(), '/messaging_tollfree/verification/requests')
             && ! str_contains($request->url(), 'verification_requests'));
+    }
+
+    /**
+     * Review correction — Telnyx's own toll-free verification submission
+     * requires the already-owned number being verified.
+     */
+    public function test_toll_free_submission_includes_the_already_owned_phone_number(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/messaging_tollfree/verification/requests' => Http::response(['data' => ['id' => 'tfv_fixture_2']]),
+        ]);
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree, '+18005550100'));
+
+        Http::assertSent(fn ($request) => $request['phoneNumbers'] === [['phoneNumber' => '+18005550100']]);
+    }
+
+    /**
+     * Review correction — a toll-free submission attempted without an
+     * already-owned number must refuse, never silently omit the required
+     * field. Unreachable through the real controller flow, which only
+     * ever submits toll-free once a number already exists; checked here
+     * independently, never trusted from the caller alone.
+     */
+    public function test_toll_free_submission_refuses_without_a_phone_number(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION);
+        Http::fake();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Toll-free verification cannot be submitted without an already-owned number.');
+
+        app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::TollFree));
+    }
+
+    /**
+     * Review correction — 10DLC brand+campaign registration has no
+     * equivalent requirement: Telnyx genuinely supports submitting it
+     * before any number exists.
+     */
+    public function test_ten_dlc_submission_succeeds_without_a_phone_number(): void
+    {
+        $this->enableProvisioning();
+        $business = $this->business();
+        $this->fundWallet($business, TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION);
+
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/brand' => Http::response(['data' => ['brandId' => 'brand_fixture_no_number']]),
+            'api.telnyx.com/v2/10dlc/campaignBuilder' => Http::response(['data' => ['campaignId' => 'campaign_fixture_no_number']]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->submitRegistration($this->submission($business, PhoneNumberType::Local));
+
+        $this->assertSame('brand_fixture_no_number', $result->providerBrandId);
+        $this->assertSame('campaign_fixture_no_number', $result->providerCampaignId);
     }
 
     public function test_refresh_status_routes_10dlc_to_the_10dlc_campaign_endpoint(): void
@@ -274,14 +337,14 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_2' => Http::response(['data' => ['campaignStatus' => 'ACTIVE']]),
         ]);
 
-        $status = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
             numberType: PhoneNumberType::Local,
             providerBrandId: 'brand_fixture_2',
             providerCampaignId: 'campaign_fixture_2',
             providerRegistrationId: null,
         ));
 
-        $this->assertSame(MessagingRegistrationStatus::Approved, $status);
+        $this->assertSame(MessagingRegistrationStatus::Approved, $result->status);
         Http::assertSent(fn ($request) => str_contains($request->url(), '/10dlc/campaign/campaign_fixture_2'));
     }
 
@@ -292,14 +355,14 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'api.telnyx.com/v2/messaging_tollfree/verification/requests/tfv_fixture_2' => Http::response(['data' => ['verificationStatus' => 'Verified']]),
         ]);
 
-        $status = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
             numberType: PhoneNumberType::TollFree,
             providerBrandId: null,
             providerCampaignId: null,
             providerRegistrationId: 'tfv_fixture_2',
         ));
 
-        $this->assertSame(MessagingRegistrationStatus::Approved, $status);
+        $this->assertSame(MessagingRegistrationStatus::Approved, $result->status);
         Http::assertSent(fn ($request) => str_contains($request->url(), '/messaging_tollfree/verification/requests/tfv_fixture_2'));
     }
 
@@ -310,14 +373,14 @@ class TelnyxProvisioningAdapterTest extends TestCase
             'api.telnyx.com/v2/messaging_tollfree/verification/requests/tfv_fixture_3' => Http::response(['data' => ['verificationStatus' => 'Waiting for Telnyx']]),
         ]);
 
-        $status = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
             numberType: PhoneNumberType::TollFree,
             providerBrandId: null,
             providerCampaignId: null,
             providerRegistrationId: 'tfv_fixture_3',
         ));
 
-        $this->assertSame(MessagingRegistrationStatus::Pending, $status);
+        $this->assertSame(MessagingRegistrationStatus::Pending, $result->status);
     }
 
     // -----------------------------------------------------------------
@@ -620,5 +683,106 @@ class TelnyxProvisioningAdapterTest extends TestCase
         $this->assertSame(CarrierReleaseOutcome::NotConfirmed, $result->outcome);
         $this->assertSame('lookup_status_not_safe_for_deletion', $result->detail);
         Http::assertNotSent(fn ($request) => $request->method() === 'DELETE');
+    }
+
+    // -----------------------------------------------------------------
+    // Review correction — refreshRegistrationStatus() now returns the
+    // whole RegistrationStatusResult, and correctly recognizes the full
+    // documented 10DLC/toll-free rejection vocabulary, with a
+    // carrier-supplied reason when one is present.
+    // -----------------------------------------------------------------
+
+    public function test_refresh_status_recognizes_mno_rejected_as_rejected_with_its_reason(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_rejected_1' => Http::response(['data' => [
+                'campaignStatus' => 'MNO_REJECTED',
+                'failureReasons' => ['Sample message missing required opt-out language.'],
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+            numberType: PhoneNumberType::Local,
+            providerBrandId: 'brand_fixture_rejected_1',
+            providerCampaignId: 'campaign_fixture_rejected_1',
+            providerRegistrationId: null,
+        ));
+
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $result->status);
+        $this->assertSame('Sample message missing required opt-out language.', $result->rejectionReason);
+    }
+
+    public function test_refresh_status_recognizes_telnyx_failed_as_rejected_with_no_reason_when_none_supplied(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/campaign/campaign_fixture_rejected_2' => Http::response(['data' => ['campaignStatus' => 'TELNYX_FAILED']]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+            numberType: PhoneNumberType::Local,
+            providerBrandId: 'brand_fixture_rejected_2',
+            providerCampaignId: 'campaign_fixture_rejected_2',
+            providerRegistrationId: null,
+        ));
+
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $result->status);
+        $this->assertNull($result->rejectionReason);
+    }
+
+    public function test_refresh_status_extracts_a_toll_free_decline_reason_when_present(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/messaging_tollfree/verification/requests/tfv_fixture_rejected_1' => Http::response(['data' => [
+                'verificationStatus' => 'Rejected',
+                'declineReason' => 'Business name did not match Secretary of State records.',
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->refreshRegistrationStatus(new RegistrationStatusQuery(
+            numberType: PhoneNumberType::TollFree,
+            providerBrandId: null,
+            providerCampaignId: null,
+            providerRegistrationId: 'tfv_fixture_rejected_1',
+        ));
+
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $result->status);
+        $this->assertSame('Business name did not match Secretary of State records.', $result->rejectionReason);
+    }
+
+    // -----------------------------------------------------------------
+    // Phone Numbers + A2P lane — the verify-first sequence's own final
+    // step, linking a freshly purchased local number's Messaging Profile
+    // to an already-approved 10DLC campaign.
+    // -----------------------------------------------------------------
+
+    public function test_assign_messaging_profile_to_campaign_hits_the_confirmed_endpoint_and_reports_requested(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['data' => ['taskId' => 'task_fixture_1']]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->assignMessagingProfileToCampaign('mp_fixture_1', 'campaign_fixture_1');
+
+        $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome);
+        Http::assertSent(fn ($request) => $request->method() === 'POST'
+            && str_contains($request->url(), '/10dlc/phoneNumberAssignmentByProfile')
+            && $request['messagingProfileId'] === 'mp_fixture_1'
+            && $request['campaignId'] === 'campaign_fixture_1');
+    }
+
+    public function test_assign_messaging_profile_to_campaign_never_guesses_requested_on_a_failed_response(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['errors' => [['title' => 'Not Found']]], 404),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->assignMessagingProfileToCampaign('mp_fixture_2', 'campaign_fixture_2');
+
+        $this->assertSame(CampaignAssignmentOutcome::Failed, $result->outcome);
     }
 }

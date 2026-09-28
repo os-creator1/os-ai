@@ -39,7 +39,7 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
     private function service(): BusinessMessagingRegistrationService
     {
-        return new BusinessMessagingRegistrationService();
+        return app(BusinessMessagingRegistrationService::class);
     }
 
     private function payload(array $overrides = []): array
@@ -133,6 +133,29 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
         $this->assertNotNull($submitted->provider_brand_id);
         $this->assertNotNull($submitted->provider_campaign_id);
         $this->assertNotNull($submitted->submitted_at);
+        // Review correction — a local (10DLC) submission has no number yet
+        // in this scenario (makeBusiness() attaches none); the submission
+        // must never invent one.
+        $this->assertNull($fake->submittedRegistrations[0]->phoneNumber);
+    }
+
+    /**
+     * Review correction — toll-free's own submission requires the
+     * already-owned number being verified; submit() must resolve it from
+     * the Business's own primary number, never leave it null when one
+     * genuinely exists.
+     */
+    public function test_submitting_resolves_and_sends_the_already_owned_phone_number_when_one_exists(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $this->attachNumber($this->attachIdentity($business), '+18005550199');
+        $registration = $this->service()->captureDetails($business, $this->payload(['number_type' => 'toll_free']));
+
+        $this->service()->submit($registration);
+
+        $this->assertCount(1, $fake->submittedRegistrations);
+        $this->assertSame('+18005550199', $fake->submittedRegistrations[0]->phoneNumber);
     }
 
     /**
@@ -211,6 +234,26 @@ class BusinessMessagingRegistrationServiceTest extends TestCase
 
         $this->assertSame(MessagingRegistrationStatus::Rejected, $refreshed->status);
         $this->assertNotNull($refreshed->rejected_at);
+        $this->assertNull($refreshed->rejection_reason, 'No reason was scripted — must never be guessed.');
+    }
+
+    /**
+     * Review correction — refreshRegistrationStatus() now returns the
+     * whole RegistrationStatusResult; a Rejected answer that carries a
+     * carrier-supplied reason must have that reason stored, never
+     * silently dropped.
+     */
+    public function test_refresh_stores_the_carrier_supplied_rejection_reason_when_present(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $registration = $this->service()->submit($this->service()->captureDetails($business, $this->payload()));
+        $fake->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Rejected, 'Sample message missing required opt-out language.');
+
+        $refreshed = $this->service()->refreshStatus($registration);
+
+        $this->assertSame(MessagingRegistrationStatus::Rejected, $refreshed->status);
+        $this->assertSame('Sample message missing required opt-out language.', $refreshed->rejection_reason);
     }
 
     public function test_refresh_without_a_prior_submission_is_a_no_op(): void

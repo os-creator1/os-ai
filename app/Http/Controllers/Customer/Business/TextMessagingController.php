@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Customer\Business;
 
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\MessagingEntityType;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
@@ -97,6 +98,13 @@ class TextMessagingController extends CustomerBaseController
         return match ($situation['state']) {
             'ready' => $this->renderReady($workspaceUid, $businessUid, $situation),
             'registration_required' => $this->renderRegistration($workspaceUid, $businessUid, $situation),
+            // Review correction — a Business whose local (10DLC) business
+            // verification is already Approved but has no number yet
+            // (Telnyx genuinely supports completing brand+campaign
+            // registration before any number is purchased): STATE 1's own
+            // search/order view, restricted to local and carrying a
+            // verified banner, rather than the initial number-type choice.
+            'number_required' => $this->renderNoNumber($workspaceUid, $businessUid, $situation, numberTypeLocked: PhoneNumberType::Local),
             default => $this->renderNoNumber($workspaceUid, $businessUid, $situation),
         };
     }
@@ -111,7 +119,7 @@ class TextMessagingController extends CustomerBaseController
      * canonical buy_numbers permission rather than the read-only
      * view_numbers used by show()/deliveryUsage().
      */
-    public function searchNumber(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application
+    public function searchNumber(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
         $this->authorize('buy_numbers');
 
@@ -122,6 +130,15 @@ class TextMessagingController extends CustomerBaseController
             'number_type' => ['required', 'in:local,toll_free'],
             'area_code' => ['nullable', 'digits:3'],
         ]);
+
+        if ($validated['number_type'] === 'local' && ! $this->hasApprovedLocalRegistration($business)) {
+            // Telnyx genuinely supports (and this platform now requires)
+            // completing 10DLC business verification BEFORE a local number
+            // is searched for or purchased — toll-free is unaffected: its
+            // own carrier verification requires an already-owned number,
+            // so it is never subject to this gate.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Verify your business first, then choose your local number.');
+        }
 
         $criteria = new NumberSearchCriteria(
             countryCode: 'US',
@@ -144,6 +161,7 @@ class TextMessagingController extends CustomerBaseController
             // fields back as independently-editable form inputs; it only
             // ever gets this one opaque, short-lived, Business-bound token.
             'candidateToken' => $candidate !== null ? CandidateToken::encode($business, $candidate) : null,
+            'numberTypeLocked' => $this->hasApprovedLocalRegistration($business) ? PhoneNumberType::Local : null,
             ...$this->portOutContextFor($business),
         ]);
     }
@@ -181,8 +199,15 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'This number is no longer available. Please search again.');
         }
 
+        if ($candidate->numberType === PhoneNumberType::Local && ! $this->hasApprovedLocalRegistration($business)) {
+            // Same guard as searchNumber(), re-checked here independently
+            // at the mutation boundary — a candidate token alone must never
+            // be trusted to imply the sequence requirement was honored.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Verify your business first, then choose your local number.');
+        }
+
         try {
-            $this->provisioning->provisionNumber($business, $candidate);
+            $number = $this->provisioning->provisionNumber($business, $candidate);
         } catch (MessagingProviderNotConfiguredException) {
             return $this->textMessagingError($workspaceUid, $businessUid, 'Number setup is not available in this environment yet.');
         } catch (MessagingIdentityConflictException) {
@@ -199,15 +224,93 @@ class TextMessagingController extends CustomerBaseController
             return $this->textMessagingError($workspaceUid, $businessUid, 'Your Business doesn\'t have enough funds to add this number. Add funds to your Business balance and try again.');
         }
 
+        $message = 'Phone number added. Next, complete messaging registration so texts deliver reliably.';
+
+        if ($candidate->numberType === PhoneNumberType::Local) {
+            $registration = $this->registrationFor($business);
+
+            if ($registration !== null && $registration->isApproved()) {
+                // The verify-first sequence: business verification already
+                // Approved before this number existed. The last remaining
+                // step is linking this number's own, freshly created
+                // Messaging Profile to that already-approved campaign —
+                // never itself a claim that the link is confirmed live
+                // (see CampaignAssignmentOutcome's own docblock).
+                $message = $this->composeLocalOrderMessage($business, $number, $registration);
+            }
+        }
+
         return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
-            'message' => 'Phone number added. Next, complete messaging registration so texts deliver reliably.',
+            'message' => $message,
         ]);
+    }
+
+    /**
+     * Never blocks the number purchase's own success — the number is
+     * genuinely, already purchased and charged by the time this runs.
+     * BusinessMessagingProvisioningService::assignToApprovedCampaign()
+     * itself records a provisioning incident on a failed or
+     * not-yet-confirmed result; this only composes the honest customer-
+     * facing message.
+     */
+    private function composeLocalOrderMessage(Business $business, BusinessMessagingNumber $number, BusinessMessagingRegistration $registration): string
+    {
+        if ($registration->provider_campaign_id === null) {
+            return 'Phone number added. Your business is already verified.';
+        }
+
+        $result = $this->provisioning->assignToApprovedCampaign($business, $number, $registration->provider_campaign_id);
+
+        if ($result->outcome !== CampaignAssignmentOutcome::Requested) {
+            return 'Phone number added. We could not confirm your number was linked to your approved campaign — our team has been notified and will follow up.';
+        }
+
+        return 'Phone number added. Your business is already verified, and we have asked the carrier to enable this number for messaging.';
     }
 
     // -----------------------------------------------------------------
     // STATE 2 — registration required.
     // -----------------------------------------------------------------
+
+    /**
+     * Review correction — the entry point into the verify-first sequence:
+     * Telnyx genuinely supports completing 10DLC business verification
+     * before any local number exists, so this creates the one (business-
+     * scoped, create-or-update) registration row with number_type=local
+     * and no number yet, rather than requiring a number first. Never
+     * reachable for toll-free — its own carrier verification always
+     * requires an already-owned number, so it has no equivalent "start
+     * verification first" entry point; guardNoExistingNumber() below
+     * still applies here, since this must never be reachable once a
+     * number already exists either.
+     */
+    public function startLocalVerification(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('buy_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->guardNoExistingNumber($business);
+        $this->authorizeRegistrationMutation($business);
+
+        try {
+            $this->registrations->captureDetails($business, [
+                'number_type' => PhoneNumberType::Local->value,
+                'country_code' => 'US',
+            ]);
+        } catch (MessagingRegistrationImmutableException) {
+            // Unreachable in practice (an Approved registration with no
+            // number belongs to the 'number_required' state, which never
+            // links back to this action), but never trusted from the
+            // caller's own state alone.
+            return $this->textMessagingError($workspaceUid, $businessUid, 'This registration has already been approved and can no longer be edited.');
+        }
+
+        return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'Let\'s verify your business. Once approved, you\'ll choose your local number.',
+        ]);
+    }
 
     /**
      * PR #295 Correction Round 2, item 1 — legal/compliance registration is
@@ -435,6 +538,19 @@ class TextMessagingController extends CustomerBaseController
         $portOutContext = $this->portOutContextFor($business);
 
         if ($identity === null) {
+            // Review correction — Telnyx genuinely supports (and this
+            // platform now requires) completing 10DLC business
+            // verification BEFORE any local number is purchased; toll-free
+            // can never reach this branch un-Approved, since its own
+            // carrier verification always requires an already-owned
+            // number, so its submission is only ever reachable once a
+            // number (and therefore an identity) already exists.
+            if ($registration !== null && $registration->number_type === PhoneNumberType::Local) {
+                $state = $registration->isApproved() ? 'number_required' : 'registration_required';
+
+                return ['state' => $state, 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
+            }
+
             return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
         }
 
@@ -509,7 +625,34 @@ class TextMessagingController extends CustomerBaseController
     {
         $number = $this->primaryNumberFor($business);
 
-        return $number?->number_type;
+        if ($number !== null) {
+            return $number->number_type;
+        }
+
+        // Review correction — a Business may already be mid local (10DLC)
+        // business verification with no number yet (Telnyx genuinely
+        // supports this sequence for local numbers); toll-free's own
+        // verification can never reach here without a number, since its
+        // submission requires one already.
+        $registration = $this->registrationFor($business);
+
+        return $registration?->number_type === PhoneNumberType::Local ? PhoneNumberType::Local : null;
+    }
+
+    /**
+     * Whether this Business already has an Approved local (10DLC)
+     * business verification on file — the one condition under which the
+     * verify-first sequence allows searching for or ordering a local
+     * number with no number/identity yet. Never true for toll-free: its
+     * own carrier verification always requires an already-owned number.
+     */
+    private function hasApprovedLocalRegistration(Business $business): bool
+    {
+        $registration = $this->registrationFor($business);
+
+        return $registration !== null
+            && $registration->number_type === PhoneNumberType::Local
+            && $registration->isApproved();
     }
 
     private function primaryNumberFor(Business $business): ?BusinessMessagingNumber
@@ -541,7 +684,7 @@ class TextMessagingController extends CustomerBaseController
     /**
      * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
-    private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation): View
+    private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View
     {
         return view('customer.settings.text-messaging.states.no-number', [
             'workspaceUid' => $workspaceUid,
@@ -551,6 +694,11 @@ class TextMessagingController extends CustomerBaseController
             'criteria' => [],
             'candidate' => null,
             'candidateToken' => null,
+            // Review correction — non-null only for the verify-first local
+            // sequence's "your business is verified, now choose your
+            // number" render: the view hides the toll-free/local choice
+            // entirely and shows a verified banner instead.
+            'numberTypeLocked' => $numberTypeLocked,
             // Review correction — a Business can land in this "no active
             // number" classification while still retaining a Suspended
             // number (Slice 3's own resolveForBusiness()/resolvePrimaryNumber()
