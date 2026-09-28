@@ -69,13 +69,14 @@ $(function () {
     userChats.css('overflow', 'scroll');
     profileSidebarArea.css('overflow', 'scroll');
 
-    // on user click sidebar close in touch devices
-    $(chatsUserList)
-        .find('li')
-        .on('click', function () {
-          $(sidebarContent).removeClass('show');
-          $(overlay).removeClass('show');
-        });
+    // on user click sidebar close in touch devices — delegated to the
+    // list's own stable container, so it also matches conversation rows
+    // loadChatUsers() adds later via AJAX, not only whichever ones
+    // happened to already be in the DOM when this ran.
+    chatsUserList.on('click', 'li', function () {
+      $(sidebarContent).removeClass('show');
+      $(overlay).removeClass('show');
+    });
   }
 
   // Chat Profile sidebar & overlay toggle

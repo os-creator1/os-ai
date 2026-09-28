@@ -37,21 +37,14 @@ class PlatformFeatureRegistryTest extends TestCase
             // (PackagesProducts left this list at Contract 16 Sub-slice E's final
             // flip; test_packages_products_is_available_after_sub_slice_es_final_flip
             // asserts it is Available.)
-            // Implementation Contract 17, Sub-slice A — schema and inert
-            // entitlement identity only; stays Planned until Sub-slice G's
-            // final flip, after A-F are merged and verified end to end.
-            //
-            // PRE-EXISTING, UNRELATED DEFECT (reproduced, not fixed here —
-            // out of scope for Contract 18): PaymentsContracts was actually
-            // flipped to Available by Contract 17 Sub-slice G (see
-            // PlatformFeatureRegistry's own comment for that key), but this
-            // line was never updated to match. It is left as-is; flipping
-            // Contract 17's assertion is Contract 17's own housekeeping, not
-            // Contract 18's.
-            PlatformFeature::PaymentsContracts,
+            // (PaymentsContracts left this list at Contract 17 Sub-slice G's final
+            // flip; test_payments_contracts_is_available_after_sub_slice_gs_final_flip
+            // asserts it is Available — merged in from origin/main, which
+            // independently fixed the same stale assertion this branch had
+            // found and documented as a pre-existing, out-of-scope defect.)
         ];
 
-        $this->assertCount(7, $planned);
+        $this->assertCount(6, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -106,6 +99,21 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
         $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoBasicVisibility->value));
         $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::SeoModule->value));
+    }
+
+    public function test_payments_contracts_is_available_after_sub_slice_gs_final_flip(): void
+    {
+        // Implementation Contract 17: Planned through Sub-slices A-F (schema,
+        // inert entitlement identity, authoring, secure send/sign and Stripe
+        // Connect payments with no availability flip), flipped to Available
+        // only by Sub-slice G once the full flow was proven end to end
+        // (PaymentsContractsAcceptanceTest). Packaged into all three plan
+        // tiers — no tier is excluded
+        // (`2026_09_25_100012_seed_payments_contracts_plan_packaging.php`).
+        $this->assertSame('payments_contracts', PlatformFeature::PaymentsContracts->value);
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PaymentsContracts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PaymentsContracts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PaymentsContracts->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void
