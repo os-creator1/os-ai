@@ -70,6 +70,42 @@ class SeoReviewsBoundaryTest extends TestCase
         $this->assertSame($before, $this->dbFingerprint(['seo_review_requests', 'seo_location_review_links']), 'A fail-closed write must persist nothing.');
     }
 
+    /**
+     * The combined, real-entitlement chain the flip must not weaken: a
+     * Growth Business (real seo_module decision, no bypass) reaches the
+     * write routes, but a Selected-scope staff member still cannot write a
+     * review link or request for a Location they were never granted, and
+     * view_seo alone (no manage_seo) still reads but cannot write — proving
+     * tenancy, LocationAccessGuard and the capability gate all still apply
+     * through the now-Available real controller for the surface this
+     * task's flip newly exposes.
+     */
+    public function test_a_growth_actors_write_still_enforces_location_acl_through_the_real_controller(): void
+    {
+        [$owner, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $granted = $this->reviewLocation($business, 'Granted Branch');
+        $hidden = $this->reviewLocation($business, 'Hidden Branch');
+
+        $staff = $this->selectedScopeMember($workspace, [$granted]);
+        $this->authenticateAsSeoCustomer($staff, $this->reviewPermissions());
+
+        // The Location this staff member was never granted: 404, real
+        // controller, real seo_module entitlement, no bypass.
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $hidden->uid), ['review_url' => 'https://g.page/r/hidden'])->assertNotFound();
+        $this->assertSame(0, \App\Models\SeoLocationReviewLink::query()->where('business_location_id', $hidden->id)->count());
+
+        // The Location they WERE granted: the real, Available controller
+        // lets the write through.
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $granted->uid), ['review_url' => 'https://g.page/r/granted'])->assertSessionHas('status', 'success');
+        $this->assertSame(1, \App\Models\SeoLocationReviewLink::query()->where('business_location_id', $granted->id)->count());
+
+        // The manage_seo capability, independent of both tenancy and
+        // entitlement: view_seo alone (no manage_seo) reads but cannot write.
+        $this->authenticateAsSeoCustomer($owner, ['view_seo', 'view_google_business_profile', 'website']);
+        $this->get($this->reviewsUrl($workspace, $business))->assertOk();
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $granted->uid), ['review_url' => 'https://g.page/r/blocked'])->assertUnauthorized();
+    }
+
     public function test_the_production_controller_gates_on_seo_module_and_the_two_seo_capabilities(): void
     {
         $source = file_get_contents(dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/SeoReviewsController.php');

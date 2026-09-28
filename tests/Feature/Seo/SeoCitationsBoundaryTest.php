@@ -65,6 +65,48 @@ class SeoCitationsBoundaryTest extends TestCase
         $this->assertSame(0, \App\Models\SeoCitation::query()->where('business_id', $coreBusiness->id)->count(), 'A fail-closed write must persist nothing.');
     }
 
+    /**
+     * The combined, real-entitlement chain the flip must not weaken: a
+     * Growth Business (real seo_module decision, no bypass) reaches the
+     * write route, but a Selected-scope staff member still cannot write a
+     * citation for a Location they were never granted — tenancy, the
+     * manage_seo capability and LocationAccessGuard all still apply exactly
+     * as SeoCitationsTest already proves under the entitlement bypass; this
+     * proves the same guarantee end to end, through the now-Available real
+     * controller, for the surface this task's flip newly exposes.
+     */
+    public function test_a_growth_actors_write_still_enforces_location_acl_through_the_real_controller(): void
+    {
+        [$owner, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $granted = $this->createLocation($business, true, overrides: ['name' => 'Granted Branch']);
+        $hidden = $this->createLocation($business, true, overrides: ['name' => 'Hidden Branch', 'is_primary' => false]);
+
+        $staff = $this->selectedScopeMember($workspace, [$granted]);
+        $this->authenticateAsSeoCustomer($staff);
+
+        // The Location this staff member was never granted: 404, real
+        // controller, real seo_module entitlement, no bypass.
+        $this->from($this->citationsUrl($workspace, $business))
+            ->put($this->citationUpdateUrl($workspace, $business, (string) $hidden->uid, 'bing_places'), $this->citationInput())
+            ->assertNotFound();
+        $this->assertSame(0, \App\Models\SeoCitation::query()->where('business_location_id', $hidden->id)->count());
+
+        // The Location they WERE granted: the real, Available controller
+        // lets the write through.
+        $this->from($this->citationsUrl($workspace, $business))
+            ->put($this->citationUpdateUrl($workspace, $business, (string) $granted->uid, 'bing_places'), $this->citationInput())
+            ->assertSessionHasNoErrors();
+        $this->assertSame(1, \App\Models\SeoCitation::query()->where('business_location_id', $granted->id)->count());
+
+        // The manage_seo capability, independent of both tenancy and
+        // entitlement: view_seo alone (no manage_seo) reads but cannot write.
+        $this->authenticateAsSeoCustomer($owner, ['view_seo', 'view_google_business_profile', 'website']);
+        $this->get($this->citationsUrl($workspace, $business))->assertOk();
+        $this->from($this->citationsUrl($workspace, $business))
+            ->put($this->citationUpdateUrl($workspace, $business, (string) $granted->uid, 'bing_places'), $this->citationInput())
+            ->assertUnauthorized();
+    }
+
     public function test_the_production_controller_gates_on_the_seo_module_feature_not_the_overview_feature(): void
     {
         $source = file_get_contents(dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/SeoCitationController.php');
