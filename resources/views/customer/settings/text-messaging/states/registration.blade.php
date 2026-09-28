@@ -63,14 +63,44 @@
                 </x-alert>
                 @break
             @case('approved')
+                {{--
+                    Review correction — an Approved registration with a
+                    genuine number can still be waiting here, never Ready:
+                    a local number's own carrier-side campaign assignment
+                    is Requested (Telnyx's own assignment endpoint returns
+                    a background task, never an immediate confirmation)
+                    until it is actually polled and found complete — never
+                    equated with Confirmed anywhere the customer can see.
+                --}}
+                @if($campaignAssignmentStatus === 'failed')
+                    <x-alert variant="danger" icon="alert-circle" class="mt-2 mb-0" data-role="campaign-assignment-status">
+                        <strong class="d-block">We couldn't confirm your number is enabled yet</strong>
+                        Your number has already been purchased and charged, but we could not confirm the carrier finished enabling it for messaging. Our team has been notified and will follow up — texting will not be available on this number until that is resolved.
+                    </x-alert>
+                @elseif($campaignAssignmentStatus === 'requested')
+                    <x-alert variant="info" icon="clock" class="mt-2 mb-0" data-role="campaign-assignment-status">
+                        <strong class="d-block">Almost ready</strong>
+                        Your business is verified and your number has been purchased. We're waiting for the carrier to confirm it's enabled for messaging — this is usually quick, and texting will become available on this number as soon as that's confirmed.
+                    </x-alert>
+                @endif
                 @break
             @default
+                {{--
+                    Review correction — never claim business verification is
+                    free: TelnyxProvisioningAdapter reserves real wallet
+                    funds for both regimes before ever submitting a
+                    registration. $verificationChargeDisclosure states the
+                    truth from the actual configured rate — no rate is
+                    invented here, and every environment today has none
+                    configured, so this currently reads as an honest
+                    "no fee is currently configured" statement.
+                --}}
                 <p class="text-caption text-muted mt-2 mb-0">
-                    Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step.
+                    Carriers require a few details about this Business before texts can be delivered reliably. This is a one-time step. {{ $verificationChargeDisclosure }}
                     @if($phoneNumber === null)
-                        Verifying your business is free — a charge for your number begins only once you choose it, after your verification is approved.
+                        A charge for your number begins once you choose it, after your verification is approved.
                     @else
-                        Verifying your business is free; you have already been charged for this number.
+                        You have already been charged for this number.
                     @endif
                 </p>
         @endswitch

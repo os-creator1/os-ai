@@ -785,4 +785,121 @@ class TelnyxProvisioningAdapterTest extends TestCase
 
         $this->assertSame(CampaignAssignmentOutcome::Failed, $result->outcome);
     }
+
+    /**
+     * Review correction — a 2xx response carrying no usable taskId leaves
+     * this platform with nothing to ever poll for completion; it must
+     * never be reported as Requested (a promise of later confirmation this
+     * platform could not actually check for).
+     */
+    public function test_assign_messaging_profile_to_campaign_fails_when_the_response_carries_no_task_id(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile' => Http::response(['data' => []]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->assignMessagingProfileToCampaign('mp_fixture_3', 'campaign_fixture_3');
+
+        $this->assertSame(CampaignAssignmentOutcome::Failed, $result->outcome);
+        $this->assertSame('missing_task_id', $result->detail);
+    }
+
+    // -----------------------------------------------------------------
+    // Review correction — checkCampaignAssignmentStatus(): the real
+    // completion mechanism this correction added. Telnyx's own assignment
+    // endpoint above returns only a background task; this is the ONLY
+    // path that may ever report Confirmed, and only for the documented
+    // "completed" per-record status — every other outcome (failed,
+    // in-progress, an unmatched phone number, a non-2xx response, or a
+    // transport exception) must report Requested again (poll again later)
+    // or Failed, never a guessed Confirmed.
+    // -----------------------------------------------------------------
+
+    public function test_check_campaign_assignment_status_confirms_only_on_a_completed_record_for_this_exact_number(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+                ['taskId' => 'task_fixture_4', 'phoneNumber' => '+14155550100', 'status' => 'completed'],
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_4', '+14155550100');
+
+        $this->assertSame(CampaignAssignmentOutcome::Confirmed, $result->outcome);
+        Http::assertSent(fn ($request) => $request->method() === 'GET'
+            && str_contains($request->url(), '/10dlc/phoneNumberAssignmentByProfile/task_fixture_4/phoneNumbers'));
+    }
+
+    public function test_check_campaign_assignment_status_reports_failed_on_a_failed_record(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+                ['taskId' => 'task_fixture_5', 'phoneNumber' => '+14155550101', 'status' => 'failed'],
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_5', '+14155550101');
+
+        $this->assertSame(CampaignAssignmentOutcome::Failed, $result->outcome);
+    }
+
+    /**
+     * Documented in-progress values ("pending", "starting", "processing",
+     * "running") must never be equated with completion — "Requested" is
+     * the only honest answer while the carrier is still working.
+     */
+    public function test_check_campaign_assignment_status_stays_requested_while_still_processing(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+                ['taskId' => 'task_fixture_6', 'phoneNumber' => '+14155550102', 'status' => 'processing'],
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_6', '+14155550102');
+
+        $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome);
+    }
+
+    public function test_check_campaign_assignment_status_stays_requested_when_this_number_has_no_record_yet(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['records' => [
+                ['taskId' => 'task_fixture_7', 'phoneNumber' => '+14155559999', 'status' => 'completed'],
+            ]]),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_7', '+14155550103');
+
+        $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome, 'A different number\'s completed record must never be attributed to this one.');
+    }
+
+    public function test_check_campaign_assignment_status_stays_requested_on_a_non_2xx_response(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => Http::response(['errors' => [['title' => 'Internal Server Error']]], 500),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_8', '+14155550104');
+
+        $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome, 'A poll failure is retried later, never guessed as a terminal outcome.');
+    }
+
+    public function test_check_campaign_assignment_status_stays_requested_on_a_transport_exception(): void
+    {
+        $this->enableProvisioning();
+        Http::fake([
+            'api.telnyx.com/v2/10dlc/phoneNumberAssignmentByProfile/*/phoneNumbers' => fn () => throw new \Illuminate\Http\Client\ConnectionException('Simulated network failure.'),
+        ]);
+
+        $result = app(TelnyxProvisioningAdapter::class)->checkCampaignAssignmentStatus('task_fixture_9', '+14155550105');
+
+        $this->assertSame(CampaignAssignmentOutcome::Requested, $result->outcome);
+    }
 }

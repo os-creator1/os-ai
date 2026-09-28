@@ -64,6 +64,14 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
     /** Scripted assignMessagingProfileToCampaign() outcome, keyed by messagingProfileId; defaults to Requested. */
     public array $campaignAssignmentOutcomes = [];
 
+    /** @var list<array{taskId: string, phoneNumber: string}> every checkCampaignAssignmentStatus() call, in order. */
+    public array $campaignAssignmentStatusChecks = [];
+
+    /** Scripted checkCampaignAssignmentStatus() outcome, keyed by phoneNumber; defaults to Requested (still processing). */
+    public array $campaignAssignmentPollOutcomes = [];
+
+    private int $campaignAssignmentTaskCounter = 0;
+
     /** @var list<NumberReleaseQuery> every releaseNumber() call, in order. */
     public array $releaseAttempts = [];
 
@@ -144,19 +152,57 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
 
         $outcome = $this->campaignAssignmentOutcomes[$messagingProfileId] ?? CampaignAssignmentOutcome::Requested;
 
+        if ($outcome !== CampaignAssignmentOutcome::Requested) {
+            // A scripted immediate failure (e.g. missing profile/campaign
+            // id) never produces a task id — there is nothing to poll.
+            return new CampaignAssignmentResult($outcome, 'fake_failed');
+        }
+
+        $this->campaignAssignmentTaskCounter++;
+
         return new CampaignAssignmentResult(
-            $outcome,
-            $outcome === CampaignAssignmentOutcome::Requested ? 'fake_task_000001' : 'fake_failed',
+            CampaignAssignmentOutcome::Requested,
+            'fake_task_requested',
+            sprintf('fake_task_%06d', $this->campaignAssignmentTaskCounter),
         );
     }
 
     /**
      * Test helper — scripts this exact Messaging Profile's next
-     * assignMessagingProfileToCampaign() outcome.
+     * assignMessagingProfileToCampaign() outcome. Only Requested (the
+     * default) and Failed are meaningful here — Confirmed is never an
+     * immediate POST result in reality (see CampaignAssignmentOutcome's
+     * own docblock); script a poll outcome via
+     * scriptCampaignAssignmentPollOutcome() for that.
      */
     public function scriptCampaignAssignmentOutcome(string $messagingProfileId, CampaignAssignmentOutcome $outcome): void
     {
         $this->campaignAssignmentOutcomes[$messagingProfileId] = $outcome;
+    }
+
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult
+    {
+        $this->campaignAssignmentStatusChecks[] = ['taskId' => $taskId, 'phoneNumber' => $phoneNumber];
+
+        $outcome = $this->campaignAssignmentPollOutcomes[$phoneNumber] ?? CampaignAssignmentOutcome::Requested;
+
+        return new CampaignAssignmentResult($outcome, match ($outcome) {
+            CampaignAssignmentOutcome::Confirmed => 'fake_poll_completed',
+            CampaignAssignmentOutcome::Failed => 'fake_poll_failed',
+            CampaignAssignmentOutcome::Requested => 'fake_poll_still_processing',
+        });
+    }
+
+    /**
+     * Test helper — scripts this exact phone number's next
+     * checkCampaignAssignmentStatus() poll outcome. Defaults to Requested
+     * ("still processing") so a test must explicitly script Confirmed or
+     * Failed to move the poll along — mirrors scriptReleaseOutcome()'s own
+     * per-reference keying.
+     */
+    public function scriptCampaignAssignmentPollOutcome(string $phoneNumber, CampaignAssignmentOutcome $outcome): void
+    {
+        $this->campaignAssignmentPollOutcomes[$phoneNumber] = $outcome;
     }
 
     public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult

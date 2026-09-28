@@ -3,6 +3,8 @@
 namespace App\Library\Messaging;
 
 use App\Enums\Messaging\MessagingRegistrationStatus;
+use App\Enums\Messaging\PhoneNumberType;
+use App\Library\Dashboard\DashboardMoney;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
@@ -11,6 +13,7 @@ use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
 use App\Library\Messaging\Exceptions\MessagingRegistrationImmutableException;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Carbon\CarbonImmutable;
 
 /**
@@ -27,6 +30,7 @@ class BusinessMessagingRegistrationService
 {
     public function __construct(
         private readonly BusinessMessagingIdentityResolver $identities,
+        private readonly UsageMeterRepository $meters,
     ) {
     }
     /**
@@ -201,5 +205,35 @@ class BusinessMessagingRegistrationService
                     }
                 }
             });
+    }
+
+    /**
+     * Review correction — TelnyxProvisioningAdapter reserves real wallet
+     * funds for both FEATURE_TEN_DLC_REGISTRATION and
+     * FEATURE_TOLL_FREE_VERIFICATION before ever submitting a
+     * registration; business verification was never actually free, and
+     * this platform must never claim otherwise. Reads the SAME meter/rate
+     * UsageWalletManager::reserve() would itself apply — never a second,
+     * invented pricing source — and states plainly when none is
+     * configured, which is the true state of every environment today (no
+     * owner has approved a commercial rate for either feature key yet).
+     */
+    public function chargeDisclosureFor(PhoneNumberType $numberType): string
+    {
+        $meterKey = $numberType === PhoneNumberType::TollFree
+            ? TelnyxProvisioningAdapter::FEATURE_TOLL_FREE_VERIFICATION
+            : TelnyxProvisioningAdapter::FEATURE_TEN_DLC_REGISTRATION;
+
+        $meter = $this->meters->findByMeterKey($meterKey);
+
+        if ($meter === null || ! $meter->is_metered || $meter->activeRate === null) {
+            return 'No fee is currently configured for business verification in this environment.';
+        }
+
+        $rate = $meter->activeRate;
+        $amount = DashboardMoney::format((string) $rate->retail_rate_micro, $rate->currency?->code);
+        $unit = $rate->unit_label !== null && $rate->unit_label !== '' ? ' per ' . $rate->unit_label : '';
+
+        return sprintf('Business verification currently costs %s%s.', $amount, $unit);
     }
 }

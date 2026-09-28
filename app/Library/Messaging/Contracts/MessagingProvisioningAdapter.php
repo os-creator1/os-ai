@@ -24,7 +24,7 @@ use App\Models\Business;
  * lifecycles, and a future adapter could plausibly implement one without
  * the other.
  *
- * Six methods, each provider-neutral: no Telnyx-specific parameter (rate
+ * Seven methods, each provider-neutral: no Telnyx-specific parameter (rate
  * center, TCR vetting tier, ...) crosses this boundary — only what
  * STATE 1/2 of the customer-facing hub and the Phone Numbers + A2P lane's
  * own carrier-release boundary actually need.
@@ -99,6 +99,22 @@ interface MessagingProvisioningAdapter
      * send 10DLC traffic.
      */
     public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult;
+
+    /**
+     * Review correction — polls the ACTUAL completion mechanism Telnyx
+     * documents for the task assignMessagingProfileToCampaign() started:
+     * GET /10dlc/phoneNumberAssignmentByProfile/{taskId}/phoneNumbers,
+     * which reports the individual phone number's own status within that
+     * task (never the bare overall-task status, which this platform's own
+     * single-number-per-task usage makes an unnecessary extra layer of
+     * indirection to trust). Confirmed only once this exact
+     * $phoneNumber's own record reports "completed"; Failed only once it
+     * reports "failed". Still processing, an unrecognized value, a
+     * missing record, a non-2xx response, or a transport exception all
+     * report Requested again — "poll again later", never guessed as
+     * either terminal outcome.
+     */
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult;
 
     /**
      * Phone Numbers + A2P lane — the carrier-release boundary. Attempts to

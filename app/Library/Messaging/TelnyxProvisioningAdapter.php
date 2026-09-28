@@ -126,8 +126,32 @@ use Illuminate\Support\Str;
  *                                                      returns a background `taskId`, never
  *                                                      an immediate confirmation — see
  *                                                      CampaignAssignmentOutcome's own
- *                                                      docblock; this platform does not yet
- *                                                      poll that task to completion.
+ *                                                      docblock. A 2xx response with no
+ *                                                      usable `taskId` is Failed, never
+ *                                                      Requested — this platform could never
+ *                                                      poll for completion without one.
+ *   - GET    /10dlc/phoneNumberAssignmentByProfile/     CONFIRMED path (developers.telnyx.com/
+ *            {taskId}/phoneNumbers                       api-reference/bulk-phone-number-
+ *                                                      campaigns/get-phone-number-status) —
+ *                                                      review correction: this platform now
+ *                                                      actually polls this task to
+ *                                                      completion (checkCampaignAssignmentStatus()),
+ *                                                      matched by this exact phone number
+ *                                                      within the response's own `records`
+ *                                                      array rather than trusting the
+ *                                                      overall-task-level status endpoint
+ *                                                      (GET .../{taskId}, also documented,
+ *                                                      but a coarser signal this platform's
+ *                                                      own one-number-per-task usage does not
+ *                                                      need). Documented per-record `status`
+ *                                                      values include "completed" and
+ *                                                      "failed" — only these two ever leave
+ *                                                      Requested; every other value (the
+ *                                                      documented in-progress states, an
+ *                                                      unrecognized one, a missing record, a
+ *                                                      non-2xx response, or a transport
+ *                                                      exception) reports Requested again —
+ *                                                      never guessed as terminal.
  *   - GET    /phone_numbers/{id}                       CONFIRMED path (developers.telnyx.com/
  *   - DELETE /phone_numbers/{id}                       api-reference/phone-number-configurations/
  *                                                      retrieve-a-phone-number and
@@ -426,7 +450,71 @@ class TelnyxProvisioningAdapter implements MessagingProvisioningAdapter
             return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'http_' . $response->status());
         }
 
-        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'task_' . ($response->json('data.taskId') ?? 'unknown'));
+        $taskId = $response->json('data.taskId');
+
+        if (! is_string($taskId) || $taskId === '') {
+            // A 2xx response with no usable task id leaves this platform
+            // unable to ever poll for completion — never guessed as
+            // Requested (which promises a later confirmation this
+            // platform could not actually check for).
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'missing_task_id');
+        }
+
+        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'task_requested', $taskId);
+    }
+
+    /**
+     * Review correction — see this class's own docblock and the
+     * interface's own for the confirmed completion mechanism: GET
+     * /10dlc/phoneNumberAssignmentByProfile/{taskId}/phoneNumbers, whose
+     * documented response shape is {records: [{taskId, phoneNumber,
+     * status}, ...]} — one record per number in the (potentially
+     * multi-number) task. This platform only ever assigns one number per
+     * task, but still matches by $phoneNumber explicitly rather than
+     * trusting record order, in case Telnyx's own response ever includes
+     * more than this platform expects.
+     */
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult
+    {
+        try {
+            $response = $this->client()->get(self::API_BASE . '/10dlc/phoneNumberAssignmentByProfile/' . $taskId . '/phoneNumbers');
+        } catch (\Throwable) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_transport_error');
+        }
+
+        if (! $response->successful()) {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_http_' . $response->status());
+        }
+
+        $record = null;
+
+        foreach ((array) $response->json('records', []) as $row) {
+            if (is_array($row) && ($row['phoneNumber'] ?? null) === $phoneNumber) {
+                $record = $row;
+                break;
+            }
+        }
+
+        if ($record === null) {
+            // The task exists but says nothing about THIS number yet —
+            // never guessed either way.
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_record_not_found');
+        }
+
+        $status = strtolower((string) ($record['status'] ?? ''));
+
+        if ($status === 'completed') {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Confirmed, 'poll_completed');
+        }
+
+        if ($status === 'failed') {
+            return new CampaignAssignmentResult(CampaignAssignmentOutcome::Failed, 'poll_failed');
+        }
+
+        // Covers the documented in-progress values ("pending", "starting",
+        // "processing", "running") and anything this platform has not
+        // seen before — never guessed as terminal either way.
+        return new CampaignAssignmentResult(CampaignAssignmentOutcome::Requested, 'poll_status_' . ($status !== '' ? $status : 'unknown'));
     }
 
     /**

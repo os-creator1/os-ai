@@ -80,8 +80,11 @@
             number type, confirmed separately against current Telnyx
             documentation:
               - Local (10DLC): brand+campaign business verification can be,
-                and now must be, completed BEFORE any number is purchased
-                — genuinely free until you order a number.
+                and now must be, completed BEFORE any number is purchased.
+                This is NOT free — TelnyxProvisioningAdapter reserves real
+                wallet funds for this step — so $verificationChargeDisclosure
+                states the truth from the actual configured rate, never an
+                invented one.
               - Toll-free: Telnyx's own verification submission requires
                 the number to already be owned and assigned to a messaging
                 profile, so it can never be verified before purchase — the
@@ -92,7 +95,7 @@
             <div class="col-12 col-lg-6 mb-2">
                 <x-card :padded="true" class="h-100">
                     <p class="text-section-heading mb-1">Local number</p>
-                    <p class="text-caption text-muted mb-2">A number with a specific area code, like a local business. We verify your business first, at no charge — you'll choose your number once your verification is approved, and a charge for the number begins only when you complete that order.</p>
+                    <p class="text-caption text-muted mb-2">A number with a specific area code, like a local business. You'll verify your business first and choose your number once that verification is approved. {{ $verificationChargeDisclosure }} A charge for the number itself begins only when you complete that order.</p>
 
                     <form method="post" action="{{ route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspaceUid, $businessUid]) }}">
                         @csrf

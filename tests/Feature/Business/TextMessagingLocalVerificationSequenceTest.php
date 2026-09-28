@@ -124,7 +124,10 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $response->assertOk();
         $response->assertSee('Not yet chosen');
-        $response->assertSee('Verifying your business is free');
+        // Review correction — never claims verification is free; states
+        // the truth from the actual configured rate (none, in every test
+        // environment today).
+        $response->assertSee('No fee is currently configured for business verification in this environment.');
     }
 
     // =================================================================
@@ -195,10 +198,20 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
 
     // =================================================================
     // The complete verify-first journey: verify -> approve -> choose a
-    // local number -> campaign assignment requested -> Ready -> a send.
+    // local number -> campaign assignment REQUESTED (not confirmed) ->
+    // NOT Ready, sending refused -> the carrier's own completion polled
+    // and resolves Confirmed -> Ready -> a send succeeds.
+    //
+    // Review correction — this is the exact test the reviewer flagged:
+    // it previously showed Ready and a successful send immediately after
+    // ordering, treating an asynchronous "Requested" task response as if
+    // it were confirmed completion. Telnyx's own assignment endpoint
+    // returns only a background task id; this now proves the customer is
+    // held out of Ready and every real send attempt is refused until
+    // that task is actually polled and reports completed.
     // =================================================================
 
-    public function test_completing_the_verify_first_sequence_orders_a_local_number_and_requests_campaign_assignment(): void
+    public function test_completing_the_verify_first_sequence_orders_a_local_number_and_requires_confirmed_campaign_assignment_before_ready(): void
     {
         $fpa = $this->bindFakeProvisioningAdapter();
         $fma = $this->bindFakeAdapter();
@@ -229,12 +242,67 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $this->assertCount(1, $fpa->campaignAssignments);
         $this->assertSame($registration->fresh()->provider_campaign_id, $fpa->campaignAssignments[0]['providerCampaignId']);
 
+        $number = \App\Models\BusinessMessagingNumber::where('phone_number', '+14155552002')->firstOrFail();
+        $this->assertSame('requested', $number->campaign_assignment_status, 'A background task id is not confirmed completion.');
+        $this->assertFalse($number->isCampaignAssignmentConfirmedOrNotRequired());
+
+        // Not Ready, and the screen must never claim it is, while the
+        // carrier enablement task is still only Requested.
+        $notReadyYet = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
+        $notReadyYet->assertOk();
+        $notReadyYet->assertDontSee('Ready');
+        $notReadyYet->assertSee('+14155552002');
+
+        // The same fail-closed check is enforced again at the actual
+        // outbound-send boundary — never only on the status screen.
+        $this->expectException(\App\Library\Messaging\Exceptions\MessagingCampaignAssignmentNotConfirmedException::class);
+        try {
+            app(ManagedMessageDispatcher::class)->dispatch($business->fresh(), '+14155559999', 'Your appointment is confirmed.', 'op_local_verify_first_1');
+        } finally {
+            $this->assertSame(0, $fma->sentCount(), 'A send must never reach the provider before confirmation.');
+        }
+    }
+
+    public function test_a_confirmed_campaign_assignment_poll_makes_the_customer_ready_and_unblocks_sending(): void
+    {
+        $fpa = $this->bindFakeProvisioningAdapter();
+        $fma = $this->bindFakeAdapter();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.registration.start-local-verification', [$workspace->uid, $business->uid]));
+        $this->post(route('customer.workspaces.businesses.text-messaging.registration.update', [$workspace->uid, $business->uid]), $this->registrationPayload());
+        $this->post(route('customer.workspaces.businesses.text-messaging.registration.submit', [$workspace->uid, $business->uid]));
+
+        $registration = BusinessMessagingRegistration::where('business_id', $business->id)->firstOrFail();
+        $fpa->scriptRegistrationStatus($registration, MessagingRegistrationStatus::Approved);
+        app(BusinessMessagingRegistrationService::class)->refreshAllPending();
+
+        $fpa->queueSearchResult(new AvailableNumberCandidate('+14155552009', PhoneNumberType::Local, 'candidate-ref-verified-3'));
+        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'local'])->assertOk();
+        $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
+
+        $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), [
+            'candidate_token' => $candidateToken,
+        ])->assertSessionHas('status', 'success');
+
+        $number = \App\Models\BusinessMessagingNumber::where('phone_number', '+14155552009')->firstOrFail();
+
+        // The carrier's own real completion mechanism, now polled — this
+        // is the ONLY path that can ever move the number to Ready.
+        $fpa->scriptCampaignAssignmentPollOutcome('+14155552009', CampaignAssignmentOutcome::Confirmed);
+        app(\App\Library\Messaging\BusinessMessagingProvisioningService::class)->refreshPendingCampaignAssignment($number->fresh());
+
+        $number->refresh();
+        $this->assertSame('confirmed', $number->campaign_assignment_status);
+        $this->assertTrue($number->isCampaignAssignmentConfirmedOrNotRequired());
+
         $ready = $this->get(route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]));
         $ready->assertOk();
         $ready->assertSee('Ready');
-        $ready->assertSee('+14155552002');
+        $ready->assertSee('+14155552009');
 
-        $result = app(ManagedMessageDispatcher::class)->dispatch($business->fresh(), '+14155559999', 'Your appointment is confirmed.', 'op_local_verify_first_1');
+        $result = app(ManagedMessageDispatcher::class)->dispatch($business->fresh(), '+14155559999', 'Your appointment is confirmed.', 'op_local_verify_first_2');
         $this->assertTrue($result->accepted);
         $this->assertSame(1, $fma->sentCount());
     }
@@ -273,10 +341,19 @@ class TextMessagingLocalVerificationSequenceTest extends TestCase
         $orderResponse->assertSessionHas('message', fn ($message) => str_contains($message, 'could not confirm your number was linked'));
         $this->assertDatabaseHas('business_messaging_numbers', ['phone_number' => '+14155552003', 'status' => 'active']);
 
+        $number = \App\Models\BusinessMessagingNumber::where('phone_number', '+14155552003')->firstOrFail();
+        $this->assertSame('failed', $number->campaign_assignment_status);
+        $this->assertNotNull($number->campaign_assignment_failed_at);
+        $this->assertFalse($number->isCampaignAssignmentConfirmedOrNotRequired());
+
         $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
             'business_id' => $business->id,
             'stage' => 'campaign_assignment_request_failed',
         ]);
+
+        // A failed assignment must never leave sending reachable either.
+        $this->expectException(\App\Library\Messaging\Exceptions\MessagingCampaignAssignmentNotConfirmedException::class);
+        app(ManagedMessageDispatcher::class)->dispatch($business->fresh(), '+14155559999', 'Your appointment is confirmed.', 'op_local_verify_failed_1');
     }
 
     // =================================================================

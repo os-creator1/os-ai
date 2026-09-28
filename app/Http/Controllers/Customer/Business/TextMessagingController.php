@@ -156,6 +156,7 @@ class TextMessagingController extends CustomerBaseController
             'searched' => true,
             'criteria' => $validated,
             'candidate' => $candidate,
+            'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             // PR #295 Correction Round 1, item 2 — the browser never gets
             // the raw phone_number/provider_candidate_reference/number_type
             // fields back as independently-editable form inputs; it only
@@ -250,23 +251,22 @@ class TextMessagingController extends CustomerBaseController
      * Never blocks the number purchase's own success — the number is
      * genuinely, already purchased and charged by the time this runs.
      * BusinessMessagingProvisioningService::assignToApprovedCampaign()
-     * itself records a provisioning incident on a failed or
-     * not-yet-confirmed result; this only composes the honest customer-
-     * facing message.
+     * itself persists the durable outcome and records a provisioning
+     * incident on a failed (or unconfirmable — missing profile/campaign
+     * id) result; this only composes the honest customer-facing message.
+     * Never claims the number can already send — Requested is the
+     * strongest honest claim this message ever makes; see
+     * CampaignAssignmentOutcome's own docblock.
      */
     private function composeLocalOrderMessage(Business $business, BusinessMessagingNumber $number, BusinessMessagingRegistration $registration): string
     {
-        if ($registration->provider_campaign_id === null) {
-            return 'Phone number added. Your business is already verified.';
-        }
-
         $result = $this->provisioning->assignToApprovedCampaign($business, $number, $registration->provider_campaign_id);
 
         if ($result->outcome !== CampaignAssignmentOutcome::Requested) {
             return 'Phone number added. We could not confirm your number was linked to your approved campaign — our team has been notified and will follow up.';
         }
 
-        return 'Phone number added. Your business is already verified, and we have asked the carrier to enable this number for messaging.';
+        return 'Phone number added. Your business is already verified. We have asked the carrier to enable this number for messaging — this is usually quick, but texting will not be available on this number until that is confirmed.';
     }
 
     // -----------------------------------------------------------------
@@ -518,7 +518,7 @@ class TextMessagingController extends CustomerBaseController
     // -----------------------------------------------------------------
 
     /**
-     * @return array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}
+     * @return array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}
      */
     private function situation(Business $business): array
     {
@@ -560,7 +560,16 @@ class TextMessagingController extends CustomerBaseController
             return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
         }
 
-        $ready = $number->isActive() && $registration !== null && $registration->isApproved();
+        // Review correction — a local number's own carrier-side campaign
+        // assignment must be genuinely Confirmed, never merely Requested,
+        // before the customer is told they are Ready. See
+        // BusinessMessagingNumber::isCampaignAssignmentConfirmedOrNotRequired()'s
+        // own docblock for why toll-free and assignment-less numbers pass
+        // this check unconditionally.
+        $ready = $number->isActive()
+            && $registration !== null
+            && $registration->isApproved()
+            && $number->isCampaignAssignmentConfirmedOrNotRequired();
 
         return [
             'state' => $ready ? 'ready' : 'registration_required',
@@ -568,6 +577,8 @@ class TextMessagingController extends CustomerBaseController
             'textingAvailable' => $ready,
             'mediaAvailable' => $ready,
             'registration' => $registration,
+            'campaignAssignmentStatus' => $number->campaign_assignment_status,
+            'campaignAssignmentFailureReason' => $number->campaign_assignment_failure_reason,
             ...$portOutContext,
         ];
     }
@@ -682,7 +693,7 @@ class TextMessagingController extends CustomerBaseController
     }
 
     /**
-     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
+     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
     private function renderNoNumber(string $workspaceUid, string $businessUid, array $situation, ?PhoneNumberType $numberTypeLocked = null): View
     {
@@ -694,6 +705,7 @@ class TextMessagingController extends CustomerBaseController
             'criteria' => [],
             'candidate' => null,
             'candidateToken' => null,
+            'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor(PhoneNumberType::Local),
             // Review correction — non-null only for the verify-first local
             // sequence's "your business is verified, now choose your
             // number" render: the view hides the toll-free/local choice
@@ -710,7 +722,7 @@ class TextMessagingController extends CustomerBaseController
     }
 
     /**
-     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
+     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
     private function renderRegistration(string $workspaceUid, string $businessUid, array $situation): View
     {
@@ -722,9 +734,17 @@ class TextMessagingController extends CustomerBaseController
             // with no captured details yet still gets a real (unsaved)
             // model, so the form can read every field the same way
             // whether this is the first visit or the tenth.
-            'registration' => $situation['registration'] ?? new BusinessMessagingRegistration(['status' => MessagingRegistrationStatus::NotStarted->value]),
+            'registration' => $registration = $situation['registration'] ?? new BusinessMessagingRegistration(['status' => MessagingRegistrationStatus::NotStarted->value]),
             'useCases' => self::US_USE_CASES,
             'available' => ProvisioningAvailability::isConfigured(),
+            'verificationChargeDisclosure' => $this->registrations->chargeDisclosureFor($registration->number_type ?? PhoneNumberType::Local),
+            // Review correction — an Approved registration with a genuine
+            // number can still be stuck here, never Ready, while a local
+            // number's own carrier-side campaign assignment has not yet
+            // been Confirmed (or has Failed) — this is the only render
+            // that ever shows that durable state to the customer.
+            'campaignAssignmentStatus' => $situation['campaignAssignmentStatus'] ?? null,
+            'campaignAssignmentFailureReason' => $situation['campaignAssignmentFailureReason'] ?? null,
             // Review correction — §13.4's exit path must be reachable while
             // registration is pending/rejected, not only once "ready".
             'retainedNumbers' => $situation['retainedNumbers'],
@@ -733,7 +753,7 @@ class TextMessagingController extends CustomerBaseController
     }
 
     /**
-     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
+     * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
     private function renderReady(string $workspaceUid, string $businessUid, array $situation): View
     {
