@@ -36,10 +36,23 @@ final readonly class MessagingRegistrationSubmission
         public string $sampleMessage2,
         public string $privacyPolicyUrl,
         public string $termsUrl,
+        /**
+         * Review correction — Telnyx's toll-free verification submission
+         * requires the already-owned number being verified (a `phoneNumbers`
+         * array in the request body); 10DLC brand+campaign registration has
+         * no such requirement, since it is a Business/account-level
+         * submission Telnyx genuinely supports completing before any number
+         * is purchased. Null for a local (10DLC) registration submitted
+         * before a number exists; always populated for a toll-free
+         * registration, since that regime can only ever be submitted once a
+         * number is already owned (the controller enforces this before
+         * calling submit()).
+         */
+        public ?string $phoneNumber = null,
     ) {
     }
 
-    public static function fromModel(BusinessMessagingRegistration $registration): self
+    public static function fromModel(BusinessMessagingRegistration $registration, ?string $phoneNumber = null): self
     {
         return new self(
             businessId: (int) $registration->business_id,
@@ -62,6 +75,7 @@ final readonly class MessagingRegistrationSubmission
             sampleMessage2: (string) $registration->sample_message_2,
             privacyPolicyUrl: (string) $registration->privacy_policy_url,
             termsUrl: (string) $registration->terms_url,
+            phoneNumber: $phoneNumber,
         );
     }
 }

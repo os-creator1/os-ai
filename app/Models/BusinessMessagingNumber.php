@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\PhoneNumberType;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -40,6 +41,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * a genuine (or explicitly-faked-in-a-test) confirmation from
  * MessagingProvisioningAdapter::releaseNumber() — never merely because a
  * decision was recorded.
+ *
+ * Review correction — the five campaign_assignment_* columns
+ * (campaign_assignment_status, campaign_assignment_task_id,
+ * campaign_assignment_confirmed_at, campaign_assignment_failed_at,
+ * campaign_assignment_failure_reason) are likewise absent from $fillable:
+ * BusinessMessagingProvisioningService is their single writer. Null on
+ * every toll-free number and on any number that never went through this
+ * platform's own verify-first local sequence — deliberately treated as
+ * "not applicable", never as a passed check (see
+ * isCampaignAssignmentConfirmedOrNotRequired()'s own docblock).
  */
 class BusinessMessagingNumber extends Model
 {
@@ -70,6 +81,8 @@ class BusinessMessagingNumber extends Model
         'release_notice_failed_at' => 'datetime',
         'release_decided_at' => 'datetime',
         'carrier_release_failed_at' => 'datetime',
+        'campaign_assignment_confirmed_at' => 'datetime',
+        'campaign_assignment_failed_at' => 'datetime',
     ];
 
     public function identity(): BelongsTo
@@ -145,6 +158,35 @@ class BusinessMessagingNumber extends Model
         return $this->isSuspended()
             && $this->release_decided_at !== null
             && filled($this->provider_number_reference);
+    }
+
+    /**
+     * Review correction — the fail-closed gate both
+     * TextMessagingController::situation()'s Ready state and
+     * ManagedMessageDispatcher::dispatch()'s own send boundary share, so
+     * neither can drift from the other. True for a toll-free number
+     * (never subject to this mechanism at all — its own carrier
+     * verification is submitted directly against the number, no separate
+     * profile-to-campaign link exists) or for a local number whose
+     * campaign_assignment_status is null (never put through this
+     * platform's own verify-first sequence — a test fixture, or a number
+     * predating this mechanism; there is no real customer-facing path
+     * today that reaches an Active local number with a null status,
+     * since orderNumber() calls
+     * BusinessMessagingProvisioningService::assignToApprovedCampaign()
+     * for every local purchase). False for a local number whose
+     * assignment was Requested or Failed — true only once it is
+     * genuinely Confirmed by checkCampaignAssignmentStatus() actually
+     * polling the carrier. "Requested" must never be treated as
+     * "Confirmed" anywhere this method's callers are the source of truth.
+     */
+    public function isCampaignAssignmentConfirmedOrNotRequired(): bool
+    {
+        if ($this->number_type !== PhoneNumberType::Local || $this->campaign_assignment_status === null) {
+            return true;
+        }
+
+        return $this->campaign_assignment_status === CampaignAssignmentOutcome::Confirmed->value;
     }
 
     public function scopeSuspended(Builder $query): Builder

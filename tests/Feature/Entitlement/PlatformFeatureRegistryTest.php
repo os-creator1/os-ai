@@ -39,13 +39,12 @@ class PlatformFeatureRegistryTest extends TestCase
             // (PackagesProducts left this list at Contract 16 Sub-slice E's final
             // flip; test_packages_products_is_available_after_sub_slice_es_final_flip
             // asserts it is Available.)
-            // Implementation Contract 17, Sub-slice A — schema and inert
-            // entitlement identity only; stays Planned until Sub-slice G's
-            // final flip, after A-F are merged and verified end to end.
-            PlatformFeature::PaymentsContracts,
+            // (PaymentsContracts left this list at Contract 17 Sub-slice G's final
+            // flip; test_payments_contracts_is_available_after_sub_slice_gs_final_flip
+            // asserts it is Available.)
         ];
 
-        $this->assertCount(9, $planned);
+        $this->assertCount(8, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -77,6 +76,21 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PackagesProducts->value));
         $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PackagesProducts->value));
+    }
+
+    public function test_payments_contracts_is_available_after_sub_slice_gs_final_flip(): void
+    {
+        // Implementation Contract 17: Planned through Sub-slices A-F (schema,
+        // inert entitlement identity, authoring, secure send/sign and Stripe
+        // Connect payments with no availability flip), flipped to Available
+        // only by Sub-slice G once the full flow was proven end to end
+        // (PaymentsContractsAcceptanceTest). Packaged into all three plan
+        // tiers — no tier is excluded
+        // (`2026_09_25_100012_seed_payments_contracts_plan_packaging.php`).
+        $this->assertSame('payments_contracts', PlatformFeature::PaymentsContracts->value);
+        $this->assertTrue(PlatformFeatureRegistry::isKnown(PlatformFeature::PaymentsContracts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::PaymentsContracts->value));
+        $this->assertTrue(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::PaymentsContracts->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void
