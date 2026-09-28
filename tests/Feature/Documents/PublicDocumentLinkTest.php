@@ -3,6 +3,8 @@
 namespace Tests\Feature\Documents;
 
 use App\Enums\Business\BusinessLocationLifecycleState;
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Library\Documents\DocumentManager;
 use App\Library\Entitlement\EntitlementManager;
@@ -151,10 +153,36 @@ class PublicDocumentLinkTest extends TestCase
 
     public function test_an_unentitled_account_gets_the_same_refusal_as_a_bad_token(): void
     {
-        // Deliberately NO allowPublicEntitlement(): Payments & Contracts is
-        // `Planned` until Sub-slice G, so this is the real production answer.
+        // Payments & Contracts is `Available` and packaged into every plan
+        // tier since Sub-slice G's final flip, so `sendableTenant()` alone no
+        // longer produces a genuinely unentitled Business. A real
+        // WorkspaceEntitlementOverrideState::Deny override (the same
+        // mechanism DocumentsNavigationTest uses) makes this Business
+        // genuinely unentitled through the unmodified production
+        // EntitlementManager, so this still proves §6.3.1: the link is not
+        // an entitlement bypass.
         $tenant = $this->sendableTenant();
         [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
+
+        $this->get($this->publicUrl($document, $token))->assertOk();
+
+        app(EntitlementManager::class)->createOrChangeOverride(
+            $tenant['workspace'],
+            PlatformFeature::PaymentsContracts,
+            WorkspaceEntitlementOverrideState::Deny,
+            $this->platformAdminId(),
+            'Public document link test: deny the feature.'
+        );
+
+        $this->assertFalse(
+            app(EntitlementManager::class)->decide(
+                $tenant['workspace'],
+                $tenant['business'],
+                PlatformFeature::PaymentsContracts->value,
+                (int) $tenant['business']->customer_id,
+            )->allowed,
+            'The real entitlement decision must be denied after the override.'
+        );
 
         $this->assertUniformRefusal($this->get($this->publicUrl($document, $token)), 'unentitled account');
     }
