@@ -70,8 +70,14 @@ class TextMessagingSetupStateTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
+        // Review correction — toll-free, not local: a local search is now
+        // refused before it ever reaches this "unconfigured" branch unless
+        // the Business already has an Approved local business
+        // verification (see the verify-first sequence's own tests); this
+        // test's own intent (preview/inert behavior when unconfigured) is
+        // unaffected by which type is searched.
         $response = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
-            'number_type' => 'local',
+            'number_type' => 'toll_free',
         ]);
 
         $response->assertOk();
@@ -101,7 +107,12 @@ class TextMessagingSetupStateTest extends TestCase
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
-        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550200', \App\Enums\Messaging\PhoneNumberType::Local, 'candidate-ref-order-1'));
+        // Review correction — toll-free: this proves the number-first
+        // sequence, which toll-free's own carrier verification requires
+        // (it can only ever be submitted for an already-owned number). The
+        // local (10DLC) verify-first sequence has its own dedicated test
+        // file, TextMessagingLocalVerificationSequenceTest.
+        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550200', \App\Enums\Messaging\PhoneNumberType::TollFree, 'candidate-ref-order-1'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -110,7 +121,7 @@ class TextMessagingSetupStateTest extends TestCase
         // the opaque candidate_token this platform's own search response
         // just issued, never with raw, independently-editable fields.
         $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
-            'number_type' => 'local',
+            'number_type' => 'toll_free',
         ])->assertOk();
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
@@ -136,13 +147,17 @@ class TextMessagingSetupStateTest extends TestCase
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
-        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550210', \App\Enums\Messaging\PhoneNumberType::Local, 'candidate-ref-real'));
+        // Review correction — toll-free: never subject to the verify-first
+        // gate, so this stays a plain, unconditional search/order (the
+        // anti-tamper mechanism itself is what this test proves, not the
+        // sequence).
+        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550210', \App\Enums\Messaging\PhoneNumberType::TollFree, 'candidate-ref-real'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
 
         $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), [
-            'number_type' => 'local',
+            'number_type' => 'toll_free',
         ])->assertOk();
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
@@ -161,14 +176,14 @@ class TextMessagingSetupStateTest extends TestCase
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
-        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550211', \App\Enums\Messaging\PhoneNumberType::Local, 'candidate-ref-real-2'));
+        $fake->queueSearchResult(new \App\Library\Messaging\DTO\AvailableNumberCandidate('+14155550211', \App\Enums\Messaging\PhoneNumberType::TollFree, 'candidate-ref-real-2'));
 
         [$customerA, $businessA, $workspaceA] = $this->tenant(WorkspacePlanTier::Growth, 'Business A', 'Workspace A');
         [, $businessB, $workspaceB] = $this->tenant(WorkspacePlanTier::Growth, 'Business B', 'Workspace B');
         $this->authenticateAs($customerA);
 
         $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspaceA->uid, $businessA->uid]), [
-            'number_type' => 'local',
+            'number_type' => 'toll_free',
         ])->assertOk();
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
@@ -426,12 +441,12 @@ class TextMessagingSetupStateTest extends TestCase
         $fake = new FakeProvisioningAdapter();
         $this->app->instance(MessagingProvisioningAdapter::class, $fake);
         config(['messaging.managed_messaging_enabled' => true, 'messaging.managed_messaging_provisioning_enabled' => true, 'services.telnyx.api_key' => 'fixture_key']);
-        $fake->queueSearchResult(new AvailableNumberCandidate('+14155550220', \App\Enums\Messaging\PhoneNumberType::Local, 'candidate-ref-buy-numbers'));
+        $fake->queueSearchResult(new AvailableNumberCandidate('+14155550220', \App\Enums\Messaging\PhoneNumberType::TollFree, 'candidate-ref-buy-numbers'));
 
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer, ['view_numbers', 'buy_numbers']);
 
-        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'local'])->assertOk();
+        $searchResponse = $this->post(route('customer.workspaces.businesses.text-messaging.number.search', [$workspace->uid, $business->uid]), ['number_type' => 'toll_free'])->assertOk();
         $candidateToken = $this->extractCandidateToken($searchResponse->getContent());
 
         $this->post(route('customer.workspaces.businesses.text-messaging.number.order', [$workspace->uid, $business->uid]), ['candidate_token' => $candidateToken])

@@ -9,16 +9,26 @@
     plain escaped text only.
 --}}
 @php
+    // Preview shows live Business/Location state exactly as it will be
+    // resolved at the NEXT publish (§7.3) — including this SAME address
+    // privacy gate WebsiteSnapshotBuilder applies at publish time, so a
+    // location the predicate would withhold never appears in preview
+    // either, even with Show address checked.
+    $previewLocation = $website->business?->primaryLocation;
+    $addressPermitted = $previewLocation !== null
+        && $previewLocation->isActive()
+        && app(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileReadMask::class)->addressPermittedForLocation($previewLocation);
+
     $resolved = $data['resolved'] ?? [
         'phone' => ($data['show_phone'] ?? false) ? $website->business?->phone : null,
         'email' => ($data['show_email'] ?? false) ? $website->business?->email : null,
-        'address' => ($data['show_address'] ?? false)
+        'address' => ($data['show_address'] ?? false) && $addressPermitted
             ? collect([
-                $website->business?->primaryLocation?->address_line_1,
-                $website->business?->primaryLocation?->address_line_2,
-                $website->business?->primaryLocation?->city,
-                $website->business?->primaryLocation?->region,
-                $website->business?->primaryLocation?->postal_code,
+                $previewLocation?->address_line_1,
+                $previewLocation?->address_line_2,
+                $previewLocation?->city,
+                $previewLocation?->region,
+                $previewLocation?->postal_code,
             ])->filter()->implode(', ')
             : null,
     ];

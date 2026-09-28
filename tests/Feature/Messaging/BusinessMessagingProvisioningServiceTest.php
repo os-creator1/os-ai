@@ -266,4 +266,193 @@ class BusinessMessagingProvisioningServiceTest extends TestCase
         ]);
         $this->assertSame(1, BusinessMessagingProvisioningIncident::where('business_id', $business->id)->count());
     }
+
+    // =================================================================
+    // Review correction — assignToApprovedCampaign()'s durable, pollable
+    // campaign-assignment state. Requested is never treated as Confirmed
+    // anywhere; a failed or unconfirmable request is recorded both on the
+    // number row and as a provisioning incident.
+    // =================================================================
+
+    public function test_assign_to_approved_campaign_persists_requested_status_and_task_id(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550300', PhoneNumberType::Local, 'candidate-ref-assign-1'));
+
+        $result = $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000001');
+
+        $this->assertSame(\App\Enums\Messaging\CampaignAssignmentOutcome::Requested, $result->outcome);
+        $number->refresh();
+        $this->assertSame('requested', $number->campaign_assignment_status);
+        $this->assertNotNull($number->campaign_assignment_task_id);
+        $this->assertNull($number->campaign_assignment_confirmed_at);
+        $this->assertNull($number->campaign_assignment_failed_at);
+        // A merely-Requested outcome is never itself an incident.
+        $this->assertDatabaseCount('business_messaging_provisioning_incidents', 0);
+    }
+
+    public function test_assign_to_approved_campaign_persists_failed_status_and_records_an_incident(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550301', PhoneNumberType::Local, 'candidate-ref-assign-2'));
+        $fake->scriptCampaignAssignmentOutcome('fake_profile_000001', \App\Enums\Messaging\CampaignAssignmentOutcome::Failed);
+
+        $result = $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000002');
+
+        $this->assertSame(\App\Enums\Messaging\CampaignAssignmentOutcome::Failed, $result->outcome);
+        $number->refresh();
+        $this->assertSame('failed', $number->campaign_assignment_status);
+        $this->assertNotNull($number->campaign_assignment_failed_at);
+        $this->assertSame('fake_failed', $number->campaign_assignment_failure_reason);
+        $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
+            'business_id' => $business->id,
+            'stage' => 'campaign_assignment_request_failed',
+        ]);
+    }
+
+    public function test_assign_to_approved_campaign_fails_and_records_an_incident_when_the_messaging_profile_id_is_missing(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550309', PhoneNumberType::Local, 'candidate-ref-assign-11'));
+        // messaging_profile_id is a real NOT-NULL, UNIQUE column, and a
+        // number's identity is protected by its own restrictOnDelete()
+        // foreign key — there is no way to genuinely orphan a number via
+        // SQL. Faking the in-memory relation is the only way to exercise
+        // this method's own defensive "identity is missing" branch without
+        // corrupting the database.
+        $number->setRelation('identity', null);
+
+        $result = $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000003');
+
+        $this->assertSame(\App\Enums\Messaging\CampaignAssignmentOutcome::Failed, $result->outcome);
+        $this->assertSame('missing_messaging_profile_id', $result->detail);
+        $number->refresh();
+        $this->assertSame('failed', $number->campaign_assignment_status);
+        $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
+            'business_id' => $business->id,
+            'stage' => 'campaign_assignment_request_failed',
+            'error_message' => 'missing_messaging_profile_id',
+        ]);
+    }
+
+    public function test_assign_to_approved_campaign_fails_and_records_an_incident_when_the_campaign_id_is_missing(): void
+    {
+        $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550302', PhoneNumberType::Local, 'candidate-ref-assign-4'));
+
+        $result = $this->service()->assignToApprovedCampaign($business, $number, null);
+
+        $this->assertSame(\App\Enums\Messaging\CampaignAssignmentOutcome::Failed, $result->outcome);
+        $this->assertSame('missing_campaign_id', $result->detail);
+        $number->refresh();
+        $this->assertSame('failed', $number->campaign_assignment_status);
+        $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
+            'business_id' => $business->id,
+            'stage' => 'campaign_assignment_request_failed',
+            'error_message' => 'missing_campaign_id',
+        ]);
+    }
+
+    // =================================================================
+    // Review correction — refreshPendingCampaignAssignment(): the real
+    // completion mechanism, polled until it resolves.
+    // =================================================================
+
+    public function test_refresh_pending_campaign_assignment_confirms_when_the_poll_reports_completed(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550303', PhoneNumberType::Local, 'candidate-ref-assign-5'));
+        $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000005');
+        $fake->scriptCampaignAssignmentPollOutcome('+14155550303', \App\Enums\Messaging\CampaignAssignmentOutcome::Confirmed);
+
+        $this->service()->refreshPendingCampaignAssignment($number->fresh());
+
+        $number->refresh();
+        $this->assertSame('confirmed', $number->campaign_assignment_status);
+        $this->assertNotNull($number->campaign_assignment_confirmed_at);
+        $this->assertTrue($number->isCampaignAssignmentConfirmedOrNotRequired());
+    }
+
+    public function test_refresh_pending_campaign_assignment_fails_when_the_poll_reports_failed(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550304', PhoneNumberType::Local, 'candidate-ref-assign-6'));
+        $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000006');
+        $fake->scriptCampaignAssignmentPollOutcome('+14155550304', \App\Enums\Messaging\CampaignAssignmentOutcome::Failed);
+
+        $this->service()->refreshPendingCampaignAssignment($number->fresh());
+
+        $number->refresh();
+        $this->assertSame('failed', $number->campaign_assignment_status);
+        $this->assertNotNull($number->campaign_assignment_failed_at);
+        $this->assertFalse($number->isCampaignAssignmentConfirmedOrNotRequired());
+        $this->assertDatabaseHas('business_messaging_provisioning_incidents', [
+            'business_id' => $business->id,
+            'stage' => 'campaign_assignment_request_failed',
+        ]);
+    }
+
+    /**
+     * Retry/reconciliation — still processing on this poll never advances
+     * or regresses anything; a LATER poll (the next scheduled sweep) can
+     * still resolve it.
+     */
+    public function test_refresh_pending_campaign_assignment_is_a_no_op_while_still_processing_and_can_later_resolve(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550305', PhoneNumberType::Local, 'candidate-ref-assign-7'));
+        $this->service()->assignToApprovedCampaign($business, $number, 'fake_campaign_000007');
+        // Default scripted poll outcome is Requested ("still processing").
+
+        $this->service()->refreshPendingCampaignAssignment($number->fresh());
+
+        $number->refresh();
+        $this->assertSame('requested', $number->campaign_assignment_status, 'Still processing must never regress or advance the status.');
+        $this->assertNull($number->campaign_assignment_confirmed_at);
+        $this->assertNull($number->campaign_assignment_failed_at);
+
+        // The next sweep tick, now that the carrier has actually finished.
+        $fake->scriptCampaignAssignmentPollOutcome('+14155550305', \App\Enums\Messaging\CampaignAssignmentOutcome::Confirmed);
+        $this->service()->refreshPendingCampaignAssignment($number->fresh());
+
+        $this->assertSame('confirmed', $number->fresh()->campaign_assignment_status);
+    }
+
+    public function test_refresh_pending_campaign_assignment_does_nothing_for_a_number_with_no_assignment_in_progress(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $business = $this->makeBusiness();
+        $number = $this->service()->provisionNumber($business, new AvailableNumberCandidate('+14155550306', PhoneNumberType::TollFree, 'candidate-ref-assign-8'));
+
+        $this->service()->refreshPendingCampaignAssignment($number->fresh());
+
+        $this->assertSame([], $fake->campaignAssignmentStatusChecks, 'A toll-free number (or any number never put through assignment) must never be polled.');
+    }
+
+    public function test_refresh_all_pending_campaign_assignments_sweeps_every_requested_number(): void
+    {
+        $fake = $this->bindFakeProvisioningAdapter();
+        $businessA = $this->makeBusiness();
+        $numberA = $this->service()->provisionNumber($businessA, new AvailableNumberCandidate('+14155550307', PhoneNumberType::Local, 'candidate-ref-assign-9'));
+        $this->service()->assignToApprovedCampaign($businessA, $numberA, 'fake_campaign_000009');
+
+        $businessB = $this->makeBusiness();
+        $numberB = $this->service()->provisionNumber($businessB, new AvailableNumberCandidate('+14155550308', PhoneNumberType::Local, 'candidate-ref-assign-10'));
+        $this->service()->assignToApprovedCampaign($businessB, $numberB, 'fake_campaign_000010');
+
+        $fake->scriptCampaignAssignmentPollOutcome('+14155550307', \App\Enums\Messaging\CampaignAssignmentOutcome::Confirmed);
+        $fake->scriptCampaignAssignmentPollOutcome('+14155550308', \App\Enums\Messaging\CampaignAssignmentOutcome::Failed);
+
+        $this->service()->refreshAllPendingCampaignAssignments();
+
+        $this->assertSame('confirmed', $numberA->fresh()->campaign_assignment_status);
+        $this->assertSame('failed', $numberB->fresh()->campaign_assignment_status);
+    }
 }

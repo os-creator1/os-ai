@@ -49,6 +49,14 @@
                         not created yet. <a href="{{ route('customer.workspaces.businesses.website.forms.index', [$workspaceUid, $businessUid]) }}">Create your quote request form</a>.
                     @endif
                 </li>
+                <li>
+                    About &amp; FAQ content:
+                    @if ($aboutFaqMissingCount > 0)
+                        your About and FAQ pages only show what you've confirmed so far. {{ $aboutFaqMissingCount }} more confirmed {{ $aboutFaqMissingCount === 1 ? 'answer' : 'answers' }} (years in business, credentials, guarantees, pricing, financing, what makes you different, who you serve) would make them more complete — we never guess these for you. <a href="{{ route('customer.workspaces.businesses.knowledge-profile.edit', [$workspaceUid, $businessUid]) }}">Complete your Knowledge Profile</a>.
+                    @else
+                        every fact your About and FAQ pages can show is already confirmed. <a href="{{ route('customer.workspaces.businesses.knowledge-profile.edit', [$workspaceUid, $businessUid]) }}">Review your Knowledge Profile</a>.
+                    @endif
+                </li>
             </ul>
         </x-card>
     @endif

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Website\WebsiteDomainStatus;
 use App\Enums\Website\WebsiteStatus;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
@@ -99,5 +100,21 @@ class Website extends Model
     public function publishedRevision(): BelongsTo
     {
         return $this->belongsTo(WebsiteRevision::class, 'published_revision_id');
+    }
+
+    /**
+     * The one domain, if any, that actually serves this Website's
+     * content — every other Active domain for it is an alias that
+     * redirects here (App\Http\Middleware\ResolveCustomDomainWebsite).
+     * The single canonical-URL source for both the custom-domain
+     * renderer and the platform-path renderer, so a business's content
+     * never has two different "correct" addresses at once.
+     */
+    public function activePrimaryDomain(): ?WebsiteDomain
+    {
+        return $this->domains()
+            ->where('is_primary', true)
+            ->where('status', WebsiteDomainStatus::Active->value)
+            ->first();
     }
 }

@@ -3,6 +3,8 @@
 namespace App\Library\Website;
 
 use App\Enums\Website\WebsiteSectionType;
+use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
+use App\Models\Business;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
 use App\Models\WebsiteForm;
@@ -12,17 +14,34 @@ use Carbon\Carbon;
  * Website Generation + Hosting Slice A contract §11/§14. Builds the
  * self-contained, versioned snapshot JSON stored on a WebsiteRevision.
  * Plain scalars/arrays only — no executable class names, no serialized
- * Eloquent models. `contact_details` (contract §7.3) is the one
- * deliberate live-read exception: its boolean flags are copied
- * unchanged, and the Business's CURRENT phone/email/primary-location
- * address are resolved and copied into the snapshot at build time —
- * the decision of what to display re-reads Business state on the next
- * publish, but the already-published snapshot's values never change
- * themselves.
+ * Eloquent models. `contact_details` (contract §7.3) and the site-wide
+ * `localBusiness` facts below are the two deliberate live-read
+ * exceptions: their VALUES are resolved from CURRENT Business/Location
+ * state and copied into the snapshot at BUILD (publish) time only — a
+ * phone/email change, or a change to WHICH address would be shown,
+ * takes effect only on the next publish, and the already-published
+ * snapshot's values never change themselves in the meantime.
+ *
+ * The address's PERMISSION to be shown at all (contract §7.5) is the
+ * one narrow exception to that freeze: it is re-checked live, on every
+ * public request, by App\Library\Website\Seo\WebsiteAddressPrivacyGate
+ * — a business revoking `public_address` must stop showing its street
+ * address on the very next request, even on an already-published
+ * revision or one reached through rollback, never only "on the next
+ * publish". This class never applies that live check to what it
+ * BAKES INTO a snapshot at publish time (so a permitted, frozen address
+ * value is exactly what the render path's own live gate then decides
+ * whether to actually reveal); it exists here only so a frozen `false`
+ * decision at publish time is never later "upgraded" to `true` by
+ * something this snapshot's own values wouldn't otherwise support.
  */
 final class WebsiteSnapshotBuilder
 {
     public const SCHEMA_VERSION = 1;
+
+    public function __construct(
+        private readonly WebsiteAddressPrivacyGate $privacyGate,
+    ) {}
 
     public function build(Website $website): array
     {
@@ -45,10 +64,17 @@ final class WebsiteSnapshotBuilder
                 }
 
                 if ($type === WebsiteSectionType::ContactDetails) {
+                    // `show_address` is the owner's display preference,
+                    // not a privacy override: an address this business/
+                    // location combination must never surface (the same
+                    // GoogleBusinessProfileReadMask predicate the
+                    // LocalBusiness JSON-LD gate below relies on) is
+                    // withheld from the visible HTML too, even when the
+                    // owner checked Show address.
                     $data['resolved'] = [
                         'phone' => $data['show_phone'] ? $business?->phone : null,
                         'email' => $data['show_email'] ? $business?->email : null,
-                        'address' => $data['show_address'] ? $this->formatAddress($business) : null,
+                        'address' => ($data['show_address'] && $this->addressPermitted($business)) ? $this->formatAddress($business) : null,
                     ];
                 }
 
@@ -98,11 +124,46 @@ final class WebsiteSnapshotBuilder
             'website' => [
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
+                'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots)),
             ],
             'pages' => $pageSnapshots,
             'assets' => $assets,
             'forms' => $forms,
         ];
+    }
+
+    /**
+     * Scans every page just built above for its own `contact_details`
+     * section(s) — the one place a visitor can actually see a phone,
+     * email, or address on this site — and reports which of those three
+     * facts at least one section's owner-controlled Show phone/Show
+     * email/Show address toggle actually reveals. LocalBusiness JSON-LD
+     * must never assert a fact the owner never chose to display, even
+     * when it is otherwise a true, saved Business/Location value: a
+     * turned-off toggle, or a website with no `contact_details` section
+     * at all, means that fact is omitted from structured data too.
+     *
+     * @param  array<int, array{sections: array<int, array{type: string, data: array}>}>  $pageSnapshots
+     * @return array{phone: bool, email: bool, address: bool}
+     */
+    private function visibleContactFacts(array $pageSnapshots): array
+    {
+        $visible = ['phone' => false, 'email' => false, 'address' => false];
+
+        foreach ($pageSnapshots as $page) {
+            foreach ($page['sections'] as $section) {
+                if ($section['type'] !== WebsiteSectionType::ContactDetails->value) {
+                    continue;
+                }
+
+                $resolved = $section['data']['resolved'] ?? [];
+                $visible['phone'] = $visible['phone'] || ! empty($resolved['phone']);
+                $visible['email'] = $visible['email'] || ! empty($resolved['email']);
+                $visible['address'] = $visible['address'] || ! empty($resolved['address']);
+            }
+        }
+
+        return $visible;
     }
 
     private function assetUidsIn(?WebsiteSectionType $type, array $data): array
@@ -143,5 +204,76 @@ final class WebsiteSnapshotBuilder
             $location->region,
             $location->postal_code,
         ])->filter()->implode(', ');
+    }
+
+    /**
+     * Delegates to the one shared, LIVE address-privacy gate
+     * (App\Library\Website\Seo\WebsiteAddressPrivacyGate) that render
+     * time also calls on every public request — see that class for why
+     * the permission check itself is never baked into the snapshot,
+     * unlike the resolved VALUES this method's two callers freeze.
+     */
+    private function addressPermitted(?Business $business): bool
+    {
+        return $this->privacyGate->currentlyPermitsAddress($business);
+    }
+
+    /**
+     * Neutral, schema.org-agnostic facts for
+     * App\Library\Website\Seo\WebsiteLocalBusinessStructuredData to
+     * shape into JSON-LD at render time — this method makes every
+     * privacy/currency decision once, here, at publish time; that
+     * class only ever formats what it is given.
+     *
+     * `telephone`/`email`/`address` are each gated behind TWO
+     * independent checks, both required: `$visibleContact` (was this
+     * fact actually shown to a visitor via a published `contact_details`
+     * section's own Show phone/Show email/Show address toggle? — never
+     * claim in machine-readable metadata what the page itself doesn't
+     * display), AND, for `address` only, the SAME privacy predicate
+     * (WebsiteAddressPrivacyGate) already applied above when resolving
+     * `contact_details`. This method's own address here is still only a
+     * FROZEN, publish-time value — the render path re-checks that SAME
+     * gate again, live, on every public request, so a permission
+     * revoked afterward still withholds the address even though this
+     * value never changes until the next publish.
+     *
+     * `hours` is always omitted: no component on the published site
+     * today ever visibly presents opening hours, so asserting them in
+     * structured data would itself be an undisplayed claim.
+     *
+     * @param  array{phone: bool, email: bool, address: bool}  $visibleContact
+     * @return array{name: ?string, telephone: ?string, email: ?string, address: ?array<string, ?string>, hours: ?array}
+     */
+    private function localBusinessFacts(?Business $business, array $visibleContact): array
+    {
+        if ($business === null) {
+            return ['name' => null, 'telephone' => null, 'email' => null, 'address' => null, 'hours' => null];
+        }
+
+        $name = trim((string) $business->name);
+        $email = $business->email && filter_var($business->email, FILTER_VALIDATE_EMAIL) ? $business->email : null;
+
+        $location = $business->primaryLocation;
+        $address = null;
+
+        if ($visibleContact['address'] && $this->addressPermitted($business)) {
+            $address = [
+                'line1' => $location->address_line_1,
+                'line2' => $location->address_line_2,
+                'city' => $location->city,
+                'region' => $location->region,
+                'postal_code' => $location->postal_code,
+                'country_code' => $location->country_code,
+            ];
+        }
+
+        return [
+            'name' => $name !== '' ? $name : null,
+            'telephone' => $visibleContact['phone'] ? ($business->phone ?: null) : null,
+            'email' => $visibleContact['email'] ? $email : null,
+            'address' => $address,
+            'hours' => null,
+        ];
     }
 }

@@ -2,17 +2,20 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Messaging\CampaignAssignmentOutcome;
 use App\Enums\Messaging\CarrierReleaseOutcome;
 use App\Enums\Messaging\MessagingRegistrationStatus;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\Contracts\MessagingProvisioningAdapter;
 use App\Library\Messaging\DTO\AvailableNumberCandidate;
+use App\Library\Messaging\DTO\CampaignAssignmentResult;
 use App\Library\Messaging\DTO\CarrierReleaseResult;
 use App\Library\Messaging\DTO\MessagingRegistrationSubmission;
 use App\Library\Messaging\DTO\NumberReleaseQuery;
 use App\Library\Messaging\DTO\NumberSearchCriteria;
 use App\Library\Messaging\DTO\ProvisionedNumberResult;
 use App\Library\Messaging\DTO\RegistrationStatusQuery;
+use App\Library\Messaging\DTO\RegistrationStatusResult;
 use App\Library\Messaging\DTO\RegistrationSubmissionResult;
 use App\Models\Business;
 use App\Models\BusinessMessagingRegistration;
@@ -51,6 +54,23 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
 
     /** Scripted refreshRegistrationStatus() answer, keyed by RegistrationStatusQuery::key(). */
     public array $registrationStatuses = [];
+
+    /** Scripted refreshRegistrationStatus() rejection reason, same key. */
+    public array $registrationRejectionReasons = [];
+
+    /** @var list<array{messagingProfileId: string, providerCampaignId: string}> every assignMessagingProfileToCampaign() call, in order. */
+    public array $campaignAssignments = [];
+
+    /** Scripted assignMessagingProfileToCampaign() outcome, keyed by messagingProfileId; defaults to Requested. */
+    public array $campaignAssignmentOutcomes = [];
+
+    /** @var list<array{taskId: string, phoneNumber: string}> every checkCampaignAssignmentStatus() call, in order. */
+    public array $campaignAssignmentStatusChecks = [];
+
+    /** Scripted checkCampaignAssignmentStatus() outcome, keyed by phoneNumber; defaults to Requested (still processing). */
+    public array $campaignAssignmentPollOutcomes = [];
+
+    private int $campaignAssignmentTaskCounter = 0;
 
     /** @var list<NumberReleaseQuery> every releaseNumber() call, in order. */
     public array $releaseAttempts = [];
@@ -116,9 +136,73 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
         );
     }
 
-    public function refreshRegistrationStatus(RegistrationStatusQuery $query): MessagingRegistrationStatus
+    public function refreshRegistrationStatus(RegistrationStatusQuery $query): RegistrationStatusResult
     {
-        return $this->registrationStatuses[$query->key()] ?? MessagingRegistrationStatus::Pending;
+        $status = $this->registrationStatuses[$query->key()] ?? MessagingRegistrationStatus::Pending;
+
+        return new RegistrationStatusResult(
+            $status,
+            $status === MessagingRegistrationStatus::Rejected ? ($this->registrationRejectionReasons[$query->key()] ?? null) : null,
+        );
+    }
+
+    public function assignMessagingProfileToCampaign(string $messagingProfileId, string $providerCampaignId): CampaignAssignmentResult
+    {
+        $this->campaignAssignments[] = ['messagingProfileId' => $messagingProfileId, 'providerCampaignId' => $providerCampaignId];
+
+        $outcome = $this->campaignAssignmentOutcomes[$messagingProfileId] ?? CampaignAssignmentOutcome::Requested;
+
+        if ($outcome !== CampaignAssignmentOutcome::Requested) {
+            // A scripted immediate failure (e.g. missing profile/campaign
+            // id) never produces a task id — there is nothing to poll.
+            return new CampaignAssignmentResult($outcome, 'fake_failed');
+        }
+
+        $this->campaignAssignmentTaskCounter++;
+
+        return new CampaignAssignmentResult(
+            CampaignAssignmentOutcome::Requested,
+            'fake_task_requested',
+            sprintf('fake_task_%06d', $this->campaignAssignmentTaskCounter),
+        );
+    }
+
+    /**
+     * Test helper — scripts this exact Messaging Profile's next
+     * assignMessagingProfileToCampaign() outcome. Only Requested (the
+     * default) and Failed are meaningful here — Confirmed is never an
+     * immediate POST result in reality (see CampaignAssignmentOutcome's
+     * own docblock); script a poll outcome via
+     * scriptCampaignAssignmentPollOutcome() for that.
+     */
+    public function scriptCampaignAssignmentOutcome(string $messagingProfileId, CampaignAssignmentOutcome $outcome): void
+    {
+        $this->campaignAssignmentOutcomes[$messagingProfileId] = $outcome;
+    }
+
+    public function checkCampaignAssignmentStatus(string $taskId, string $phoneNumber): CampaignAssignmentResult
+    {
+        $this->campaignAssignmentStatusChecks[] = ['taskId' => $taskId, 'phoneNumber' => $phoneNumber];
+
+        $outcome = $this->campaignAssignmentPollOutcomes[$phoneNumber] ?? CampaignAssignmentOutcome::Requested;
+
+        return new CampaignAssignmentResult($outcome, match ($outcome) {
+            CampaignAssignmentOutcome::Confirmed => 'fake_poll_completed',
+            CampaignAssignmentOutcome::Failed => 'fake_poll_failed',
+            CampaignAssignmentOutcome::Requested => 'fake_poll_still_processing',
+        });
+    }
+
+    /**
+     * Test helper — scripts this exact phone number's next
+     * checkCampaignAssignmentStatus() poll outcome. Defaults to Requested
+     * ("still processing") so a test must explicitly script Confirmed or
+     * Failed to move the poll along — mirrors scriptReleaseOutcome()'s own
+     * per-reference keying.
+     */
+    public function scriptCampaignAssignmentPollOutcome(string $phoneNumber, CampaignAssignmentOutcome $outcome): void
+    {
+        $this->campaignAssignmentPollOutcomes[$phoneNumber] = $outcome;
     }
 
     public function releaseNumber(NumberReleaseQuery $query): CarrierReleaseResult
@@ -156,9 +240,18 @@ class FakeProvisioningAdapter implements MessagingProvisioningAdapter
     /**
      * Scripts refreshRegistrationStatus()'s answer for this exact
      * registration's current provider references, whichever regime it is.
+     * $reason is only ever returned when $status is Rejected — scripting
+     * one alongside any other status is a no-op, matching
+     * TelnyxProvisioningAdapter's own real behavior (a reason only ever
+     * accompanies a rejection).
      */
-    public function scriptRegistrationStatus(BusinessMessagingRegistration $registration, MessagingRegistrationStatus $status): void
+    public function scriptRegistrationStatus(BusinessMessagingRegistration $registration, MessagingRegistrationStatus $status, ?string $reason = null): void
     {
-        $this->registrationStatuses[RegistrationStatusQuery::fromModel($registration)->key()] = $status;
+        $key = RegistrationStatusQuery::fromModel($registration)->key();
+        $this->registrationStatuses[$key] = $status;
+
+        if ($reason !== null) {
+            $this->registrationRejectionReasons[$key] = $reason;
+        }
     }
 }

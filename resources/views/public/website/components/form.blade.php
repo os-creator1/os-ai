@@ -32,6 +32,9 @@
                  page, since a posted value would be visitor-controlled
                  and unverifiable. The same form can appear on more than
                  one page, so the form_uid alone can't say which. --}}
+            @if (session('status') === 'success' && ! empty(session('message')))
+                <p class="website-form-success" role="status">{{ session('message') }}</p>
+            @endif
             <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid'], $pageUid]) }}" class="website-form-fields">
                 @csrf
                 <input type="text" name="{{ \App\Library\Website\WebsiteFormSubmissionService::HONEYPOT_FIELD }}" value="" tabindex="-1" autocomplete="off" class="website-form-honeypot" aria-hidden="true">
