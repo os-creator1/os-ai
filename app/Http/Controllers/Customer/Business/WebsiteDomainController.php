@@ -144,10 +144,15 @@ class WebsiteDomainController extends CustomerBaseController
         $removedDomain = $domain->domain;
         $this->domains->remove($website, $domain);
 
-        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with([
-            'status' => 'success',
-            'message' => "{$removedDomain} removed.",
-        ]);
+        // remove() only ever deletes the row once Forge itself confirms
+        // the domain resource is gone — $domain->exists is still false
+        // right here when it did, and still true (status Removing) when
+        // Forge could not be reached or refused the delete.
+        return redirect()->route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid])->with(
+            $domain->exists
+                ? ['status' => 'error', 'message' => "{$removedDomain} is no longer served, but we couldn't confirm removal with our hosting provider yet. It will need to be retried."]
+                : ['status' => 'success', 'message' => "{$removedDomain} removed."]
+        );
     }
 
     /**

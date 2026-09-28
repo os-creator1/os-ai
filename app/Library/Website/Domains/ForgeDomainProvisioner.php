@@ -51,7 +51,11 @@ use Throwable;
  *     (`DELETE .../domains/{domain}`) — Forge tears down its Nginx
  *     config and certificates for that domain alone; every other
  *     domain on the site, and its own independent certificate, is
- *     completely untouched.
+ *     completely untouched. Unlike the other three methods, a failure
+ *     here is never swallowed: WebsiteDomainService::remove() must
+ *     know when deletion did NOT happen, so it never frees the
+ *     hostname or discards the id of a Forge resource that may still
+ *     exist — see that method's own docblock.
  *
  * This class is the ONLY place a Forge API call is ever made. It is a
  * plain (non-final) class specifically so tests can bind a Mockery
@@ -196,20 +200,43 @@ class ForgeDomainProvisioner
      * config, and its own independent certificate(s), are torn down
      * with it. Every other domain on the shared site is completely
      * unaffected, since nothing is shared between them under Forge's
-     * current per-domain model. Never throws — WebsiteDomainService::
-     * remove() must always succeed locally even when the provider-side
-     * call fails.
+     * current per-domain model.
+     *
+     * Unlike every other method here, a failure is NEVER swallowed:
+     * WebsiteDomainService::remove() must know deletion did not
+     * actually happen, so it never frees the hostname or discards
+     * forge_domain_id while the Forge resource may still exist. Both
+     * an HTTP failure response and a transport-level failure (timeout,
+     * DNS, connection refused — Http::fake() can simulate this as a
+     * thrown ConnectionException, which never reaches ->failed()) are
+     * reported identically, by throwing.
+     *
+     * A 404 is the one exception treated as SUCCESS: the domain is
+     * already gone, which is exactly the desired end state — the
+     * likely result of a previous attempt whose Forge-side deletion
+     * succeeded but crashed before this app could record it.
+     *
+     * @throws DomainProvisioningException
      */
     public function detachDomain(string $forgeDomainId): void
     {
-        try {
-            [$token, $org, $serverId, $siteId] = $this->credentials();
+        [$token, $org, $serverId, $siteId] = $this->credentials();
 
-            $this->client($token)->delete(
+        try {
+            $response = $this->client($token)->delete(
                 self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains/{$forgeDomainId}"
             );
-        } catch (Throwable) {
-            // Best-effort only — see docblock above.
+        } catch (Throwable $exception) {
+            throw new DomainProvisioningException(
+                "Forge domain deletion failed for domain {$forgeDomainId}: ".$exception->getMessage(),
+                previous: $exception,
+            );
+        }
+
+        if ($response->failed() && $response->status() !== 404) {
+            throw new DomainProvisioningException(
+                "Forge domain deletion failed for domain {$forgeDomainId}: HTTP {$response->status()} {$response->body()}"
+            );
         }
     }
 

@@ -317,6 +317,72 @@ class WebsiteDomainTest extends TestCase
         $this->assertTrue($alias->fresh()->is_primary);
     }
 
+    public function test_a_removal_forge_cannot_confirm_keeps_the_hostname_claimed_until_a_retry_succeeds(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->publish($website);
+        $this->fakeDnsVerifier(true);
+        $provisioner = $this->fakeDomainProvisioner();
+        $provisioner->shouldReceive('attachDomain')->once()->andReturn('forge-domain-retry');
+        $provisioner->shouldReceive('requestCertificate')->once()->with('forge-domain-retry')->andReturn('cert-retry');
+        $provisioner->shouldReceive('certificateStatus')->once()->with('forge-domain-retry', 'cert-retry')->andReturn(WebsiteDomainCertificateStatus::Active);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspace->uid, $business->uid]), ['domain' => 'flaky-removal.test'])->assertRedirect();
+        $domain = $website->domains()->sole();
+        $this->post(route('customer.workspaces.businesses.website.domains.verify', [$workspace->uid, $business->uid, $domain->uid]));
+        $this->post(route('customer.workspaces.businesses.website.domains.provision', [$workspace->uid, $business->uid, $domain->uid]));
+        $this->post(route('customer.workspaces.businesses.website.domains.checkCertificate', [$workspace->uid, $business->uid, $domain->uid]));
+        $this->assertSame(WebsiteDomainStatus::Active, $domain->fresh()->status);
+
+        // Forge is unreachable (this stands in for either an HTTP error
+        // response or a transport failure — ForgeDomainProvisionerTest
+        // proves detachDomain() converts BOTH into the same exception,
+        // so WebsiteDomainService's handling is identical either way).
+        $provisioner->shouldReceive('detachDomain')->once()->with('forge-domain-retry')
+            ->andThrow(new DomainProvisioningException('Forge did not respond.'));
+
+        $this->delete(route('customer.workspaces.businesses.website.domains.destroy', [$workspace->uid, $business->uid, $domain->uid]))
+            ->assertRedirect()
+            ->assertSessionHas('status', 'error')
+            ->assertSessionHas('message');
+
+        $domain->refresh();
+        // Stopped being served and relinquished the primary claim
+        // immediately, but the row, its hostname, and its forge_domain_id
+        // are all still here — nothing is freed until Forge confirms.
+        $this->assertSame(WebsiteDomainStatus::Removing, $domain->status);
+        $this->assertSame('forge-domain-retry', $domain->forge_domain_id);
+        $this->assertFalse($domain->is_primary);
+        $this->assertStringContainsString('Forge did not respond.', (string) $domain->failure_reason);
+
+        // The hostname is still claimed: a different business cannot
+        // take it over while removal is unconfirmed.
+        [$customerB, $businessB, $workspaceB] = $this->entitledTenant();
+        $websiteB = $this->createWebsite($businessB);
+        $this->publish($websiteB);
+        $this->authenticateAsCustomer($customerB);
+        $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspaceB->uid, $businessB->uid]), ['domain' => 'flaky-removal.test'])
+            ->assertSessionHasErrors('domain');
+        $this->authenticateAsCustomer($customer);
+
+        // Retrying removal is the SAME destroy action, called again on
+        // the still-existing row — this time Forge confirms deletion.
+        $provisioner->shouldReceive('detachDomain')->once()->with('forge-domain-retry');
+
+        $this->delete(route('customer.workspaces.businesses.website.domains.destroy', [$workspace->uid, $business->uid, $domain->uid]))
+            ->assertRedirect()
+            ->assertSessionHas('status', 'success');
+
+        $this->assertSame(0, WebsiteDomain::where('domain', 'flaky-removal.test')->count());
+
+        // The hostname is free now.
+        $this->authenticateAsCustomer($customerB);
+        $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspaceB->uid, $businessB->uid]), ['domain' => 'flaky-removal.test'])
+            ->assertRedirect()->assertSessionHasNoErrors();
+    }
+
     // ---------------------------------------------------------------
     // Tenancy and DNS-instructions accuracy
     // ---------------------------------------------------------------

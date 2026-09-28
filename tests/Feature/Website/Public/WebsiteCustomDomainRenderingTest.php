@@ -5,6 +5,7 @@ namespace Tests\Feature\Website\Public;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Website\WebsiteDomainCertificateStatus;
 use App\Enums\Website\WebsiteDomainStatus;
+use App\Library\Website\Domains\DomainProvisioningException;
 use App\Library\Website\Domains\WebsiteDomainService;
 use App\Library\Website\WebsiteFormPresets;
 use App\Library\Website\WebsitePublisher;
@@ -205,6 +206,39 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         // route (redirecting a guest visitor), so this proves the fall-
         // through with a path no platform route registers at all,
         // mirroring test_a_domain_that_is_not_yet_active_does_not_serve_the_website.
+        $this->get('http://'.$domain->domain.'/this-path-matches-no-platform-route')->assertNotFound();
+    }
+
+    public function test_a_domain_stuck_removing_after_a_failed_forge_deletion_stops_serving_immediately(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $this->homePage($website);
+        app(WebsitePublisher::class)->publish($website, $this->platformAdminId());
+        $website->refresh();
+
+        $this->fakeDnsVerifier(true);
+        $provisioner = $this->fakeDomainProvisioner();
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-1');
+        $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
+
+        $domain = $this->activateViaService($website, 'stuck-removing.test');
+
+        $this->get('http://'.$domain->domain.'/')->assertOk()->assertSee('Welcome');
+
+        // Forge refuses (or cannot be reached for) the deletion — the
+        // domain row is deliberately NOT deleted (see
+        // WebsiteDomainService::remove()'s own docblock), but this must
+        // still be exactly as unreachable as a genuinely removed one on
+        // the very next request.
+        $provisioner->shouldReceive('detachDomain')->once()
+            ->andThrow(new DomainProvisioningException('Forge did not respond.'));
+
+        app(WebsiteDomainService::class)->remove($website, $domain);
+
+        $domain->refresh();
+        $this->assertSame(WebsiteDomainStatus::Removing, $domain->status);
+
         $this->get('http://'.$domain->domain.'/this-path-matches-no-platform-route')->assertNotFound();
     }
 

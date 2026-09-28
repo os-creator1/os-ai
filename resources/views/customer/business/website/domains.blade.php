@@ -56,14 +56,25 @@
                             @case('failed')
                                 <x-badge variant="danger">Failed</x-badge>
                                 @break
+                            @case('removing')
+                                <x-badge variant="warning">Removal pending</x-badge>
+                                @break
                         @endswitch
                     </span>
                 </div>
-                <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.destroy', [$workspaceUid, $businessUid, $domain->uid]) }}" class="d-inline" onsubmit="return confirm('Remove {{ $domain->domain }}? It becomes available for anyone to connect again, including you, from scratch.');">
-                    @csrf
-                    @method('DELETE')
-                    <x-button variant="ghost" size="sm" type="submit">Remove</x-button>
-                </form>
+                @if ($domain->status->value === 'removing')
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.destroy', [$workspaceUid, $businessUid, $domain->uid]) }}" class="d-inline">
+                        @csrf
+                        @method('DELETE')
+                        <x-button variant="ghost" size="sm" type="submit">Retry removal</x-button>
+                    </form>
+                @else
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.website.domains.destroy', [$workspaceUid, $businessUid, $domain->uid]) }}" class="d-inline" onsubmit="return confirm('Remove {{ $domain->domain }}? It becomes available for anyone to connect again, including you, from scratch.');">
+                        @csrf
+                        @method('DELETE')
+                        <x-button variant="ghost" size="sm" type="submit">Remove</x-button>
+                    </form>
+                @endif
             </div>
 
             @if ($domain->failure_reason)
@@ -110,6 +121,8 @@
                 @endif
             @elseif ($domain->status->value === 'failed')
                 <p class="text-caption">Remove this domain and add it again to retry from the start.</p>
+            @elseif ($domain->status->value === 'removing')
+                <p class="text-caption">This domain is no longer served, but we couldn't confirm its removal with our hosting provider yet, so its address is still reserved. Try again above.</p>
             @endif
         </x-card>
     @empty

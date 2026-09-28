@@ -5,6 +5,7 @@ namespace Tests\Feature\Website;
 use App\Enums\Website\WebsiteDomainCertificateStatus;
 use App\Library\Website\Domains\DomainProvisioningException;
 use App\Library\Website\Domains\ForgeDomainProvisioner;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -238,14 +239,44 @@ class ForgeDomainProvisionerTest extends TestCase
             && $request->url() === 'https://'.self::BASE.'/domains/555');
     }
 
-    public function test_detach_domain_never_throws_even_when_the_forge_call_fails(): void
+    public function test_detach_domain_throws_on_a_failed_http_response(): void
     {
         Http::fake([
             self::BASE.'/domains/555' => Http::response(['message' => 'Server error'], 500),
         ]);
 
-        // Must not throw — WebsiteDomainService::remove() has to succeed
-        // locally regardless of the provider-side outcome.
+        // Must throw — WebsiteDomainService::remove() must never free a
+        // hostname or discard forge_domain_id while the Forge resource
+        // might still exist.
+        $this->expectException(DomainProvisioningException::class);
+
+        app(ForgeDomainProvisioner::class)->detachDomain('555');
+    }
+
+    public function test_detach_domain_throws_on_a_transport_failure(): void
+    {
+        // A timeout, DNS failure, or connection refusal never reaches
+        // ->failed() at all — Http::fake() simulates it as a thrown
+        // ConnectionException, which detachDomain() must also convert
+        // into a DomainProvisioningException rather than let escape
+        // raw or (worse) swallow silently.
+        Http::fake(fn () => throw new ConnectionException('Connection timed out'));
+
+        $this->expectException(DomainProvisioningException::class);
+
+        app(ForgeDomainProvisioner::class)->detachDomain('555');
+    }
+
+    public function test_detach_domain_treats_a_404_as_already_removed(): void
+    {
+        // The domain is already gone on Forge's side — the exact end
+        // state a caller wants — most likely because a PRIOR attempt's
+        // deletion succeeded but this app crashed before recording it.
+        // This must be treated as success, not a failure to surface.
+        Http::fake([
+            self::BASE.'/domains/555' => Http::response(['message' => 'Not found'], 404),
+        ]);
+
         app(ForgeDomainProvisioner::class)->detachDomain('555');
 
         $this->addToAssertionCount(1);

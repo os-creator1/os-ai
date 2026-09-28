@@ -20,9 +20,12 @@ use Throwable;
  *
  * Lifecycle: pending_verification -> verified -> provisioning -> active,
  * or -> failed at either of the last two steps (WebsiteDomainStatus).
- * Only an Active domain is ever used for public Host-based routing or
- * search indexing — see App\Http\Middleware\ResolveCustomDomainWebsite
- * and resources/views/public/website/page.blade.php.
+ * Removing is a separate exit state any of those can enter (remove())
+ * and can re-enter itself (a retry), never returning to any state
+ * above — see remove()'s own docblock. Only an Active domain is ever
+ * used for public Host-based routing or search indexing — see
+ * App\Http\Middleware\ResolveCustomDomainWebsite and
+ * resources/views/public/website/page.blade.php.
  */
 final class WebsiteDomainService
 {
@@ -214,43 +217,79 @@ final class WebsiteDomainService
     }
 
     /**
-     * Always succeeds locally even when the provider-side cleanup call
-     * fails (ForgeDomainProvisioner::detachDomain() never throws) — the
-     * domain string is immediately free for anyone, including the same
-     * business, to claim again from scratch. The public-serving lookup
-     * in App\Http\Middleware\ResolveCustomDomainWebsite is never cached,
-     * so a removed domain stops serving the former Website on the very
-     * next request without any invalidation step here; the trusted-host
-     * allowlist below is the one cache this method still has to clear.
+     * Stops serving this domain, and relinquishes its primary-address
+     * claim, IMMEDIATELY and unconditionally — an owner who clicked
+     * "Remove" must never keep seeing their site served on the address
+     * they just asked to disconnect, no matter what happens next.
      *
-     * Only calls out to Forge when forge_domain_id was actually
-     * persisted (attachDomain() ran at least once) — a domain removed
-     * before ever reaching provisionCertificate() (e.g. still
-     * pending_verification) never created anything on Forge's side to
-     * clean up.
+     * The row itself, `domain` string, and `forge_domain_id` are only
+     * ever deleted once Forge actually confirms the domain resource is
+     * gone (or there was never one to confirm — see attemptDeletion()).
+     * A domain stuck unable to confirm removal stays in the Removing
+     * status: its hostname remains claimed (the same uniqueness check
+     * attach() always runs sees this row) and its forge_domain_id
+     * remains on the row, so a retry (calling this method again on the
+     * same row) targets the exact same Forge resource rather than
+     * orphaning it and leaking a duplicate. Never silently frees a
+     * hostname, or discards a provider reference, while that provider
+     * resource might still exist.
      */
     public function remove(Website $website, WebsiteDomain $domain): void
     {
         abort_unless($domain->website_id === $website->id, 404);
 
-        if ($domain->forge_domain_id !== null) {
-            $this->provisioner->detachDomain($domain->forge_domain_id);
-        }
-
         $wasActive = $domain->isActive();
         $wasPrimary = $domain->is_primary;
+
+        if ($domain->status !== WebsiteDomainStatus::Removing) {
+            $domain->status = WebsiteDomainStatus::Removing;
+            $domain->is_primary = false;
+            $domain->failure_reason = null;
+            $domain->save();
+
+            if ($wasPrimary) {
+                $website->domains()->where('status', WebsiteDomainStatus::Active->value)
+                    ->orderBy('id')
+                    ->first()
+                    ?->update(['is_primary' => true]);
+            }
+
+            if ($wasActive) {
+                Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
+            }
+        }
+
+        $this->attemptDeletion($domain);
+    }
+
+    /**
+     * The one place forge_domain_id is ever cleared or the row ever
+     * deleted for a domain being removed — only once Forge itself
+     * confirms the resource is gone (detachDomain() throws otherwise,
+     * including on a transport failure, and never on a 404, which
+     * means the resource is already gone). A domain that never reached
+     * provisionCertificate() (still pending_verification when removed)
+     * has no forge_domain_id and nothing to confirm, so it deletes
+     * immediately.
+     */
+    private function attemptDeletion(WebsiteDomain $domain): void
+    {
+        if ($domain->forge_domain_id === null) {
+            $domain->delete();
+
+            return;
+        }
+
+        try {
+            $this->provisioner->detachDomain($domain->forge_domain_id);
+        } catch (Throwable $exception) {
+            $domain->failure_reason = 'Removal could not be confirmed and will need to be retried: '.$exception->getMessage();
+            $domain->save();
+
+            return;
+        }
+
         $domain->delete();
-
-        if ($wasPrimary) {
-            $website->domains()->where('status', WebsiteDomainStatus::Active->value)
-                ->orderBy('id')
-                ->first()
-                ?->update(['is_primary' => true]);
-        }
-
-        if ($wasActive) {
-            Cache::forget(TrustHosts::ACTIVE_DOMAINS_CACHE_KEY);
-        }
     }
 
     /**
