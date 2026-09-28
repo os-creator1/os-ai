@@ -85,8 +85,8 @@ class WebsiteDomainTest extends TestCase
         $this->publish($website);
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->once()->andReturn('cert-ref-123');
-        $provisioner->shouldReceive('certificateStatus')->once()->with('cert-ref-123')->andReturn(WebsiteDomainCertificateStatus::Active);
+        $provisioner->shouldReceive('attachDomain')->once()->andReturn('forge-domain-1');
+        $provisioner->shouldReceive('requestCertificate')->once()->with('forge-domain-1')->andReturn('cert-ref-123');
         $this->authenticateAsCustomer($customer);
 
         $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspace->uid, $business->uid]), [
@@ -107,7 +107,10 @@ class WebsiteDomainTest extends TestCase
             ->assertRedirect()->assertSessionHas('status', 'success');
         $domain->refresh();
         $this->assertSame(WebsiteDomainStatus::Provisioning, $domain->status);
+        $this->assertSame('forge-domain-1', $domain->forge_domain_id);
         $this->assertSame('cert-ref-123', $domain->certificate_reference);
+
+        $provisioner->shouldReceive('certificateStatus')->once()->with('forge-domain-1', 'cert-ref-123')->andReturn(WebsiteDomainCertificateStatus::Active);
 
         $this->post(route('customer.workspaces.businesses.website.domains.checkCertificate', [$workspace->uid, $business->uid, $domain->uid]))
             ->assertRedirect()->assertSessionHas('status', 'success');
@@ -147,8 +150,13 @@ class WebsiteDomainTest extends TestCase
         $this->publish($website);
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->once()->andThrow(new DomainProvisioningException('DNS does not point at us yet.'));
-        $provisioner->shouldReceive('detachDomain')->once();
+        // attachDomain() succeeds and its id is persisted BEFORE the
+        // certificate request that then fails — proving remove() below
+        // can still clean up the Forge-side domain it created, using
+        // that exact persisted id, not a dropped/forgotten reference.
+        $provisioner->shouldReceive('attachDomain')->once()->andReturn('forge-domain-99');
+        $provisioner->shouldReceive('requestCertificate')->once()->with('forge-domain-99')->andThrow(new DomainProvisioningException('DNS does not point at us yet.'));
+        $provisioner->shouldReceive('detachDomain')->once()->with('forge-domain-99');
         $this->authenticateAsCustomer($customer);
 
         $this->post(route('customer.workspaces.businesses.website.domains.store', [$workspace->uid, $business->uid]), [
@@ -164,6 +172,7 @@ class WebsiteDomainTest extends TestCase
         $domain->refresh();
         $this->assertSame(WebsiteDomainStatus::Failed, $domain->status);
         $this->assertStringContainsString('DNS does not point at us yet.', (string) $domain->failure_reason);
+        $this->assertSame('forge-domain-99', $domain->forge_domain_id);
 
         // A failed domain is removable, freeing the string to try again.
         $this->delete(route('customer.workspaces.businesses.website.domains.destroy', [$workspace->uid, $business->uid, $domain->uid]))
@@ -238,7 +247,7 @@ class WebsiteDomainTest extends TestCase
         $this->publish($website);
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->andReturn('ref-1', 'ref-2');
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-1', 'ref-2');
         $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
         $this->authenticateAsCustomer($customer);
 
@@ -286,7 +295,7 @@ class WebsiteDomainTest extends TestCase
         $this->publish($website);
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->andReturn('ref-1', 'ref-2');
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-1', 'ref-2');
         $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
         $provisioner->shouldReceive('detachDomain')->once();
         $this->authenticateAsCustomer($customer);
@@ -362,7 +371,7 @@ class WebsiteDomainTest extends TestCase
         $this->publish($website);
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->once()->andReturn('ref');
+        $provisioner->shouldReceive('requestCertificate')->once()->andReturn('ref');
         $provisioner->shouldReceive('certificateStatus')->once()->andReturn(WebsiteDomainCertificateStatus::Active);
 
         $service = app(WebsiteDomainService::class);

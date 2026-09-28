@@ -150,13 +150,21 @@ final class WebsiteDomainService
 
         try {
             // Attaching and certifying are two separate Forge operations
-            // (see ForgeDomainProvisioner's docblock) — attach first, so
-            // the site actually responds to $domain before Forge's own
-            // HTTP-01 challenge for the certificate request even runs.
-            $this->provisioner->attachDomain($domain->domain);
-            $domain->certificate_reference = $this->provisioner->requestCertificateForDomains(
-                $this->certificateDomainList($domain->domain)
-            );
+            // (see ForgeDomainProvisioner's docblock). If forge_domain_id
+            // is already set, a PRIOR attempt already created the Forge
+            // domain but failed before (or during) the certificate step
+            // — reuse it rather than creating a second, orphaned Forge
+            // domain for the same hostname on every retry.
+            if ($domain->forge_domain_id === null) {
+                $domain->forge_domain_id = $this->provisioner->attachDomain($domain->domain);
+                // Persisted immediately, before the certificate request
+                // even runs: if THAT call throws, this id must already
+                // be durable so remove() can still clean up the Forge
+                // side — see the migration's own note on this column.
+                $domain->save();
+            }
+
+            $domain->certificate_reference = $this->provisioner->requestCertificate($domain->forge_domain_id);
             $domain->status = WebsiteDomainStatus::Provisioning;
             $domain->failure_reason = null;
         } catch (Throwable $exception) {
@@ -170,34 +178,6 @@ final class WebsiteDomainService
     }
 
     /**
-     * Every domain the ONE shared Forge site's certificate must keep
-     * covering: every other currently Active custom domain (across
-     * every Business — they all share this one site), the platform's
-     * own host (the same site also serves the platform itself), and the
-     * one being requested now. Recomputed fresh on every call — never
-     * cached — so a request made moments after another Business's
-     * domain went Active still covers it, and a certificate is never
-     * requested with a stale, shrunk SAN list that would drop existing
-     * domains' HTTPS coverage.
-     *
-     * @return array<int, string>
-     */
-    private function certificateDomainList(string $newDomain): array
-    {
-        $platformHost = strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST));
-
-        $domains = WebsiteDomain::where('status', WebsiteDomainStatus::Active->value)
-            ->pluck('domain')
-            ->push($newDomain);
-
-        if ($platformHost !== '') {
-            $domains->push($platformHost);
-        }
-
-        return $domains->unique()->values()->all();
-    }
-
-    /**
      * Idempotent: a no-op once already Active or Failed.
      */
     public function checkCertificate(WebsiteDomain $domain): WebsiteDomain
@@ -207,7 +187,7 @@ final class WebsiteDomainService
         }
 
         $domain->last_checked_at = now();
-        $status = $this->provisioner->certificateStatus((string) $domain->certificate_reference);
+        $status = $this->provisioner->certificateStatus((string) $domain->forge_domain_id, (string) $domain->certificate_reference);
 
         if ($status === WebsiteDomainCertificateStatus::Active) {
             $domain->status = WebsiteDomainStatus::Active;
@@ -242,12 +222,20 @@ final class WebsiteDomainService
      * so a removed domain stops serving the former Website on the very
      * next request without any invalidation step here; the trusted-host
      * allowlist below is the one cache this method still has to clear.
+     *
+     * Only calls out to Forge when forge_domain_id was actually
+     * persisted (attachDomain() ran at least once) — a domain removed
+     * before ever reaching provisionCertificate() (e.g. still
+     * pending_verification) never created anything on Forge's side to
+     * clean up.
      */
     public function remove(Website $website, WebsiteDomain $domain): void
     {
         abort_unless($domain->website_id === $website->id, 404);
 
-        $this->provisioner->detachDomain($domain->domain);
+        if ($domain->forge_domain_id !== null) {
+            $this->provisioner->detachDomain($domain->forge_domain_id);
+        }
 
         $wasActive = $domain->isActive();
         $wasPrimary = $domain->is_primary;

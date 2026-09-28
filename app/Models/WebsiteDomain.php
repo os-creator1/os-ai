@@ -28,6 +28,7 @@ class WebsiteDomain extends Model
         'status',
         'verification_token',
         'failure_reason',
+        'forge_domain_id',
         'certificate_reference',
         'verified_at',
         'activated_at',

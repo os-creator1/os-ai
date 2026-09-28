@@ -34,6 +34,13 @@ return new class extends Migration
             $table->string('status', 24)->default('pending_verification');
             $table->string('verification_token', 64);
             $table->string('failure_reason', 255)->nullable();
+            // The Forge domain resource id — Forge's current per-domain
+            // model requires this to request/check/remove a certificate
+            // or to remove the domain itself; persisted the instant
+            // attachDomain() succeeds (before the certificate step even
+            // runs) so a later retry or removal never orphans a Forge-side
+            // domain this row has already forgotten about.
+            $table->string('forge_domain_id', 120)->nullable();
             $table->string('certificate_reference', 120)->nullable();
             $table->timestamp('verified_at')->nullable();
             $table->timestamp('activated_at')->nullable();

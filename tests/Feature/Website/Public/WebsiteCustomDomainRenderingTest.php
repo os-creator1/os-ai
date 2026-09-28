@@ -190,7 +190,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
 
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->andReturn('ref-1');
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-1');
         $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
 
         $domain = $this->activateViaService($website, 'to-be-removed.test');
@@ -223,7 +223,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
 
         $this->fakeDnsVerifier(true);
         $provisioner = $this->fakeDomainProvisioner();
-        $provisioner->shouldReceive('requestCertificateForDomains')->andReturn('ref-1');
+        $provisioner->shouldReceive('requestCertificate')->andReturn('ref-1');
         $provisioner->shouldReceive('certificateStatus')->andReturn(WebsiteDomainCertificateStatus::Active);
 
         $domain = $this->activateViaService($website, 'freshly-active.test');

@@ -227,10 +227,11 @@
         */
 
         'forge' => [
-            'api_token'    => env('FORGE_API_TOKEN'),
-            'server_id'    => env('FORGE_SERVER_ID'),
-            'site_id'      => env('FORGE_SITE_ID'),
-            'cname_target' => env('FORGE_CNAME_TARGET'),
-            'a_record_ip'  => env('FORGE_A_RECORD_IP'),
+            'api_token'         => env('FORGE_API_TOKEN'),
+            'organization_slug' => env('FORGE_ORGANIZATION_SLUG'),
+            'server_id'         => env('FORGE_SERVER_ID'),
+            'site_id'           => env('FORGE_SITE_ID'),
+            'cname_target'      => env('FORGE_CNAME_TARGET'),
+            'a_record_ip'       => env('FORGE_A_RECORD_IP'),
         ],
     ];

@@ -3,6 +3,7 @@
 namespace App\Library\Website\Domains;
 
 use App\Enums\Website\WebsiteDomainCertificateStatus;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -13,33 +14,44 @@ use Throwable;
  * approach, is Laravel Forge's own Let's Encrypt integration on the one
  * server every Website is hosted on).
  *
- * Attaching a domain and covering it with a working certificate are TWO
- * separate Forge operations, not one — confirmed against Forge's own
- * "Alias Domains" announcement (laravel.com/blog/forge-alias-domains):
- * "If your site is using SSL, you are responsible for ensuring that
- * your ACTIVATED SSL certificate contains all of the domains that your
- * site responds to." Adding an alias never auto-extends the active
- * certificate. Every custom domain across every Business shares this
- * ONE Forge site (one `server_id`/`site_id`), so:
+ * Targets Forge's CURRENT API (v2, `laravel/forge-sdk` v4 —
+ * forge.laravel.com's own live OpenAPI spec at
+ * `https://forge.laravel.com/api/docs.openapi` was fetched and read to
+ * confirm every shape below) and its per-domain management model for a
+ * site created from October 2025 onward — our production Forge site has
+ * not been created yet, so it will use this model, never the legacy
+ * shared-alias-list one a pre-Oct-2025 site is stuck with.
  *
- *  1. attachDomain() adds $domain to the site's alias list (Forge API:
- *     PUT .../sites/{site}/aliases, replacing the full list — so this
- *     reads the site's CURRENT aliases first and sends the union back,
- *     never just the one new domain, or every other Business's already
- *     -attached domain would be silently dropped).
- *  2. requestCertificateForDomains() requests ONE Let's Encrypt
- *     certificate whose `domains` SAN list covers EVERY currently
- *     active domain plus the platform's own host plus the new one —
- *     WebsiteDomainService builds that full list, never this class,
- *     since only the service can see every WebsiteDomain row.
+ * Under this model, a domain is its own resource on the site (created,
+ * read, and deleted independently — Forge's own docs: "Each custom
+ * domain is managed separately... adding or removing a domain does not
+ * impact other domains on the same site") and certificates are scoped
+ * to ONE domain each, never a shared SAN list:
+ *
+ *  1. attachDomain() creates a Forge domain resource for exactly this
+ *     hostname (`POST .../sites/{site}/domains`) and returns ITS id —
+ *     WebsiteDomainService persists that id immediately, before ever
+ *     attempting the certificate step, so a later retry or removal
+ *     never leaves an orphaned Forge-side domain this row has forgotten
+ *     about. Two businesses attaching domains at the same time each get
+ *     their own independent resource — there is no shared list to race
+ *     on, unlike the legacy read-then-PUT-whole-list design.
+ *  2. requestCertificate() asks for ONE Let's Encrypt certificate for
+ *     that one domain id (`POST .../domains/{domain}/certificates`),
+ *     never a multi-domain SAN list — removing or failing one domain
+ *     can never disrupt another's certificate, because there is no
+ *     longer anything shared between them.
  *  3. certificateStatus() reports Active ONLY when Forge's own
- *     `certificate.active` field is true — a certificate can be fully
- *     `installed` on the server without being the one the site is
- *     currently terminating TLS with (Forge's own
- *     activate/{certificate} endpoint exists precisely because
- *     installing and activating are different steps). Reporting Active
- *     off `status` alone would label a domain "Live" while the site
- *     still cannot actually serve it over HTTPS.
+ *     `active` attribute on THAT domain's THAT certificate is true —
+ *     a certificate can be fully `installed` without being the one the
+ *     domain is currently terminating TLS with. Reporting Active off
+ *     `status` alone would label a domain "Live" while it still cannot
+ *     actually serve traffic over HTTPS.
+ *  4. detachDomain() deletes that one Forge domain resource
+ *     (`DELETE .../domains/{domain}`) — Forge tears down its Nginx
+ *     config and certificates for that domain alone; every other
+ *     domain on the site, and its own independent certificate, is
+ *     completely untouched.
  *
  * This class is the ONLY place a Forge API call is ever made. It is a
  * plain (non-final) class specifically so tests can bind a Mockery
@@ -51,172 +63,180 @@ use Throwable;
  * API.
  *
  * NOT WIRED UP FOR A REAL DEPLOYMENT YET: `config('services.forge.*')`
- * has no real value in this environment, and the exact request/response
- * shapes below are this class's best-effort mapping of Forge's
- * documented Sites/Aliases/Certificates endpoints (forge.laravel.com/
- * docs/api-reference, the official laravel/forge-sdk source, and the
- * Alias Domains announcement above) — informed by documentation, not
- * verified against a live account.
+ * has no real value in this environment, and no production Forge site
+ * exists yet either. The exact request/response shapes below were
+ * confirmed against Forge's own live OpenAPI spec, its official SDK
+ * source (github.com/laravel/forge-sdk, tag v4.1.0) including its own
+ * integration test (`tests/Integration/SitesTest.php::
+ * test_crud_site_domain`), and forge.laravel.com/docs/sites/domains —
+ * not verified against a live account.
  */
 class ForgeDomainProvisioner
 {
-    private const API_BASE = 'https://forge.laravel.com/api/v1';
+    private const API_BASE = 'https://forge.laravel.com/api';
 
     /**
-     * Adds $domain to the site's alias list, preserving every alias
-     * already there (every other Business's already-attached custom
-     * domain, and any alias set up outside this integration entirely).
+     * Creates an independent Forge domain resource for exactly this
+     * hostname. No wildcard subdomains (this is a multi-tenant
+     * platform — letting one business's domain resolve every subdomain
+     * would be a tenancy hazard) and no `www.` redirect (our own domain
+     * model has no concept of a www variant; auto-creating one on
+     * Forge's side could silently collide with a different business
+     * later adding that exact www hostname as its own, separate,
+     * legitimately-unique WebsiteDomain row).
+     *
+     * @return string the Forge domain id — persist this immediately,
+     *                see class docblock
      *
      * @throws DomainProvisioningException
      */
-    public function attachDomain(string $domain): void
+    public function attachDomain(string $domain): string
     {
-        [$token, $serverId, $siteId] = $this->credentials();
+        [$token, $org, $serverId, $siteId] = $this->credentials();
 
-        $site = Http::withToken($token)->get(self::API_BASE."/servers/{$serverId}/sites/{$siteId}");
-
-        if ($site->failed()) {
-            throw new DomainProvisioningException(
-                "Could not read the Forge site to attach {$domain}: HTTP {$site->status()} {$site->body()}"
-            );
-        }
-
-        $aliases = collect($site->json('site.aliases') ?? [])
-            ->push($domain)
-            ->unique()
-            ->values()
-            ->all();
-
-        $response = Http::withToken($token)->put(
-            self::API_BASE."/servers/{$serverId}/sites/{$siteId}/aliases",
-            ['aliases' => $aliases],
+        $response = $this->client($token)->post(
+            self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains",
+            [
+                'name' => $domain,
+                'allow_wildcard_subdomains' => false,
+                'www_redirect_type' => 'none',
+            ],
         );
 
         if ($response->failed()) {
             throw new DomainProvisioningException(
-                "Forge alias update failed for {$domain}: HTTP {$response->status()} {$response->body()}"
+                "Forge domain creation failed for {$domain}: HTTP {$response->status()} {$response->body()}"
             );
         }
+
+        $domainId = $response->json('data.id');
+
+        if ($domainId === null) {
+            throw new DomainProvisioningException("Forge domain creation for {$domain} returned no domain id.");
+        }
+
+        return (string) $domainId;
     }
 
     /**
-     * Requests ONE Let's Encrypt certificate covering every domain in
-     * $domains (the full current SAN list — see class docblock). Never
-     * called with just the one new domain: WebsiteDomainService is the
-     * one place with visibility into every other currently active
-     * domain that the resulting certificate must keep covering.
+     * Requests a Let's Encrypt certificate for exactly this one Forge
+     * domain — never a multi-domain SAN list. HTTP-01 verification is
+     * used deliberately: it needs nothing beyond the domain already
+     * resolving to this server, which our own traffic CNAME/A-record
+     * instruction (dnsInstructions()) already requires, so the owner is
+     * never asked for a THIRD DNS record on top of our ownership TXT
+     * record and the traffic record.
      *
-     * @param  array<int, string>  $domains
      * @return string a Forge certificate id to poll via certificateStatus()
      *
      * @throws DomainProvisioningException
      */
-    public function requestCertificateForDomains(array $domains): string
+    public function requestCertificate(string $forgeDomainId): string
     {
-        [$token, $serverId, $siteId] = $this->credentials();
+        [$token, $org, $serverId, $siteId] = $this->credentials();
 
-        $response = Http::withToken($token)->post(
-            self::API_BASE."/servers/{$serverId}/sites/{$siteId}/certificates/letsencrypt",
-            ['domains' => array_values($domains)],
+        $response = $this->client($token)->post(
+            self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains/{$forgeDomainId}/certificates",
+            [
+                'type' => 'letsencrypt',
+                'letsencrypt' => ['verification_method' => 'http-01'],
+            ],
         );
 
         if ($response->failed()) {
             throw new DomainProvisioningException(
-                'Forge certificate request failed: HTTP '.$response->status().' '.$response->body()
+                "Forge certificate request failed for domain {$forgeDomainId}: HTTP {$response->status()} {$response->body()}"
             );
         }
 
-        $certificateId = $response->json('certificate.id');
+        $certificateId = $response->json('data.id');
 
         if ($certificateId === null) {
-            throw new DomainProvisioningException('Forge certificate request returned no certificate id.');
+            throw new DomainProvisioningException("Forge certificate request for domain {$forgeDomainId} returned no certificate id.");
         }
 
         return (string) $certificateId;
     }
 
     /**
-     * Active only when Forge's own `certificate.active` field is true —
-     * see class docblock for why `status` alone is never enough.
+     * Active only when Forge's own `active` attribute on this exact
+     * domain's exact certificate is true — see class docblock for why
+     * `status` alone is never enough. `status` values `failed`,
+     * `failed-unknown`, and `failed-runner` (Forge's documented
+     * `ResourceState` enum) all mean the request will never complete.
      */
-    public function certificateStatus(string $certificateId): WebsiteDomainCertificateStatus
+    public function certificateStatus(string $forgeDomainId, string $certificateId): WebsiteDomainCertificateStatus
     {
-        [$token, $serverId, $siteId] = $this->credentials();
+        [$token, $org, $serverId, $siteId] = $this->credentials();
 
-        $response = Http::withToken($token)->get(
-            self::API_BASE."/servers/{$serverId}/sites/{$siteId}/certificates/{$certificateId}"
+        $response = $this->client($token)->get(
+            self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains/{$forgeDomainId}/certificates/{$certificateId}"
         );
 
         if ($response->failed()) {
             return WebsiteDomainCertificateStatus::Failed;
         }
 
-        if ($response->json('certificate.active') === true) {
+        if ($response->json('data.attributes.active') === true) {
             return WebsiteDomainCertificateStatus::Active;
         }
 
-        if ($response->json('certificate.status') === 'failed' || $response->json('certificate.request_status') === 'failed') {
+        if (in_array($response->json('data.attributes.status'), ['failed', 'failed-unknown', 'failed-runner'], true)) {
             return WebsiteDomainCertificateStatus::Failed;
         }
 
         // Still installing, or installed-but-not-yet-active — either
-        // way, the site cannot serve this domain over HTTPS yet, so
-        // this is never reported as Active.
+        // way, the domain cannot serve traffic over HTTPS yet, so this
+        // is never reported as Active.
         return WebsiteDomainCertificateStatus::Pending;
     }
 
     /**
-     * Removes $domain from the site's alias list — Nginx immediately
-     * stops routing that Host to this site regardless of what any
-     * still-installed certificate's SAN list claims to cover, which is
-     * what actually stops the site being served on that domain.
-     * Deliberately does NOT delete or re-request the shared certificate:
-     * every other Business's domain may still be covered by it, and
-     * re-issuing with a shrunk domain list risks disrupting them for a
-     * single domain's removal. Never throws — WebsiteDomainService::
+     * Deletes this one Forge domain resource outright — its Nginx
+     * config, and its own independent certificate(s), are torn down
+     * with it. Every other domain on the shared site is completely
+     * unaffected, since nothing is shared between them under Forge's
+     * current per-domain model. Never throws — WebsiteDomainService::
      * remove() must always succeed locally even when the provider-side
      * call fails.
      */
-    public function detachDomain(string $domain): void
+    public function detachDomain(string $forgeDomainId): void
     {
         try {
-            [$token, $serverId, $siteId] = $this->credentials();
+            [$token, $org, $serverId, $siteId] = $this->credentials();
 
-            $site = Http::withToken($token)->get(self::API_BASE."/servers/{$serverId}/sites/{$siteId}");
-
-            if ($site->failed()) {
-                return;
-            }
-
-            $aliases = collect($site->json('site.aliases') ?? [])
-                ->reject(fn ($alias) => $alias === $domain)
-                ->values()
-                ->all();
-
-            Http::withToken($token)->put(
-                self::API_BASE."/servers/{$serverId}/sites/{$siteId}/aliases",
-                ['aliases' => $aliases],
+            $this->client($token)->delete(
+                self::API_BASE."/orgs/{$org}/servers/{$serverId}/sites/{$siteId}/domains/{$forgeDomainId}"
             );
         } catch (Throwable) {
             // Best-effort only — see docblock above.
         }
     }
 
+    private function client(string $token): PendingRequest
+    {
+        return Http::withToken($token)->withHeaders([
+            'Accept' => 'application/vnd.api+json',
+            'Content-Type' => 'application/vnd.api+json',
+        ]);
+    }
+
     /**
-     * @return array{0: string, 1: string, 2: string}
+     * @return array{0: string, 1: string, 2: string, 3: string}
      *
      * @throws DomainProvisioningException when Forge is not configured for this environment
      */
     private function credentials(): array
     {
         $token = config('services.forge.api_token');
+        $organizationSlug = config('services.forge.organization_slug');
         $serverId = config('services.forge.server_id');
         $siteId = config('services.forge.site_id');
 
-        if (! $token || ! $serverId || ! $siteId) {
+        if (! $token || ! $organizationSlug || ! $serverId || ! $siteId) {
             throw new DomainProvisioningException('Custom-domain certificate provisioning is not configured for this environment.');
         }
 
-        return [$token, $serverId, $siteId];
+        return [$token, $organizationSlug, $serverId, $siteId];
     }
 }
