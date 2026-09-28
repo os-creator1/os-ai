@@ -56,50 +56,64 @@ class SeoKeywordsHttpTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // FAIL CLOSED while SeoBasicVisibility is Planned (the REAL controller).
+    // Entitlement, now that Sub-slice H has flipped SeoBasicVisibility to
+    // Available for every tier (the REAL controller).
     // -----------------------------------------------------------------
 
-    public function test_every_keyword_route_is_a_404_for_every_tier_while_the_feature_is_planned(): void
+    public function test_every_keyword_route_reaches_every_tier_now_the_feature_is_available(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$owner, $business, $workspace] = $this->entitledTenant($tier);
             $location = $this->createLocation($business);
             $keyword = $this->make($owner, $business, 'best bakery');
             $this->authenticateAsSeoCustomer($owner);
-            $before = $this->keywordSnapshot();
 
-            $this->get($this->url('index', $workspace, $business))->assertNotFound();
+            $this->get($this->url('index', $workspace, $business))->assertOk();
 
-            // A VALID payload and an INVALID one must both be 404: validation
-            // must never run ahead of the tenancy/entitlement chain.
-            foreach ([['phrase' => 'new phrase'], ['phrase' => ''], [], ['phrase' => str_repeat('x', 500)], ['phrase' => 'p', 'location_uid' => $location->uid]] as $payload) {
-                $this->post($this->url('store', $workspace, $business), $payload)->assertNotFound();
-                $this->post($this->url('update', $workspace, $business, $keyword), $payload)->assertNotFound();
-            }
+            $this->post($this->url('store', $workspace, $business), ['phrase' => 'fresh croissants', 'location_uid' => $location->uid])->assertRedirect();
+            $this->assertDatabaseHas('seo_keywords', ['business_id' => $business->id, 'phrase' => 'fresh croissants']);
 
-            $this->post($this->url('archive', $workspace, $business, $keyword))->assertNotFound();
-            $this->post($this->url('reactivate', $workspace, $business, $keyword))->assertNotFound();
+            $this->post($this->url('archive', $workspace, $business, $keyword))->assertRedirect();
+            $this->assertNotNull($keyword->fresh()->archived_at, "[{$tier->value}] archive must actually write.");
 
-            $this->assertSame($before, $this->keywordSnapshot(), 'Nothing may be written while the feature is Planned.');
+            $this->post($this->url('reactivate', $workspace, $business, $keyword))->assertRedirect();
+            $this->assertNull($keyword->fresh()->archived_at, "[{$tier->value}] reactivate must actually write.");
         }
     }
 
-    public function test_a_planned_feature_answers_the_same_404_with_or_without_the_capabilities(): void
+    /**
+     * The availability floor no longer needs to hide the surface, so the
+     * capability gate now behaves like every other SEO/GBP route: holding
+     * the SEO capabilities reaches the index, lacking view_seo is a 401
+     * (never a 404), and nothing is ever written by a refused request.
+     */
+    public function test_the_capability_gate_applies_independently_once_the_feature_is_available(): void
     {
         [$owner, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $this->createLocation($business);
         $keyword = $this->make($owner, $business, 'best bakery');
+        $before = $this->keywordSnapshot();
 
-        foreach ([$this->seoPermissions(), ['view_google_business_profile'], []] as $permissions) {
+        $this->authenticateAsSeoCustomer($owner, $this->seoPermissions());
+        $this->get($this->url('index', $workspace, $business))->assertOk();
+
+        foreach ([['view_google_business_profile'], []] as $permissions) {
             $this->authenticateAsSeoCustomer($owner, $permissions);
 
-            $this->get($this->url('index', $workspace, $business))->assertNotFound();
-            $this->post($this->url('store', $workspace, $business), ['phrase' => 'x'])->assertNotFound();
-            $this->post($this->url('archive', $workspace, $business, $keyword))->assertNotFound();
+            $this->get($this->url('index', $workspace, $business))->assertUnauthorized();
+            $this->post($this->url('store', $workspace, $business), ['phrase' => 'x'])->assertUnauthorized();
+            $this->post($this->url('archive', $workspace, $business, $keyword))->assertUnauthorized();
         }
+
+        $this->assertSame($before, $this->keywordSnapshot(), 'A refused request must never write.');
     }
 
-    public function test_a_stranger_gets_the_same_404_while_planned(): void
+    /**
+     * A stranger holds full SEO capability but no tenancy relationship to
+     * this Workspace/Business at all — tenancy denial 404s regardless of
+     * entitlement state, unaffected by Sub-slice H's flip.
+     */
+    public function test_a_stranger_with_no_tenancy_still_gets_404(): void
     {
         [$owner, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $keyword = $this->make($owner, $business, 'best bakery');

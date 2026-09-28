@@ -279,7 +279,7 @@ against the Agency/lifecycle work above:
 | 15 | Calendar / Booking Types / Availability | §12 | XL | Medium | Net-new (traceability matrix row 9); build Location-bound from the start |
 | 16 | Packages & Products catalog | §17 | L | Low | Net-new (row 14); Business-wide catalog + Location override + immutable snapshot together from the start, not retrofitted |
 | 17 | Proposal / Contract / e-signature | §18 | XL | Medium | Net-new on top of existing Invoice/Payment (row 15); depends on Slice 16 for package snapshots |
-| 18 | SEO expansion (GBP, Citations, Reviews, technical SEO) | §15 | L | Low | Existing Keywords module extended (row 12) |
+| 18 | SEO expansion (GBP, Citations, Reviews, technical SEO) | §15 | L | Low | **Done, except Search Console.** Corrected per Contract 18 §3.2 F1: net-new, never an extension of the unrelated legacy inbound-SMS Keywords module (row 12). Sub-slices A/D/E/F/G/H built, merged and entitlement-flipped Available; Sub-slices B/C (GBP connection product discriminator, Search Console) unbuilt pending OD-2 authorization |
 
 Each may be its own lane, concurrent with everything in Waves 1–5 below,
 since none touch `WorkspaceManager`, `CustomerAccountAccessResolver`,

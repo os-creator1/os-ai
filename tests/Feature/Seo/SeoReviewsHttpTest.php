@@ -221,7 +221,34 @@ class SeoReviewsHttpTest extends TestCase
         $html = $this->page($workspace, $business);
 
         $this->assertStringContainsString('Requests recorded: 2', $html);
-        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', strip_tags($html));
+        // Investigated: a bare strip_tags($html) over the FULL page (shell
+        // included) false-positived on the customer shell's own generic
+        // global-search script (`event.target.closest(...)`,
+        // resources/views/panels/navbar.blade.php) — an ordinary DOM API
+        // name on every authenticated page, nothing Reviews-specific and
+        // no gating/quota language. Scoped to the page's own <main> content
+        // with inline <script>/<style> blocks removed first — the same
+        // technique DashboardInvoiceScopeTest::mainText() already uses —
+        // this is the actual contract check: no gating/quota/ranking copy
+        // in what the Reviews page itself renders.
+        $this->assertDoesNotMatchRegularExpression('/\b(target|goal|quota|leaderboard|ranking|of \d+ )\b/i', $this->mainText($html));
+    }
+
+    private function mainHtml(string $html): string
+    {
+        $start = strpos($html, '<main');
+        $end = strpos($html, '</main>');
+        $this->assertNotFalse($start, 'The page must render inside <main>.');
+        $this->assertNotFalse($end, 'The page must render inside <main>.');
+
+        return substr($html, $start, $end - $start);
+    }
+
+    private function mainText(string $html): string
+    {
+        $region = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#si', ' ', $this->mainHtml($html)) ?? '';
+
+        return trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($region))) ?? '');
     }
 
     // -----------------------------------------------------------------
@@ -498,17 +525,33 @@ class SeoReviewsHttpTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/href="[^"]*(' . preg_quote((string) $contact->phone, '/') . '|g\.page)[^"]*"[^>]*deep-link/', $html);
     }
 
+    /**
+     * Investigated: this test previously called Bus::fake() BEFORE
+     * $this->tenant(), so it also captured entitledTenant()'s own
+     * assignFirstPlan() call — which legitimately, and correctly, fires
+     * WorkspacePlanAssigned and dispatches
+     * App\Jobs\NicheBlueprint\InstallNicheBlueprintForBusiness via
+     * App\Listeners\NicheBlueprint\InstallBlueprintOnFirstPlanAssigned
+     * (Contract 20 §9.1 — onboarding, unrelated to SEO Reviews). That is a
+     * test-setup ordering defect, not a Reviews defect: SEO Reviews itself
+     * dispatches nothing, but faking the bus before the fixture existed
+     * swept in the fixture's own, unrelated onboarding side effect. Fixed
+     * by building the tenant/fixtures FIRST and only then faking outbound
+     * effects, so the assertions below are scoped to what the Reviews
+     * actions under test actually do.
+     */
     public function test_seo_reviews_sends_zero_messages_and_touches_no_messaging_or_automation_table(): void
     {
+        $google = $this->bindFakeGoogleClient();
+        [, $business, $workspace, $location] = $this->tenant();
+        $contact = $this->reviewContact($business, $location);
+
         Http::fake();
         Mail::fake();
         Notification::fake();
         Bus::fake();
         Queue::fake();
-        $google = $this->bindFakeGoogleClient();
 
-        [, $business, $workspace, $location] = $this->tenant();
-        $contact = $this->reviewContact($business, $location);
         $tables = ['chat_boxes', 'chat_box_messages', 'tracking_logs', 'campaigns', 'automations', 'reports', 'sms_logs'];
         $tables = array_values(array_filter($tables, fn ($table) => \Illuminate\Support\Facades\Schema::hasTable($table)));
         $before = $this->dbFingerprint($tables);
