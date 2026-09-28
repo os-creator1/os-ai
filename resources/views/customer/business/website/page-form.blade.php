@@ -317,6 +317,20 @@
             if (data.buttons) {
                 data.buttons = Object.keys(data.buttons).map(function (k) { return data.buttons[k]; }).filter(function (b) { return b && b.url; });
             }
+            // A hero's Primary/Secondary button fields are always rendered
+            // (see FIELD_TEMPLATES.hero above), so setDeep() always creates
+            // an empty {label: '', url: ''} object even when the owner
+            // never filled them in — the common case for a generated
+            // page's own hero. The server's required_with validation
+            // requires BOTH once the key is present at all, so an
+            // untouched, fully-blank cta object must never be sent —
+            // only a genuinely started one (matching how `buttons` above
+            // already drops entries with no url).
+            ['primary_cta', 'secondary_cta'].forEach(function (ctaKey) {
+                if (data[ctaKey] && !data[ctaKey].label && !data[ctaKey].url) {
+                    delete data[ctaKey];
+                }
+            });
             out.push({type: type, data: data});
         });
         return out;
