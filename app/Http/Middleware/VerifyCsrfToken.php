@@ -28,6 +28,11 @@
             '/payment/*',
             'dlr/*',
             'webhooks/prospecting/*',
+            // Implementation Contract 15 §11 — Google/Outlook push
+            // notifications carry no Laravel session; authenticity is the
+            // URL-embedded HMAC token (ExternalCalendarWebhookToken),
+            // verified in-controller before anything else.
+            'webhooks/calendar/*',
             'maintenance/notify',
             'stripe/webhook/usage-billing',
             // Implementation Contract 17 §5.8 — money lane B's own Connect

@@ -500,6 +500,33 @@
 
     /*
     |--------------------------------------------------------------------------
+    | External calendar connection (Contract 15 §5.5, Sub-slice F)
+    |--------------------------------------------------------------------------
+    |
+    | Bare and tenant-free, unlike every other Calendar route in this slice:
+    | Blueprint §12 is explicit that this connection is per-User, not
+    | per-Workspace/Business, so there is no tenancy chain to run and no
+    | Calendar entitlement gate here — see
+    | ExternalCalendarConnectionController's docblock. The two OAuth
+    | callback routes share ONE pattern
+    | (`calendar-connection/oauth/{provider}/callback`); each provider's own
+    | registered redirect_uri is still a distinct, fixed, literal URL.
+    |
+    */
+    Route::get('calendar-connection', 'ExternalCalendarConnectionController@show')->name('calendar-connection.show');
+    Route::post('calendar-connection/connect/{provider}', 'ExternalCalendarConnectionController@connect')
+        ->whereIn('provider', ['google', 'outlook'])
+        ->middleware('throttle:10,1')
+        ->name('calendar-connection.connect');
+    Route::post('calendar-connection/disconnect', 'ExternalCalendarConnectionController@disconnect')
+        ->name('calendar-connection.disconnect');
+    Route::get('calendar-connection/oauth/{provider}/callback', 'ExternalCalendarConnectionController@callback')
+        ->whereIn('provider', ['google', 'outlook'])
+        ->middleware('throttle:20,1')
+        ->name('calendar-connection.oauth.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | SEO entry (Contract 18, Sub-slice 18A)
     |--------------------------------------------------------------------------
     |

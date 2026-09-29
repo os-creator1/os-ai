@@ -104,6 +104,12 @@
             // recordReleaseDecision()'s own explicit, audited, admin-only
             // action, which itself never confirms a real carrier release.
             $schedule->command('messaging:sweep-number-renewals')->daily()->withoutOverlapping();
+            // Implementation Contract 15 §12.F — an implementation-time
+            // cadence decision (not pinned by any authoritative document):
+            // frequent enough that a webhook-missed change still converges
+            // reasonably quickly, bounded so this never becomes the
+            // dominant source of provider request volume.
+            $schedule->command('calendar:sync-external-connections')->everyFifteenMinutes()->withoutOverlapping();
             //   $schedule->command('imartgroup:dlr')->hourly();
             $schedule->command('dashboard:warm')->hourly();
             $schedule->command('keywords:check')->daily();
