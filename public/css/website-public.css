@@ -505,6 +505,19 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 .website-header-modern .website-cta h2,
 .website-header-modern .website-cta p { color: #fff; }
 .website-header-modern .website-faq-item summary { color: var(--website-secondary); }
+.website-header-modern .website-testimonial-card { position: relative; padding-top: 2.25rem; }
+.website-header-modern .website-testimonial-card::before {
+    content: '\201C';
+    position: absolute;
+    top: 0.5rem;
+    left: 1.25rem;
+    font-size: 2.5rem;
+    line-height: 1;
+    color: var(--website-primary);
+    font-family: Georgia, serif;
+}
+.website-header-modern .website-gallery-item { border-radius: 0.5rem; }
+.website-header-modern .website-navigation a { text-transform: uppercase; font-size: 0.8125rem; letter-spacing: 0.03em; }
 .website-footer-modern { background: var(--website-secondary); color: #cbd5e1; border-top-color: rgba(255,255,255,.08); }
 .website-footer-modern a { color: #fff; }
 
@@ -538,6 +551,15 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 .website-header-editorial .website-service-card:hover,
 .website-header-editorial .website-testimonial-card:hover { transform: none; box-shadow: none; }
 .website-header-editorial .website-cta { background: #faf6f1; border: none; }
+.website-header-editorial .website-testimonial-card {
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-size: 1.125rem;
+}
+.website-header-editorial .website-testimonial-card footer strong { font-style: normal; font-family: var(--website-font); }
+.website-header-editorial .website-gallery-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.75rem; }
+.website-header-editorial .website-gallery-item { border-radius: 0; box-shadow: none; border: 1px solid #ecdfd0; }
+.website-header-editorial .website-navigation a { font-family: Georgia, "Times New Roman", serif; }
 .website-footer-editorial { background: #faf6f1; border-top-color: #ecdfd0; }
 
 /* --- Luxury: restrained, elegant, gold/charcoal, tiered package cards
@@ -569,6 +591,14 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 .website-header-luxury .website-service-price { background: transparent; border: 1px solid var(--website-primary); }
 .website-header-luxury .website-cta { background: var(--website-secondary); color: #ece4d6; border: 1px solid rgba(168,135,79,.35); }
 .website-header-luxury .website-cta h2, .website-header-luxury .website-cta p { color: #ece4d6; }
+.website-header-luxury .website-testimonial-card {
+    text-align: center;
+    padding: 2.25rem 1.75rem;
+}
+.website-header-luxury .website-testimonial-card p { font-family: Georgia, "Times New Roman", serif; font-size: 1.1875rem; }
+.website-header-luxury .website-testimonial-card footer strong { letter-spacing: .04em; text-transform: uppercase; font-size: .8125rem; }
+.website-header-luxury .website-gallery-item { border: 1px solid #e7dcc4; border-radius: 0.25rem; }
+.website-header-luxury .website-navigation a { letter-spacing: .04em; font-size: .875rem; }
 .website-footer-luxury { background: var(--website-secondary); color: #ab9c81; border-top-color: rgba(168,135,79,.35); }
 .website-footer-luxury a { color: #ece4d6; }
 
@@ -604,6 +634,13 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 .website-header-conversion .website-cta h2, .website-header-conversion .website-cta p { color: #fff; }
 .website-header-conversion .website-cta .website-btn-primary { background: #fff; color: var(--website-primary); }
 .website-header-conversion .website-faq-item summary { text-transform: none; }
+.website-header-conversion .website-testimonial-card {
+    border: 2px solid var(--website-border);
+    text-align: center;
+}
+.website-header-conversion .website-gallery-item { border-radius: 0; border: 2px solid transparent; transition: border-color .15s ease; }
+.website-header-conversion .website-gallery-item:hover { border-color: var(--website-primary); }
+.website-header-conversion .website-navigation a { text-transform: uppercase; font-size: 0.8125rem; font-weight: 700; }
 .website-footer-conversion { background: var(--website-secondary); color: #cbd5e1; }
 
 @media (max-width: 640px) {

@@ -26,6 +26,8 @@
 
     <form method="POST" action="{{ route('customer.workspaces.businesses.website.rebuild', [$workspaceUid, $businessUid]) }}">
         @csrf
+        {{-- A fresh nonce per page render — see WebsiteController::runGuidedGeneration()'s own docblock. --}}
+        <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
         <fieldset>
             <legend class="h5 mb-2">Choose a template</legend>
             <div class="row">

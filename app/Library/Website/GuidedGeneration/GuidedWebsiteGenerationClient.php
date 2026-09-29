@@ -7,7 +7,7 @@ use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
-use App\Models\WebsiteTemplate;
+use App\Models\BusinessKnowledgeProfileFieldState;
 
 /**
  * Website Guided Generation contract §8.3, completed by this lane. A
@@ -21,10 +21,18 @@ use App\Models\WebsiteTemplate;
  * class's own fail-closed contract: any failure, refusal, or malformed
  * JSON returns null, never throws.
  *
- * Sensitive-fact exclusion (contract §5.2): only a `customer_confirmed`
- * fact within its own freshness window is ever included in the prompt
- * at all — an unverified or stale sensitive fact is never sent, even
- * labeled as unverified.
+ * Acceptance-correction Blocker 2/3: the AI is sent the DETERMINISTIC
+ * generation plan (WebsitePageStrategy::buildPlan()) — the exact real
+ * page instances it must write for, each carrying its own real
+ * entity facts (service name/description/price, location city/service
+ * area) straight from the owning domain's canonical tables — never a
+ * generic page-type manifest it could reinterpret, and never facts
+ * duplicated onto BusinessKnowledgeProfile merely to make them visible
+ * here. Confirmed Knowledge-Profile-owned facts (differentiators,
+ * credentials, testimonials, etc.) are still sent, but only a
+ * `customer_confirmed` fact within its own freshness window is ever
+ * included — an unverified or stale sensitive fact is never sent, even
+ * labeled as unverified (contract §5.2).
  */
 class GuidedWebsiteGenerationClient
 {
@@ -36,7 +44,6 @@ class GuidedWebsiteGenerationClient
         BusinessKnowledgeProfileFieldKey::PricingMethod,
         BusinessKnowledgeProfileFieldKey::FinancingAvailable,
         BusinessKnowledgeProfileFieldKey::Offers,
-        BusinessKnowledgeProfileFieldKey::Hours,
     ];
 
     public function __construct(
@@ -46,11 +53,12 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
-     * @return ?array<int, array{page_type: string, title: string, slug: ?string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
+     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output, already passed through WebsitePageStrategy::withoutAiGallerySections()
+     * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
-    public function generate(Business $business, WebsiteTemplate $template, ?int $actorUserId = null): ?array
+    public function generate(Business $business, array $plan, ?int $actorUserId = null): ?array
     {
-        $messages = $this->buildMessages($business, $template);
+        $messages = $this->buildMessages($business, $plan);
 
         $raw = $this->client->complete($messages, $business, $actorUserId);
         if ($raw === null) {
@@ -68,52 +76,123 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
+     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output
      * @return array<int, array{role: string, content: string}>
      */
-    private function buildMessages(Business $business, WebsiteTemplate $template): array
+    private function buildMessages(Business $business, array $plan): array
     {
-        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
-        $confirmed = $profile === null ? [] : $this->profiles->completenessCheck($business)->presentFieldKeys;
-
-        // §7.4/§8.3 — the AI never sees image_slots (it never authors an
-        // image reference) and never sees a template's presentation
-        // theme (visual choice is never AI's to make).
-        $manifest = collect($template->page_manifest['pages'] ?? [])->map(fn ($page) => [
+        // §7.4/§8.3 — the AI never sees a page's image_slots (it never
+        // authors an image reference) and never sees the template's
+        // presentation theme (visual choice is never AI's to make).
+        // Only page_key/page_type/allowed_section_types/entity survive
+        // into the prompt.
+        $planForPrompt = array_map(fn ($page) => [
+            'page_key' => $page['page_key'],
             'page_type' => $page['page_type'],
             'is_home' => $page['is_home'],
             'allowed_section_types' => $page['allowed_section_types'],
-        ])->all();
+            'entity' => $page['entity'],
+        ], $plan);
 
-        $facts = [];
-        foreach (BusinessKnowledgeProfileFieldKey::cases() as $key) {
-            if (! in_array($key->value, $confirmed, true)) {
-                continue;
-            }
-
-            if (in_array($key, self::SENSITIVE_FIELDS, true) && ! in_array($key->value, $confirmed, true)) {
-                continue;
-            }
-
-            $facts[$key->value] = $profile?->{$key->value} ?? null;
-        }
+        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
 
         $instructions = [
             'You are writing factual, bounded website copy for a real local business.',
             'You may only use the confirmed facts provided below — never invent a fact, statistic, award, review, price, or claim.',
-            'Every page you output must use only the page_type and section types allowed for it in the manifest.',
+            'The "plan" array below is the COMPLETE, FINAL list of pages this website will have. You must write content for EXACTLY these page_key values — one output page per plan entry, never fewer, never more, never a page_key that is not in the plan.',
+            'Each page you output must use only the section types listed in its own plan entry\'s allowed_section_types.',
             'Never include an image, background_image, or asset field of any kind.',
             'Never write any of these prohibited phrases: ' . implode('; ', $profile?->prohibited_claims ?? []),
-            'For each page, also draft seo_title (max 70 characters, descriptive and distinct, never boilerplate or keyword-stuffed) and meta_description (max 160 characters, a genuine one-sentence summary of that specific page) — never copy the same seo_title or meta_description across two pages.',
-            'Respond with a single JSON object: {"pages": [{"page_type": string, "title": string, "slug": string|null, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
+            'For each page, draft a title, seo_title (max 70 characters, descriptive and distinct, never boilerplate or keyword-stuffed) and meta_description (max 160 characters, a genuine one-sentence summary of that specific page) — never copy the same title, seo_title, or meta_description across two pages.',
+            'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
         return [
             ['role' => 'system', 'content' => implode("\n", $instructions)],
             ['role' => 'user', 'content' => json_encode([
                 'business_name' => $business->name,
-                'template_manifest' => $manifest,
-                'confirmed_facts' => $facts,
+                'plan' => $planForPrompt,
+                'confirmed_facts' => $this->canonicalFacts($business),
             ])],
         ];
+    }
+
+    /**
+     * Business-wide facts (never a specific page's own entity data,
+     * which travels on that plan entry instead) drawn from each
+     * domain's own canonical authority — never duplicated onto
+     * BusinessKnowledgeProfile merely to make them visible to AI
+     * (acceptance-correction Blocker 3). Public: also used by
+     * GuidedGenerationCommitService to derive its deterministic
+     * idempotency key from the exact same material facts a generation
+     * attempt is actually built from (Blocker 6).
+     */
+    public function canonicalFacts(Business $business): array
+    {
+        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+
+        $facts = array_filter([
+            'name' => $business->name,
+            'phone' => $business->phone,
+            'email' => $business->email,
+            'description' => trim((string) $business->description) !== '' ? trim($business->description) : null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        $primaryLocation = $business->primaryLocation()->first();
+        if ($primaryLocation !== null) {
+            if ((bool) $primaryLocation->public_address && trim((string) $primaryLocation->address_line_1) !== '') {
+                $facts['address'] = array_filter([
+                    'address_line_1' => $primaryLocation->address_line_1,
+                    'city' => $primaryLocation->city,
+                    'region' => $primaryLocation->region,
+                ]);
+            }
+
+            // Acceptance-correction Blocker 3 (IMPORTANT HOURS BUG): hours
+            // are a business_locations fact, never a BusinessKnowledgeProfile
+            // column — reading `$profile->hours` here (as the old
+            // implementation did) always returns null even when hours are
+            // genuinely confirmed. Read the real, confirmed fact straight
+            // from the primary BusinessLocation instead, exactly the same
+            // confirmation status BusinessKnowledgeProfileManager itself
+            // requires before treating any location's hours as real.
+            if ($primaryLocation->hours_verification_status === BusinessKnowledgeProfileFieldState::STATUS_CUSTOMER_CONFIRMED
+                && $primaryLocation->hours_verified_at !== null
+                && ! empty($primaryLocation->hours)) {
+                $facts['hours'] = $primaryLocation->hours;
+            }
+        }
+
+        if ($profile !== null) {
+            $confirmed = $this->profiles->completenessCheck($business)->presentFieldKeys;
+
+            foreach (BusinessKnowledgeProfileFieldKey::cases() as $key) {
+                if ($key === BusinessKnowledgeProfileFieldKey::Hours) {
+                    // Handled above from the canonical BusinessLocation
+                    // record — this enum case has no matching Profile
+                    // column at all.
+                    continue;
+                }
+
+                if (! in_array($key->value, $confirmed, true)) {
+                    continue;
+                }
+
+                // Sensitive fields are already gated by $confirmed above
+                // (only customer_confirmed, fresh facts ever appear
+                // there) — this second check just documents which keys
+                // are treated as sensitive for readers of this class.
+                if (in_array($key, self::SENSITIVE_FIELDS, true) && ! in_array($key->value, $confirmed, true)) {
+                    continue;
+                }
+
+                $value = $profile->{$key->value} ?? null;
+                if ($value !== null && $value !== '' && $value !== []) {
+                    $facts[$key->value] = $value;
+                }
+            }
+        }
+
+        return $facts;
     }
 }

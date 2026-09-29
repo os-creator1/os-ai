@@ -280,11 +280,47 @@ final class WebsiteStarterDraftService
 
         $this->createAboutPage($website, $business, $contact);
         $this->createFaqPage($website, $business, $contact);
+
+        if ($this->pageStrategy->galleryEligible($website)) {
+            $this->createGalleryPage($website, $business, $contact);
+        }
+
         $this->createContactPage($website, $business, $contact);
 
         foreach ($this->pageStrategy->eligibleLocations($business) as $location) {
             $this->createLocationPage($website, $business, $location, $contact, $servicesOverviewUrl);
         }
+    }
+
+    /**
+     * Only built once WebsitePageStrategy::galleryEligible() confirms
+     * enough real uploaded photography exists (MIN_GALLERY_ASSETS) — a
+     * brand-new Website has zero assets at creation time, so this only
+     * ever fires for a rebuild of an existing, photo-stocked Website
+     * (acceptance-correction Blocker 9/10: a real Gallery page every
+     * template's manifest already declares support for, but which
+     * nothing previously ever built).
+     */
+    private function createGalleryPage(Website $website, Business $business, ?array $contact): void
+    {
+        $items = $website->assets()->orderBy('id')->limit(24)->get()
+            ->map(fn ($asset) => ['image' => $asset->uid])
+            ->all();
+
+        $sections = array_values(array_filter([
+            ['type' => 'hero', 'data' => ['heading' => 'Gallery']],
+            ['type' => 'gallery', 'data' => ['heading' => 'Photos', 'items' => $items]],
+            $contact,
+        ]));
+
+        $this->pages->createPage($website, [
+            'title' => 'Gallery',
+            'slug' => 'gallery',
+            'is_home' => false,
+            'sections' => $sections,
+            'seo_title' => Str::limit('Gallery | ' . $business->name, 70, ''),
+            'meta_description' => null,
+        ]);
     }
 
     /**

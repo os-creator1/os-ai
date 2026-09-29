@@ -3,24 +3,29 @@
 namespace App\Library\Website\GuidedGeneration;
 
 use App\Library\Website\WebsiteSectionValidator;
-use App\Models\WebsiteTemplate;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Website Guided Generation contract §8.2/§8.5, completed by this lane.
- * Validates an AI-authored generation batch — text and structure only,
- * never images (§8.3: the AI is never given an asset UID and never
- * emits one) — before ANY page is created. Fails the WHOLE batch
- * together; there is no such thing as a partially-valid attempt
- * reaching persistence (§8.2).
+ * Website Guided Generation contract §8.2/§8.5, completed by this lane,
+ * strengthened by acceptance-correction Blocker 2. Validates an
+ * AI-authored generation batch — text and structure only, never images
+ * (§8.3: the AI is never given an asset UID and never emits one) —
+ * against the DETERMINISTIC plan (WebsitePageStrategy::buildPlan())
+ * before ANY page is created. Fails the WHOLE batch together; there is
+ * no such thing as a partially-valid attempt reaching persistence
+ * (§8.2).
  *
- * Reuses WebsiteSectionValidator exactly as it already exists — this
- * class adds three checks that validator has no reason to know about:
- * that every page/section type is actually inside the chosen
- * template's own manifest, that no generated text contains a
- * `prohibited_claims` phrase, and that every internal CTA/hero link
- * target is a real page in this same batch (or tel:/mailto:) — never a
- * broken or invented internal link.
+ * The core acceptance-correction invariant: WebsitePageStrategy chooses
+ * page INSTANCES; AI writes bounded content for THOSE instances and may
+ * not add, remove, or reorder them. This class proves that invariant
+ * mechanically — every plan page_key must appear in the output exactly
+ * once, and no output page_key may exist outside the plan — in addition
+ * to reusing WebsiteSectionValidator exactly as it already exists, and
+ * checking that no generated text contains a `prohibited_claims`
+ * phrase, and that every internal CTA/hero link target is a real
+ * planned page slug (or tel:/mailto:) — never a broken or invented
+ * internal link.
  */
 final class GuidedGenerationOutputValidator
 {
@@ -30,35 +35,42 @@ final class GuidedGenerationOutputValidator
     }
 
     /**
-     * @param  array<int, array{page_type: string, title: string, slug: ?string, sections: array}>  $pages
+     * @param  array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
+     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output — the authoritative required page set
      * @param  array<int, string>  $prohibitedClaims
      * @throws ValidationException
      */
-    public function validate(array $pages, WebsiteTemplate $template, array $prohibitedClaims = []): void
+    public function validate(array $pages, array $plan, array $prohibitedClaims = []): void
     {
-        if ($pages === []) {
-            throw ValidationException::withMessages(['pages' => ['Generation produced no pages.']]);
+        if ($plan === []) {
+            throw ValidationException::withMessages(['plan' => ['The generation plan contains no pages.']]);
         }
 
-        $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
+        $planByKey = collect($plan)->keyBy('page_key');
         $errors = [];
-        $knownSlugs = collect($pages)->pluck('slug')->filter()->all();
+
+        $this->assertExactPlanCoverage($pages, $planByKey, $errors);
+
+        // Every planned slug (home resolves to '/') is a valid internal
+        // link target, regardless of whether AI happened to emit content
+        // for it correctly above — a CTA is still allowed to point at
+        // any real planned page.
+        $knownSlugs = collect($plan)->map(fn ($page) => $page['is_home'] ? '' : (string) $page['slug'])->filter(fn ($slug) => $slug !== '')->values()->all();
 
         foreach ($pages as $index => $page) {
-            $pageType = $page['page_type'] ?? null;
-            $manifestPage = $pageType !== null ? $manifestByType->get($pageType) : null;
+            $pageKey = $page['page_key'] ?? null;
+            $planPage = $pageKey !== null ? $planByKey->get($pageKey) : null;
 
-            if ($manifestPage === null) {
-                $errors["pages.{$index}.page_type"][] = "'{$pageType}' is not a page type this template supports.";
-
+            if ($planPage === null) {
+                // Already recorded by assertExactPlanCoverage() above.
                 continue;
             }
 
-            $allowedTypes = $manifestPage['allowed_section_types'] ?? [];
+            $allowedTypes = $planPage['allowed_section_types'] ?? [];
             foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
                 $type = $section['type'] ?? null;
                 if (! in_array($type, $allowedTypes, true)) {
-                    $errors["pages.{$index}.sections.{$sectionIndex}.type"][] = "Section type '{$type}' is not allowed on a '{$pageType}' page.";
+                    $errors["pages.{$index}.sections.{$sectionIndex}.type"][] = "Section type '{$type}' is not allowed on the '{$pageKey}' page.";
                 }
             }
 
@@ -81,6 +93,40 @@ final class GuidedGenerationOutputValidator
 
         if (! empty($errors)) {
             throw ValidationException::withMessages($errors);
+        }
+    }
+
+    /**
+     * Acceptance-correction Blocker 2's core mechanical proof: exactly
+     * one output page per plan page_key — no missing required page, no
+     * extra invented page. AI never decides which pages exist.
+     */
+    private function assertExactPlanCoverage(array $pages, Collection $planByKey, array &$errors): void
+    {
+        $seenKeys = [];
+
+        foreach ($pages as $index => $page) {
+            $pageKey = $page['page_key'] ?? null;
+
+            if ($pageKey === null || ! $planByKey->has($pageKey)) {
+                $errors["pages.{$index}.page_key"][] = "'{$pageKey}' is not a page this generation plan calls for.";
+
+                continue;
+            }
+
+            if (in_array($pageKey, $seenKeys, true)) {
+                $errors["pages.{$index}.page_key"][] = "'{$pageKey}' is duplicated in the output — the plan calls for exactly one page per key.";
+
+                continue;
+            }
+
+            $seenKeys[] = $pageKey;
+        }
+
+        foreach ($planByKey->keys() as $requiredKey) {
+            if (! in_array($requiredKey, $seenKeys, true)) {
+                $errors['plan.missing'][] = "Required planned page '{$requiredKey}' is missing from the generated output.";
+            }
         }
     }
 
@@ -153,7 +199,7 @@ final class GuidedGenerationOutputValidator
     }
 
     /**
-     * @param  array<int, string>  $knownSlugs  every slug this SAME generation batch will create
+     * @param  array<int, string>  $knownSlugs  every non-home slug this generation plan calls for
      */
     private function assertInternalLinksResolve(array $page, array $knownSlugs, int $index, array &$errors): void
     {
@@ -167,8 +213,8 @@ final class GuidedGenerationOutputValidator
                 }
 
                 $targetSlug = ltrim($url, '/');
-                if (! in_array($targetSlug, $knownSlugs, true) && $targetSlug !== '') {
-                    $errors["pages.{$index}.sections.{$sectionIndex}.buttons.{$buttonIndex}.url"][] = "Internal link '{$url}' does not resolve to any page in this generation batch.";
+                if ($targetSlug !== '' && ! in_array($targetSlug, $knownSlugs, true)) {
+                    $errors["pages.{$index}.sections.{$sectionIndex}.buttons.{$buttonIndex}.url"][] = "Internal link '{$url}' does not resolve to any page in this generation plan.";
                 }
             }
         }

@@ -6,8 +6,11 @@ use App\Enums\Business\BusinessServiceStatus;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
+use App\Models\CatalogItem;
+use App\Models\CatalogItemLocationOverride;
 use App\Models\WebsiteTemplate;
 use Database\Seeders\WebsiteTemplateSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -66,12 +69,17 @@ class WebsitePageStrategyTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
 
+        // Two independent real signals (acceptance-correction Blocker 8):
+        // a saved service-area city list AND a genuine, findable public
+        // address — never just one geographic token.
         $eligible = BusinessLocation::create([
             'business_id' => $business->id,
             'service_mode' => 'service_area',
             'city' => 'Naperville',
             'region' => 'IL',
             'service_area_cities' => ['Naperville', 'Aurora', 'Wheaton'],
+            'public_address' => true,
+            'address_line_1' => '400 S Washington St',
         ]);
         $thin = BusinessLocation::create([
             'business_id' => $business->id,
@@ -92,6 +100,118 @@ class WebsitePageStrategyTest extends TestCase
         $this->assertStringNotContainsString('joliet', implode(',', $slugs));
     }
 
+    /**
+     * Acceptance-correction Blocker 8: a bare geographic token (a city
+     * list, or a radius) is no longer, by itself, enough to justify a
+     * page — it must land in the "needs more local information"
+     * checklist instead of ever becoming an indexable page.
+     */
+    public function test_a_location_with_only_a_single_geographic_signal_needs_more_info_not_a_page(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        $cityOnly = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Elgin',
+            'region' => 'IL',
+            'service_area_cities' => ['Elgin', 'Carpentersville'],
+        ]);
+        $radiusOnly = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Waukegan',
+            'region' => 'IL',
+            'service_radius_km' => 25,
+        ]);
+
+        $strategy = app(WebsitePageStrategy::class);
+        $this->assertFalse($strategy->eligibleLocations($business)->contains('id', $cityOnly->id));
+        $this->assertFalse($strategy->eligibleLocations($business)->contains('id', $radiusOnly->id));
+        $this->assertTrue($strategy->locationsNeedingMoreInfo($business)->contains('id', $cityOnly->id));
+        $this->assertTrue($strategy->locationsNeedingMoreInfo($business)->contains('id', $radiusOnly->id));
+
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = app(WebsiteStarterDraftService::class)->createFromTemplate($business, $template);
+
+        $slugs = $website->pages()->pluck('slug')->filter()->values()->all();
+        $this->assertStringNotContainsString('elgin', implode(',', $slugs));
+        $this->assertStringNotContainsString('waukegan', implode(',', $slugs));
+    }
+
+    /**
+     * A location may clear the bar through a DIFFERENT pair of real
+     * signals than the geography+address combination — here, a travel
+     * radius plus a genuinely saved, distinct package/offer override for
+     * that specific location — proving the gate counts independent real
+     * facts rather than hardcoding one specific pair.
+     */
+    public function test_a_radius_plus_a_real_location_specific_package_override_is_enough_to_qualify(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Schaumburg',
+            'region' => 'IL',
+            'service_radius_km' => 30,
+        ]);
+        $catalogItem = CatalogItem::create([
+            'business_id' => $business->id,
+            'type' => 'package',
+            'name' => 'Weekend Package',
+            'price_minor' => 50000,
+            'currency_code' => 'USD',
+            'position' => 0,
+        ]);
+        CatalogItemLocationOverride::create([
+            'catalog_item_id' => $catalogItem->id,
+            'business_location_id' => $location->id,
+            'is_enabled' => true,
+            'price_minor_override' => 45000,
+        ]);
+
+        $strategy = app(WebsitePageStrategy::class);
+        $this->assertTrue($strategy->eligibleLocations($business)->contains('id', $location->id));
+    }
+
+    /**
+     * Verified, location-specific opening hours are another independent
+     * real signal — but only once genuinely confirmed (never a merely
+     * saved, unverified value), mirroring the exact confirmation status
+     * BusinessKnowledgeProfileManager itself requires before treating
+     * any location's hours as real.
+     */
+    public function test_unverified_hours_do_not_count_as_a_signal_but_confirmed_hours_do(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        $unverified = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Batavia',
+            'region' => 'IL',
+            'service_radius_km' => 20,
+            'hours' => ['mon' => [['09:00', '17:00']]],
+            'hours_verification_status' => 'unverified',
+        ]);
+        $confirmed = BusinessLocation::create([
+            'business_id' => $business->id,
+            'service_mode' => 'service_area',
+            'city' => 'Geneva',
+            'region' => 'IL',
+            'service_radius_km' => 20,
+            'hours' => ['mon' => [['09:00', '17:00']]],
+            'hours_verification_status' => BusinessKnowledgeProfileFieldState::STATUS_CUSTOMER_CONFIRMED,
+            'hours_verified_at' => now(),
+        ]);
+
+        $strategy = app(WebsitePageStrategy::class);
+        $this->assertFalse($strategy->eligibleLocations($business)->contains('id', $unverified->id));
+        $this->assertTrue($strategy->eligibleLocations($business)->contains('id', $confirmed->id));
+    }
+
     public function test_location_page_body_copy_is_unique_per_location_not_a_name_swapped_template(): void
     {
         [, $business] = $this->entitledTenant();
@@ -102,6 +222,8 @@ class WebsitePageStrategyTest extends TestCase
             'city' => 'Naperville',
             'region' => 'IL',
             'service_area_cities' => ['Naperville', 'Aurora'],
+            'public_address' => true,
+            'address_line_1' => '10 W Jefferson Ave',
         ]);
         BusinessLocation::create([
             'business_id' => $business->id,
@@ -109,6 +231,8 @@ class WebsitePageStrategyTest extends TestCase
             'city' => 'Rockford',
             'region' => 'IL',
             'service_radius_km' => 40,
+            'public_address' => true,
+            'address_line_1' => '200 E State St',
         ]);
 
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');

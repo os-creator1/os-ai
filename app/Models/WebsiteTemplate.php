@@ -52,19 +52,30 @@ class WebsiteTemplate extends Model
      * exists in every dimension for the pre-existing, pre-template-
      * system Websites whose `theme` carries none of these keys at all
      * (page.blade.php's own `?? 'default'` fallback).
+     *
+     * Acceptance-correction "Template presentation check": an earlier
+     * revision also declared nav_style/hero_style/card_style/
+     * testimonial_style/faq_style/cta_style/process_style, each with the
+     * exact same allowed-value list as header_variant. No seeded
+     * template ever set any of them to a value DIFFERENT from its own
+     * header_variant, no renderer partial ever read any of them, and
+     * process_style named a component (a numbered "how it works" step
+     * list) that has no corresponding WebsiteSectionType at all — a
+     * template advertising a capability the renderer ignores. Removed
+     * rather than wired to a no-op: `header_variant`'s body-level CSS
+     * class (`.website-header-{variant}`, page.blade.php) already
+     * cascades to every component partial (hero/services/testimonials/
+     * faq/cta/gallery/image_text/contact_details/form — see
+     * public/css/website-public.css's "FOUR OPERATOR TEMPLATES"
+     * section), so one real, renderer-honored key already drives the
+     * template's entire visual identity; seven redundant, always-
+     * identical copies of that same string added no real capability.
      */
     public const ALLOWED_THEME_VALUES = [
         'font' => ['system', 'serif', 'display'],
         'button_style' => ['solid', 'rounded', 'outline', 'pill'],
         'header_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion'],
         'footer_variant' => ['default', 'clean', 'bold', 'premium', 'modern', 'editorial', 'luxury', 'conversion'],
-        'nav_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'hero_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'card_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'testimonial_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'faq_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'cta_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
-        'process_style' => ['default', 'modern', 'editorial', 'luxury', 'conversion'],
     ];
 
     public const REQUIRED_THEME_KEYS = ['primary_color', 'secondary_color', 'content_width'];
