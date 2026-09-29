@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Marketing;
 
 use App\Http\Controllers\Controller;
 use App\Library\PlatformBilling\PlatformPlanPresenter;
-use App\Models\MarketingFaq;
-use App\Models\MarketingTestimonial;
 use App\Repositories\Contracts\MarketingContentSettingsRepository;
+use App\Repositories\Contracts\MarketingFaqRepository;
+use App\Repositories\Contracts\MarketingTestimonialRepository;
 use Illuminate\Contracts\View\View;
 
 /**
@@ -20,12 +20,21 @@ use Illuminate\Contracts\View\View;
  * through MarketingContentSettingsRepository::current() — the same
  * race-safe path MarketingContentController uses — so the admin editor and
  * this public page can never resolve two different rows.
+ *
+ * Review correction round 2: FAQ and testimonial reads moved off the
+ * MarketingFaq/MarketingTestimonial Eloquent scopes and behind
+ * MarketingFaqRepository/MarketingTestimonialRepository — the same
+ * repositories MarketingContentController already uses — so the public
+ * read path follows the same controller -> repository -> library -> model
+ * structure as the corrected admin path.
  */
 class HomeController extends Controller
 {
     public function __construct(
         private readonly PlatformPlanPresenter $plans,
         private readonly MarketingContentSettingsRepository $settings,
+        private readonly MarketingFaqRepository $faqs,
+        private readonly MarketingTestimonialRepository $testimonials,
     ) {
     }
 
@@ -34,12 +43,15 @@ class HomeController extends Controller
         return view('marketing.home', [
             'plans' => $this->plans->sellablePlans(),
             'settings' => $this->settings->current(),
-            'faqs' => MarketingFaq::visibleOrdered()->get(),
+            'faqs' => $this->faqs->visibleOrdered(),
             // A visible testimonial only ever renders once it has something
             // to actually show: an uploaded poster, or a YouTube link (whose
             // own thumbnail stands in for a poster) — see
-            // MarketingTestimonial::hasDisplayableMedia().
-            'testimonials' => MarketingTestimonial::visibleOrdered()->get()->filter->hasDisplayableMedia()->values(),
+            // MarketingTestimonial::hasDisplayableMedia(). Filtering an
+            // already-fetched Collection by a plain model predicate is not
+            // an Eloquent query, so it stays here rather than moving into
+            // the repository.
+            'testimonials' => $this->testimonials->visibleOrdered()->filter->hasDisplayableMedia()->values(),
         ]);
     }
 }

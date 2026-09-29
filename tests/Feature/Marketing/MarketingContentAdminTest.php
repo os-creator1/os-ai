@@ -369,4 +369,33 @@ class MarketingContentAdminTest extends TestCase
 
         $this->assertDatabaseCount('marketing_testimonials', 0);
     }
+
+    /**
+     * Review correction round 2 (P2): a stale or nonexistent FAQ/testimonial
+     * id used to throw ModelNotFoundException, which Handler.php renders as
+     * a 500 outside local — the routes now use the established
+     * ->missing(fn () => abort(404)) binding so this is a plain 404.
+     */
+    public function test_a_missing_faq_or_testimonial_id_returns_404_not_500(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $missingId = 999999;
+
+        $this->put(route('admin.marketing-content.faqs.update', ['faq' => $missingId]), [
+            'question' => 'Does not matter?',
+            'answer' => 'A.',
+        ])->assertNotFound();
+
+        $this->delete(route('admin.marketing-content.faqs.destroy', ['faq' => $missingId]))
+            ->assertNotFound();
+
+        $this->post(route('admin.marketing-content.testimonials.update', ['testimonial' => $missingId]), [
+            'name' => 'Does not matter',
+            'business_context_label' => 'Feedback from an earlier business',
+        ])->assertNotFound();
+
+        $this->delete(route('admin.marketing-content.testimonials.destroy', ['testimonial' => $missingId]))
+            ->assertNotFound();
+    }
 }

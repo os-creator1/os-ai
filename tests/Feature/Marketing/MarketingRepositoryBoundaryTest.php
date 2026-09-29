@@ -44,6 +44,24 @@ class MarketingRepositoryBoundaryTest extends TestCase
         $this->assertDatabaseMissing('marketing_faqs', ['id' => $faq->id]);
     }
 
+    /**
+     * Review correction round 2 (P1): HomeController's public read moved
+     * off MarketingFaq::visibleOrdered() directly onto this repository
+     * method, so it must apply the same visibility filter and ordering.
+     */
+    public function test_faq_repository_visible_ordered_excludes_hidden_faqs(): void
+    {
+        $repository = app(MarketingFaqRepository::class);
+
+        $repository->create(['question' => 'Hidden?', 'answer' => 'A.', 'position' => 1, 'is_visible' => false]);
+        $repository->create(['question' => 'Visible second?', 'answer' => 'A.', 'position' => 3, 'is_visible' => true]);
+        $repository->create(['question' => 'Visible first?', 'answer' => 'A.', 'position' => 2, 'is_visible' => true]);
+
+        $visible = $repository->visibleOrdered();
+
+        $this->assertSame(['Visible first?', 'Visible second?'], $visible->pluck('question')->all());
+    }
+
     public function test_testimonial_repository_resolves_from_the_container_and_tracks_poster_usage(): void
     {
         $repository = app(MarketingTestimonialRepository::class);
@@ -80,5 +98,36 @@ class MarketingRepositoryBoundaryTest extends TestCase
         $remaining = MarketingTestimonial::query()->where('name', 'A Person')->firstOrFail();
         $repository->delete($remaining);
         $this->assertFalse($repository->isPosterPathInUse('images/marketing/testimonials/shared.png'));
+    }
+
+    /**
+     * Review correction round 2 (P1): HomeController's public read moved
+     * off MarketingTestimonial::visibleOrdered() directly onto this
+     * repository method, so it must apply the same visibility filter and
+     * ordering (the separate hasDisplayableMedia() filter stays a plain
+     * Collection operation in the controller, not the repository).
+     */
+    public function test_testimonial_repository_visible_ordered_excludes_hidden_testimonials(): void
+    {
+        $repository = app(MarketingTestimonialRepository::class);
+
+        $repository->create([
+            'name' => 'Hidden Person',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image_path' => 'images/marketing/testimonials/a.png',
+            'position' => 1,
+            'is_visible' => false,
+        ]);
+        $repository->create([
+            'name' => 'Visible Person',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image_path' => 'images/marketing/testimonials/b.png',
+            'position' => 2,
+            'is_visible' => true,
+        ]);
+
+        $visible = $repository->visibleOrdered();
+
+        $this->assertSame(['Visible Person'], $visible->pluck('name')->all());
     }
 }

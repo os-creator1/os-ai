@@ -18,6 +18,11 @@ class EloquentMarketingTestimonialRepository extends EloquentBaseRepository impl
         return $this->query()->orderBy('position')->orderBy('id')->get();
     }
 
+    public function visibleOrdered(): Collection
+    {
+        return $this->query()->visibleOrdered()->get();
+    }
+
     public function nextPosition(): int
     {
         return (int) $this->query()->max('position') + 1;
