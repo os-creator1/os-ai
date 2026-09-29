@@ -2,6 +2,10 @@
 
 @section('title', 'Calendar')
 
+@section('page-style')
+    @include('customer.business.calendar._styles')
+@endsection
+
 @section('content')
     @php
         // Implementation Contract 15 §12.D — presentation only.
@@ -11,41 +15,41 @@
         // inaccessible Location is absent, not greyed out, and its existence is
         // not implied by a count or a "more locations" hint.
         $scopeFor = static fn ($location) => [$workspace->uid, $business->uid, $location->uid];
+        $location = null;
     @endphp
 
-    <section class="mb-2">
-        <h1 class="h3 mb-25">Calendar</h1>
-        <p class="text-body mb-0">Choose a location to see its schedule. Each location has its own calendar.</p>
-    </section>
+    @include('customer.business.calendar._module-nav', ['active' => null])
 
     @if ($locations->isEmpty())
         {{-- Only reachable when the Business has no active Location at all,
              so this discloses nothing an actor could not already see. --}}
-        <div class="card" data-section="calendar-no-locations">
-            <div class="card-body">
-                <p class="mb-0">This business has no locations yet. Add a location to start using its calendar.</p>
-            </div>
-        </div>
+        <x-card data-section="calendar-no-locations">
+            <x-empty-state icon="map-pin" title="This business has no locations yet."
+                            description="Add a location to start using its calendar." />
+        </x-card>
     @else
-    <div class="card" data-section="calendar-location-picker">
-        <div class="list-group list-group-flush">
-            @foreach ($locations as $location)
-                <a class="list-group-item list-group-item-action"
-                   data-role="calendar-location"
-                   href="{{ route('customer.workspaces.businesses.calendar.schedule', $scopeFor($location)) }}">
-                    <strong>{{ $location->name ?: 'Unnamed location' }}</strong>
-                    @if ($location->is_primary)
-                        <span class="badge badge-light-primary ml-50">Primary</span>
-                    @endif
-                    @php
-                        $address = collect([$location->address_line_1, $location->city, $location->region])->filter()->implode(', ');
-                    @endphp
-                    @if ($address !== '')
-                        <div class="text-muted small">{{ $address }}</div>
-                    @endif
-                </a>
-            @endforeach
-        </div>
-    </div>
+        <x-card :padded="false" data-section="calendar-location-picker">
+            <div class="list-group list-group-flush">
+                @foreach ($locations as $loc)
+                    <a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between"
+                       data-role="calendar-location"
+                       href="{{ route('customer.workspaces.businesses.calendar.schedule', $scopeFor($loc)) }}">
+                        <span>
+                            <span class="text-label">{{ $loc->name ?: 'Unnamed location' }}</span>
+                            @if ($loc->is_primary)
+                                <x-badge variant="accent" class="ms-50">Primary</x-badge>
+                            @endif
+                            @php
+                                $address = collect([$loc->address_line_1, $loc->city, $loc->region])->filter()->implode(', ');
+                            @endphp
+                            @if ($address !== '')
+                                <span class="d-block text-caption">{{ $address }}</span>
+                            @endif
+                        </span>
+                        <x-ds-icon name="chevron-right" size="16" aria-hidden="true" />
+                    </a>
+                @endforeach
+            </div>
+        </x-card>
     @endif
 @endsection
