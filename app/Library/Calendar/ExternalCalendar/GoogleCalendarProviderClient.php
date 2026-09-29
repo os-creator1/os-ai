@@ -153,11 +153,19 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
         $pageToken = null;
         $nextSyncToken = null;
 
+        // https://developers.google.com/calendar/api/guides/sync — Google's
+        // documented pagination rule is that page 2+ repeats the SAME
+        // request parameters and adds pageToken; it is never a
+        // pageToken-only request. An earlier version of this method
+        // replaced the query wholesale on page 2, silently dropping
+        // syncToken/singleEvents from every page after the first.
+        $baseQuery = ['syncToken' => $cursor, 'singleEvents' => 'true'];
+
         do {
-            $query = ['syncToken' => $cursor, 'singleEvents' => 'true'];
+            $query = $baseQuery;
 
             if ($pageToken !== null) {
-                $query = ['pageToken' => $pageToken];
+                $query['pageToken'] = $pageToken;
             }
 
             try {
