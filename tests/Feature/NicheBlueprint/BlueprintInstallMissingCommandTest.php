@@ -529,7 +529,13 @@ class BlueprintInstallMissingCommandTest extends TestCase
             class_exists('App\Http\Controllers\Customer\Business\NicheBlueprintController'),
             'The customer HTTP surface is Sub-slice E, not this one.'
         );
-        $this->assertSame([], $this->appFilesMentioning('NicheBlueprintController'));
+
+        // Sub-slice F landed the PLATFORM OWNER admin surface, so the bare
+        // class name 'NicheBlueprintController' now legitimately appears
+        // under app/ (App\Http\Controllers\Admin\NicheBlueprintController).
+        // The fully-qualified Customer namespace fragment is what must still
+        // be absent everywhere — that is Sub-slice E, still not built.
+        $this->assertSame([], $this->appFilesMentioning('Customer\\Business\\NicheBlueprintController'));
 
         // Sub-slice D's real adapter, registered additively in
         // AppServiceProvider (§11 rule 3) — present, and still the only

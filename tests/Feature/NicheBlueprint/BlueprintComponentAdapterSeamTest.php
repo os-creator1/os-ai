@@ -18,11 +18,14 @@ use Tests\TestCase;
 
 /**
  * Implementation Contract 20 §10, §12.A — the adapter seam, the enums, and the
- * scope boundary of Sub-slice A.
+ * scope boundary Sub-slice A originally shipped empty.
  *
- * Sub-slice A ships the seam EMPTY: no real adapter, no publisher, no
- * installer, no HTTP surface. Several assertions here exist specifically to
- * fail if a later edit smuggles any of that in early.
+ * Sub-slices B (publisher), C (installer), D (the real CRM pipeline adapter)
+ * and F (the Platform Owner admin surfaces) have since landed their own
+ * authorized deliverables, asserted below as a positive control. Only
+ * Sub-slice E's customer-reachable HTTP surface remains out of scope; several
+ * assertions here exist specifically to fail if a later edit smuggles that in
+ * early.
  */
 class BlueprintComponentAdapterSeamTest extends TestCase
 {
@@ -248,46 +251,61 @@ class BlueprintComponentAdapterSeamTest extends TestCase
         $this->assertSame('boolean', (new NicheBlueprint())->getCasts()['is_active'] ?? null);
     }
 
-    // ---------------------------------------- Sub-slice A scope boundary
+    // ---------------------------------------- remaining scope boundary
 
     /**
-     * Sub-slice A builds the seam only. If any of these exist, a later
-     * sub-slice has been smuggled in early and its own gates are not yet in
-     * place — which is exactly the ordering failure §12 exists to prevent.
+     * Sub-slice A built the seam empty; B, C, D and F have since landed
+     * their own authorized deliverables (checked below as a positive
+     * control, so this test cannot pass vacuously on a misspelled
+     * namespace). Only Sub-slice E's customer HTTP surface remains absent —
+     * if it exists, it has been smuggled in early and its own gates
+     * (ownership-only add, §6.5) are not yet in place, which is exactly the
+     * ordering failure §12 exists to prevent.
      */
-    public function test_no_publisher_installer_or_http_surface_exists_yet(): void
+    public function test_no_customer_surface_exists_yet(): void
     {
-        // NicheBlueprintPublisher was on this list until Sub-slice B,
-        // NicheBlueprintInstaller with its queued job until Sub-slice C, and
-        // CrmPipelineComponentAdapter until Sub-slice D — each moved to the
-        // assertion below when the sub-slice that owns it landed. Everything
-        // still listed belongs to E or F, and must not appear before the
-        // gates that protect it do.
         foreach ([
             'App\\Http\\Controllers\\Customer\\Business\\NicheBlueprintController',
-            'App\\Http\\Controllers\\Admin\\NicheBlueprintController',
         ] as $class) {
             $this->assertFalse(class_exists($class), $class . ' belongs to a later sub-slice.');
         }
 
-        // Sub-slice B's, C's and D's own deliverables: present, and still the
-        // only Blueprint services that may exist at this point. All three are
-        // domain code with no customer HTTP surface of their own — the
-        // controllers above remain absent, which is what keeps the feature
-        // unreachable.
+        // Sub-slice B's, C's, D's and F's own deliverables: present, and
+        // still the only Blueprint services/surfaces that may exist at this
+        // point. Neither admin controller writes a niche_blueprint_* row
+        // directly — both delegate to NicheBlueprintPublisher (proven by
+        // NicheBlueprintPublishBoundaryTest's structural tripwire, which
+        // scans the whole app/ tree including these two files) — and no
+        // customer-reachable surface exists yet, which is what keeps the
+        // feature unreachable by anyone but a platform administrator.
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintPublisher'));
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\NicheBlueprintInstaller'));
         $this->assertTrue(class_exists('App\\Jobs\\NicheBlueprint\\InstallNicheBlueprintForBusiness'));
         $this->assertTrue(class_exists('App\\Library\\NicheBlueprint\\Adapters\\CrmPipelineComponentAdapter'));
+        $this->assertTrue(class_exists('App\\Http\\Controllers\\Admin\\NicheBlueprintController'));
+        $this->assertTrue(class_exists('App\\Http\\Controllers\\Admin\\BlueprintTemplateLibraryController'));
     }
 
-    public function test_no_niche_blueprint_route_is_registered(): void
+    /**
+     * Contract 20 §12.F — Sub-slice F registers the Platform Owner's two
+     * admin-only surfaces, so "no blueprint route at all" (Sub-slice A's
+     * original assertion) is no longer the right boundary. What must still
+     * be true, and is asserted here, is that no CUSTOMER-facing route names
+     * a Blueprint — that remains Sub-slice E's, not yet built.
+     */
+    public function test_no_customer_facing_niche_blueprint_route_is_registered(): void
     {
         foreach (app('router')->getRoutes() as $route) {
+            $name = (string) $route->getName();
+
+            if (! str_starts_with($name, 'customer.') && ! str_starts_with($name, 'user.')) {
+                continue;
+            }
+
             $this->assertStringNotContainsString(
                 'blueprint',
                 strtolower($route->uri()),
-                'Sub-slice A registers no route: ' . $route->uri()
+                'Sub-slice E is not yet built: ' . $route->uri()
             );
         }
     }

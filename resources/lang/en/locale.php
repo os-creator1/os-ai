@@ -959,6 +959,8 @@
             'AI Usage'                => 'AI Usage',
             'Provider Events'         => 'Provider Events',
             'Additional Slot Agreements' => 'Additional Slot Agreements',
+            'Niche Blueprints'        => 'Niche Blueprints',
+            'Template Library'        => 'Template Library',
             'Messaging Provisioning Incidents' => 'Messaging Provisioning Incidents',
             'Messaging Port-Out Requests' => 'Messaging Port-Out Requests',
             'Messaging Number Lifecycle' => 'Messaging Number Lifecycle',
