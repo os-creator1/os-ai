@@ -21,7 +21,6 @@ use App\Models\NicheBlueprintComponent;
 use App\Models\NicheBlueprintVersion;
 use App\Repositories\Contracts\UserRepository;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Throwable;
@@ -75,20 +74,6 @@ class NicheBlueprintPublisher
 
     private const MAX_FEATURE_KEY = 64;
 
-    /**
-     * §5.1's two identity uniqueness constraints, by name
-     * (`2026_09_14_...create_niche_blueprints_table.php`). The database
-     * remains the sole concurrency authority for both — these names exist
-     * only so a violation can be told apart from an unrelated database
-     * failure and translated into the same InvalidArgumentException
-     * vocabulary the pre-write assertions below already use, mirroring
-     * BusinessKnowledgeProfileManager::createProfileRaceSafe()'s own
-     * constraint-name-checked UniqueConstraintViolationException handling.
-     */
-    private const BLUEPRINT_KEY_UNIQUE_CONSTRAINT = 'nb_key_unique';
-
-    private const VERTICAL_KEY_UNIQUE_CONSTRAINT = 'nb_vertical_key_unique';
-
     public function __construct(
         private readonly UserRepository $userRepository,
         private readonly BlueprintComponentAdapterRegistry $adapters,
@@ -113,16 +98,12 @@ class NicheBlueprintPublisher
         $this->assertVerticalKey($verticalKey);
         $this->assertBroadIndustry($broadIndustry);
 
-        try {
-            $blueprint = NicheBlueprint::create([
-                'key' => $key,
-                'display_name' => $displayName,
-                'vertical_key' => $verticalKey,
-                'broad_industry' => $broadIndustry,
-            ]);
-        } catch (UniqueConstraintViolationException $e) {
-            throw $this->translateIdentityUniqueConstraintViolation($e, $key, $verticalKey);
-        }
+        $blueprint = NicheBlueprint::create([
+            'key' => $key,
+            'display_name' => $displayName,
+            'vertical_key' => $verticalKey,
+            'broad_industry' => $broadIndustry,
+        ]);
 
         // `is_active` is not mass-assignable (Slice 20A), so the model that
         // comes back from create() carries no value for it at all while the
@@ -137,18 +118,6 @@ class NicheBlueprintPublisher
      * by id, but operators, seeds and future resolution logic address it by
      * key, and silently renaming it would strand all three.
      *
-     * VERTICAL REASSIGNMENT VS. RETENTION. A vertical can be deactivated
-     * after a Blueprint is bound to it (§7.1's fallback resolution keeps
-     * working from `broad_industry` when that happens). `assertVerticalKey()`
-     * requires an ACTIVE vertical, and that requirement is correct for a
-     * genuine reassignment — but applying it unconditionally here would mean
-     * saving an unrelated field (display_name, say) on a Blueprint whose
-     * vertical has since gone inactive silently detaches that vertical,
-     * because the admin form always resubmits the current value. So a
-     * submitted `vertical_key` identical to the one already persisted is
-     * treated as unchanged and never re-validated for activeness; only an
-     * actual change is held to the "must be active" rule.
-     *
      * @param  array{display_name?: string, vertical_key?: ?string, broad_industry?: ?string}  $attributes
      */
     public function updateBlueprintIdentity(int $actorUserId, NicheBlueprint $blueprint, array $attributes): NicheBlueprint
@@ -162,13 +131,8 @@ class NicheBlueprintPublisher
         }
 
         if (array_key_exists('vertical_key', $attributes)) {
-            $submittedVerticalKey = $attributes['vertical_key'];
-
-            if ($submittedVerticalKey !== $blueprint->vertical_key) {
-                $this->assertVerticalKey($submittedVerticalKey);
-            }
-
-            $changes['vertical_key'] = $submittedVerticalKey;
+            $this->assertVerticalKey($attributes['vertical_key']);
+            $changes['vertical_key'] = $attributes['vertical_key'];
         }
 
         if (array_key_exists('broad_industry', $attributes)) {
@@ -177,45 +141,10 @@ class NicheBlueprintPublisher
         }
 
         if ($changes !== []) {
-            try {
-                $blueprint->forceFill($changes)->save();
-            } catch (UniqueConstraintViolationException $e) {
-                throw $this->translateIdentityUniqueConstraintViolation(
-                    $e,
-                    $blueprint->key,
-                    $changes['vertical_key'] ?? null,
-                );
-            }
+            $blueprint->forceFill($changes)->save();
         }
 
         return $blueprint->refresh();
-    }
-
-    /**
-     * §5.1's two identity uniqueness constraints are the database's own
-     * concurrency authority — never bypassed, never pre-empted by trusting
-     * only a pre-check. This translates ONLY those two known constraints
-     * into the InvalidArgumentException vocabulary create/update's own
-     * pre-write assertions already raise; anything else (a different
-     * constraint, a connection failure, an unrelated integrity error)
-     * propagates unchanged rather than being reported as "duplicate".
-     */
-    private function translateIdentityUniqueConstraintViolation(
-        UniqueConstraintViolationException $e,
-        string $key,
-        ?string $verticalKey,
-    ): Throwable {
-        if (str_contains($e->getMessage(), self::BLUEPRINT_KEY_UNIQUE_CONSTRAINT)) {
-            return new InvalidArgumentException("The Blueprint key [{$key}] is already in use.");
-        }
-
-        if ($verticalKey !== null && str_contains($e->getMessage(), self::VERTICAL_KEY_UNIQUE_CONSTRAINT)) {
-            return new InvalidArgumentException(
-                "The vertical [{$verticalKey}] is already assigned to another Blueprint."
-            );
-        }
-
-        return $e;
     }
 
     /**

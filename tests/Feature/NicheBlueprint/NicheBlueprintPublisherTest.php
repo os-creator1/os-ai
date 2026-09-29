@@ -19,18 +19,14 @@ use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
 use App\Library\NicheBlueprint\Adapters\InstalledComponentReference;
 use App\Library\NicheBlueprint\NicheBlueprintPublisher;
 use App\Models\Business;
-use App\Models\BusinessVertical;
 use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\NicheBlueprintVersion;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
-use PDOException;
-use ReflectionMethod;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -776,138 +772,5 @@ class NicheBlueprintPublisherTest extends TestCase
         $fresh = $blueprint->refresh();
         $this->assertSame('Renamed', $fresh->display_name);
         $this->assertSame('photo_booth', $fresh->key, 'The Blueprint key is stable identity and is never rewritten here.');
-    }
-
-    // ==================================================== Identity uniqueness
-
-    /**
-     * §5.1's `nb_key_unique` is a database constraint, not merely a
-     * pre-check — this proves a genuine duplicate becomes a domain
-     * InvalidArgumentException (the vocabulary create()'s own pre-write
-     * assertions already raise) rather than an uncaught QueryException.
-     */
-    public function test_duplicate_blueprint_key_is_a_domain_refusal_not_a_query_exception(): void
-    {
-        $this->blueprint('photo_booth');
-
-        try {
-            $this->publisher->createBlueprint($this->adminId, 'photo_booth', 'A Second Photo Booth');
-            $this->fail('A duplicate Blueprint key must be refused.');
-        } catch (InvalidArgumentException $e) {
-            $this->assertStringContainsString('photo_booth', $e->getMessage());
-        }
-
-        $this->assertSame(1, NicheBlueprint::where('key', 'photo_booth')->count());
-    }
-
-    public function test_duplicate_vertical_key_on_create_is_a_domain_refusal(): void
-    {
-        $vertical = BusinessVertical::create([
-            'key' => 'photo_booth_vertical', 'display_name' => 'Photo Booth Vertical', 'is_active' => true,
-        ]);
-        $this->publisher->createBlueprint($this->adminId, 'photo_booth', 'Photo Booth', $vertical->key);
-
-        try {
-            $this->publisher->createBlueprint($this->adminId, 'weddings', 'Weddings', $vertical->key);
-            $this->fail('A vertical already assigned to another Blueprint must be refused.');
-        } catch (InvalidArgumentException $e) {
-            $this->assertStringContainsString($vertical->key, $e->getMessage());
-        }
-
-        $this->assertSame(1, NicheBlueprint::where('vertical_key', $vertical->key)->count());
-        $this->assertNull(NicheBlueprint::where('key', 'weddings')->first());
-    }
-
-    public function test_reassigning_a_blueprint_onto_another_blueprints_vertical_is_refused_and_leaves_rows_unchanged(): void
-    {
-        $verticalA = BusinessVertical::create(['key' => 'vertical_a', 'display_name' => 'Vertical A', 'is_active' => true]);
-        $verticalB = BusinessVertical::create(['key' => 'vertical_b', 'display_name' => 'Vertical B', 'is_active' => true]);
-        $blueprintA = $this->publisher->createBlueprint($this->adminId, 'blueprint_a', 'Blueprint A', $verticalA->key);
-        $blueprintB = $this->publisher->createBlueprint($this->adminId, 'blueprint_b', 'Blueprint B', $verticalB->key);
-
-        try {
-            $this->publisher->updateBlueprintIdentity($this->adminId, $blueprintB, ['vertical_key' => $verticalA->key]);
-            $this->fail('Assigning an already-claimed vertical must be refused.');
-        } catch (InvalidArgumentException) {
-            $this->addToAssertionCount(1);
-        }
-
-        $this->assertSame($verticalA->key, $blueprintA->fresh()->vertical_key, 'The untouched Blueprint must be unaffected.');
-        $this->assertSame($verticalB->key, $blueprintB->fresh()->vertical_key, 'A refused update must leave the row unchanged.');
-    }
-
-    /**
-     * THE NARROW PROOF THAT UNRELATED DATABASE FAILURES ARE NEVER SWALLOWED.
-     * A unique-constraint violation naming a DIFFERENT constraint than the
-     * two known identity ones (e.g. `nb_uid_unique`) must propagate
-     * completely unchanged — never mistaken for a key or vertical duplicate.
-     */
-    public function test_an_unrelated_unique_constraint_violation_is_not_swallowed(): void
-    {
-        $method = new ReflectionMethod($this->publisher, 'translateIdentityUniqueConstraintViolation');
-        $method->setAccessible(true);
-
-        $previous = new PDOException(
-            "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'abc-123' for key 'niche_blueprints.nb_uid_unique'"
-        );
-        $unrelated = new UniqueConstraintViolationException(
-            'mysql',
-            'insert into `niche_blueprints` (`uid`, `key`) values (?, ?)',
-            [],
-            $previous,
-        );
-
-        $result = $method->invoke($this->publisher, $unrelated, 'some_key', null);
-
-        $this->assertSame(
-            $unrelated,
-            $result,
-            'A violation of an unrelated constraint (nb_uid_unique) must propagate unchanged, never be reported as a key/vertical duplicate.'
-        );
-    }
-
-    // ============================== Vertical retention on edit (§7.1, §12.F)
-
-    /**
-     * A vertical may be deactivated after a Blueprint is bound to it. Saving
-     * an UNRELATED identity field must not detach or reject that binding
-     * merely because the admin form resubmits the same, now-inactive value.
-     */
-    public function test_editing_an_unrelated_field_retains_a_now_inactive_vertical(): void
-    {
-        $vertical = BusinessVertical::create([
-            'key' => 'legacy_vertical', 'display_name' => 'Legacy Vertical', 'is_active' => true,
-        ]);
-        $blueprint = $this->publisher->createBlueprint($this->adminId, 'photo_booth', 'Photo Booth', $vertical->key);
-
-        $vertical->update(['is_active' => false]);
-
-        $updated = $this->publisher->updateBlueprintIdentity($this->adminId, $blueprint, [
-            'display_name' => 'Renamed Photo Booth',
-            'vertical_key' => $vertical->key,
-        ]);
-
-        $this->assertSame('Renamed Photo Booth', $updated->display_name);
-        $this->assertSame(
-            $vertical->key,
-            $updated->vertical_key,
-            'The unchanged current vertical must be retained even though it is now inactive.'
-        );
-    }
-
-    /**
-     * Retention of the CURRENT vertical must not widen into "inactive
-     * verticals are generally assignable" — a genuine change of target still
-     * requires an active vertical.
-     */
-    public function test_assigning_a_different_but_inactive_vertical_is_still_refused(): void
-    {
-        $blueprint = $this->blueprint('photo_booth');
-        $vertical = BusinessVertical::create([
-            'key' => 'inactive_vertical', 'display_name' => 'Inactive Vertical', 'is_active' => false,
-        ]);
-
-        $this->expectException(InvalidArgumentException::class);
-        $this->publisher->updateBlueprintIdentity($this->adminId, $blueprint, ['vertical_key' => $vertical->key]);
     }
 }

@@ -21,8 +21,10 @@ use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\NicheBlueprintVersion;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 /**
@@ -32,13 +34,25 @@ use InvalidArgumentException;
  * EVERY WRITE ACTION DELEGATES TO NicheBlueprintPublisher (Sub-slice B).
  * This controller never creates, updates or deletes a `niche_blueprint_*`
  * row itself, through Eloquent or the query builder — the publisher is the
- * sole write authority. Platform-administrator authority is checked twice,
- * by design: the route's own 'can:access backend' + EnsureUserIsAdministrator
- * group middleware (routes/admin.php), and again inside every
- * NicheBlueprintPublisher method (assertPlatformAdministrator(), re-derived
- * from users.is_admin) — the same defense-in-depth every other admin-only,
- * cross-tenant surface in this application already uses. There is no Agency
- * path and no customer path to any action here (§6.1, §15).
+ * sole write authority, and this surface does not modify it: §12.F's own
+ * domain boundary is the publisher, the routes and the views, nothing more.
+ * Platform-administrator authority is checked twice, by design: the route's
+ * own 'can:access backend' + EnsureUserIsAdministrator group middleware
+ * (routes/admin.php), and again inside every NicheBlueprintPublisher method
+ * (assertPlatformAdministrator(), re-derived from users.is_admin) — the same
+ * defense-in-depth every other admin-only, cross-tenant surface in this
+ * application already uses. There is no Agency path and no customer path to
+ * any action here (§6.1, §15).
+ *
+ * TWO HTTP-LAYER CONCERNS LIVE HERE, DELIBERATELY, RATHER THAN IN THE
+ * PUBLISHER: identity-uniqueness-conflict presentation (identityConflictMessage())
+ * and inactive-current-vertical retention under a fresh row lock (update()).
+ * Both are about how this ONE surface presents and orchestrates a write the
+ * publisher already fully validates and performs; neither adds a second
+ * write authority, a second uniqueness check, or a second entitlement/
+ * authorization decision. The database's own unique constraints
+ * (nb_key_unique, nb_vertical_key_unique) remain the sole concurrency
+ * authority throughout.
  *
  * Distinct from BlueprintTemplateLibraryController (Blueprint §30 names two
  * surfaces): this one authors a Blueprint's single draft and publishes it;
@@ -83,12 +97,15 @@ class NicheBlueprintController extends AdminBaseController
 
     public function store(StoreNicheBlueprintRequest $request): RedirectResponse
     {
+        $key = (string) $request->validated('key');
+        $verticalKey = $request->validated('vertical_key');
+
         try {
             $blueprint = $this->publisher->createBlueprint(
                 (int) Auth::id(),
-                (string) $request->validated('key'),
+                $key,
                 (string) $request->validated('display_name'),
-                $request->validated('vertical_key'),
+                $verticalKey,
                 $request->validated('broad_industry'),
             );
         } catch (InvalidArgumentException $e) {
@@ -96,6 +113,17 @@ class NicheBlueprintController extends AdminBaseController
                 ->route('admin.niche-blueprints.create')
                 ->withInput()
                 ->with('flash_error', $e->getMessage());
+        } catch (UniqueConstraintViolationException $e) {
+            $message = $this->identityConflictMessage($e, $key, $verticalKey);
+
+            if ($message === null) {
+                throw $e;
+            }
+
+            return redirect()
+                ->route('admin.niche-blueprints.create')
+                ->withInput()
+                ->with('flash_error', $message);
         }
 
         return redirect()
@@ -157,15 +185,82 @@ class NicheBlueprintController extends AdminBaseController
         return $current === null ? $active : $active->push($current);
     }
 
+    /**
+     * VERTICAL RETENTION IS DECIDED HERE, AGAINST A FRESH LOCKED ROW — NEVER
+     * AGAINST THE STALE ROUTE-BOUND $blueprint. NicheBlueprintPublisher
+     * (Sub-slice B) is unmodified by this surface (Contract 20 §12.F: F's
+     * concurrency "inherits B"); it still unconditionally requires an ACTIVE
+     * vertical whenever `vertical_key` is present in the attributes it
+     * receives. So the "resubmitting the current, now-inactive vertical must
+     * not be rejected or detach it" behaviour has to happen entirely in this
+     * orchestration layer, by deciding whether to even SEND `vertical_key`
+     * to the publisher — and that decision is only safe against the row's
+     * CURRENT persisted value, taken under a `lockForUpdate()` held through
+     * the publisher's own write in the same transaction. Comparing against
+     * $blueprint (resolved earlier by route-model binding, before this
+     * request's transaction even opened) would let a concurrent request that
+     * already moved the vertical elsewhere be silently overwritten by a
+     * stale "unchanged" decision — exactly the race this method closes.
+     */
     public function update(UpdateNicheBlueprintRequest $request, NicheBlueprint $blueprint): RedirectResponse
     {
+        $attributes = $request->validated();
+        $submittedVerticalKey = $attributes['vertical_key'] ?? null;
+
         try {
-            $this->publisher->updateBlueprintIdentity((int) Auth::id(), $blueprint, $request->validated());
+            DB::transaction(function () use ($blueprint, $attributes): void {
+                $locked = NicheBlueprint::query()->whereKey($blueprint->id)->lockForUpdate()->first();
+
+                if ($locked === null) {
+                    abort(404);
+                }
+
+                if (array_key_exists('vertical_key', $attributes) && $attributes['vertical_key'] === $locked->vertical_key) {
+                    // Retention/no-op against the FRESH locked value: strip it
+                    // so the publisher never sees `vertical_key` at all and
+                    // therefore never re-validates an unchanged assignment,
+                    // active or not.
+                    unset($attributes['vertical_key']);
+                }
+
+                $this->publisher->updateBlueprintIdentity((int) Auth::id(), $locked, $attributes);
+            });
         } catch (InvalidArgumentException $e) {
             return redirect()->route('admin.niche-blueprints.show', $blueprint)->with('flash_error', $e->getMessage());
+        } catch (UniqueConstraintViolationException $e) {
+            $message = $this->identityConflictMessage($e, $blueprint->key, $submittedVerticalKey);
+
+            if ($message === null) {
+                throw $e;
+            }
+
+            return redirect()->route('admin.niche-blueprints.show', $blueprint)->with('flash_error', $message);
         }
 
         return redirect()->route('admin.niche-blueprints.show', $blueprint)->with('flash_success', 'Blueprint identity updated.');
+    }
+
+    /**
+     * §5.1's two identity uniqueness constraints (`nb_key_unique`,
+     * `nb_vertical_key_unique`) are the database's own concurrency
+     * authority — this surface never pre-empts it with a check-then-write
+     * race, only translates the two KNOWN constraints it can name into a
+     * safe admin-facing message. Anything else (an unrelated constraint, a
+     * connection failure) returns null so the caller rethrows the original
+     * exception unchanged — never swallowed, never misreported as
+     * "duplicate".
+     */
+    private function identityConflictMessage(UniqueConstraintViolationException $e, string $key, ?string $verticalKey): ?string
+    {
+        if (str_contains($e->getMessage(), 'nb_key_unique')) {
+            return "The Blueprint key [{$key}] is already in use.";
+        }
+
+        if ($verticalKey !== null && str_contains($e->getMessage(), 'nb_vertical_key_unique')) {
+            return "The vertical [{$verticalKey}] is already assigned to another Blueprint.";
+        }
+
+        return null;
     }
 
     public function activate(NicheBlueprint $blueprint): RedirectResponse

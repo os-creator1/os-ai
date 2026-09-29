@@ -3,6 +3,8 @@
 namespace Tests\Feature\NicheBlueprint\Admin;
 
 use App\Enums\NicheBlueprint\NicheBlueprintVersionState;
+use App\Http\Controllers\Admin\NicheBlueprintController;
+use App\Http\Requests\Admin\NicheBlueprint\UpdateNicheBlueprintRequest;
 use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapter;
 use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
 use App\Library\NicheBlueprint\Adapters\InstalledComponentReference;
@@ -14,10 +16,13 @@ use App\Models\NicheBlueprint;
 use App\Models\NicheBlueprintComponent;
 use App\Models\NicheBlueprintVersion;
 use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use PDOException;
+use ReflectionMethod;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -611,6 +616,97 @@ class NicheBlueprintAdminControllerTest extends TestCase
 
         $this->assertSame($verticalA->key, $blueprintA->fresh()->vertical_key);
         $this->assertSame($verticalB->key, $blueprintB->fresh()->vertical_key, 'The refused update must leave the row unchanged.');
+    }
+
+    /**
+     * THE NARROW PROOF THAT UNRELATED DATABASE FAILURES ARE NEVER SWALLOWED.
+     * `identityConflictMessage()` recognizes ONLY the two known identity
+     * constraints; a violation naming a different one (e.g. `nb_uid_unique`)
+     * must return null so the caller rethrows the original exception
+     * unchanged, never misreported as a key/vertical duplicate.
+     */
+    public function test_an_unrelated_unique_constraint_violation_is_not_reported_as_duplicate(): void
+    {
+        $controller = app(NicheBlueprintController::class);
+        $method = new ReflectionMethod($controller, 'identityConflictMessage');
+        $method->setAccessible(true);
+
+        $previous = new PDOException(
+            "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'abc-123' for key 'niche_blueprints.nb_uid_unique'"
+        );
+        $unrelated = new UniqueConstraintViolationException(
+            'mysql',
+            'insert into `niche_blueprints` (`uid`, `key`) values (?, ?)',
+            [],
+            $previous,
+        );
+
+        $result = $method->invoke($controller, $unrelated, 'some_key', null);
+
+        $this->assertNull(
+            $result,
+            'A violation of an unrelated constraint (nb_uid_unique) must not be reported as a key/vertical duplicate.'
+        );
+    }
+
+    /**
+     * THE RACE THIS SURFACE MUST CLOSE. A route-bound $blueprint resolved
+     * before a concurrent request already moved the vertical elsewhere and
+     * deactivated the old one must NOT let a stale resubmission of that old
+     * value be treated as "unchanged" — that would silently move the
+     * persisted row's vertical backwards onto a now-inactive one. The
+     * update() action must decide retention against a FRESH row read under
+     * lockForUpdate() inside its own transaction, never against the
+     * (possibly stale) model instance the caller happens to hand it.
+     *
+     * Driven by calling the controller action directly with a deliberately
+     * stale Eloquent instance — the cleanest way to exercise this without a
+     * genuinely flaky two-process timing test, since a real HTTP request
+     * always re-resolves its route-bound model fresh and could never
+     * reproduce the staleness this proves the surface tolerates safely.
+     */
+    public function test_update_decides_retention_against_a_fresh_locked_row_not_a_stale_instance(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $verticalA = BusinessVertical::create(['key' => 'vertical_a', 'display_name' => 'Vertical A', 'is_active' => true]);
+        $verticalB = BusinessVertical::create(['key' => 'vertical_b', 'display_name' => 'Vertical B', 'is_active' => true]);
+
+        $blueprint = $this->publisher()->createBlueprint($admin->id, 'photo_booth', 'Photo Booth', $verticalA->key);
+
+        // A stale in-memory copy — exactly what a route-bound model would be
+        // if it had been resolved BEFORE the concurrent change below.
+        $staleBlueprint = NicheBlueprint::query()->whereKey($blueprint->id)->first();
+        $this->assertSame($verticalA->key, $staleBlueprint->vertical_key);
+
+        // The "concurrent" request: someone else moves the persisted row onto
+        // B, then A is deactivated.
+        $this->publisher()->updateBlueprintIdentity($admin->id, $blueprint->fresh(), ['vertical_key' => $verticalB->key]);
+        $verticalA->update(['is_active' => false]);
+
+        // Drive update() directly with the STALE instance, resubmitting the
+        // STALE value (A) — simulating a browser that loaded the edit form
+        // before the concurrent change and is only now saving.
+        $request = UpdateNicheBlueprintRequest::create(
+            route('admin.niche-blueprints.update', $blueprint),
+            'PATCH',
+            ['display_name' => 'Renamed While Stale', 'vertical_key' => $verticalA->key],
+        );
+        $request->setContainer($this->app);
+        $request->validateResolved();
+
+        $response = app(NicheBlueprintController::class)->update($request, $staleBlueprint);
+
+        $this->assertTrue($response->isRedirect(), 'A refusal must still redirect safely, not 500.');
+        $this->assertSame(
+            $verticalB->key,
+            $blueprint->fresh()->vertical_key,
+            'The persisted row must remain B: a stale resubmission of the now-inactive A must never be treated as unchanged.'
+        );
+        $this->assertSame(
+            'Photo Booth',
+            $blueprint->fresh()->display_name,
+            'The refused write must also leave display_name untouched — it is one atomic update.'
+        );
     }
 
     // ------------------------------------ inactive current vertical (finding 3)
