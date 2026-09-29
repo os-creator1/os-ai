@@ -225,15 +225,66 @@
                 ]);
             }
 
-            $phone_numbers = PhoneNumbers::where('business_id', $business->id)->where('status', 'assigned')->cursor();
+            // Customer Experience Slice 3 correction — a managed Business's
+            // compose form must never ask the customer to pick a legacy
+            // sending server or sender number, and must never be populated
+            // from legacy coverage (never populated for a V1 self-signup in
+            // the first place — RFC-004 keeps that schema legacy-only). The
+            // FROM number is resolved once here, from the same
+            // BusinessMessagingIdentityResolver seam quickSend()/reply() use,
+            // purely to SHOW the customer who they are sending from — never
+            // trusted back from the browser on submit (see sent()).
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
+            $managedFromNumber = null;
+            $countries = collect();
 
-            $coverage = CustomerBasedPricingPlan::where('user_id', $business->customer_id)->where('status', true)->cursor();
-            if ($coverage->count() < 1 && $activeSubscription) {
-                $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)->where('status', true)->cursor();
+            if ($managedTransport) {
+                $identity = app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolveForBusiness($business);
+
+                try {
+                    $managedFromNumber = $identity !== null
+                        ? app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)->resolvePrimaryNumber($identity)->phone_number
+                        : null;
+                } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+                    $managedFromNumber = null;
+                }
+
+                if ($managedFromNumber === null) {
+                    return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
+                        'status'  => 'error',
+                        'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
+                    ]);
+                }
+
+                $phone_numbers  = collect();
+                $coverage       = collect();
+                $sendingServers = collect();
+                // A destination-formatting helper only, from the platform's
+                // own active Country catalog — never a pricing/coverage
+                // table a managed Business was never meant to have a row in.
+                $countries = Country::where('status', 1)->orderBy('name')->get();
+            } elseif (! $activeSubscription) {
+                // A V1 platform-backed Business (it passed the check above)
+                // with no legacy Subscription and no managed identity yet
+                // has genuinely never finished messaging setup — a real,
+                // expected post-signup state (§7 requires no A2P/number
+                // setup at signup), not a pricing problem.
+                return redirect()->route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])->with([
+                    'status'  => 'error',
+                    'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
+                ]);
+            } else {
+                $phone_numbers = PhoneNumbers::where('business_id', $business->id)->where('status', 'assigned')->cursor();
+
+                $coverage = CustomerBasedPricingPlan::where('user_id', $business->customer_id)->where('status', true)->cursor();
+                if ($coverage->count() < 1) {
+                    $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)->where('status', true)->cursor();
+                }
+
+                $sendingServers = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->get();
             }
 
-            $sendingServers = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->get();
-            $templates      = Templates::where('business_id', $business->id)->where('status', true)->get();
+            $templates = Templates::where('business_id', $business->id)->where('status', true)->get();
 
             // RFC-005 Milestone 5 §6.1 — unchanged: a genuinely new compose
             // gets a fresh idempotency token; a 'retain' retry redirect
@@ -244,7 +295,8 @@
                 : (string) Str::uuid();
 
             return view('customer.ChatBox.new', compact(
-                'breadcrumbs', 'phone_numbers', 'coverage', 'sendingServers', 'templates', 'idempotencyToken', 'workspaceUid', 'businessUid'
+                'breadcrumbs', 'phone_numbers', 'coverage', 'sendingServers', 'templates', 'idempotencyToken', 'workspaceUid', 'businessUid',
+                'managedTransport', 'managedFromNumber', 'countries'
             ));
         }
 
@@ -314,88 +366,122 @@
                 return $back(__('locale.customer.no_active_subscription'));
             }
 
-            $coverage = CustomerBasedPricingPlan::where('user_id', $owner->id)
-                ->where('status', true)
-                ->with('sendingServer')
-                ->first();
+            // Customer Experience Slice 3 correction — classified BEFORE any
+            // legacy CustomerBasedPricingPlan/PlansCoverageCountries lookup,
+            // for the same reason EloquentCampaignRepository::quickSend()
+            // now classifies its own coverage block this way: RFC-004 keeps
+            // that schema legacy-only, and a normal V1 signup never
+            // populates it. A managed Business's actual sender is already
+            // authoritative in BusinessMessagingIdentityResolver/
+            // ManagedMessageDispatcher — never the legacy coverage,
+            // PhoneNumbers or Senderid tables below, and never trusted from
+            // this request's own 'sender_id' input.
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
 
-            if (! $coverage && $activeSubscription) {
-                $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)
+            if (! $managedTransport) {
+                if (! $activeSubscription) {
+                    // A V1 platform-backed Business (it passed the check
+                    // above) with no legacy Subscription and no managed
+                    // messaging identity yet has genuinely never finished
+                    // messaging setup — a real, expected post-signup state
+                    // (§7 requires no A2P/number setup at signup), not a
+                    // pricing problem. The old "Price Plan unavailable" text
+                    // was never true for this account and never actionable.
+                    return $back(ConversationSendFailureReason::MessagingNotReady->customerMessage());
+                }
+
+                $coverage = CustomerBasedPricingPlan::where('user_id', $owner->id)
                     ->where('status', true)
                     ->with('sendingServer')
                     ->first();
-            }
 
-            if (! $coverage) {
-                return $back('Price Plan unavailable');
-            }
-
-            // §6 — a submitted sending server is accepted only when it is
-            // positively assigned to THIS Business. It used to be
-            // SendingServer::find() on the raw id: any server id the form
-            // submitted was trusted.
-            if (isset($request->sending_server)) {
-                $assigned = CustomerBasedSendingServer::where('business_id', $business->id)
-                    ->where('sending_server', $request->sending_server)
-                    ->where('status', 1)
-                    ->exists();
-
-                $sendingServer = $assigned
-                    ? SendingServer::where('status', true)->find($request->sending_server)
-                    : null;
-            } else {
-                $sendingServer = $coverage->sendingServer;
-            }
-
-            if (! $sendingServer) {
-                return $back(__('locale.campaigns.sending_server_not_available'));
-            }
-
-            $db_sms_type = $sms_type == 'unicode' ? 'plain' : $sms_type;
-
-            if (! $sendingServer->{$db_sms_type}) {
-                return $back(__('locale.sending_servers.sending_server_sms_capabilities', ['type' => strtoupper($db_sms_type)]));
-            }
-
-            if ($sendingServer->settings === 'Whatsender' || $sendingServer->type === 'whatsapp') {
-                $input['sms_type'] = 'whatsapp';
-            }
-
-            $capabilities_type = ($sms_type === 'plain' || $sms_type === 'unicode') ? 'sms' : $sms_type;
-
-            // §6 — the sender identity must be one of THIS Business's own:
-            // an active Sender ID, or an assigned number with the right
-            // capability. The same rule B1 enforces for Business-aware sends
-            // (EloquentCampaignRepository::validateQuickSendOriginatorValue),
-            // mirrored rather than re-derived. Another Business's number or
-            // Sender ID is refused even if the actor could compose there too.
-            $ownNumber = PhoneNumbers::where('business_id', $business->id)
-                ->where('number', $senderId)
-                ->where('status', 'assigned')
-                ->first();
-
-            if ($ownNumber) {
-                if (! str_contains((string) $ownNumber->capabilities, $capabilities_type)) {
-                    return $back(__('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $senderId, 'type' => $db_sms_type]));
+                if (! $coverage) {
+                    $coverage = PlansCoverageCountries::where('plan_id', $activeSubscription->plan_id)
+                        ->where('status', true)
+                        ->with('sendingServer')
+                        ->first();
                 }
 
-                // A Business number is a two-way identity: this is what makes
-                // the send start a conversation at all.
-                $input['originator']   = 'phone_number';
-                $input['phone_number'] = $senderId;
-            } else {
-                $ownSenderId = Senderid::where('business_id', $business->id)
-                    ->where('sender_id', $senderId)
-                    ->where('status', 'active')
-                    ->exists();
-
-                if (! $ownSenderId || $owner->customer->getOption('sender_id_verification') === 'yes') {
-                    // Verification demands a verified number; and a sender the
-                    // Business does not own is never accepted either way.
-                    return $back(__('locale.sender_id.sender_id_invalid', ['sender_id' => $senderId]));
+                if (! $coverage) {
+                    return $back('Price Plan unavailable');
                 }
 
-                $input['originator'] = 'sender_id';
+                // §6 — a submitted sending server is accepted only when it is
+                // positively assigned to THIS Business. It used to be
+                // SendingServer::find() on the raw id: any server id the form
+                // submitted was trusted.
+                if (isset($request->sending_server)) {
+                    $assigned = CustomerBasedSendingServer::where('business_id', $business->id)
+                        ->where('sending_server', $request->sending_server)
+                        ->where('status', 1)
+                        ->exists();
+
+                    $sendingServer = $assigned
+                        ? SendingServer::where('status', true)->find($request->sending_server)
+                        : null;
+                } else {
+                    $sendingServer = $coverage->sendingServer;
+                }
+
+                if (! $sendingServer) {
+                    return $back(__('locale.campaigns.sending_server_not_available'));
+                }
+
+                $db_sms_type = $sms_type == 'unicode' ? 'plain' : $sms_type;
+
+                if (! $sendingServer->{$db_sms_type}) {
+                    return $back(__('locale.sending_servers.sending_server_sms_capabilities', ['type' => strtoupper($db_sms_type)]));
+                }
+
+                if ($sendingServer->settings === 'Whatsender' || $sendingServer->type === 'whatsapp') {
+                    $input['sms_type'] = 'whatsapp';
+                }
+
+                $capabilities_type = ($sms_type === 'plain' || $sms_type === 'unicode') ? 'sms' : $sms_type;
+
+                // §6 — the sender identity must be one of THIS Business's own:
+                // an active Sender ID, or an assigned number with the right
+                // capability. The same rule B1 enforces for Business-aware sends
+                // (EloquentCampaignRepository::validateQuickSendOriginatorValue),
+                // mirrored rather than re-derived. Another Business's number or
+                // Sender ID is refused even if the actor could compose there too.
+                $ownNumber = PhoneNumbers::where('business_id', $business->id)
+                    ->where('number', $senderId)
+                    ->where('status', 'assigned')
+                    ->first();
+
+                if ($ownNumber) {
+                    if (! str_contains((string) $ownNumber->capabilities, $capabilities_type)) {
+                        return $back(__('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $senderId, 'type' => $db_sms_type]));
+                    }
+
+                    // A Business number is a two-way identity: this is what makes
+                    // the send start a conversation at all.
+                    $input['originator']   = 'phone_number';
+                    $input['phone_number'] = $senderId;
+                } else {
+                    $ownSenderId = Senderid::where('business_id', $business->id)
+                        ->where('sender_id', $senderId)
+                        ->where('status', 'active')
+                        ->exists();
+
+                    if (! $ownSenderId || $owner->customer->getOption('sender_id_verification') === 'yes') {
+                        // Verification demands a verified number; and a sender the
+                        // Business does not own is never accepted either way.
+                        return $back(__('locale.sender_id.sender_id_invalid', ['sender_id' => $senderId]));
+                    }
+
+                    $input['originator'] = 'sender_id';
+                }
+            } else {
+                // Managed transport resolves its own identity, primary
+                // number and destination readiness entirely from the
+                // tenancy-verified Business (BusinessMessagingIdentityResolver,
+                // ManagedMessageDispatcher) — never from this request. Any
+                // browser-submitted 'sender_id'/'sending_server' is discarded
+                // rather than threaded through, so it can never be mistaken
+                // for authority it does not have.
+                $input['sender_id'] = null;
             }
 
             // `sending_server` stays exactly as submitted — already proven
@@ -420,7 +506,21 @@
             // inherits the explicit Business from the Campaigns instance.
             $campaign->business_id = $business->id;
 
-            $data = $this->campaigns->quickSend($campaign, $input, true);
+            try {
+                $data = $this->campaigns->quickSend($campaign, $input, true);
+            } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+                // Zero provider calls (Slice 3 §4.5) — the identity resolves
+                // but no usable primary number/destination does, or the
+                // resolved number's carrier readiness is not yet confirmed.
+                // The same customer-safe vocabulary attemptManagedSend() uses
+                // for reply()/retry()'s identical case.
+                return $back(ConversationSendFailureReason::MessagingNotReady->customerMessage());
+            } catch (\App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException) {
+                // §4.4 — the platform kill switch is off, or managed
+                // messaging is otherwise unconfigured. A platform-side
+                // readiness problem, never the customer's.
+                return $back(ConversationSendFailureReason::MessagingUnavailable->customerMessage());
+            }
 
             if (isset($data->getData()->status)) {
                 // RFC-005 Milestone 5 §6.1 — 'retain' returns to compose with

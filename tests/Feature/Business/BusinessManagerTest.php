@@ -338,6 +338,37 @@ class BusinessManagerTest extends TestCase
         $this->assertSame($otherWorkspace->id, $reloaded->workspace_id, 'The reassignment itself is unaffected by the refused activation.');
     }
 
+    /**
+     * ChatGPT review correction — the managed-Client exclusion must be the
+     * FINAL, locked authority, never the caller's earlier unlocked
+     * findActiveForClientWorkspace() read. Models the exact race: an
+     * ordinary pre-check sees no relationship, but by the time this
+     * method's own Workspace lock is held, AgencyClientRelationshipManager
+     * ::establish() has already committed an Active one (deterministic via
+     * a mocked findActiveForClientWorkspaceForUpdate() — no sleep/timing
+     * needed). The historical self-signup repair must refuse outright: no
+     * Business status write, the Business stays exactly Draft.
+     */
+    public function test_activate_for_confirmed_signup_refuses_when_an_agency_relationship_commits_under_the_workspace_lock(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        $this->mock(\App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class, function ($mock) use ($business): void {
+            $mock->shouldReceive('findActiveForClientWorkspaceForUpdate')
+                ->once()
+                ->with($business->workspace_id)
+                ->andReturn(new \App\Models\AgencyClientWorkspaceRelationship());
+        });
+
+        $manager = app(BusinessManager::class);
+        $transitioned = $manager->activateForConfirmedSignup($business);
+
+        $this->assertFalse($transitioned, 'A Client Workspace whose relationship commits under the lock must refuse activation.');
+        $this->assertSame(BusinessStatus::Draft, Business::find($business->id)->status);
+        $this->assertNull(Business::find($business->id)->activated_at);
+    }
+
     public function test_upsert_primary_location_delegates_invariant_and_dispatches_event(): void
     {
         Event::fake([BusinessPrimaryLocationUpdated::class]);

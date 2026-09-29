@@ -275,9 +275,38 @@ class BusinessManager
     {
         $expectedWorkspaceId = (int) $business->workspace_id;
 
+        // ChatGPT review correction — re-checked under the SAME Workspace
+        // lock this transaction takes below, never the caller's earlier
+        // unlocked read. AgencyClientRelationshipManager::establish() also
+        // locks the Client Workspace before its own relationship
+        // current-read/create (Workspace-before-relationship, the same
+        // order this method now uses), so that shared Workspace lock is the
+        // serialization boundary: if an Active relationship commits between
+        // a caller's pre-check and this method's lock, the LOCKING read
+        // (findActiveForClientWorkspaceForUpdate(), never the plain
+        // findActiveForClientWorkspace()) is guaranteed to see it. A Client
+        // Workspace's self-signup Draft Business belongs to the
+        // Client/Agency provisioning flow the moment that relationship
+        // exists — never this historical-repair seam — so activation
+        // refuses outright: no write, false, the same idempotent shape as
+        // an already-Active row.
+        //
+        // Retried up to 3 attempts on a genuine MySQL deadlock: terminate()
+        // takes relationship locks before Workspace locks — the exact
+        // inverse of establish()'s (and now this method's) order — so
+        // either side may legitimately be chosen as a deadlock victim.
+        // Retrying from the start is correct because every read this
+        // closure makes is taken again under fresh locks. No lock
+        // reordering on either side.
         return DB::transaction(function () use ($business, $expectedWorkspaceId): bool {
             $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
             $workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+
+            if ($relationshipRepository->findActiveForClientWorkspaceForUpdate($expectedWorkspaceId) !== null) {
+                return false;
+            }
 
             $locked = $this->businessRepository->findForUpdate($business->id);
 
@@ -296,7 +325,7 @@ class BusinessManager
             $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
 
             return true;
-        });
+        }, 3);
     }
 
     /**
