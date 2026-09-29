@@ -97,8 +97,12 @@ class OpportunityActionRegistryTest extends TestCase
         // Implementation Contract 19 §5.4(5)/§8: paid_effect and
         // location_bound are first-class source-controlled risk flags, so
         // they belong in the trusted metadata boundary — still plain
-        // booleans, never a callable or class name.
-        $baseKeys = ['schema_version', 'mutates_business_data', 'paid_effect', 'location_bound', 'approval_required', 'completion_policy', 'parameter_rules'];
+        // booleans, never a callable or class name. §12 19.E adds
+        // meter_key: which UsageMeter ActionCostEstimator prices a
+        // paid_effect action by, or null — meaningless while paid_effect is
+        // false, but still part of the same trusted, source-controlled
+        // shape, never a callable or class name.
+        $baseKeys = ['schema_version', 'mutates_business_data', 'paid_effect', 'meter_key', 'location_bound', 'approval_required', 'completion_policy', 'parameter_rules'];
         $addPhoneKeys = [...$baseKeys, 'handler_identifier', 'verifier_identifier'];
         $forbiddenKeys = ['validator', 'handler', 'verifier', 'callback', 'handler_class', 'verifier_class', 'system_verification_method'];
 

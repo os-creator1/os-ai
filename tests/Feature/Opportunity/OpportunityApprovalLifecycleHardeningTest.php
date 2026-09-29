@@ -270,11 +270,30 @@ class OpportunityApprovalLifecycleHardeningTest extends TestCase
         $guard = app(OpportunityAuthorityGuard::class);
         $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action');
         $execution->update($snapshot);
-        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh());
+
+        // Correction (Contract 19 §5.3 review, R-3) — a null $liveEstimate
+        // at execution time now fails closed rather than silently passing,
+        // so this snapshot-matching proof supplies a live estimate that
+        // genuinely matches the approved ceiling, exactly like the real
+        // execution-time recompute would produce.
+        $matchingLiveEstimate = new \App\Library\Opportunity\ActionCostEstimate(
+            payerType: \App\Enums\Usage\PayerType::Workspace,
+            payerWorkspaceId: (int) $business->workspace_id,
+            currencyCode: 'USD',
+            amountMinorUpperBound: 250,
+            unitCount: null,
+            unitKind: null,
+            basis: 'upper_bound',
+            priceVersion: 'test-v1',
+            estimatedAt: now(),
+            expiresAt: now()->addHour(),
+            walletSufficient: true,
+        );
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh(), $matchingLiveEstimate);
 
         $execution->update(['action_cost_amount_minor_upper_bound' => 251]);
         $this->expectException(OpportunityPaidEffectEstimateMissingException::class);
-        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh());
+        $guard->assertPaidEffectIsCovered($opportunity->fresh(), 'unregistered_paid_action', $execution->fresh(), $matchingLiveEstimate);
     }
 
     public function test_confirmation_copies_the_approval_record_action_cost_ceiling(): void

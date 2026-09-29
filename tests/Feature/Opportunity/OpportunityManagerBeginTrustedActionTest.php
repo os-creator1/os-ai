@@ -29,6 +29,7 @@ use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
+use App\Library\Opportunity\ActionCostEstimator;
 use App\Library\Opportunity\CanonicalJson;
 use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityActionHash;
@@ -839,6 +840,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
             app(OpportunityActionExecutionRepository::class),
             app(OpportunityActionExecutor::class),
             app(OpportunityAuthorityGuard::class),
+            app(ActionCostEstimator::class),
             $definition,
             $supportsExecution,
         ) extends OpportunityManager {
@@ -856,6 +858,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
                 OpportunityActionExecutionRepository $actionExecutionRepository,
                 OpportunityActionExecutor $opportunityActionExecutor,
                 OpportunityAuthorityGuard $authority,
+                ActionCostEstimator $costEstimator,
                 private readonly ?array $testDefinition,
                 private readonly bool $testSupportsExecution,
             ) {
@@ -873,6 +876,7 @@ class OpportunityManagerBeginTrustedActionTest extends TestCase
                     $actionExecutionRepository,
                     $opportunityActionExecutor,
                     $authority,
+                    $costEstimator,
                 );
             }
 

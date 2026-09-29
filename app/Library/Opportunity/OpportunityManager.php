@@ -48,6 +48,7 @@ use App\Library\Opportunity\Exceptions\OpportunityAttestationNotAvailableExcepti
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectReapprovalRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityRetryRequiresReapprovalException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalExpiredException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
@@ -105,6 +106,16 @@ class OpportunityManager
     private const STATE_MISMATCH_SAFE_SUMMARY = 'Opportunity action state no longer matched the approved action.';
 
     /**
+     * Contract 19 §5.3 R-3, §12 19.E — the pending execution's own
+     * source-controlled failure reason when returnPaidEffectToAwaitingApproval()
+     * reclaims it, distinct from STATE_MISMATCH_SAFE_SUMMARY: this is never
+     * passed to recordExecutionResult()/assertValidFailureSummary() (the
+     * Opportunity does not go to `open` here), so it is not a member of
+     * ALLOWED_FAILURE_SUMMARIES.
+     */
+    private const REAPPROVAL_REQUIRED_SAFE_SUMMARY = 'The estimated cost or payer changed since approval; a new approval is required.';
+
+    /**
      * Fixed, source-controlled customer-safe failure summaries for
      * recordExecutionResult() (RFC-002 §47) — never a raw exception
      * message, SQL fragment, stack trace, or file path.
@@ -129,6 +140,7 @@ class OpportunityManager
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly OpportunityActionExecutor $opportunityActionExecutor,
         private readonly OpportunityAuthorityGuard $authority,
+        private readonly ActionCostEstimator $costEstimator,
     ) {
     }
 
@@ -885,16 +897,34 @@ class OpportunityManager
                 );
             }
 
-            $definition = OpportunityActionRegistry::get($locked->recommended_action['action_key'] ?? '');
-            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $locked->recommended_action['action_key'] ?? '', $definition ?? []);
+            $actionKey = $locked->recommended_action['action_key'] ?? '';
+            $definition = OpportunityActionRegistry::get($actionKey);
+            $this->authority->assertMutableAuthority($locked, (int) $customer->user_id, $actionKey, $definition ?? []);
             $this->assertActionIsApprovableAndExecutable($locked);
-            $this->authority->assertPaidEffectIsCovered($locked, $locked->recommended_action['action_key'], null);
 
-            $updated = $this->opportunityRepository->update($locked, [
+            // Implementation Contract 19 §5.3, §12 19.E — "an insufficient
+            // wallet is surfaced before approval, not discovered at
+            // execution": the estimate is computed and snapshotted onto the
+            // Opportunity itself, as the ceiling assertPaidEffectIsCovered()
+            // requires, BEFORE the status ever moves to awaiting_approval.
+            // Null for every action with no configured price today (R-0:
+            // no action is configured), add_phone included — a no-op write.
+            $costUpdate = $this->authority->estimatePaidEffectForApproval($locked, $actionKey, $this->costEstimator) ?? [];
+
+            if ($costUpdate !== []) {
+                // In-memory only, so the very next call reads the estimate
+                // just computed; the persisted write happens once, below,
+                // together with the status transition.
+                $locked->forceFill($costUpdate);
+            }
+
+            $this->authority->assertPaidEffectIsCovered($locked, $actionKey, null);
+
+            $updated = $this->opportunityRepository->update($locked, array_merge([
                 'status' => OpportunityStatus::AwaitingApproval->value,
                 'approval_expires_at' => $this->authority->approvalExpiryFromNow(),
                 'approval_initiated_by_type' => $proposer->value,
-            ]);
+            ], $costUpdate));
 
             $this->createTransition([
                 'opportunity_id' => $locked->id,
@@ -1818,7 +1848,20 @@ class OpportunityManager
             );
             $this->assertPendingExecutionAttemptIsValid($lockedOpportunity, $lockedExecution);
             $this->authority->assertApprovalIsFresh((int) $lockedOpportunity->id, $lockedExecution->approval_expires_at);
-            $this->authority->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $lockedExecution);
+
+            // Implementation Contract 19 §5.4(2)/§7.6, §12 19.E — "recheck
+            // payer, price ceiling, authority, and wallet at execution".
+            // Recomputed fresh, under this same lock, never inherited from
+            // confirmApproval(). For a non-`paid_effect` action (every
+            // shipped action today, add_phone included) this is always null
+            // and the guard never looks at it — it returns before reaching
+            // that check. For a genuine `paid_effect` action, a null result
+            // here means the pricing configuration that priced it has
+            // disappeared since approval, and the guard now refuses rather
+            // than treating that as "unchanged" (R-3, correction: a null
+            // live estimate must fail closed, never be silently skipped).
+            $liveEstimate = $this->costEstimator->estimateForAction($lockedOpportunity->business, $actionKey);
+            $this->authority->assertPaidEffectIsCovered($lockedOpportunity, $actionKey, $lockedExecution, $liveEstimate);
 
             $runningExecution = $this->actionExecutionRepository->update($lockedExecution, [
                 'status' => OpportunityActionExecutionStatus::Running->value,
@@ -1826,6 +1869,103 @@ class OpportunityManager
             ]);
 
             return new OpportunityExecutionAttempt($lockedOpportunity, $runningExecution);
+        });
+    }
+
+    /**
+     * Implementation Contract 19 §5.3 R-3, §12 19.E — the narrow paid-effect
+     * reapproval path. `ExecuteOpportunityAction` calls this — instead of
+     * the ordinary `recordExecutionResult()` failure lifecycle — ONLY when
+     * `beginExecutionAttempt()` refused a still-pending execution with
+     * `OpportunityPaidEffectReapprovalRequiredException` (a live price or
+     * payer change): the handler was never invoked, nothing external was
+     * mutated.
+     *
+     * The pending execution is marked failed with its own distinct,
+     * source-controlled reason, and the Opportunity returns to
+     * `awaiting_approval` carrying a FRESHLY computed estimate — the exact
+     * same computation `requestApproval()` itself performs
+     * (`estimatePaidEffectForApproval()`, never a second pricing authority)
+     * — so the customer sees the current real figure and must confirm it
+     * again. The old approved ceiling is never silently raised or treated
+     * as still approved (R-3); a new payer never inherits the old payer's
+     * approval.
+     *
+     * FAILS CLOSED, NOT SOFTLY. `estimatePaidEffectForApproval()` itself
+     * throws `OpportunityPaidEffectWalletInsufficientException` or
+     * `OpportunityPaidEffectEstimateMissingException` when the fresh
+     * recompute cannot produce a real, sufficient estimate. Neither is
+     * caught here: they propagate to the caller, which falls back to the
+     * ordinary §5.4(2) failure lifecycle rather than this method fabricating
+     * an `awaiting_approval` entry with no honest estimate to show.
+     */
+    public function returnPaidEffectToAwaitingApproval(
+        OpportunityActionExecution $execution,
+        OpportunityPaidEffectReapprovalRequiredException $reason,
+    ): Opportunity {
+        return DB::transaction(function () use ($execution, $reason) {
+            $unlockedOpportunity = $execution->opportunity;
+
+            if ($unlockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] has no associated Opportunity."
+                );
+            }
+
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($execution->opportunity_id, $unlockedOpportunity->business_id);
+
+            if ($lockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Opportunity [{$execution->opportunity_id}] no longer exists."
+                );
+            }
+
+            $lockedExecution = $this->actionExecutionRepository->findForUpdate($execution->id);
+
+            if ($lockedExecution === null
+                || $lockedExecution->id !== $execution->id
+                || $lockedExecution->opportunity_id !== $lockedOpportunity->id
+                || $lockedExecution->status !== OpportunityActionExecutionStatus::Pending
+                || $lockedOpportunity->status !== OpportunityStatus::InProgress
+            ) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] no longer matches a recordable Opportunity state."
+                );
+            }
+
+            $actionKey = $lockedExecution->action_key;
+
+            // The SAME computation requestApproval() performs — no second
+            // pricing authority (R-4). Throws, uncaught, when the fresh
+            // recompute cannot produce a real, sufficient estimate.
+            $costUpdate = $this->authority->estimatePaidEffectForApproval($lockedOpportunity, $actionKey, $this->costEstimator) ?? [];
+
+            $this->actionExecutionRepository->update($lockedExecution, [
+                'status' => OpportunityActionExecutionStatus::Failed->value,
+                'completed_at' => now(),
+                'safe_error_summary' => self::REAPPROVAL_REQUIRED_SAFE_SUMMARY,
+                'safe_result_summary' => null,
+            ]);
+
+            $updatedOpportunity = $this->opportunityRepository->update($lockedOpportunity, array_merge([
+                'status' => OpportunityStatus::AwaitingApproval->value,
+                'approval_expires_at' => $this->authority->approvalExpiryFromNow(),
+            ], $costUpdate));
+
+            $this->createTransition([
+                'opportunity_id' => $lockedOpportunity->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::InProgress->value,
+                'to_status' => OpportunityStatus::AwaitingApproval->value,
+                'actor_type' => OpportunityTransitionActorType::System->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => null,
+                'action_execution_id' => $lockedExecution->id,
+                'reason_code' => $reason->reapprovalReasonCode(),
+                'safe_note' => null,
+            ]);
+
+            return $updatedOpportunity;
         });
     }
 

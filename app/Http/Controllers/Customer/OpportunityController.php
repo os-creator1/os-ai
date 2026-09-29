@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Http\Requests\Opportunity\ConfigureOpportunityActionRequest;
 use App\Http\Requests\Opportunity\SnoozeOpportunityRequest;
+use App\Library\Catalog\CatalogMoney;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
@@ -15,6 +16,8 @@ use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
+use App\Library\Opportunity\ActionCostEstimate;
+use App\Library\Opportunity\ActionCostEstimator;
 use App\Library\Opportunity\OpportunityManager;
 use App\Library\Opportunity\OpportunityActionRegistry;
 use App\Library\Navigation\CustomerContext;
@@ -62,6 +65,7 @@ class OpportunityController extends Controller
         private readonly OpportunityRepository $opportunityRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly OpportunityManager $opportunityManager,
+        private readonly ActionCostEstimator $costEstimator,
     ) {
     }
 
@@ -125,6 +129,7 @@ class OpportunityController extends Controller
             'canRetry' => $this->canRetry($ownedOpportunity),
             'shouldPollExecution' => $this->shouldPollExecution($ownedOpportunity, $latestExecution),
             'canConfigureAction' => $this->canConfigureAction($ownedOpportunity),
+            'costEstimate' => $this->safeCostEstimate($ownedOpportunity, $business),
         ]);
     }
 
@@ -457,6 +462,79 @@ class OpportunityController extends Controller
         }
 
         return $safe;
+    }
+
+    /**
+     * Implementation Contract 19 §5.3, §12 19.E — "before a human approves a
+     * paid action, show the actual payer, estimated amount or units,
+     * pricing basis, and whether that payer's wallet has enough funds."
+     *
+     * While the Opportunity is still `open`, this is a fresh, read-only,
+     * server-computed preview (ActionCostEstimator never reserves or writes
+     * anything) — never a stored value, since nothing is snapshotted until
+     * requestApproval() runs. From `awaiting_approval` onward, the human has
+     * already been shown and approved a ceiling, so this instead renders
+     * exactly what was snapshotted then — the actual approved figure, never
+     * a re-estimate that could silently disagree with it. Null whenever the
+     * action is not `paid_effect` (every shipped action today, add_phone
+     * included) — never a fabricated zero-cost estimate.
+     *
+     * @return array{payerType: string, amountMinorUpperBound: ?int, formattedAmount: ?string, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool}|null
+     */
+    private function safeCostEstimate(Opportunity $opportunity, Business $business): ?array
+    {
+        $actionKey = is_array($opportunity->recommended_action) ? ($opportunity->recommended_action['action_key'] ?? null) : null;
+
+        if (! is_string($actionKey) || ! OpportunityActionRegistry::hasPaidEffect($actionKey)) {
+            return null;
+        }
+
+        if ($opportunity->status !== OpportunityStatus::Open) {
+            $stored = ActionCostEstimate::fromSnapshot([
+                'action_cost_payer_type' => $opportunity->action_cost_payer_type,
+                'action_cost_payer_workspace_id' => $opportunity->action_cost_payer_workspace_id,
+                'action_cost_currency_code' => $opportunity->action_cost_currency_code,
+                'action_cost_amount_minor_upper_bound' => $opportunity->action_cost_amount_minor_upper_bound,
+                'action_cost_unit_count' => $opportunity->action_cost_unit_count,
+                'action_cost_unit_kind' => $opportunity->action_cost_unit_kind,
+                'action_cost_basis' => $opportunity->action_cost_basis,
+                'action_cost_price_version' => $opportunity->action_cost_price_version,
+                'action_cost_estimated_at' => $opportunity->action_cost_estimated_at,
+                'action_cost_expires_at' => $opportunity->action_cost_expires_at,
+                'action_cost_wallet_sufficient' => $opportunity->action_cost_wallet_sufficient,
+            ]);
+
+            return $stored === null ? null : $this->safeEstimateFields($stored);
+        }
+
+        $estimate = $this->costEstimator->estimateForAction($business, $actionKey);
+
+        return $estimate === null ? null : $this->safeEstimateFields($estimate);
+    }
+
+    /**
+     * `formattedAmount` is the actual major-currency figure a human reads
+     * ("USD 1.24", never "124 USD") — computed once here, from the exact
+     * minor-unit integer plus the currency's own exponent
+     * ({@see CatalogMoney::format()}, reused rather than duplicated), so
+     * the view never does its own currency arithmetic.
+     *
+     * @return array{payerType: string, amountMinorUpperBound: ?int, formattedAmount: ?string, unitCount: ?int, unitKind: ?string, currencyCode: ?string, basis: string, walletSufficient: bool}
+     */
+    private function safeEstimateFields(ActionCostEstimate $estimate): array
+    {
+        return [
+            'payerType' => $estimate->payerType->value,
+            'amountMinorUpperBound' => $estimate->amountMinorUpperBound,
+            'formattedAmount' => $estimate->amountMinorUpperBound === null
+                ? null
+                : CatalogMoney::format($estimate->amountMinorUpperBound, $estimate->currencyCode),
+            'unitCount' => $estimate->unitCount,
+            'unitKind' => $estimate->unitKind,
+            'currencyCode' => $estimate->currencyCode,
+            'basis' => $estimate->basis,
+            'walletSufficient' => $estimate->walletSufficient,
+        ];
     }
 
     /**
