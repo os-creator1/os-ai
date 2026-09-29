@@ -168,8 +168,15 @@ final class WebsiteSectionValidator
             if (str_contains($field, '*')) {
                 $buttons = $data['buttons'] ?? [];
                 foreach ($buttons as $i => $button) {
-                    if (isset($button['url']) && ! WebsiteUrlRules::isValid((string) $button['url'])) {
-                        $errors["buttons.{$i}.url"][] = 'The URL must be https, tel:, or mailto: only.';
+                    // A `cta` button is the one place the internal-link
+                    // engine (Website Generator + Local SEO Completion)
+                    // points a visitor at another page on the SAME
+                    // Website — e.g. a service page's "See all services"
+                    // button — so it alone accepts a root-relative path
+                    // alongside https/tel/mailto (WebsiteUrlRules::
+                    // isValid()'s bounded $allowInternalPath extension).
+                    if (isset($button['url']) && ! WebsiteUrlRules::isValid((string) $button['url'], allowInternalPath: true)) {
+                        $errors["buttons.{$i}.url"][] = 'The URL must be https, tel:, mailto:, or a same-site path only.';
                     }
                 }
 

@@ -1,0 +1,165 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\WebsiteTemplate;
+use Illuminate\Database\Seeder;
+
+/**
+ * Website Generator + Local SEO Completion. Seeds the exact four
+ * operator-owned visual templates the product direction requires.
+ * Internal `key`s are stable and customer-invisible; `display_name` is
+ * neutral and customer-friendly (never a competitor's name). Each
+ * template's presentation-variant values are drawn broadly from one of
+ * four live photo-booth-rental reference sites' overall visual grammar
+ * (dark high-contrast hero + teal accent; warm narrative serif
+ * editorial; restrained gold/charcoal tiered-package luxury; punchy
+ * red/blue event-type-picker conversion-first) — never their copy,
+ * photos, logos, reviews, or literal CSS/markup. See docs/automation/
+ * WEBSITE-GENERATOR-SEO-COMPLETION-NOTE.md for the exact mapping.
+ *
+ * `page_manifest.pages` lists every page TYPE a template supports and
+ * which of the 10 existing WebsiteSectionType values that type may use
+ * — WebsitePageStrategy (not this manifest) decides how many actual
+ * pages of each type a given Business gets (one per real service, one
+ * per eligible real location, etc.).
+ */
+class WebsiteTemplateSeeder extends Seeder
+{
+    public function run(): void
+    {
+        foreach (self::templates() as $attributes) {
+            WebsiteTemplate::updateOrCreate(['key' => $attributes['key']], $attributes);
+        }
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public static function templates(): array
+    {
+        $manifest = self::sharedPageManifest();
+
+        return [
+            [
+                'key' => 'photo_booth_modern',
+                'display_name' => 'Modern',
+                'description' => 'High-contrast, confident, and direct — a bold dark hero with a strong first impression.',
+                'theme' => [
+                    'font' => 'system',
+                    'primary_color' => '#0ea5b0',
+                    'secondary_color' => '#0b1220',
+                    'button_style' => 'rounded',
+                    'content_width' => '1160px',
+                    'header_variant' => 'modern',
+                    'footer_variant' => 'modern',
+                    'nav_style' => 'modern',
+                    'hero_style' => 'modern',
+                    'card_style' => 'modern',
+                    'testimonial_style' => 'modern',
+                    'faq_style' => 'modern',
+                    'cta_style' => 'modern',
+                    'process_style' => 'modern',
+                ],
+                'page_manifest' => $manifest,
+                'manifest_version' => 1,
+                'is_active' => true,
+            ],
+            [
+                'key' => 'photo_booth_editorial',
+                'display_name' => 'Editorial',
+                'description' => 'Warm, narrative-led, and generously spaced — serif headlines and a considered pace.',
+                'theme' => [
+                    'font' => 'serif',
+                    'primary_color' => '#b6562c',
+                    'secondary_color' => '#2b241d',
+                    'button_style' => 'outline',
+                    'content_width' => '1000px',
+                    'header_variant' => 'editorial',
+                    'footer_variant' => 'editorial',
+                    'nav_style' => 'editorial',
+                    'hero_style' => 'editorial',
+                    'card_style' => 'editorial',
+                    'testimonial_style' => 'editorial',
+                    'faq_style' => 'editorial',
+                    'cta_style' => 'editorial',
+                    'process_style' => 'editorial',
+                ],
+                'page_manifest' => $manifest,
+                'manifest_version' => 1,
+                'is_active' => true,
+            ],
+            [
+                'key' => 'photo_booth_luxury',
+                'display_name' => 'Luxury',
+                'description' => 'Restrained and elegant — a muted gold and charcoal palette built around tiered packages.',
+                'theme' => [
+                    'font' => 'display',
+                    'primary_color' => '#a8874f',
+                    'secondary_color' => '#14110c',
+                    'button_style' => 'pill',
+                    'content_width' => '1080px',
+                    'header_variant' => 'luxury',
+                    'footer_variant' => 'luxury',
+                    'nav_style' => 'luxury',
+                    'hero_style' => 'luxury',
+                    'card_style' => 'luxury',
+                    'testimonial_style' => 'luxury',
+                    'faq_style' => 'luxury',
+                    'cta_style' => 'luxury',
+                    'process_style' => 'luxury',
+                ],
+                'page_manifest' => $manifest,
+                'manifest_version' => 1,
+                'is_active' => true,
+            ],
+            [
+                'key' => 'photo_booth_conversion',
+                'display_name' => 'Conversion',
+                'description' => 'Punchy and direct — event-type quick-picks and a clear numbered booking process.',
+                'theme' => [
+                    'font' => 'system',
+                    'primary_color' => '#ef4444',
+                    'secondary_color' => '#111827',
+                    'button_style' => 'solid',
+                    'content_width' => '1120px',
+                    'header_variant' => 'conversion',
+                    'footer_variant' => 'conversion',
+                    'nav_style' => 'conversion',
+                    'hero_style' => 'conversion',
+                    'card_style' => 'conversion',
+                    'testimonial_style' => 'conversion',
+                    'faq_style' => 'conversion',
+                    'cta_style' => 'conversion',
+                    'process_style' => 'conversion',
+                ],
+                'page_manifest' => $manifest,
+                'manifest_version' => 1,
+                'is_active' => true,
+            ],
+        ];
+    }
+
+    /**
+     * SEO architecture must not depend on which template a customer
+     * picked (task instruction) — all four templates therefore share
+     * the exact same page-type/section-type manifest; only `theme`
+     * differs between them.
+     */
+    private static function sharedPageManifest(): array
+    {
+        return [
+            'pages' => [
+                ['page_type' => 'home', 'is_home' => true, 'allowed_section_types' => ['hero', 'services', 'image_text', 'testimonials', 'faq', 'cta', 'contact_details', 'gallery'], 'default_section_order' => ['hero', 'services', 'image_text', 'testimonials', 'faq', 'cta', 'contact_details']],
+                ['page_type' => 'services_overview', 'is_home' => false, 'allowed_section_types' => ['hero', 'services', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'services', 'contact_details']],
+                ['page_type' => 'service_detail', 'is_home' => false, 'allowed_section_types' => ['hero', 'text', 'image_text', 'services', 'testimonials', 'faq', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'text', 'image_text', 'faq', 'cta', 'contact_details']],
+                ['page_type' => 'packages', 'is_home' => false, 'allowed_section_types' => ['hero', 'services', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'services', 'contact_details']],
+                ['page_type' => 'about', 'is_home' => false, 'allowed_section_types' => ['hero', 'text', 'testimonials', 'contact_details'], 'default_section_order' => ['hero', 'text', 'testimonials', 'contact_details']],
+                ['page_type' => 'faq', 'is_home' => false, 'allowed_section_types' => ['hero', 'faq', 'contact_details'], 'default_section_order' => ['hero', 'faq', 'contact_details']],
+                ['page_type' => 'gallery', 'is_home' => false, 'allowed_section_types' => ['hero', 'gallery', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'gallery', 'contact_details']],
+                ['page_type' => 'contact', 'is_home' => false, 'allowed_section_types' => ['hero', 'contact_details', 'form'], 'default_section_order' => ['hero', 'contact_details', 'form']],
+                ['page_type' => 'location', 'is_home' => false, 'allowed_section_types' => ['hero', 'text', 'services', 'faq', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'text', 'services', 'faq', 'contact_details']],
+            ],
+        ];
+    }
+}

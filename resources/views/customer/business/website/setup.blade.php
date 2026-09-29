@@ -38,6 +38,28 @@
         </p>
     </x-card>
 
+    <x-card title="Website completeness" class="mb-3">
+        <p class="text-caption mb-2">What your site can include right now, from your saved business facts. Nothing here is guessed.</p>
+        <ul class="mb-0">
+            <li>Services: {{ $completeness['eligibleServiceCount'] }} real service{{ $completeness['eligibleServiceCount'] === 1 ? '' : 's' }} will get its own page.</li>
+            <li>Packages: {{ $completeness['eligibleCatalogCount'] > 0 ? $completeness['eligibleCatalogCount'] . ' saved package(s) will appear.' : 'none saved yet.' }}</li>
+            <li>
+                Additional locations: {{ $completeness['eligibleLocationCount'] }} ready for their own page.
+                @if ($completeness['needsMoreInfoLocationCount'] > 0)
+                    {{ $completeness['needsMoreInfoLocationCount'] }} more need a service area or travel radius before we can give them a page —
+                    <a href="{{ route('customer.workspaces.businesses.locations.index', [$workspaceUid, $businessUid]) }}">add that now</a>.
+                @endif
+            </li>
+            <li>Photos: add real photos after your site is created so Home and your Gallery page have real images.</li>
+            @if (! empty($completeness['missingFieldKeys']) || ! empty($completeness['staleFieldKeys']))
+                <li>
+                    {{ count($completeness['missingFieldKeys']) + count($completeness['staleFieldKeys']) }} more confirmed answer(s) (story, credentials, guarantees, pricing) would make your About and FAQ pages more complete —
+                    <a href="{{ route('customer.workspaces.businesses.knowledge-profile.edit', [$workspaceUid, $businessUid]) }}">answer them now</a>.
+                </li>
+            @endif
+        </ul>
+    </x-card>
+
     @if ($reusable)
         <x-card title="What your Photo Booth draft will reuse" class="mb-3">
             <ul class="mb-2">
@@ -73,28 +95,53 @@
 
     <form method="POST" action="{{ route('customer.workspaces.businesses.website.store', [$workspaceUid, $businessUid]) }}">
         @csrf
-        <fieldset>
-            <legend class="h5 mb-2">Choose a design</legend>
-            <p class="text-caption mb-3">Each option starts with your saved business information. You can edit, add, move, or remove sections afterwards.</p>
-            <div class="row">
-                @foreach ($designs as $key => $design)
-                    <div class="col-md-4 mb-3">
-                        <label class="website-starter-choice d-block h-100" for="website-design-{{ $key }}">
-                            <input class="form-check-input me-1" type="radio" name="design" id="website-design-{{ $key }}" value="{{ $key }}" @checked(old('design', 'clean') === $key)>
-                            <strong>{{ $design['name'] }}</strong>
-                            <span class="website-starter-preview website-starter-preview-{{ $key }}" aria-hidden="true">
-                                <span class="website-starter-preview-top"></span>
-                                <span class="website-starter-preview-title"></span>
-                                <span class="website-starter-preview-line"></span>
-                                <span class="website-starter-preview-button"></span>
-                                <span class="website-starter-preview-cards"><i></i><i></i><i></i></span>
-                            </span>
-                            <span class="text-caption d-block">{{ $design['description'] }}</span>
-                        </label>
-                    </div>
-                @endforeach
-            </div>
-        </fieldset>
+        @if ($templates->isNotEmpty())
+            <fieldset>
+                <legend class="h5 mb-2">Choose a template</legend>
+                <p class="text-caption mb-3">Every template builds the same complete site structure from your saved business facts — only the look changes. You can edit, add, move, or remove sections afterwards.</p>
+                <div class="row">
+                    @foreach ($templates as $template)
+                        <div class="col-md-3 mb-3">
+                            <label class="website-starter-choice d-block h-100" for="website-template-{{ $template->key }}">
+                                <input class="form-check-input me-1" type="radio" name="template_key" id="website-template-{{ $template->key }}" value="{{ $template->key }}" @checked($loop->first)>
+                                <strong>{{ $template->display_name }}</strong>
+                                <span class="website-starter-preview website-starter-preview-{{ $template->key }}" aria-hidden="true">
+                                    <span class="website-starter-preview-top"></span>
+                                    <span class="website-starter-preview-title"></span>
+                                    <span class="website-starter-preview-line"></span>
+                                    <span class="website-starter-preview-button"></span>
+                                    <span class="website-starter-preview-cards"><i></i><i></i><i></i></span>
+                                </span>
+                                <span class="text-caption d-block">{{ $template->description }}</span>
+                            </label>
+                        </div>
+                    @endforeach
+                </div>
+            </fieldset>
+        @else
+            <fieldset>
+                <legend class="h5 mb-2">Choose a design</legend>
+                <p class="text-caption mb-3">Each option starts with your saved business information. You can edit, add, move, or remove sections afterwards.</p>
+                <div class="row">
+                    @foreach ($designs as $key => $design)
+                        <div class="col-md-4 mb-3">
+                            <label class="website-starter-choice d-block h-100" for="website-design-{{ $key }}">
+                                <input class="form-check-input me-1" type="radio" name="design" id="website-design-{{ $key }}" value="{{ $key }}" @checked(old('design', 'clean') === $key)>
+                                <strong>{{ $design['name'] }}</strong>
+                                <span class="website-starter-preview website-starter-preview-{{ $key }}" aria-hidden="true">
+                                    <span class="website-starter-preview-top"></span>
+                                    <span class="website-starter-preview-title"></span>
+                                    <span class="website-starter-preview-line"></span>
+                                    <span class="website-starter-preview-button"></span>
+                                    <span class="website-starter-preview-cards"><i></i><i></i><i></i></span>
+                                </span>
+                                <span class="text-caption d-block">{{ $design['description'] }}</span>
+                            </label>
+                        </div>
+                    @endforeach
+                </div>
+            </fieldset>
+        @endif
         <x-button type="submit" variant="primary">Create my draft</x-button>
     </form>
 
@@ -129,6 +176,37 @@
     .website-starter-preview-premium .website-starter-preview-line { background: #ab9d89; }
     .website-starter-preview-premium .website-starter-preview-button { background: #8b653e; }
     .website-starter-preview-premium .website-starter-preview-cards i { background: #fffaf2; }
+
+    /* The four operator templates (Website Generator + Local SEO
+       Completion) — swatches only, echoing each template's own
+       website-public.css treatment so the picker preview isn't a lie. */
+    .website-starter-preview-photo_booth_modern { background: #0b1220; }
+    .website-starter-preview-photo_booth_modern .website-starter-preview-top { background: #0b1220; }
+    .website-starter-preview-photo_booth_modern .website-starter-preview-title { background: #fff; width: 72%; }
+    .website-starter-preview-photo_booth_modern .website-starter-preview-line { background: #6b7b8c; }
+    .website-starter-preview-photo_booth_modern .website-starter-preview-button { background: #0ea5b0; border-radius: 999px; }
+    .website-starter-preview-photo_booth_modern .website-starter-preview-cards i { background: #10213a; border-top: 3px solid #0ea5b0; }
+
+    .website-starter-preview-photo_booth_editorial { background: #faf6f1; }
+    .website-starter-preview-photo_booth_editorial .website-starter-preview-top { background: #faf6f1; }
+    .website-starter-preview-photo_booth_editorial .website-starter-preview-title { background: #2b241d; width: 50%; }
+    .website-starter-preview-photo_booth_editorial .website-starter-preview-line { background: #b6562c; height: 2px; width: 30%; }
+    .website-starter-preview-photo_booth_editorial .website-starter-preview-button { background: transparent; border: 2px solid #b6562c; }
+    .website-starter-preview-photo_booth_editorial .website-starter-preview-cards i { background: transparent; border-left: 2px solid #b6562c; border-radius: 0; }
+
+    .website-starter-preview-photo_booth_luxury { background: #14110c; }
+    .website-starter-preview-photo_booth_luxury .website-starter-preview-top { background: #14110c; }
+    .website-starter-preview-photo_booth_luxury .website-starter-preview-title { background: #f6efe3; width: 60%; }
+    .website-starter-preview-photo_booth_luxury .website-starter-preview-line { background: #a8874f; }
+    .website-starter-preview-photo_booth_luxury .website-starter-preview-button { background: #a8874f; border-radius: 999px; }
+    .website-starter-preview-photo_booth_luxury .website-starter-preview-cards i { background: #fdfbf7; border: 1px solid #e7dcc4; border-radius: 2px; }
+
+    .website-starter-preview-photo_booth_conversion { background: #111827; }
+    .website-starter-preview-photo_booth_conversion .website-starter-preview-top { background: #111827; border-bottom: 3px solid #ef4444; }
+    .website-starter-preview-photo_booth_conversion .website-starter-preview-title { background: #fff; width: 66%; }
+    .website-starter-preview-photo_booth_conversion .website-starter-preview-line { background: #9ca3af; }
+    .website-starter-preview-photo_booth_conversion .website-starter-preview-button { background: #ef4444; }
+    .website-starter-preview-photo_booth_conversion .website-starter-preview-cards i { background: #1f2937; border: 2px solid #374151; }
 </style>
 @endsection
 

@@ -32,6 +32,7 @@ class Website extends Model
         'status',
         'published_revision_id',
         'theme',
+        'template_key',
     ];
 
     protected $casts = [
@@ -100,6 +101,22 @@ class Website extends Model
     public function publishedRevision(): BelongsTo
     {
         return $this->belongsTo(WebsiteRevision::class, 'published_revision_id');
+    }
+
+    /**
+     * `template_key` is a nullable string reference, not a foreign key
+     * (WebsiteTemplate migration docblock) — a template may be
+     * deactivated without breaking a Website that already used it, so
+     * this deliberately does not scope to `is_active`.
+     */
+    public function template(): BelongsTo
+    {
+        return $this->belongsTo(WebsiteTemplate::class, 'template_key', 'key');
+    }
+
+    public function guidedGenerationAttempts(): HasMany
+    {
+        return $this->hasMany(WebsiteGuidedGenerationAttempt::class);
     }
 
     /**

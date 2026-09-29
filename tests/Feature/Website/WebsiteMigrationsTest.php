@@ -140,6 +140,13 @@ class WebsiteMigrationsTest extends TestCase
             // Slice B (custom domains) added one more table that FKs
             // straight to `websites` — same reasoning, same fix.
             'website_domains' => database_path('migrations/2026_10_08_120000_create_website_domains_table.php'),
+            // Website Generator + Local SEO Completion lane added one
+            // more table that FKs straight to `websites` — same
+            // reasoning, same fix. `website_templates` and
+            // `websites.template_key` are deliberately excluded: neither
+            // has any foreign-key relationship to `websites`, so neither
+            // participates in this drop-order dance.
+            'website_guided_generation_attempts' => database_path('migrations/2026_10_12_090002_create_website_guided_generation_attempts_table.php'),
         ];
 
         $websites = require $paths['websites'];
@@ -150,11 +157,16 @@ class WebsiteMigrationsTest extends TestCase
         $formSubmissions = require $paths['website_form_submissions'];
         $forms = require $paths['website_forms'];
         $domains = require $paths['website_domains'];
+        $guidedGenerationAttempts = require $paths['website_guided_generation_attempts'];
 
         try {
-            // Reverse order: domains, then form submissions, then forms,
-            // then assets, then the published_revision_id column/FK,
-            // then revisions, then pages, then websites.
+            // Reverse order: guided generation attempts, then domains,
+            // then form submissions, then forms, then assets, then the
+            // published_revision_id column/FK, then revisions, then
+            // pages, then websites.
+            $guidedGenerationAttempts->down();
+            $this->assertFalse(Schema::hasTable('website_guided_generation_attempts'));
+
             $domains->down();
             $this->assertFalse(Schema::hasTable('website_domains'));
 
@@ -182,10 +194,10 @@ class WebsiteMigrationsTest extends TestCase
         } finally {
             // Forward order: websites, pages, revisions,
             // published_revision_id, assets, forms, form submissions,
-            // domains — restore the schema so RefreshDatabase's
-            // transaction rollback for THIS test doesn't leave the next
-            // test file with a mismatched schema (these are raw DDL
-            // changes outside any transaction).
+            // domains, guided generation attempts — restore the schema so
+            // RefreshDatabase's transaction rollback for THIS test
+            // doesn't leave the next test file with a mismatched schema
+            // (these are raw DDL changes outside any transaction).
             $websites->up();
             $pages->up();
             $revisions->up();
@@ -194,6 +206,7 @@ class WebsiteMigrationsTest extends TestCase
             $forms->up();
             $formSubmissions->up();
             $domains->up();
+            $guidedGenerationAttempts->up();
         }
 
         $this->assertTrue(Schema::hasTable('websites'));

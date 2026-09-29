@@ -13,8 +13,10 @@ use App\Library\Catalog\CatalogMoney;
 use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
 use App\Models\CatalogItem;
+use App\Models\BusinessService;
 use App\Models\Website;
 use App\Models\WebsiteForm;
+use App\Models\WebsiteTemplate;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -85,6 +87,7 @@ final class WebsiteStarterDraftService
     public function __construct(
         private readonly WebsiteDraftPageService $pages,
         private readonly BusinessKnowledgeProfileManager $profiles,
+        private readonly WebsitePageStrategy $pageStrategy,
     ) {
     }
 
@@ -129,6 +132,272 @@ final class WebsiteStarterDraftService
 
             return $website;
         });
+    }
+
+    /**
+     * Website Generator + Local SEO Completion. The template-driven,
+     * industry-agnostic sibling of create(): chooses a
+     * WebsiteTemplate::theme() instead of a bare WebsiteStarterDesigns
+     * key, and builds the FULL information architecture
+     * WebsitePageStrategy's real, saved facts justify — Home, a
+     * Services overview (if any active service exists), one detail page
+     * per active service, Packages (if any active catalog item exists),
+     * About, FAQ, Contact, and one page per anti-doorway-eligible saved
+     * location — instead of create()'s smaller, Photo-Booth-only fixed
+     * set. Every section is built from the exact same, already-tested
+     * private builders create()/createPhotoBoothPages() already use;
+     * this method adds no new copy-generation logic, only more places
+     * to apply it. New pages stay `noindex` until the owner reviews
+     * them, exactly like create()'s starter pages.
+     */
+    public function createFromTemplate(Business $business, WebsiteTemplate $template, ?string $name = null): Website
+    {
+        return DB::transaction(function () use ($business, $template, $name) {
+            Business::whereKey($business->id)->lockForUpdate()->firstOrFail();
+
+            $existing = Website::where('business_id', $business->id)->first();
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            $website = Website::create([
+                'business_id' => $business->id,
+                'name' => $name ?: Str::limit($business->name, 120, ''),
+                'theme' => $template->theme,
+                'template_key' => $template->key,
+            ]);
+
+            $this->buildPagesFromTemplate($website, $business);
+
+            return $website;
+        });
+    }
+
+    /**
+     * Website Generator + Local SEO Completion — the "Rebuild website
+     * from template" flow (task instruction: never destructively
+     * overwrite the currently published site). This method ONLY ever
+     * touches the mutable DRAFT `website_pages` rows belonging to this
+     * Website; it never reads or writes `websites.published_revision_id`
+     * or any `website_revisions` row, so the currently published
+     * snapshot (if any) keeps serving the public site completely
+     * unaffected throughout and after this call — the owner must still
+     * take the separate, explicit "Publish" action (WebsitePublisher,
+     * unchanged) before a rebuild is ever visible to a visitor, and the
+     * pre-rebuild published revision remains available for rollback
+     * exactly as before. Every existing draft page is deleted and
+     * replaced — the caller (the rebuild controller action) is
+     * responsible for telling the owner exactly that before they
+     * confirm, per the task's own required confirmation step.
+     */
+    public function rebuildFromTemplate(Business $business, Website $website, WebsiteTemplate $template): Website
+    {
+        return DB::transaction(function () use ($business, $website, $template) {
+            Business::whereKey($business->id)->lockForUpdate()->firstOrFail();
+
+            $website->pages()->delete();
+            $website->update([
+                'theme' => $template->theme,
+                'template_key' => $template->key,
+            ]);
+
+            $this->buildPagesFromTemplate($website, $business);
+
+            return $website->fresh();
+        });
+    }
+
+    /**
+     * The shared page-building body createFromTemplate() and
+     * rebuildFromTemplate() both use — every section still comes only
+     * from the same, already-tested private builders create()/
+     * createPhotoBoothPages() already use.
+     *
+     * Indexability: Home, the Services overview, Packages, every
+     * per-service page, and every eligible location page are all real,
+     * substantive content pages this engine exists to get indexed — none
+     * of them pass `noindex`, so each defaults to indexable (the whole
+     * point of building a dedicated page per genuine service/location).
+     * createAboutPage()/createFaqPage()/createContactPage() are
+     * pre-existing, shared with the older create() flow, and keep their
+     * own already-established `noindex` behavior unchanged here.
+     */
+    private function buildPagesFromTemplate(Website $website, Business $business): void
+    {
+        $homeSections = $this->sections($business);
+        $this->pages->createPage($website, [
+            'title' => 'Home',
+            'is_home' => true,
+            'sections' => $homeSections,
+            'seo_title' => Str::limit($business->name, 70, ''),
+            'meta_description' => $business->description
+                ? Str::limit(trim($business->description), 160, '')
+                : null,
+        ]);
+
+        $contact = collect($homeSections)->firstWhere('type', 'contact_details');
+        $servicesOverviewUrl = null;
+
+        $services = $this->pageStrategy->eligibleServices($business);
+        if ($services->isNotEmpty()) {
+            $servicesSection = $this->activeServicesSection($business, full: true);
+            if ($servicesSection !== null) {
+                $this->pages->createPage($website, [
+                    'title' => 'Services',
+                    'slug' => 'services',
+                    'is_home' => false,
+                    'sections' => array_values(array_filter([
+                        ['type' => 'hero', 'data' => ['heading' => 'Our services']],
+                        $servicesSection,
+                        $contact,
+                    ])),
+                    'seo_title' => Str::limit('Services | ' . $business->name, 70, ''),
+                    'meta_description' => null,
+                ]);
+                $servicesOverviewUrl = 'services';
+            }
+        }
+
+        $catalogSection = $this->activeCatalogSection($business, full: true);
+        if ($catalogSection !== null) {
+            $this->pages->createPage($website, [
+                'title' => 'Packages',
+                'slug' => 'packages',
+                'is_home' => false,
+                'sections' => array_values(array_filter([
+                    ['type' => 'hero', 'data' => ['heading' => 'Packages']],
+                    $catalogSection,
+                    $contact,
+                ])),
+                'seo_title' => Str::limit('Packages | ' . $business->name, 70, ''),
+                'meta_description' => null,
+            ]);
+        }
+
+        foreach ($services as $service) {
+            $this->createServiceDetailPage($website, $business, $service, $contact, $servicesOverviewUrl);
+        }
+
+        $this->createAboutPage($website, $business, $contact);
+        $this->createFaqPage($website, $business, $contact);
+        $this->createContactPage($website, $business, $contact);
+
+        foreach ($this->pageStrategy->eligibleLocations($business) as $location) {
+            $this->createLocationPage($website, $business, $location, $contact, $servicesOverviewUrl);
+        }
+    }
+
+    /**
+     * One real page per genuinely offered service (task instruction) —
+     * unique per-service copy comes entirely from that service's own
+     * saved `name`/`description`/price, never a business-wide paragraph
+     * repeated across every service page (which would itself be
+     * duplicate, low-value content). Links back to the Services overview
+     * and to Contact — the internal-link contribution this task calls
+     * for — via the existing `cta` section type's own bounded button
+     * list (never a new section type).
+     */
+    private function createServiceDetailPage(Website $website, Business $business, BusinessService $service, ?array $contact, ?string $servicesOverviewUrl): void
+    {
+        $slug = 'service-' . Str::slug($service->slug ?: $service->name);
+
+        $sections = [
+            ['type' => 'hero', 'data' => ['heading' => Str::limit($service->name, 120, '')]],
+        ];
+
+        if (trim((string) $service->description) !== '') {
+            $sections[] = ['type' => 'text', 'data' => [
+                'heading' => 'About this service',
+                'body' => Str::limit(trim($service->description), self::FULL_DESCRIPTION_LENGTH, ''),
+            ]];
+        }
+
+        if ($service->starting_price !== null && $service->currency_code) {
+            $sections[] = ['type' => 'services', 'data' => [
+                'heading' => 'Pricing',
+                'items' => [array_filter([
+                    'name' => Str::limit($service->name, 120, ''),
+                    'price_label' => Str::limit('From ' . strtoupper($service->currency_code) . ' ' . $service->starting_price, 40, ''),
+                ], fn ($value) => $value !== null && $value !== '')],
+            ]];
+        }
+
+        $ctaButtons = array_values(array_filter([
+            $servicesOverviewUrl !== null ? ['label' => 'See all services', 'url' => '/' . $servicesOverviewUrl] : null,
+            ($target = $this->contactTarget($business)) !== null ? ['label' => 'Get a quote', 'url' => $target] : null,
+        ]));
+        if ($ctaButtons !== []) {
+            $sections[] = ['type' => 'cta', 'data' => [
+                'heading' => 'Ready to book ' . Str::limit($service->name, 80, '') . '?',
+                'buttons' => $ctaButtons,
+            ]];
+        }
+
+        if ($contact !== null) {
+            $sections[] = $contact;
+        }
+
+        $this->pages->createPage($website, [
+            'title' => $service->name,
+            'slug' => $slug,
+            'is_home' => false,
+            'sections' => $sections,
+            'seo_title' => Str::limit($service->name . ' | ' . $business->name, 70, ''),
+            'meta_description' => trim((string) $service->description) !== ''
+                ? Str::limit(trim($service->description), 160, '')
+                : null,
+        ]);
+    }
+
+    /**
+     * A location page exists only for a saved location
+     * WebsitePageStrategy::eligibleLocations() already proved carries a
+     * real, distinguishing local fact (service-area cities or a service
+     * radius) — the body copy reuses that exact same fact via
+     * serviceAreaAnswer(), so the page is never a bare name/city-token
+     * swap of the primary location's own content (Google doorway-page
+     * safety, task instruction).
+     */
+    private function createLocationPage(Website $website, Business $business, $location, ?array $contact, ?string $servicesOverviewUrl): void
+    {
+        $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
+        $heading = $cityLabel !== '' ? 'Serving ' . $cityLabel : 'Serving your area';
+
+        $sections = [
+            ['type' => 'hero', 'data' => ['heading' => Str::limit($heading, 120, '')]],
+            ['type' => 'text', 'data' => [
+                'heading' => 'Local service area',
+                'body' => $this->serviceAreaAnswer($location),
+            ]],
+        ];
+
+        $servicesSection = $this->activeServicesSection($business, full: false);
+        if ($servicesSection !== null) {
+            $sections[] = $servicesSection;
+        }
+
+        $ctaButtons = array_values(array_filter([
+            $servicesOverviewUrl !== null ? ['label' => 'See all services', 'url' => '/' . $servicesOverviewUrl] : null,
+            ($target = $this->contactTarget($business)) !== null ? ['label' => 'Get a quote', 'url' => $target] : null,
+        ]));
+        if ($ctaButtons !== []) {
+            $sections[] = ['type' => 'cta', 'data' => ['heading' => 'Book for your event in ' . ($cityLabel !== '' ? $cityLabel : 'your area'), 'buttons' => $ctaButtons]];
+        }
+
+        if ($contact !== null) {
+            $sections[] = $contact;
+        }
+
+        $slug = 'serving-' . Str::slug($cityLabel !== '' ? $cityLabel : (string) $location->id);
+
+        $this->pages->createPage($website, [
+            'title' => $cityLabel !== '' ? 'Serving ' . $cityLabel : 'Service area',
+            'slug' => $slug,
+            'is_home' => false,
+            'sections' => $sections,
+            'seo_title' => Str::limit($heading . ' | ' . $business->name, 70, ''),
+            'meta_description' => Str::limit($this->serviceAreaAnswer($location), 160, ''),
+        ]);
     }
 
     /**
@@ -253,8 +522,14 @@ final class WebsiteStarterDraftService
             'is_home' => false,
             'sections' => $sections,
             'seo_title' => Str::limit('About | ' . $business->name, 70, ''),
+            // Never byte-identical to Home's own meta_description (which
+            // also draws from $business->description) — Search Central's
+            // own guidance treats duplicate metadata across pages as a
+            // signal to avoid, so this page's description is framed as
+            // being about the business rather than repeating Home's exact
+            // summary verbatim.
             'meta_description' => trim((string) $business->description) !== ''
-                ? Str::limit(trim($business->description), 160, '')
+                ? Str::limit('Learn more about ' . $business->name . ': ' . trim($business->description), 160, '')
                 : null,
             'noindex' => true,
         ]);

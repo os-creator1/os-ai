@@ -14,6 +14,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsiteAssetUploadService;
 use App\Library\Website\WebsiteDraftPageService;
+use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDesigns;
 use App\Library\Website\WebsiteStarterDraftService;
@@ -23,6 +24,7 @@ use App\Models\Website;
 use App\Models\WebsiteForm;
 use App\Models\WebsitePage;
 use App\Models\WebsiteRevision;
+use App\Models\WebsiteTemplate;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
@@ -65,6 +67,7 @@ class WebsiteController extends CustomerBaseController
         private readonly WebsiteAiDraftGenerator $aiGenerator,
         private readonly WebsiteStarterDraftService $starterDrafts,
         private readonly BusinessKnowledgeProfileManager $profiles,
+        private readonly WebsitePageStrategy $pageStrategy,
     ) {
     }
 
@@ -120,14 +123,31 @@ class WebsiteController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
         }
 
+        $completeness = $this->profiles->completenessCheck($business);
+        $eligibleLocations = $this->pageStrategy->eligibleLocations($business);
+        $needsMoreInfoLocations = $this->pageStrategy->locationsNeedingMoreInfo($business);
+
         return view('customer.business.website.setup', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
+            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
             'designs' => WebsiteStarterDesigns::all(),
             'services' => $business->services()->where('status', 'active')->orderBy('sort_order')->limit(4)->get(),
             'location' => $business->primaryLocation()->first(),
             'reusable' => WebsiteStarterDraftService::isPhotoBooth($business) ? $this->starterDrafts->reusableContent($business) : null,
+            // "Website completeness" (task instruction) — the real,
+            // deterministic facts the page-strategy engine and the
+            // About/FAQ builders actually consult, never a pretend list.
+            'completeness' => [
+                'missingFieldKeys' => $completeness->missingFieldKeys,
+                'staleFieldKeys' => $completeness->staleFieldKeys,
+                'eligibleServiceCount' => $this->pageStrategy->eligibleServices($business)->count(),
+                'eligibleCatalogCount' => $this->pageStrategy->eligibleCatalogItems($business)->count(),
+                'eligibleLocationCount' => $eligibleLocations->count(),
+                'needsMoreInfoLocationCount' => $needsMoreInfoLocations->count(),
+                'photoCount' => 0,
+            ],
         ]);
     }
 
@@ -142,15 +162,35 @@ class WebsiteController extends CustomerBaseController
 
         $request->validate([
             'design' => 'nullable|in:clean,bold,premium,blank',
+            'template_key' => 'nullable|string|max:40',
             'name' => 'nullable|string|max:120',
         ]);
 
-        if (! $request->filled('design') && ! $request->filled('name')) {
+        if (! $request->filled('design') && ! $request->filled('template_key') && ! $request->filled('name')) {
             throw ValidationException::withMessages(['design' => ['Choose a design to start your website.']]);
         }
 
-        $design = $request->input('design', 'blank');
-        $website = $this->starterDrafts->create($business, $design, $request->input('name'));
+        // The four-template picker (task instruction: "replace the
+        // current generic Clean/Bold/Premium selection") — resolved
+        // against the operator-owned, `is_active`-checked catalog. The
+        // older `design` (clean/bold/premium/blank) path stays fully
+        // functional and untouched for a business that still submits it
+        // (e.g. the "Start with a blank website" link), never removed —
+        // only no longer the primary path the setup screen itself offers.
+        if ($request->filled('template_key')) {
+            $template = WebsiteTemplate::where('key', $request->input('template_key'))
+                ->where('is_active', true)
+                ->first();
+
+            if ($template === null) {
+                throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+            }
+
+            $website = $this->starterDrafts->createFromTemplate($business, $template, $request->input('name'));
+        } else {
+            $design = $request->input('design', 'blank');
+            $website = $this->starterDrafts->create($business, $design, $request->input('name'));
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -407,6 +447,65 @@ class WebsiteController extends CustomerBaseController
         return redirect()->route('customer.workspaces.businesses.website.history', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
             'message' => 'Website rolled back.',
+        ]);
+    }
+
+    /**
+     * Website Generator + Local SEO Completion — "Rebuild website from
+     * template" (task instruction). Shows which template is currently
+     * selected, the choice of a new one, and states plainly that a
+     * rebuild replaces every current DRAFT page while the site that is
+     * actually live right now (if published) keeps serving completely
+     * unaffected until the owner explicitly publishes the rebuilt draft.
+     */
+    public function rebuildForm(string $workspaceUid, string $businessUid): View|Factory|Application
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        return view('customer.business.website.rebuild', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'website' => $website,
+            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
+            'currentPageCount' => $website->pages()->count(),
+            'isPublished' => $website->published_revision_id !== null,
+        ]);
+    }
+
+    public function rebuild(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        $request->validate([
+            'template_key' => 'required|string|max:40',
+            // Explicit confirmation (task instruction, step 3) — never
+            // inferred from merely visiting the page or clicking once.
+            'confirm_rebuild' => 'accepted',
+        ]);
+
+        $template = WebsiteTemplate::where('key', $request->input('template_key'))
+            ->where('is_active', true)
+            ->first();
+
+        if ($template === null) {
+            throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+        }
+
+        $this->starterDrafts->rebuildFromTemplate($business, $website, $template);
+
+        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => $website->published_revision_id !== null
+                ? 'Draft rebuilt. Your currently published site is unaffected until you review and publish this draft.'
+                : 'Draft rebuilt from the new template.',
         ]);
     }
 

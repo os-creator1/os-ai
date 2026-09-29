@@ -445,3 +445,170 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
     .website-header-premium .website-hero { padding-top: 4rem; padding-bottom: 4rem; }
     .website-form-fields { padding: 1.25rem; }
 }
+
+/* =================================================================
+   FOUR OPERATOR TEMPLATES (Website Generator + Local SEO Completion)
+
+   Each scopes under the same `.website-header-{key}` ancestor class
+   the pre-existing clean/bold/premium designs already use
+   (page.blade.php's `website-header-{{ theme.header_variant }}` body
+   class) — a bounded, validated presentation key
+   (WebsiteTemplate::ALLOWED_THEME_VALUES), never arbitrary CSS. Every
+   rule below is presentation only: it changes how the exact same
+   {type, data} section shape looks, never what data exists or which
+   pages/links/schema get generated.
+
+   Visual grammar is broadly inspired by (never copied from) one of
+   four live photo-booth-rental reference sites — colors, spacing and
+   type choices are original. See WebsiteTemplateSeeder's own docblock
+   for the exact mapping.
+   ================================================================= */
+
+/* --- Modern: dark, high-contrast, confident (boothstothemax.com-style
+   grammar: dark full-bleed hero, bright accent CTA, benefit cards) --- */
+.website-header-modern .website-header {
+    background: var(--website-secondary);
+    border-bottom-color: rgba(255, 255, 255, .08);
+}
+.website-header-modern .website-brand,
+.website-header-modern .website-navigation a { color: #fff; }
+.website-header-modern .website-navigation a:hover { background: rgba(255, 255, 255, .1); color: var(--website-primary); }
+.website-header-modern .website-navigation a[aria-current="page"] { color: var(--website-primary); }
+.website-header-modern .website-hero {
+    background-color: var(--website-secondary);
+    background-image: radial-gradient(circle at 15% 0%, rgba(14, 165, 176, .25), transparent 55%), linear-gradient(180deg, #0b1220, #0d1626 90%);
+    color: #fff;
+    margin: 0 calc(50% - 50vw);
+    padding: 7rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2)) 6rem;
+    text-align: left;
+}
+.website-header-modern .website-hero-inner { max-width: 780px; margin: 0; }
+.website-header-modern .website-hero h1,
+.website-header-modern .website-hero-subheading { color: #fff; }
+.website-header-modern .website-hero h1 { font-size: clamp(2.25rem, 1.6rem + 3vw, 3.5rem); }
+.website-header-modern .website-hero-ctas { justify-content: flex-start; }
+.website-header-modern .website-section > h2 { text-align: left; }
+.website-header-modern .website-section > h2::after { margin-left: 0; }
+.website-header-modern .website-service-card,
+.website-header-modern .website-testimonial-card {
+    border: none;
+    border-top: 3px solid var(--website-primary);
+    border-radius: 0.5rem;
+    background: var(--website-surface-muted);
+}
+.website-header-modern .website-btn-primary { border-radius: 999px; }
+.website-header-modern .website-cta {
+    background: var(--website-secondary);
+    border: none;
+    color: #fff;
+}
+.website-header-modern .website-cta h2,
+.website-header-modern .website-cta p { color: #fff; }
+.website-header-modern .website-faq-item summary { color: var(--website-secondary); }
+.website-footer-modern { background: var(--website-secondary); color: #cbd5e1; border-top-color: rgba(255,255,255,.08); }
+.website-footer-modern a { color: #fff; }
+
+/* --- Editorial: warm, narrative, generous whitespace, serif headings
+   (kalebhillphotobooth.com-style grammar: mission-statement copy,
+   single-package spotlight) --- */
+.website-header-editorial .website-header { background: #faf6f1; border-bottom-color: #ecdfd0; }
+.website-header-editorial .website-hero {
+    background-color: #faf6f1;
+    background-image: none;
+    padding: 7rem 1.5rem 5rem;
+    text-align: center;
+}
+.website-header-editorial .website-hero-inner { max-width: 640px; }
+.website-header-editorial .website-hero h1 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(2.25rem, 1.7rem + 2vw, 3.25rem); }
+.website-header-editorial .website-hero-subheading { font-size: 1.1875rem; font-style: italic; color: #6b5c4a; }
+.website-header-editorial .website-section { padding: 5rem 0; }
+.website-header-editorial .website-section > h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; }
+.website-header-editorial .website-section > h2::after { background: var(--website-primary); width: 2rem; height: 2px; }
+.website-header-editorial .website-services-grid,
+.website-header-editorial .website-testimonials-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2.5rem; }
+.website-header-editorial .website-service-card,
+.website-header-editorial .website-testimonial-card {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0 0 0 1.25rem;
+    border-left: 2px solid var(--website-primary);
+}
+.website-header-editorial .website-service-card:hover,
+.website-header-editorial .website-testimonial-card:hover { transform: none; box-shadow: none; }
+.website-header-editorial .website-cta { background: #faf6f1; border: none; }
+.website-footer-editorial { background: #faf6f1; border-top-color: #ecdfd0; }
+
+/* --- Luxury: restrained, elegant, gold/charcoal, tiered package cards
+   (photoboothcompanyoftoronto.com-style grammar: trust bar, rich
+   inclusion-list package tiers) --- */
+.website-header-luxury .website-header { background: var(--website-secondary); border-bottom-color: rgba(168, 135, 79, .35); }
+.website-header-luxury .website-brand,
+.website-header-luxury .website-navigation a { color: #ece4d6; }
+.website-header-luxury .website-navigation a:hover,
+.website-header-luxury .website-navigation a[aria-current="page"] { color: var(--website-primary); }
+.website-header-luxury .website-hero {
+    background-color: var(--website-secondary);
+    background-image: linear-gradient(180deg, #1b170f, #14110c 85%);
+    color: #ece4d6;
+    margin: 0 calc(50% - 50vw);
+    padding: 6.5rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+}
+.website-header-luxury .website-hero h1 { color: #f6efe3; font-family: Georgia, "Times New Roman", serif; letter-spacing: 0; }
+.website-header-luxury .website-hero-subheading { color: #cbbb9a; }
+.website-header-luxury .website-btn-primary { border-radius: 999px; letter-spacing: .04em; text-transform: uppercase; font-size: .8125rem; }
+.website-header-luxury .website-service-card,
+.website-header-luxury .website-testimonial-card {
+    background: #fdfbf7;
+    border: 1px solid #e7dcc4;
+    border-radius: 0.25rem;
+    box-shadow: none;
+}
+.website-header-luxury .website-service-card h3 { font-family: Georgia, "Times New Roman", serif; }
+.website-header-luxury .website-service-price { background: transparent; border: 1px solid var(--website-primary); }
+.website-header-luxury .website-cta { background: var(--website-secondary); color: #ece4d6; border: 1px solid rgba(168,135,79,.35); }
+.website-header-luxury .website-cta h2, .website-header-luxury .website-cta p { color: #ece4d6; }
+.website-footer-luxury { background: var(--website-secondary); color: #ab9c81; border-top-color: rgba(168,135,79,.35); }
+.website-footer-luxury a { color: #ece4d6; }
+
+/* --- Conversion: punchy, direct, repeated calls-to-action
+   (transparentphotobooths.com-style grammar: event-type quick-picks,
+   numbered process) --- */
+.website-header-conversion .website-header { border-bottom: 3px solid var(--website-primary); }
+.website-header-conversion .website-hero {
+    background: linear-gradient(135deg, var(--website-secondary), #1f2937 65%);
+    color: #fff;
+    margin: 0 calc(50% - 50vw);
+    padding: 6rem max(1.5rem, calc((100vw - var(--website-content-width)) / 2));
+}
+.website-header-conversion .website-hero h1,
+.website-header-conversion .website-hero-subheading { color: #fff; }
+.website-header-conversion .website-btn-primary {
+    text-transform: uppercase;
+    font-size: .875rem;
+    letter-spacing: .03em;
+    padding: 1rem 2.25rem;
+}
+.website-header-conversion .website-section > h2 { text-transform: uppercase; font-size: 1.5rem; letter-spacing: .02em; }
+.website-header-conversion .website-service-card {
+    border: 2px solid var(--website-border);
+    text-align: center;
+}
+.website-header-conversion .website-service-card:hover { border-color: var(--website-primary); }
+.website-header-conversion .website-cta {
+    background: var(--website-primary);
+    border: none;
+    color: #fff;
+}
+.website-header-conversion .website-cta h2, .website-header-conversion .website-cta p { color: #fff; }
+.website-header-conversion .website-cta .website-btn-primary { background: #fff; color: var(--website-primary); }
+.website-header-conversion .website-faq-item summary { text-transform: none; }
+.website-footer-conversion { background: var(--website-secondary); color: #cbd5e1; }
+
+@media (max-width: 640px) {
+    .website-header-modern .website-hero,
+    .website-header-luxury .website-hero,
+    .website-header-conversion .website-hero { padding-top: 4rem; padding-bottom: 4rem; }
+    .website-header-modern .website-hero-inner { max-width: 100%; }
+}
