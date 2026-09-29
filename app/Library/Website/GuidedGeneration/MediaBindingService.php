@@ -20,9 +20,16 @@ use App\Models\Website;
  *    other page's hero, so the same photo does not repeat as the
  *    hero on every page);
  *  - each `image_text` section on any OTHER page (service_detail pages,
- *    in the current template manifests) — a distinct, round-robined
- *    asset per slot, cycling only once every asset has been used at
- *    least once;
+ *    in the current template manifests) — AI is free to write an
+ *    `image_text` section's heading/body/image_position, but never its
+ *    `image` (GuidedGenerationOutputValidator validates that section
+ *    with WebsiteSectionValidator's `requireImageOnImageText: false`,
+ *    acceptance-correction round 2, Blocker 1); this service fills a
+ *    real, distinct, round-robined asset into that empty slot — and if
+ *    genuinely no asset exists at all, drops the section entirely
+ *    (stripUnfillableImageTextSections()) rather than ever persisting
+ *    an `image_text` section with no image, which would fail
+ *    WebsiteDraftPageService's own strict re-validation at commit time;
  *  - the Gallery page's own `gallery` section — built ENTIRELY here
  *    from every real uploaded asset, never by AI: the section validator
  *    categorically rejects any `image` value in AI-authored content
@@ -49,6 +56,7 @@ final class MediaBindingService
 
         if ($assets->isEmpty()) {
             $warnings[] = 'No uploaded photos are available yet — every page was generated without any photography.';
+            $pages = $this->stripUnfillableImageTextSections($pages, $warnings);
 
             return ['pages' => $this->fillGalleryFromAssets($pages, $assets->all(), $warnings), 'warnings' => $warnings];
         }
@@ -106,7 +114,53 @@ final class MediaBindingService
             $warnings[] = 'Not enough distinct uploaded photos for every photo slot — some photos repeat across pages.';
         }
 
+        // Defense in depth: once at least one asset exists, the
+        // round-robin fallback above always fills every image_text slot
+        // with something real, so this is a no-op in the ordinary case —
+        // it only matters if a future change to the pool logic above
+        // ever leaves a slot genuinely unfillable.
+        $pages = $this->stripUnfillableImageTextSections($pages, $warnings);
+
         return ['pages' => $this->fillGalleryFromAssets($pages, $assets->all(), $warnings), 'warnings' => $warnings];
+    }
+
+    /**
+     * Acceptance-correction round 2, Blocker 1's "define safe behavior
+     * when no usable photo exists": an `image_text` section whose
+     * `image` is still empty after every binding attempt is dropped
+     * from the page entirely, never persisted half-valid. Persisting it
+     * with a null `image` would fail WebsiteDraftPageService::
+     * createPage()'s own strict re-validation at commit time (§8.2's
+     * defense-in-depth), which — inside the same atomic transaction as
+     * every other page in the batch — would abort the whole commit
+     * rather than safely omitting one section. Dropping it here instead
+     * means the page still ships with all its OTHER real content; the
+     * missing photo is only ever surfaced as a warning, never a crash
+     * and never a broken rendered section.
+     */
+    private function stripUnfillableImageTextSections(array $pages, array &$warnings): array
+    {
+        $dropped = false;
+
+        foreach ($pages as $index => $page) {
+            $sections = array_values(array_filter($page['sections'] ?? [], function ($section) use (&$dropped) {
+                if (($section['type'] ?? null) === 'image_text' && empty($section['data']['image'] ?? null)) {
+                    $dropped = true;
+
+                    return false;
+                }
+
+                return true;
+            }));
+
+            $pages[$index]['sections'] = $sections;
+        }
+
+        if ($dropped) {
+            $warnings[] = 'An image_text section could not be given a real photo and was left out of its page.';
+        }
+
+        return $pages;
     }
 
     /**

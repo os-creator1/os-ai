@@ -101,7 +101,7 @@ class GuidedWebsiteGenerationClient
             'You may only use the confirmed facts provided below — never invent a fact, statistic, award, review, price, or claim.',
             'The "plan" array below is the COMPLETE, FINAL list of pages this website will have. You must write content for EXACTLY these page_key values — one output page per plan entry, never fewer, never more, never a page_key that is not in the plan.',
             'Each page you output must use only the section types listed in its own plan entry\'s allowed_section_types.',
-            'Never include an image, background_image, or asset field of any kind.',
+            'You may use an image_text section to pair written content with a photo, but never choose or name the photo itself: leave its "image" field as null (or omit it) and the system will attach a real photo automatically. Never set background_image on a hero, and never set "image" on anything else, to any value at all.',
             'Never write any of these prohibited phrases: ' . implode('; ', $profile?->prohibited_claims ?? []),
             'For each page, draft a title, seo_title (max 70 characters, descriptive and distinct, never boilerplate or keyword-stuffed) and meta_description (max 160 characters, a genuine one-sentence summary of that specific page) — never copy the same title, seo_title, or meta_description across two pages.',
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',

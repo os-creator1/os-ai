@@ -2,10 +2,13 @@
 
 namespace Tests\Feature\Website\GuidedGeneration;
 
+use App\Enums\Business\BusinessServiceStatus;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Models\BusinessService;
+use App\Models\WebsiteAsset;
 use App\Models\WebsiteGuidedGenerationAttempt;
 use App\Models\WebsitePage;
 use App\Models\WebsiteTemplate;
@@ -211,5 +214,204 @@ class GuidedGenerationCommitServiceTest extends TestCase
 
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $succeeded->status);
         $this->assertNotSame($failed->id, $succeeded->id);
+    }
+
+    // -----------------------------------------------------------------
+    // Acceptance-correction round 2, Blocker 1 — image_text end-to-end
+    // (a direct MediaBindingService unit test alone is not enough: this
+    // exercises the real GuidedGenerationOutputValidator ->
+    // MediaBindingService -> WebsiteDraftPageService::createPage() chain
+    // against ACTUAL WebsiteAsset rows belonging to the real Website).
+    // -----------------------------------------------------------------
+
+    public function test_an_image_text_section_is_bound_to_a_real_website_asset_end_to_end(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        BusinessService::create(['business_id' => $business->id, 'name' => 'Open-Air Booth', 'slug' => 'open-air-booth', 'status' => BusinessServiceStatus::Active->value, 'sort_order' => 0]);
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+
+        $asset = WebsiteAsset::create([
+            'website_id' => $website->id, 'disk' => 'public', 'path' => 'images/websites/' . $website->uid . '/1.png',
+            'mime_type' => 'image/png', 'size' => 1024, 'alt_text' => 'A real uploaded photo',
+        ]);
+
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website->fresh());
+        $servicePlanEntry = collect($plan)->firstWhere('page_key', 'service:' . BusinessService::first()->uid);
+        $this->assertNotNull($servicePlanEntry, 'The plan must include the real service.');
+
+        $pages = collect($plan)->map(fn ($page) => [
+            'page_key' => $page['page_key'],
+            'title' => $page['title'],
+            'seo_title' => $page['title'] . ' seo title',
+            'meta_description' => $page['title'] . ' meta description.',
+            'sections' => array_values(array_filter([
+                ['type' => 'hero', 'data' => ['heading' => $page['title']]],
+                $page['page_key'] === $servicePlanEntry['page_key']
+                    ? ['type' => 'image_text', 'data' => ['heading' => 'See it in action', 'body' => 'A real photo from a recent event.', 'image' => null, 'image_position' => 'left']]
+                    : null,
+            ])),
+        ])->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-image-text');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status);
+
+        $servicePage = $website->pages()->where('slug', 'service-open-air-booth')->firstOrFail();
+        $imageTextSection = collect($servicePage->sections)->firstWhere('type', 'image_text');
+
+        $this->assertNotNull($imageTextSection, 'The image_text section must survive into the persisted page.');
+        $this->assertSame($asset->uid, $imageTextSection['data']['image'], 'The section must be bound to the real, Website-owned asset — never left null, never invented.');
+    }
+
+    public function test_an_image_text_section_is_safely_dropped_when_no_photos_exist_at_all(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        BusinessService::create(['business_id' => $business->id, 'name' => 'Open-Air Booth', 'slug' => 'open-air-booth', 'status' => BusinessServiceStatus::Active->value, 'sort_order' => 0]);
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+        // Deliberately zero WebsiteAsset rows.
+
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website->fresh());
+        $servicePlanEntry = collect($plan)->firstWhere('page_key', 'service:' . BusinessService::first()->uid);
+
+        $pages = collect($plan)->map(fn ($page) => [
+            'page_key' => $page['page_key'],
+            'title' => $page['title'],
+            'seo_title' => $page['title'] . ' seo title',
+            'meta_description' => $page['title'] . ' meta description.',
+            'sections' => array_values(array_filter([
+                ['type' => 'hero', 'data' => ['heading' => $page['title']]],
+                $page['page_key'] === $servicePlanEntry['page_key']
+                    ? ['type' => 'image_text', 'data' => ['heading' => 'See it in action', 'body' => 'A real photo from a recent event.', 'image' => null, 'image_position' => 'left']]
+                    : null,
+            ])),
+        ])->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-no-photos');
+
+        // Safe behavior when no usable photo exists (acceptance-correction
+        // round 2, Blocker 1): the batch still commits successfully —
+        // every OTHER real section on every page is still worth
+        // publishing — the unfillable image_text section is simply left
+        // out rather than persisted broken or crashing the whole attempt.
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status);
+
+        $servicePage = $website->pages()->where('slug', 'service-open-air-booth')->firstOrFail();
+        $this->assertNull(collect($servicePage->sections)->firstWhere('type', 'image_text'));
+        $this->assertNotNull(collect($servicePage->sections)->firstWhere('type', 'hero'), 'The rest of the page must still be there.');
+        $this->assertTrue(collect($attempt->warnings)->contains(fn ($w) => str_contains($w, 'image_text') || str_contains($w, 'photo')));
+    }
+
+    // -----------------------------------------------------------------
+    // Acceptance-correction round 2, Blocker 2 — empty pages must never
+    // reach persistence, and must never touch the existing draft.
+    // -----------------------------------------------------------------
+
+    public function test_an_empty_but_exact_batch_fails_and_preserves_the_existing_draft(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = app(WebsiteStarterDraftService::class)->createFromTemplate($business, $template);
+        $originalPageCount = $website->pages()->count();
+        $originalHomeTitle = $website->pages()->where('is_home', true)->firstOrFail()->title;
+        $this->assertGreaterThan(0, $originalPageCount);
+
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website->fresh());
+
+        // Every plan page_key is present — exact coverage — but every
+        // page is an empty shell.
+        $pages = collect($plan)->map(fn ($page) => [
+            'page_key' => $page['page_key'],
+            'title' => $page['title'],
+            'seo_title' => null,
+            'meta_description' => null,
+            'sections' => [],
+        ])->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website->fresh(), $template, $customer->user_id, 'idem-empty');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
+
+        $website->refresh();
+        $this->assertSame($originalPageCount, $website->pages()->count(), 'The existing draft must be completely untouched.');
+        $this->assertSame($originalHomeTitle, $website->pages()->where('is_home', true)->firstOrFail()->title);
+    }
+
+    // -----------------------------------------------------------------
+    // Malformed provider output must fail as a normal recorded `failed`
+    // attempt — never leave a `pending` row, never let an uncaught
+    // exception escape this call as a server error.
+    // -----------------------------------------------------------------
+
+    public function test_a_sections_value_that_is_not_an_array_fails_as_a_recorded_attempt_not_a_crash(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
+
+        $pages = collect($plan)->map(fn ($page) => [
+            'page_key' => $page['page_key'],
+            'title' => $page['title'],
+            'seo_title' => null,
+            'meta_description' => null,
+            'sections' => $page['page_key'] === 'home' ? 'this should be an array, not a string' : [['type' => 'hero', 'data' => ['heading' => $page['title']]]],
+        ])->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-malformed-sections');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
+        $this->assertNotSame(WebsiteGuidedGenerationAttempt::STATUS_PENDING, $attempt->fresh()->status);
+        $this->assertSame(0, $website->pages()->count());
+    }
+
+    public function test_a_non_object_page_entry_fails_as_a_recorded_attempt_not_a_crash(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
+
+        $pages = collect($plan)->map(fn ($page) => $page['page_key'] === 'home'
+            ? 'not an object at all'
+            : ['page_key' => $page['page_key'], 'title' => $page['title'], 'seo_title' => null, 'meta_description' => null, 'sections' => [['type' => 'hero', 'data' => ['heading' => $page['title']]]]])->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-malformed-page');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->fresh()->status);
+        $this->assertSame(0, $website->pages()->count());
+    }
+
+    public function test_a_completely_invalid_json_top_level_shape_fails_as_a_recorded_attempt(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+
+        // "pages" is present but is an object/map, not a list — still
+        // valid JSON, still the wrong shape.
+        $this->mockAiClient(json_encode(['pages' => ['not' => 'a list']]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-malformed-top');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->fresh()->status);
+        $this->assertSame(0, $website->pages()->count());
     }
 }

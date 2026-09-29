@@ -155,4 +155,131 @@ class GuidedGenerationOutputValidatorTest extends TestCase
         $this->expectException(ValidationException::class);
         app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
     }
+
+    /**
+     * Acceptance-correction round 2, Blocker 1: an `image_text` section
+     * with NO image (AI is never allowed to choose one) must be valid
+     * at this pre-binding stage — the section validator's own
+     * `image => required|string` rule would otherwise make an
+     * `image_text` section AI writes categorically impossible to pass,
+     * since asset references are separately forbidden entirely.
+     */
+    public function test_an_image_text_section_with_a_null_image_passes_pre_binding_validation(): void
+    {
+        $plan = [
+            ['page_key' => 'home', 'page_type' => 'home', 'is_home' => true, 'slug' => null, 'title' => 'Home', 'allowed_section_types' => ['hero', 'image_text'], 'entity' => null],
+        ];
+        $output = $this->validOutputFor($plan);
+        $output[0]['sections'][] = ['type' => 'image_text', 'data' => ['heading' => 'Our story', 'body' => 'Founded in 2020.', 'image' => null, 'image_position' => 'left']];
+
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+        $this->assertTrue(true);
+    }
+
+    /**
+     * Acceptance-correction round 2, Blocker 1: omitting the `image` key
+     * entirely (rather than sending an explicit null) must also pass —
+     * a real provider response may do either.
+     */
+    public function test_an_image_text_section_with_the_image_key_omitted_passes_pre_binding_validation(): void
+    {
+        $plan = [
+            ['page_key' => 'home', 'page_type' => 'home', 'is_home' => true, 'slug' => null, 'title' => 'Home', 'allowed_section_types' => ['hero', 'image_text'], 'entity' => null],
+        ];
+        $output = $this->validOutputFor($plan);
+        $output[0]['sections'][] = ['type' => 'image_text', 'data' => ['heading' => 'Our story', 'body' => 'Founded in 2020.', 'image_position' => 'left']];
+
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+        $this->assertTrue(true);
+    }
+
+    /**
+     * Acceptance-correction round 2, Blocker 2: every plan page_key
+     * present, but with zero sections — must fail, and must fail BEFORE
+     * anything downstream ever sees this batch as acceptable.
+     */
+    public function test_an_empty_but_exact_page_batch_fails_validation(): void
+    {
+        $plan = $this->plan();
+        $output = collect($plan)->map(fn ($page) => [
+            'page_key' => $page['page_key'],
+            'title' => $page['title'],
+            'seo_title' => null,
+            'meta_description' => null,
+            'sections' => [],
+        ])->values()->all();
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    /**
+     * Acceptance-correction round 2, Blocker 2: a page with sections but
+     * no hero (so no real H1) is not meaningful content either — every
+     * template manifest allows 'hero' on every page type it declares.
+     */
+    public function test_a_page_with_sections_but_no_hero_fails_validation(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[1]['sections'] = [['type' => 'text', 'data' => ['heading' => null, 'body' => 'Some real body text with no heading at all.']]];
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    public function test_a_page_with_two_hero_sections_fails_validation(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[0]['sections'][] = ['type' => 'hero', 'data' => ['heading' => 'Second hero', 'subheading' => null, 'background_image' => null, 'primary_cta' => null, 'secondary_cta' => null]];
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    // -----------------------------------------------------------------
+    // Malformed provider output — must fail as a normal
+    // ValidationException, never an uncaught TypeError/crash.
+    // -----------------------------------------------------------------
+
+    public function test_a_non_object_page_entry_fails_cleanly(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[1] = 'not an object at all';
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    public function test_a_sections_value_that_is_a_string_instead_of_an_array_fails_cleanly(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[1]['sections'] = 'oops, a string';
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    public function test_a_section_entry_that_is_not_an_object_fails_cleanly(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[1]['sections'] = ['not a section object', 12345];
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
+
+    public function test_a_page_entry_with_a_non_string_page_key_fails_cleanly(): void
+    {
+        $plan = $this->plan();
+        $output = $this->validOutputFor($plan);
+        $output[1]['page_key'] = ['home'];
+
+        $this->expectException(ValidationException::class);
+        app(GuidedGenerationOutputValidator::class)->validate($output, $plan);
+    }
 }

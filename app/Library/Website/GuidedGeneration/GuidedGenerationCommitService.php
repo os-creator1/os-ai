@@ -12,7 +12,6 @@ use App\Models\WebsiteTemplate;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -158,10 +157,15 @@ final class GuidedGenerationCommitService
             return $attempt;
         }
 
-        $merged = $this->mergePlanWithContent($plan, $aiPages);
-        $bound = $this->mediaBinding->bind($website, $merged);
-
         try {
+            // Acceptance-correction round 2: merging/binding runs inside
+            // the SAME catch as the commit transaction below — any
+            // unexpected shape or binding failure here must also end in
+            // a cleanly recorded `failed` attempt, never an uncaught
+            // exception left as a stuck `pending` row or a bare 500.
+            $merged = $this->mergePlanWithContent($plan, $aiPages);
+            $bound = $this->mediaBinding->bind($website, $merged);
+
             DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount) {
                 // Blocker 4 — real rebuild semantics: lock the Website
                 // row, then replace the ENTIRE draft page set atomically.
@@ -232,8 +236,16 @@ final class GuidedGenerationCommitService
                     $this->validator->validate($pages, $aiPlan, $prohibitedClaims);
 
                     return [$pages, $attempts];
-                } catch (ValidationException) {
-                    // fall through to retry/give up below
+                } catch (Throwable) {
+                    // Acceptance-correction round 2: catches more than
+                    // ValidationException on purpose — a provider that
+                    // returns a well-formed JSON envelope with an
+                    // unexpected inner shape (e.g. `sections` as a
+                    // string, a page entry that isn't an object) must
+                    // still fall through to the bounded retry/failure
+                    // path below, never an uncaught TypeError reaching
+                    // the HTTP layer as a 500 or leaving this attempt
+                    // stuck `pending` forever.
                 }
             }
 

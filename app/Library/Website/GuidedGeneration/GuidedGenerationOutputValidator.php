@@ -46,8 +46,21 @@ final class GuidedGenerationOutputValidator
             throw ValidationException::withMessages(['plan' => ['The generation plan contains no pages.']]);
         }
 
-        $planByKey = collect($plan)->keyBy('page_key');
         $errors = [];
+
+        // Acceptance-correction round 2, malformed-output hardening: a
+        // provider can return syntactically valid JSON with an
+        // unexpected inner shape (a page entry that isn't an object, a
+        // `sections` value that isn't an array). Reject that here, with
+        // a normal ValidationException, before anything below assumes
+        // array access is safe — never an uncaught TypeError reaching
+        // the retry loop as something other than "this attempt failed."
+        $pages = $this->assertWellFormedPages($pages, $errors);
+        if (! empty($errors)) {
+            throw ValidationException::withMessages($errors);
+        }
+
+        $planByKey = collect($plan)->keyBy('page_key');
 
         $this->assertExactPlanCoverage($pages, $planByKey, $errors);
 
@@ -66,18 +79,44 @@ final class GuidedGenerationOutputValidator
                 continue;
             }
 
+            // Acceptance-correction round 2, Blocker 2: an empty page is
+            // never valid — reject it here, before any draft mutation,
+            // rather than letting the commit service delete the existing
+            // draft for a batch that has nothing real to replace it with.
+            if ($page['sections'] === []) {
+                $errors["pages.{$index}.sections"][] = "Page '{$pageKey}' has no sections — an empty page is never valid.";
+
+                continue;
+            }
+
             $allowedTypes = $planPage['allowed_section_types'] ?? [];
-            foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
+            foreach ($page['sections'] as $sectionIndex => $section) {
                 $type = $section['type'] ?? null;
                 if (! in_array($type, $allowedTypes, true)) {
                     $errors["pages.{$index}.sections.{$sectionIndex}.type"][] = "Section type '{$type}' is not allowed on the '{$pageKey}' page.";
                 }
             }
 
+            // Every template manifest allows a 'hero' section on every
+            // page type (WebsiteTemplateSeeder) — exactly one is the
+            // same real-H1-per-page invariant the deterministic starter
+            // draft engine and the SEO acceptance audit already require.
+            // A page with zero or two+ heroes is not meaningful content
+            // (acceptance-correction round 2, Blocker 2).
+            $heroCount = collect($page['sections'])->where('type', 'hero')->count();
+            if ($heroCount !== 1) {
+                $errors["pages.{$index}.sections"][] = "Page '{$pageKey}' must have exactly one hero section (found {$heroCount}).";
+            }
+
             try {
                 // Never allows asset references — §8.3: the AI text
                 // batch never carries an image field at all.
-                $this->sectionValidator->validate($page['sections'] ?? [], [], allowAssetReferences: false);
+                // requireImageOnImageText: false — an `image_text`
+                // section's own photo is chosen by MediaBindingService
+                // afterward, never by AI (acceptance-correction round 2,
+                // Blocker 1); every other field on that section type
+                // stays required exactly as before.
+                $this->sectionValidator->validate($page['sections'], [], allowAssetReferences: false, requireImageOnImageText: false);
             } catch (ValidationException $e) {
                 foreach ($e->errors() as $field => $messages) {
                     $errors["pages.{$index}.{$field}"] = $messages;
@@ -94,6 +133,40 @@ final class GuidedGenerationOutputValidator
         if (! empty($errors)) {
             throw ValidationException::withMessages($errors);
         }
+    }
+
+    /**
+     * @return array<int, array{page_key: string, title: mixed, seo_title: mixed, meta_description: mixed, sections: array}> only the structurally sound entries — callers still see every error via $errors and always throw before using this return value if any
+     */
+    private function assertWellFormedPages(array $pages, array &$errors): array
+    {
+        $wellFormed = [];
+
+        foreach ($pages as $index => $page) {
+            if (! is_array($page) || ! isset($page['page_key']) || ! is_string($page['page_key']) || $page['page_key'] === '') {
+                $errors["pages.{$index}"][] = 'Each generated page must be an object with a non-empty string page_key.';
+
+                continue;
+            }
+
+            if (! array_key_exists('sections', $page) || ! is_array($page['sections'])) {
+                $errors["pages.{$index}.sections"][] = 'sections must be an array.';
+
+                continue;
+            }
+
+            foreach ($page['sections'] as $sectionIndex => $section) {
+                if (! is_array($section)) {
+                    $errors["pages.{$index}.sections.{$sectionIndex}"][] = 'Each section must be an object.';
+
+                    continue 2;
+                }
+            }
+
+            $wellFormed[] = $page;
+        }
+
+        return $wellFormed;
     }
 
     /**
