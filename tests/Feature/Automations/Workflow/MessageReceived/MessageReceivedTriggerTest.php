@@ -304,7 +304,7 @@ class MessageReceivedTriggerTest extends TestCase
 
         // An enrollment into the same workflow row that did not come from a
         // received message (the trigger type is what the cooldown reads).
-        $manual = app(EnrollmentService::class)->enroll($workflow, $contact, 'manual-occurrence');
+        $manual = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'manual-occurrence');
         $this->assertNotNull($manual);
         DB::table('automation_enrollments')->where('id', $manual->id)->update([
             'trigger_type' => WorkflowTriggerType::ManualEnrollment->value,
@@ -329,7 +329,7 @@ class MessageReceivedTriggerTest extends TestCase
 
         // The workflow ran for this contact before and sent them a message —
         // far enough back that the cooldown is not what decides this.
-        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, 'report:earlier');
+        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'report:earlier');
         DB::table('automation_enrollments')->where('id', $earlier->id)->update(['status' => 'completed', 'completed_at' => now()]);
         $this->enrolledAt($earlier, Carbon::now()->subDays(5));
         $this->outbound($business, '14155551016', $this->stepRunOn($earlier));
@@ -348,7 +348,7 @@ class MessageReceivedTriggerTest extends TestCase
         $workflow = $this->messageReceivedWorkflow($business);
         $contact = $this->contact($business, $this->contactGroup($business), '14155551017');
 
-        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, 'report:earlier');
+        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'report:earlier');
         DB::table('automation_enrollments')->where('id', $earlier->id)->update(['status' => 'completed', 'completed_at' => now()]);
         $this->enrolledAt($earlier, Carbon::now()->subDays(5));
 
@@ -369,7 +369,7 @@ class MessageReceivedTriggerTest extends TestCase
         $workflow = $this->messageReceivedWorkflow($business);
         $contact = $this->contact($business, $this->contactGroup($business), '14155551018');
 
-        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, 'report:earlier');
+        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'report:earlier');
         DB::table('automation_enrollments')->where('id', $earlier->id)->update(['status' => 'completed', 'completed_at' => now()]);
         $this->enrolledAt($earlier, Carbon::now()->subDays(5));
 
@@ -391,7 +391,7 @@ class MessageReceivedTriggerTest extends TestCase
         $contact = $this->contact($business, $this->contactGroup($business), '14155551019');
 
         // Park both workflows' cooldowns out of the way; only the producer ran.
-        $producerRun = app(EnrollmentService::class)->enroll($producer, $contact, 'report:producer');
+        $producerRun = app(EnrollmentService::class)->enroll($producer, $contact, $contact->location_id, 'report:producer');
         DB::table('automation_enrollments')->where('id', $producerRun->id)->update(['status' => 'completed', 'completed_at' => now()]);
         $this->enrolledAt($producerRun, Carbon::now()->subDays(5));
         $this->outbound($business, '14155551019', $this->stepRunOn($producerRun));
@@ -417,7 +417,7 @@ class MessageReceivedTriggerTest extends TestCase
         $listener = $this->messageReceivedWorkflow($business, null, 'Deep listener');
         $contact = $this->contact($business, $this->contactGroup($business), '14155551020');
 
-        $producerRun = app(EnrollmentService::class)->enroll($producer, $contact, 'report:deep');
+        $producerRun = app(EnrollmentService::class)->enroll($producer, $contact, $contact->location_id, 'report:deep');
         DB::table('automation_enrollments')->where('id', $producerRun->id)->update([
             'status' => 'completed',
             'completed_at' => now(),
@@ -441,7 +441,7 @@ class MessageReceivedTriggerTest extends TestCase
         $contactA = $this->contact($businessA, $this->contactGroup($businessA), '14155551021');
         $contactB = $this->contact($businessB, $this->contactGroup($businessB), '14155551021');
 
-        $runB = app(EnrollmentService::class)->enroll($workflowB, $contactB, 'report:b');
+        $runB = app(EnrollmentService::class)->enroll($workflowB, $contactB, $contactB->location_id, 'report:b');
 
         // A row in A carrying a step run of B's journey can only be corrupt; it
         // must not let B's history decide anything about A.
@@ -459,7 +459,7 @@ class MessageReceivedTriggerTest extends TestCase
         $workflow = $this->messageReceivedWorkflow($business);
         $contact = $this->contact($business, $this->contactGroup($business), '14155551023');
 
-        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, 'report:gone');
+        $earlier = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'report:gone');
         $this->outbound($business, '14155551023', $this->stepRunOn($earlier));
 
         // The journey — and with it the step run — is deleted. The message keeps
@@ -506,5 +506,85 @@ class MessageReceivedTriggerTest extends TestCase
         app(EnrollFromInboundMessage::class)->handle($this->legacyInbound($business, '14155551022'));
 
         $this->assertSame(1, $this->enrollmentsFor($workflow));
+    }
+
+    // =================================================================
+    // Location run-scope foundation (lane contract §9/§17) — the
+    // AUTHORITATIVE Location is the conversation's own (chat_boxes
+    // .location_id), never re-derived from the Contact.
+    // =================================================================
+
+    public function test_the_enrollment_pins_the_conversations_own_location(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->messageReceivedWorkflow($business);
+        $contact = $this->contact($business, $this->contactGroup($business), '14155551201');
+
+        $event = $this->legacyInbound($business, '14155551201');
+        $box = \App\Models\ChatBox::query()
+            ->where('business_id', $business->id)->where('to', '14155551201')->sole();
+
+        $this->assertNotNull($box->location_id, 'The fixture Business has exactly one Location, so the opened conversation must have resolved it.');
+
+        $result = $this->messageSource()->handleInboundMessage($event);
+
+        $this->assertSame(1, $result['enrolled']);
+        $enrollment = AutomationEnrollment::query()->sole();
+        $this->assertSame((int) $box->location_id, (int) $enrollment->business_location_id);
+
+        // Same fact as the Contact's own Location here (one-Location
+        // Business), but the trigger reads it from the conversation, not
+        // from $contact — proved by the next two tests, where they diverge.
+        $this->assertSame((int) $contact->location_id, (int) $enrollment->business_location_id);
+    }
+
+    public function test_a_conversation_with_no_location_enrolls_nobody_even_though_the_contact_has_one(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->messageReceivedWorkflow($business);
+        $this->contact($business, $this->contactGroup($business), '14155551202');
+
+        $event = $this->legacyInbound($business, '14155551202');
+
+        // The conversation opened with a real Location (one-Location
+        // Business) — force it back to NULL, as a multi-Location Business
+        // with no messaging-number Location evidence genuinely would
+        // (ChatBox::singleActiveLocationIdFor()'s own documented gap).
+        \App\Models\ChatBox::query()->where('business_id', $business->id)->where('to', '14155551202')
+            ->update(['location_id' => null]);
+
+        $result = $this->messageSource()->handleInboundMessage($event);
+
+        $this->assertSame(0, $result['enrolled'], 'The Contact having a Location is not enough — the CONVERSATION must have proven one.');
+        $this->assertSame(['no_location' => 1], $result['skipped']);
+        $this->assertSame(0, $this->enrollmentsFor($workflow));
+    }
+
+    public function test_two_conversations_with_the_same_business_number_use_their_own_location_not_the_contacts(): void
+    {
+        // A Contact who has messaged two of the Business's own numbers has
+        // two ChatBox threads; (business_id, to) alone cannot disambiguate
+        // which one this trigger means, so — mirroring
+        // theOneSubscribedContact()'s own "ambiguous means null" rule — it
+        // must refuse rather than guess between them.
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->messageReceivedWorkflow($business);
+        $this->contact($business, $this->contactGroup($business), '14155551203');
+
+        $event = $this->legacyInbound($business, '14155551203');
+
+        \App\Models\ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) \Illuminate\Support\Str::uuid(),
+            'from' => '14155550199',
+            'to' => '14155551203',
+            'location_id' => \App\Models\ChatBox::query()->where('business_id', $business->id)->where('to', '14155551203')->value('location_id'),
+        ]);
+
+        $result = $this->messageSource()->handleInboundMessage($event);
+
+        $this->assertSame(0, $result['enrolled']);
+        $this->assertSame(['no_location' => 1], $result['skipped']);
     }
 }

@@ -13,6 +13,7 @@ use App\Library\Automation\Workflow\WorkflowDraftService;
 use App\Library\Automation\Workflow\WorkflowReferenceCatalogLoader;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\Business;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 
@@ -177,6 +178,13 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'draft' => [
                     'definition' => $version->definition ?? [],
                     'revision' => (int) $version->definition_revision,
+                    // No acting-user id here (unlike the draft/autosave/publish
+                    // routes): LocationAccessGuard's own re-derive-never-trust
+                    // design means even a Business already in hand still costs
+                    // a fresh query, which this route's §18 budget (4) has no
+                    // room for. The Location-ACL check still runs, authoritatively,
+                    // at autosave and publish — this route only loses the
+                    // inline "you can't choose this" preview while Browse.
                     'errors' => $this->compiler->validate($version, $catalog),
                 ],
                 'contactGroups' => $catalog->groups(),
@@ -185,6 +193,17 @@ class AutomationWorkflowsController extends CustomerBaseController
                 // "Opportunity moves stage" pickers — the same read, CRM half.
                 'crmPipelines' => $catalog->pipelines(),
                 'crmStages' => $catalog->stages(),
+                // Location run-scope foundation (lane contract §11/§18): every
+                // Location of this Business, from the SAME catalog read
+                // above — no query of its own (§18's query budget). The
+                // picker is not narrowed to what this actor may themselves
+                // choose here; publish is the authoritative ACL gate
+                // (WorkflowCompiler::validateLocationScope(), which re-checks
+                // LocationAccessGuard on the value actually submitted) —
+                // adding a proactive per-request LocationAccessGuard read
+                // here would re-derive Business/Workspace/membership a
+                // second time and blow the same budget.
+                'businessLocations' => $catalog->locations(),
             ]);
         });
     }
@@ -303,6 +322,7 @@ class AutomationWorkflowsController extends CustomerBaseController
             'enrollment_policy' => $version->enrollment_policy?->value,
             'enrollment_policy_source' => $version->enrollment_policy_source?->value,
             'failure_policy' => $version->failure_policy?->value,
+            'location_scope' => $version->location_scope?->value,
             'published_at' => $version->published_at?->toIso8601String(),
         ];
     }

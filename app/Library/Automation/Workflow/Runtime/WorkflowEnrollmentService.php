@@ -9,6 +9,7 @@ use App\Library\Automation\Workflow\WorkflowLimits;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -35,12 +36,22 @@ use Illuminate\Support\Str;
  *   TENANCY      the contact must belong to the workflow's Business, re-checked
  *                here even though callers check it, because this is the boundary
  *                that actually creates the row.
+ *   THE LOCATION the run's Location is re-verified against the pinned version's
+ *                scope (`WorkflowLocationAdmission`, §10 of the lane's own
+ *                contract) and written once, here, never reassigned afterwards
+ *                — every trigger source pre-resolves one for efficiency, but
+ *                this is the boundary that actually admits it.
  */
 class WorkflowEnrollmentService implements EnrollmentService
 {
+    public function __construct(private readonly WorkflowLocationAdmission $admission)
+    {
+    }
+
     public function enroll(
         AutomationWorkflow $workflow,
         Contacts $contact,
+        ?int $businessLocationId,
         string $triggerOccurrenceKey,
         int $causationDepth = 0,
     ): ?AutomationEnrollment {
@@ -70,6 +81,15 @@ class WorkflowEnrollmentService implements EnrollmentService
             return null;
         }
 
+        // No provable Location, a foreign-Business one, an archived one, or one
+        // the pinned version's scope does not admit: no enrollment. This is the
+        // one authority for that question (§10) — no second, looser check here.
+        $location = $businessLocationId === null ? null : BusinessLocation::query()->find($businessLocationId);
+
+        if (! $this->admission->admits($version, $location)) {
+            return null;
+        }
+
         $rootNodeId = $this->rootNodeId($version);
 
         if ($rootNodeId === null) {
@@ -84,12 +104,13 @@ class WorkflowEnrollmentService implements EnrollmentService
         );
 
         try {
-            return DB::transaction(function () use ($fresh, $version, $contact, $key, $triggerOccurrenceKey, $causationDepth, $rootNodeId): AutomationEnrollment {
+            return DB::transaction(function () use ($fresh, $version, $contact, $location, $key, $triggerOccurrenceKey, $causationDepth, $rootNodeId): AutomationEnrollment {
                 $enrollment = new AutomationEnrollment([
                     'business_id' => $fresh->business_id,
                     'workflow_id' => $fresh->getKey(),
                     'version_id' => $version->getKey(),
                     'contact_id' => $contact->getKey(),
+                    'business_location_id' => $location->getKey(),
                     'status' => EnrollmentStatus::Active,
                     'current_node_id' => $rootNodeId,
                     'trigger_type' => $version->trigger_type,

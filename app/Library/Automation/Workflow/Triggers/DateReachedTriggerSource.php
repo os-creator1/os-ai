@@ -188,7 +188,11 @@ class DateReachedTriggerSource implements TriggerSource
             foreach ($page as $contact) {
                 $afterContactId = max($afterContactId, (int) $contact->getKey());
 
-                $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceYear);
+                // The authoritative Location is the Contact's own (lane
+                // contract §9) — never a guess. No Location, no run.
+                $locationId = $contact->location_id === null ? null : (int) $contact->location_id;
+
+                $enrollment = $this->enrollments->enroll($workflow, $contact, $locationId, $occurrenceYear);
 
                 if ($enrollment === null) {
                     continue;

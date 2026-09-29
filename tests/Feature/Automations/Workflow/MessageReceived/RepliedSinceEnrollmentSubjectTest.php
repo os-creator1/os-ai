@@ -49,7 +49,7 @@ class RepliedSinceEnrollmentSubjectTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
         $contact = $this->contact($business, $this->contactGroup($business), $phone);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, 'manual:' . $phone);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'manual:' . $phone);
         $this->assertNotNull($enrollment);
 
         // A fixed boundary, well in the past, so "before" and "after" are

@@ -5,6 +5,7 @@ namespace App\Library\Automation\Workflow;
 use App\Enums\Automation\Workflow\EnrollmentPolicy;
 use App\Enums\Automation\Workflow\EnrollmentPolicySource;
 use App\Enums\Automation\Workflow\FailurePolicy;
+use App\Enums\Automation\Workflow\WorkflowLocationScope;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
@@ -79,7 +80,7 @@ class WorkflowPublisher
                 ]);
             }
 
-            $errors = $this->compiler->validate($draft);
+            $errors = $this->compiler->validate($draft, null, $publishedByUserId);
 
             if ($errors !== []) {
                 throw ValidationException::withMessages($errors);
@@ -104,6 +105,11 @@ class WorkflowPublisher
                     ]);
             }
 
+            // Location run-scope foundation (lane contract §5B): read back the
+            // shape-validated scope and denormalise it onto the version,
+            // exactly like the three policy fields above it.
+            ['scope' => $locationScope, 'ids' => $locationIds] = WorkflowDefinitionValidator::locationScopeFrom($draft->definition ?? []);
+
             // (2) Promote the draft. Its own definition document is retained so
             // the builder can still render and diff it; the runtime reads the
             // compiled rows instead.
@@ -115,9 +121,29 @@ class WorkflowPublisher
                 'enrollment_policy' => EnrollmentPolicy::from((string) $triggerConfig['enrollment_policy']),
                 'enrollment_policy_source' => EnrollmentPolicySource::from((string) $triggerConfig['enrollment_policy_source']),
                 'failure_policy' => FailurePolicy::from((string) $triggerConfig['failure_policy']),
+                'location_scope' => $locationScope,
                 'published_at' => Carbon::now(),
                 'published_by_user_id' => $publishedByUserId,
             ])->save();
+
+            // Selected/One's normalised Location association — a compiled
+            // artefact of THIS publish, exactly like the nodes/edges just
+            // written above: inserted once, here, and never updated
+            // afterwards (§5B — published/superseded versions are immutable).
+            // `All` needs no rows at all (§4 of the lane's contract).
+            if ($locationScope !== WorkflowLocationScope::All && $locationIds !== []) {
+                $now = Carbon::now();
+
+                DB::table('automation_workflow_version_locations')->insert(array_map(
+                    static fn (int $locationId): array => [
+                        'version_id' => $draft->getKey(),
+                        'business_location_id' => $locationId,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ],
+                    $locationIds,
+                ));
+            }
 
             // (3) Point the workflow at it. A paused workflow that publishes
             // becomes live again, which is what the button says it does.

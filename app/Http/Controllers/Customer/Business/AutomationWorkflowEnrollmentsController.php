@@ -8,10 +8,13 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Automations\Workflow\ManualEnrollmentRequest;
 use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
+use App\Models\Business;
 use App\Models\Contacts;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
 /**
@@ -41,8 +44,10 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
     /** The reason recorded on journeys stopped from this screen. */
     public const STOP_ALL_REASON = 'stopped_by_user';
 
-    public function __construct(private readonly WorkflowLifecycle $lifecycle)
-    {
+    public function __construct(
+        private readonly WorkflowLifecycle $lifecycle,
+        private readonly LocationAccessGuard $locationAccess,
+    ) {
     }
 
     public function history(string $workspaceUid, string $businessUid, string $workflowUid): JsonResponse
@@ -54,8 +59,22 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
             $page = AutomationEnrollment::query()
                 ->where('workflow_id', (int) $workflow->id)
                 ->where('business_id', (int) $business->id)
-                // One query for every row's contact, never one per row.
-                ->with('contact:id,uid')
+                ->when(
+                    // Location ACL (lane contract §12D): an owner/all-scope
+                    // actor sees every run; a Selected-scope staff member sees
+                    // only runs whose pinned Location they can access. A
+                    // legacy NULL-Location row is never shown to a
+                    // Selected-scope actor — it cannot be proven accessible,
+                    // so it fails closed exactly like an inaccessible one.
+                    ! $this->locationAccess->userHasAllLocationReach((int) Auth::id(), $business),
+                    fn ($query) => $query->whereIn(
+                        'business_location_id',
+                        $this->locationAccess->accessibleLocationIdsForBusiness((int) Auth::id(), $business),
+                    ),
+                )
+                // One query for every row's contact and Location, never one
+                // per row.
+                ->with(['contact:id,uid', 'businessLocation:id,name'])
                 ->orderByDesc('id')
                 ->paginate(self::PAGE_SIZE);
 
@@ -67,6 +86,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                     'status_label' => $e->status->label(),
                     'step_count' => (int) $e->step_count,
                     'exit_reason' => $e->exit_reason,
+                    'location_name' => $e->businessLocation?->name,
                     'enrolled_at' => $e->enrolled_at?->toIso8601String(),
                     'resume_at' => $e->resume_at?->toIso8601String(),
                     'completed_at' => $e->completed_at?->toIso8601String(),
@@ -96,6 +116,23 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ->first();
 
             if ($enrollment === null) {
+                return $this->notFound();
+            }
+
+            // Location ACL (lane contract §12D): a Selected-scope staff
+            // member reaching this enrollment's uid directly must be refused
+            // exactly like an unknown one — the same indistinguishable 404
+            // §14.1 already uses for a foreign workflow/business id, so a
+            // direct URL guess can never distinguish "does not exist" from
+            // "exists, at a Location you cannot see" (never leaks contact
+            // identity, step summaries or error summaries either, since
+            // nothing about the row is returned at all).
+            if (! $this->locationAccess->userHasAllLocationReach((int) Auth::id(), $business)
+                && ! in_array(
+                    (int) $enrollment->business_location_id,
+                    $this->locationAccess->accessibleLocationIdsForBusiness((int) Auth::id(), $business),
+                    true,
+                )) {
                 return $this->notFound();
             }
 
@@ -170,12 +207,42 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
             $contacts = Contacts::query()
                 ->where('business_id', (int) $business->id)
                 ->whereIn('uid', $uids)
-                ->get(['id', 'uid']);
+                ->get(['id', 'uid', 'location_id']);
 
             if ($contacts->count() !== count($uids)) {
                 // Unknown and foreign are deliberately indistinguishable, and
                 // nothing has been enqueued yet, so nothing is partly honoured.
                 return $this->notFound();
+            }
+
+            // Location ACL (lane contract §12C): a forged uid naming a real
+            // Contact at a Location this actor cannot access is refused
+            // exactly like an unknown one — the same indistinguishable 404,
+            // all-or-nothing, before anything is queued.
+            if (! $this->locationAccess->userHasAllLocationReach((int) Auth::id(), $business)) {
+                $accessible = $this->locationAccess->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
+                $inaccessible = $contacts->contains(fn (Contacts $c): bool => ! in_array((int) $c->location_id, $accessible, true));
+
+                if ($inaccessible) {
+                    return $this->notFound();
+                }
+            }
+
+            // A FOURTH failure, distinct from the three T-WF-21 already names
+            // (lane contract §9 "MANUAL ENROLLMENT... refuse clearly; tell the
+            // customer the Contact must have a Location before it can be
+            // enrolled"): a Contact with no Location cannot start a run at
+            // all, and this is refused synchronously, by name, before
+            // anything is queued — the same all-or-nothing discipline as the
+            // uid check above, so a customer is never told "queued" for a
+            // request that will silently enroll nobody once the job runs.
+            $withoutLocation = $contacts->whereNull('location_id')->pluck('uid')->values();
+
+            if ($withoutLocation->isNotEmpty()) {
+                return response()->json([
+                    'message' => 'These contacts have no Location yet and cannot be enrolled. Add a Location to each contact first.',
+                    'contact_uids' => $withoutLocation,
+                ], 422);
             }
 
             // One server-derived identity for this deliberate request. It becomes

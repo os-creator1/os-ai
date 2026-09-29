@@ -5,11 +5,13 @@ namespace App\Models;
 use App\Enums\Automation\Workflow\EnrollmentPolicy;
 use App\Enums\Automation\Workflow\EnrollmentPolicySource;
 use App\Enums\Automation\Workflow\FailurePolicy;
+use App\Enums\Automation\Workflow\WorkflowLocationScope;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Enums\Automation\Workflow\WorkflowVersionState;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
@@ -48,6 +50,7 @@ class AutomationWorkflowVersion extends Model
         'enrollment_policy',
         'enrollment_policy_source',
         'failure_policy',
+        'location_scope',
         'published_at',
         'published_by_user_id',
     ];
@@ -61,6 +64,7 @@ class AutomationWorkflowVersion extends Model
         'enrollment_policy' => EnrollmentPolicy::class,
         'enrollment_policy_source' => EnrollmentPolicySource::class,
         'failure_policy' => FailurePolicy::class,
+        'location_scope' => WorkflowLocationScope::class,
         'published_at' => 'datetime',
     ];
 
@@ -93,6 +97,21 @@ class AutomationWorkflowVersion extends Model
     public function enrollments(): HasMany
     {
         return $this->hasMany(AutomationEnrollment::class, 'version_id');
+    }
+
+    /**
+     * The normalised Selected/One Location association (lane contract §5B).
+     * Empty for `All` scope — that scope is checked directly against
+     * `business_locations`, never against rows here.
+     */
+    public function locations(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            BusinessLocation::class,
+            'automation_workflow_version_locations',
+            'version_id',
+            'business_location_id',
+        )->withTimestamps();
     }
 
     public function isDraft(): bool

@@ -410,7 +410,7 @@ class WorkflowHttpBehaviourTest extends TestCase
         [$sibling] = $this->publishWorkflow($t['business'], [$this->endStep()], name: 'Sibling');
         $siblingContact = $this->contactFor($t['business'], 'Sibling');
         app(\App\Library\Automation\Workflow\Contracts\EnrollmentService::class)
-            ->enroll($sibling, $siblingContact, (string) $siblingContact->id);
+            ->enroll($sibling, $siblingContact, $siblingContact->location_id, (string) $siblingContact->id);
 
         $response = $this->callJson('GET', $this->url($t, 'enrollments.index', $t['workflow']))->assertOk();
 
@@ -509,6 +509,12 @@ class WorkflowHttpBehaviourTest extends TestCase
         $groupId = (int) $t['contact']->group_id;
         $rows = [];
         $uids = [];
+        // Location run-scope foundation (lane contract §9): this is a raw
+        // bulk INSERT for speed (500 rows), bypassing the repository seam
+        // that resolves location_id in production — resolved once here,
+        // the same fact Contacts::singleActiveLocationIdFor() would give
+        // every one of these rows individually.
+        $locationId = Contacts::singleActiveLocationIdFor((int) $t['business']->id);
 
         for ($i = 0; $i < $limit; $i++) {
             $uid = (string) Str::uuid();
@@ -518,6 +524,7 @@ class WorkflowHttpBehaviourTest extends TestCase
                 'customer_id' => (int) $t['business']->customer_id,
                 'business_id' => (int) $t['business']->id,
                 'group_id' => $groupId,
+                'location_id' => $locationId,
                 'phone' => 12025500000 + $i,
                 'status' => Contacts::STATUS_SUBSCRIBE,
                 'created_at' => now(),

@@ -12,6 +12,7 @@ use App\Library\Automation\Workflow\WorkflowDraftService;
 use App\Library\Automation\Workflow\WorkflowPublisher;
 use App\Library\Automation\Workflow\WorkflowSimulator;
 use App\Library\Contacts\ContactDirectory;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\Contacts;
@@ -52,6 +53,7 @@ class AutomationWorkflowDraftController extends CustomerBaseController
         private readonly WorkflowPublisher $publisher,
         private readonly WorkflowSimulator $simulator,
         private readonly ContactDirectory $directory,
+        private readonly LocationAccessGuard $locationAccess,
     ) {
     }
 
@@ -65,7 +67,7 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $draft = $this->drafts->ensureDraft($workflow);
 
-            return response()->json($this->draftPayload($draft));
+            return response()->json($this->draftPayload($draft, (int) Auth::id()));
         });
     }
 
@@ -94,7 +96,7 @@ class AutomationWorkflowDraftController extends CustomerBaseController
             // `body.revision` and `body.errors` at the top level.
             return response()->json([
                 'revision' => (int) $saved->definition_revision,
-                'errors' => $this->compiler->validate($saved),
+                'errors' => $this->compiler->validate($saved, null, (int) Auth::id()),
             ]);
         });
     }
@@ -161,6 +163,19 @@ class AutomationWorkflowDraftController extends CustomerBaseController
                 return $this->notFound();
             }
 
+            // Location ACL (lane contract §12C): a forged uid naming a real
+            // Contact at a Location this actor cannot access fails exactly
+            // like an unknown one — the same indistinguishable 404 already
+            // used above, never a distinguishing 403.
+            if (! $this->locationAccess->userHasAllLocationReach((int) Auth::id(), $business)
+                && ! in_array(
+                    (int) $contact->location_id,
+                    $this->locationAccess->accessibleLocationIdsForBusiness((int) Auth::id(), $business),
+                    true,
+                )) {
+                return $this->notFound();
+            }
+
             $version = $workflow->draftVersion() ?? $this->publishedVersion($workflow);
 
             if ($version === null) {
@@ -197,8 +212,32 @@ class AutomationWorkflowDraftController extends CustomerBaseController
             $this->authorize('view_contact');
 
             $search = mb_substr(trim((string) request()->query('q', '')), 0, 100);
+            $rows = collect($this->directory->page($business, $search)->items());
 
-            $contacts = collect($this->directory->page($business, $search)->items())
+            // Location ACL (lane contract §12C): a Selected-scope staff
+            // member must never be offered a Contact at a Location they
+            // cannot access, even to pick for "Test workflow" (which enrolls
+            // no one, but still reveals the Contact's existence and name).
+            // ContactDirectory is a shared, Business-wide search with no
+            // Location concept of its own, so the accessible-Location filter
+            // is applied here, against a fresh, small, uid-scoped read of
+            // each candidate's own location_id.
+            if (! $this->locationAccess->userHasAllLocationReach((int) Auth::id(), $business)) {
+                $accessible = $this->locationAccess->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
+
+                $locationByUid = Contacts::query()
+                    ->where('business_id', (int) $business->id)
+                    ->whereIn('uid', $rows->pluck('uid')->all())
+                    ->pluck('location_id', 'uid');
+
+                $rows = $rows->filter(fn (array $row): bool => in_array(
+                    (int) ($locationByUid[$row['uid']] ?? 0),
+                    $accessible,
+                    true,
+                ))->values();
+            }
+
+            $contacts = $rows
                 ->take(self::TEST_CONTACT_LIMIT)
                 ->map(static fn (array $row): array => [
                     'uid' => $row['uid'],
@@ -232,13 +271,13 @@ class AutomationWorkflowDraftController extends CustomerBaseController
     }
 
     /** @return array<string, mixed> */
-    private function draftPayload(AutomationWorkflowVersion $draft): array
+    private function draftPayload(AutomationWorkflowVersion $draft, ?int $actingUserId = null): array
     {
         return [
             'uid' => $draft->uid,
             'definition' => $draft->definition,
             'revision' => (int) $draft->definition_revision,
-            'errors' => $this->compiler->validate($draft),
+            'errors' => $this->compiler->validate($draft, null, $actingUserId),
         ];
     }
 }

@@ -197,7 +197,7 @@ class ManagedOutboundConversationHistoryTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->smsStep('Thanks for booking with us!'), $this->endStep()], name: 'Booking thanks');
         $contact = $this->contact($business, $this->contactGroup($business), self::PERSON);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertCount(1, $this->fakeAdapter->sentRequests);

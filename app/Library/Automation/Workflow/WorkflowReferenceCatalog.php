@@ -32,6 +32,7 @@ final class WorkflowReferenceCatalog
      * @param array<int, array{id: int, contact_group_id: int, label: string, type: string, is_phone: bool}> $fields keyed by id, in id order
      * @param array<int, array{id: int, name: string, archived: bool}> $pipelines CRM sales pipelines, keyed by id, in board order
      * @param array<int, array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}> $stages CRM stages, keyed by id, in board order
+     * @param array<int, array{id: int, name: string, active: bool}> $locations every Location of this Business (Location run-scope foundation, lane contract §18), keyed by id
      */
     public function __construct(
         public readonly int $businessId,
@@ -39,6 +40,7 @@ final class WorkflowReferenceCatalog
         private readonly array $fields,
         private readonly array $pipelines = [],
         private readonly array $stages = [],
+        private readonly array $locations = [],
     ) {
     }
 
@@ -152,5 +154,37 @@ final class WorkflowReferenceCatalog
     public function stages(): array
     {
         return array_values($this->stages);
+    }
+
+    // ---------------------------------------------------------------
+    // Locations (Location run-scope foundation, lane contract §18) — folded
+    // into this SAME catalog read rather than a query of its own, exactly
+    // like the CRM half was: the Builder already pays for one statement
+    // per load, and a Location picker of its own would be a second one.
+    // ---------------------------------------------------------------
+
+    /**
+     * The Location, when it belongs to this Business — archived or not.
+     *
+     * @return array{id: int, name: string, active: bool}|null
+     */
+    public function location(int $locationId): ?array
+    {
+        return $this->locations[$locationId] ?? null;
+    }
+
+    public function hasActiveLocation(int $locationId): bool
+    {
+        return ($this->locations[$locationId]['active'] ?? false) === true;
+    }
+
+    /**
+     * Every Location of this Business, in name order — the Builder's picker.
+     *
+     * @return list<array{id: int, name: string, active: bool}>
+     */
+    public function locations(): array
+    {
+        return array_values($this->locations);
     }
 }

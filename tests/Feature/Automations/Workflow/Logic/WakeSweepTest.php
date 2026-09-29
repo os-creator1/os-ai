@@ -70,7 +70,7 @@ class WakeSweepTest extends TestCase
         ]);
         $contact = $this->contactFor($business);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         return [$workflow->fresh(), $enrollment->fresh()];
@@ -269,7 +269,7 @@ class WakeSweepTest extends TestCase
 
         for ($i = 0; $i < 5; $i++) {
             $contact = $this->contactFor($business, 'Waiter' . $i);
-            $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+            $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
             app(WorkflowAdvancer::class)->advance($enrollment);
             $this->makeWaitDue($enrollment->fresh());
             $enrollments[] = $enrollment;

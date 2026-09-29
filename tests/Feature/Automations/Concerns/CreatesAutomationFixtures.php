@@ -13,6 +13,7 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Models\AppConfig;
 use App\Models\Automation;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
@@ -62,6 +63,14 @@ trait CreatesAutomationFixtures
 
         app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'B4 fixture assignment.', true, 0);
 
+        // Location run-scope foundation: every fixture Business gets its one
+        // Primary Location (Blueprint §6 — "Workspace + Business + Primary
+        // Location created together"), exactly as production signup does.
+        // Without one, `contact()`/`contactFor()` below have nothing to
+        // resolve `location_id` from, and every enrollment in every existing
+        // Automations test would be refused for want of a provable Location.
+        $this->businessLocation($business);
+
         return [$customer, $business->fresh(), $workspace->fresh()];
     }
 
@@ -83,7 +92,24 @@ trait CreatesAutomationFixtures
 
         app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->platformAdminId(), 'B4 fixture assignment.', true, 0);
 
+        $this->businessLocation($business);
+
         return [$business->fresh(), $workspace->fresh()];
+    }
+
+    /**
+     * One Location for a fixture Business, mirroring the shape
+     * `ContactsLocationAclTest`'s own `location()` helper already uses.
+     * `uid` and `lifecycle_state` are left to their model/column defaults
+     * (Active), matching production.
+     */
+    protected function businessLocation(Business $business, array $overrides = []): BusinessLocation
+    {
+        return BusinessLocation::create(array_merge([
+            'business_id' => $business->id,
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ], $overrides));
     }
 
     protected function platformAdminId(): int
@@ -155,6 +181,13 @@ trait CreatesAutomationFixtures
             'group_id' => $group->id,
             'phone' => $phone,
             'status' => Contacts::STATUS_SUBSCRIBE,
+            // Location run-scope foundation: the same rule the real
+            // creation paths already apply (EloquentContactsRepository,
+            // Contacts::singleActiveLocationIdFor()) — this fixture bypasses
+            // that repository entirely (a direct Contacts::create()), so it
+            // must resolve the same fact itself rather than leave every
+            // fixture Contact un-locatable.
+            'location_id' => Contacts::singleActiveLocationIdFor($business->id),
         ]);
 
         if ($dateValue !== null && $dateField !== null) {

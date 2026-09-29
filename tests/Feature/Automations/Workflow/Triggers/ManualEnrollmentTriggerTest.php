@@ -318,4 +318,39 @@ class ManualEnrollmentTriggerTest extends TestCase
             }
         }
     }
+
+    // -----------------------------------------------------------------
+    // Location run-scope foundation (lane contract §9/§17) — manual
+    // enrollment pins the selected Contact's OWN Location, and this
+    // domain-layer service refuses one with none (the customer-facing
+    // "refuse clearly" message lives at the HTTP layer,
+    // AutomationWorkflowEnrollmentsControllerTest).
+    // -----------------------------------------------------------------
+
+    public function test_the_enrollment_pins_the_contacts_own_location(): void
+    {
+        Bus::fake([AdvanceWorkflowEnrollment::class]);
+        [, $business] = $this->entitledTenant();
+        [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
+        $contact = $this->contactFor($business);
+
+        $enrollment = $this->manual()->enrollByHand($workflow, $contact, 'req-' . Str::uuid());
+
+        $this->assertNotNull($enrollment);
+        $this->assertSame((int) $contact->location_id, (int) $enrollment->business_location_id);
+    }
+
+    public function test_a_contact_with_no_location_is_refused(): void
+    {
+        [, $business] = $this->entitledTenant();
+        [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
+        $contact = $this->contactFor($business);
+        $contact->forceFill(['location_id' => null])->save();
+
+        $this->assertNull(
+            $this->manual()->enrollByHand($workflow, $contact->fresh(), 'req-' . Str::uuid()),
+            'A Contact with no Location cannot start a run, even by an explicit manual request.',
+        );
+        $this->assertSame(0, AutomationEnrollment::query()->count());
+    }
 }

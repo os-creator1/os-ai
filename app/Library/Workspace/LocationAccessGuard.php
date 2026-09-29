@@ -159,6 +159,44 @@ class LocationAccessGuard
     }
 
     /**
+     * Automations Location run-scope foundation (lane contract §12B) — does
+     * this actor's reach over $business cover EVERY Location, including one
+     * added after this call returns? Not the same question
+     * accessibleLocationIdsForBusiness() answers: that method's `Selected`
+     * branch can legitimately return every CURRENT Location id (an owner
+     * granted a Selected-scope member all of today's Locations one by one),
+     * which is indistinguishable from `All` reach by list content alone but
+     * is NOT the same authority — a future Location is automatically
+     * reachable under `All` and is NOT under `Selected`, however complete
+     * today's grant list happens to be.
+     *
+     * A Selected-scope staff member choosing "All Locations" for a workflow
+     * would otherwise silently gain exactly that broader, evergreen reach
+     * the moment a new Location is created — this is the check that refuses
+     * it (WorkflowCompiler::validateLocationScope()).
+     *
+     * Not a second access algorithm: it runs the same resolveLocationReach()
+     * this class's other two public methods already run, and only reads its
+     * `mode` — the same private authority, exposed rather than duplicated.
+     */
+    public function userHasAllLocationReach(int $userId, Business $business): bool
+    {
+        $currentBusiness = $this->businessRepository->findById($business->id);
+
+        if ($currentBusiness === null || $currentBusiness->workspace_id === null) {
+            return false;
+        }
+
+        $workspace = $this->workspaceRepository->findById($currentBusiness->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return false;
+        }
+
+        return $this->resolveLocationReach($userId, $currentBusiness, $workspace)['mode'] === 'all';
+    }
+
+    /**
      * The whole of Contract 02 §6's authority table EXCEPT the final
      * per-Location assignment check, which the two public methods apply
      * differently (one Location vs the whole list).

@@ -56,7 +56,7 @@ class IfElseExecutorTest extends TestCase
     ): ?string {
         [$workflow] = $this->publishGroupScopedIfElse($business, $group, $conditions, $match);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         return $this->branchTakenFor($enrollment);
@@ -345,7 +345,7 @@ class IfElseExecutorTest extends TestCase
                 ]],
             ])]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertSame(
@@ -381,7 +381,7 @@ class IfElseExecutorTest extends TestCase
                 ],
             ])]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertSame(
@@ -400,7 +400,7 @@ class IfElseExecutorTest extends TestCase
             $this->condition('contact.first_name', 'equals', 'Ada'),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $yesNode = $this->nodeIdByBody((int) $version->id, 'yes branch');
@@ -420,7 +420,7 @@ class IfElseExecutorTest extends TestCase
             $this->condition('contact.first_name', 'equals', 'Grace'),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $yesNode = $this->nodeIdByBody((int) $version->id, 'yes branch');
@@ -444,7 +444,7 @@ class IfElseExecutorTest extends TestCase
             no: [$this->recordedStep('no branch'), $this->endStep()],
         );
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertSame('yes', $this->branchTakenFor($enrollment));
@@ -461,7 +461,7 @@ class IfElseExecutorTest extends TestCase
             $this->condition('contact.first_name', 'equals', 'Ada'),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $stepRun = DB::table('automation_step_runs')
@@ -484,7 +484,7 @@ class IfElseExecutorTest extends TestCase
             $this->condition('contact.first_name', 'equals', 'Ada'),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         $advancer = app(WorkflowAdvancer::class);
         $advancer->advance($enrollment);
 
