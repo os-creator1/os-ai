@@ -437,4 +437,181 @@ class MarketingContentAdminTest extends TestCase
 
         $this->assertDatabaseHas('marketing_testimonials', ['id' => $testimonial->id, 'position' => 7]);
     }
+
+    /**
+     * Review correction round 3 (P2, proof A): a failed edit on one FAQ
+     * must not flash its old input into every other FAQ's form. Each form
+     * carries a hidden "_marketing_form" marker that gates old-input reuse.
+     */
+    public function test_a_failed_faq_edit_does_not_bleed_into_another_faqs_form(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faqA = MarketingFaq::query()->create(['question' => 'A original question?', 'answer' => 'A original answer.', 'position' => 1, 'is_visible' => true]);
+        $faqB = MarketingFaq::query()->create(['question' => 'B original question?', 'answer' => 'B original answer.', 'position' => 2, 'is_visible' => true]);
+
+        $distinctiveQuestion = 'DISTINCTIVE REJECTED QUESTION FOR FAQ A';
+
+        $this->put(route('admin.marketing-content.faqs.update', $faqA), [
+            '_marketing_form' => "faq:{$faqA->id}",
+            'question' => $distinctiveQuestion,
+            'answer' => str_repeat('x', 5001), // exceeds max:5000 — fails validation.
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, $distinctiveQuestion), 'The flashed value must appear in exactly one form — FAQ A\'s.');
+        $this->assertStringContainsString('B original question?', $html, 'FAQ B must still show its own persisted question.');
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faqB->id, 'question' => 'B original question?']);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof B): same isolation guarantee,
+     * for testimonials.
+     */
+    public function test_a_failed_testimonial_edit_does_not_bleed_into_another_testimonials_form(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $testimonialA = MarketingTestimonial::query()->create([
+            'name' => 'DISTINCTIVE REJECTED NAME FOR TESTIMONIAL A',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 1,
+            'is_visible' => true,
+        ]);
+        $testimonialB = MarketingTestimonial::query()->create([
+            'name' => 'B original name',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 2,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonialA), [
+            '_marketing_form' => "testimonial:{$testimonialA->id}",
+            'name' => $testimonialA->name,
+            'business_context_label' => str_repeat('x', 256), // exceeds max:255 — fails validation.
+        ])->assertSessionHasErrors('business_context_label');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, $testimonialA->name), 'The flashed value must appear in exactly one form — testimonial A\'s.');
+        $this->assertStringContainsString('B original name', $html, 'Testimonial B must still show its own persisted name.');
+        $this->assertDatabaseHas('marketing_testimonials', ['id' => $testimonialB->id, 'name' => 'B original name']);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof C): unchecking "Visible on
+     * homepage" while another field fails validation must not silently
+     * re-check the box on redisplay, and must persist as false once the
+     * other field is corrected. The explicit hidden-0 + checkbox-1 pair
+     * (rather than a bare @checked(old(..., $model->attr))) is what makes
+     * "unchecked and submitted" distinguishable from "field absent".
+     */
+    public function test_unchecking_a_faqs_visibility_survives_a_validation_redirect(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Q?', 'answer' => 'A.', 'position' => 1, 'is_visible' => true]);
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'Q?',
+            'answer' => str_repeat('x', 5001),
+            'is_visible' => '0',
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        preg_match('/id="faq-visible-' . $faq->id . '"[^>]*/', $html, $matches);
+        $this->assertNotEmpty($matches, 'Expected to find the FAQ visibility checkbox in the page.');
+        $this->assertStringNotContainsString('checked', $matches[0], 'The box must render unchecked after the redirect.');
+        $this->assertTrue($faq->fresh()->is_visible, 'The database must be untouched until the form actually saves.');
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'Q?',
+            'answer' => 'A corrected answer.',
+            'is_visible' => '0',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertFalse($faq->fresh()->is_visible);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof D): same proof, for testimonials.
+     */
+    public function test_unchecking_a_testimonials_visibility_survives_a_validation_redirect(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $testimonial = MarketingTestimonial::query()->create([
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 1,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            '_marketing_form' => "testimonial:{$testimonial->id}",
+            'name' => 'Jamie Rivera',
+            'business_context_label' => str_repeat('x', 256),
+            'video_url' => $testimonial->video_url,
+            'is_visible' => '0',
+        ])->assertSessionHasErrors('business_context_label');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        preg_match('/id="testimonial-visible-' . $testimonial->id . '"[^>]*/', $html, $matches);
+        $this->assertNotEmpty($matches, 'Expected to find the testimonial visibility checkbox in the page.');
+        $this->assertStringNotContainsString('checked', $matches[0], 'The box must render unchecked after the redirect.');
+        $this->assertTrue($testimonial->fresh()->is_visible, 'The database must be untouched until the form actually saves.');
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            '_marketing_form' => "testimonial:{$testimonial->id}",
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => $testimonial->video_url,
+            'is_visible' => '0',
+        ])->assertSessionDoesntHaveErrors()->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertFalse($testimonial->fresh()->is_visible);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof E): a failed edit must not
+     * populate the "Add new" create form, and a failed create must retain
+     * only its own entered values (not bleed into any edit row, and not
+     * appear reused from a stale marker).
+     */
+    public function test_a_failed_edit_does_not_populate_the_create_form_and_a_failed_create_stays_isolated(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Existing question?', 'answer' => 'Existing answer.', 'position' => 1, 'is_visible' => true]);
+
+        // A failed edit must not leak into the create form.
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'EDIT ATTEMPT VALUE',
+            'answer' => str_repeat('x', 5001),
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($html, 'EDIT ATTEMPT VALUE'), 'The failed edit\'s value must appear only in its own form, not the create form.');
+
+        // A failed create must retain only its own value, and must not
+        // have populated the (untouched) existing FAQ's edit form.
+        $distinctiveCreateAnswer = 'DISTINCTIVE CREATE ATTEMPT ANSWER';
+        $this->post(route('admin.marketing-content.faqs.store'), [
+            '_marketing_form' => 'faq:new',
+            'question' => '', // blank — fails the `required` rule.
+            'answer' => $distinctiveCreateAnswer,
+        ])->assertSessionHasErrors('question');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($html, $distinctiveCreateAnswer), 'The failed create\'s value must appear only in the create form.');
+        $this->assertStringContainsString('Existing question?', $html, 'The untouched FAQ must still show its own persisted question.');
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faq->id, 'question' => 'Existing question?']);
+    }
 }
