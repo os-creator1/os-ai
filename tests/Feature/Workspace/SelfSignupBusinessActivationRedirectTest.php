@@ -35,6 +35,14 @@ use Tests\TestCase;
  * grantsAccess() — never used as a feature/access authority (that stays
  * workspace_plan_assignments alone), only as proof this specific Draft
  * Business is a paid V1 self-signup the pre-fix defect stranded.
+ *
+ * ChatGPT review correction (round 2) — the repair is its own step
+ * (WorkspaceController::repairStrandedConfirmedSignupBusiness()), separate
+ * from isBusinessFirstAccount()'s Core/Growth-only UI meaning, so a paid
+ * Agency self-signup is repaired too without being folded into Core/Growth
+ * navigation; and the repair target is exactly Draft, never merely "not
+ * Active", so an Inactive Business is left alone rather than redirected to
+ * a Settings page it would 404 on.
  */
 class SelfSignupBusinessActivationRedirectTest extends TestCase
 {
@@ -146,6 +154,60 @@ class SelfSignupBusinessActivationRedirectTest extends TestCase
 
         $response->assertRedirect(route('user.home'));
         $this->assertSame(BusinessStatus::Draft, Business::find($business->id)->status);
+    }
+
+    /**
+     * ChatGPT review correction (Finding 1) — Agency V1 signup provisions
+     * through the exact same V1SignupManager path Core/Growth does, and can
+     * be stranded Draft by the exact same pre-fix defect, but
+     * isBusinessFirstAccount() is deliberately Core/Growth-only UI
+     * vocabulary. The repair must still apply to a paid Agency self-signup
+     * — and, having applied, must NOT force the Core/Growth Business
+     * Settings redirect: an Agency account keeps its normal account-frame
+     * overview (a 200 render), never converted into Core/Growth navigation
+     * semantics just because this repair also reaches it.
+     */
+    public function test_a_stuck_paid_agency_self_signup_is_repaired_without_becoming_business_first(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Agency);
+        $business = $this->addBusiness($fixture['customer'], $fixture['workspace'], 'Stuck Agency Business', BusinessStatus::Draft);
+        $this->assertTrue($fixture['subscription']->status->grantsAccess(), 'Fixture sanity: the subscription must genuinely grant access.');
+
+        $this->authenticateAs($fixture['customer']);
+
+        $response = $this->get(route('customer.workspaces.show', $fixture['workspace']->uid));
+
+        // Repaired, but never redirected: a redirect here would mean the
+        // Core/Growth Business-first branch fired, which must never happen
+        // for an Agency Workspace.
+        $response->assertOk();
+
+        $business = Business::find($business->id);
+        $this->assertSame(BusinessStatus::Active, $business->status);
+        $this->assertNotNull($business->activated_at);
+    }
+
+    /**
+     * ChatGPT review correction (Finding 3) — the repair target must be
+     * exactly Draft, never merely "not Active". An Inactive Business is
+     * left exactly as it is (activateForConfirmedSignup() only ever
+     * transitions a genuinely Draft row), and the controller must not
+     * redirect to Business Settings on the strength of a repair attempt
+     * alone: Settings requires an Active Business, so redirecting an
+     * Inactive one there would only 404.
+     */
+    public function test_an_inactive_business_is_left_alone_and_never_redirected_to_settings(): void
+    {
+        $fixture = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $business = $this->addBusiness($fixture['customer'], $fixture['workspace'], 'Inactive Business', BusinessStatus::Inactive);
+        $this->assertTrue($fixture['subscription']->status->grantsAccess(), 'Fixture sanity: the subscription must genuinely grant access.');
+
+        $this->authenticateAs($fixture['customer']);
+
+        $response = $this->get(route('customer.workspaces.show', $fixture['workspace']->uid));
+
+        $response->assertRedirect(route('user.home'));
+        $this->assertSame(BusinessStatus::Inactive, Business::find($business->id)->status);
     }
 
     /**

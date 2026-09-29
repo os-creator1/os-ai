@@ -161,9 +161,38 @@ class WorkspaceController extends CustomerBaseController
         [$workspace, $roleKey] = $this->resolveAccountPage($workspaceUid);
         $userId = (int) Auth::id();
 
+        // ChatGPT review correction — the historical V1 self-signup repair
+        // runs here, BEFORE the Core/Growth branch below decides what to
+        // render, and applies to every active Workspace regardless of tier:
+        // Agency V1 signup provisions through the exact same
+        // V1SignupManager path Core and Growth do, and could be stranded
+        // Draft by the exact same pre-fix defect. isBusinessFirstAccount()
+        // below stays Core/Growth-only by design — that is a UI-vocabulary
+        // decision, never an activation-eligibility one — so the repair is
+        // deliberately its own step, never folded into that check. By the
+        // time the Core/Growth branch queries for an Active Business, a
+        // just-repaired one is already there; an Agency Workspace simply
+        // renders its normal account overview afterwards, now with an
+        // Active Business, never converted into Core/Growth navigation.
+        $repaired = null;
+
+        if ($workspace->is_active) {
+            $repaired = $this->repairStrandedConfirmedSignupBusiness($workspace, $roleKey, $userId);
+        }
+
         // An inactive account can't open its Business at all, so its page stays
         // — reactivating it is the one thing left to do there.
         if ($workspace->is_active && $this->isBusinessFirstAccount($workspace)) {
+            // The repair above, when it fires, returns the exact Business it
+            // just transitioned — used directly rather than re-querying,
+            // since WorkspaceRepository::businessesForWorkspace() caches its
+            // result per request and EloquentBusinessRepository::updateStatus()
+            // does not invalidate that cache key: a second query in the same
+            // request could still see the pre-activation Draft snapshot.
+            if ($repaired !== null) {
+                return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $repaired->uid]);
+            }
+
             $business = $this->accessibleBusinesses($workspace, $userId)
                 ->first(fn (Business $business) => $business->status === BusinessStatus::Active);
 
@@ -174,42 +203,16 @@ class WorkspaceController extends CustomerBaseController
             $notYetActive = $this->accessibleBusinesses($workspace, $userId);
 
             if ($notYetActive->isNotEmpty()) {
-                // ChatGPT review correction — reaching this branch means the
-                // Workspace holds an assigned, gate-passing Core/Growth plan
-                // (isBusinessFirstAccount() above requires a resolved tier),
-                // but an assigned plan alone does not prove this is an old
-                // broken V1 self-signup: Contract 21 explicitly supports
-                // complimentary/manually-assigned Workspaces with no Stripe
-                // subscription at all, and those must never be silently
-                // activated just because the owner opened this page.
-                // workspace_plan_assignments stays the ONE access/entitlement
-                // authority — nothing here asks PlatformSubscription what
-                // features this Workspace gets. The subscription is read
-                // purely as PROVENANCE: proof this specific Draft Business is
-                // one of the paid V1 self-signups V1SignupManager::
-                // activateFromConfirmedSubscription() now activates on its
-                // own, and which this pre-fix defect left permanently stuck
-                // (nothing else in the product ever activated one). Only a
-                // local subscription row whose CURRENT status still
-                // grantsAccess() counts — a canceled, unpaid or paused one
-                // proves the opposite: this account is not, or no longer,
-                // paid, and must not be waved through.
-                $subscription = $this->platformSubscriptionManager->findForWorkspace($workspace);
-
-                if ($roleKey === 'owner'
-                    && $notYetActive->count() === 1
-                    && $subscription !== null
-                    && $subscription->status->grantsAccess()
-                    && $this->agencyClientRelationshipRepository->findActiveForClientWorkspace((int) $workspace->id) === null) {
-                    $draft = $notYetActive->first();
-                    $this->businessManager->activateForConfirmedSignup($draft);
-
-                    return redirect()->route('customer.workspaces.businesses.settings.show', [$workspace->uid, $draft->uid]);
-                }
-
-                // Its Business exists but is not active yet (just created, or
-                // still being set up). Home says exactly that and what to do
-                // next; a second Business is never the answer.
+                // Its Business exists but is not active yet (just created,
+                // still being set up, Inactive, or the repair above did not
+                // apply — e.g. no provider-confirmed PlatformSubscription).
+                // Home says exactly that and what to do next; a second
+                // Business is never the answer. This never redirects to
+                // Settings on the strength of a repair ATTEMPT alone — the
+                // query above already re-reads fresh state, so only a
+                // Business that is truly Active earns that redirect, and an
+                // explicitly Inactive one (Settings requires Active) is
+                // never sent to a page it would 404 on.
                 return redirect()->route('user.home');
             }
 
@@ -222,6 +225,105 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return view('customer.workspaces.show', $this->accountPageData($workspace, $roleKey, 'account'));
+    }
+
+    /**
+     * Historical repair for a V1 self-signup Business the pre-fix defect
+     * stranded Draft (Implementation Contract 21 §7 correction) —
+     * V1SignupManager::activateFromConfirmedSubscription() now activates a
+     * self-signup Business the moment its plan is durably assigned, so this
+     * exists only to repair an account that predates that fix (or close a
+     * vanishingly brief race window). Deliberately separate from
+     * isBusinessFirstAccount()'s Core/Growth-only UI meaning: Agency V1
+     * signup provisions through the identical path and can be stranded
+     * identically, and folding this into that check would either miss
+     * Agency accounts entirely or wrongly convert them into Core/Growth
+     * navigation semantics.
+     *
+     * Every one of these must hold, so a complimentary/manually-assigned
+     * Workspace (Contract 21 explicitly supports one with no Stripe
+     * subscription at all) or a genuine Agency-managed Client Workspace is
+     * never silently activated just because its owner opened this page:
+     *
+     *  - actor is this Workspace's owner (never an Admin, Staff, or the
+     *    inviting Agency);
+     *  - the Workspace holds exactly one Business, and it is exactly
+     *    Draft — never Inactive, and never chosen among several;
+     *  - the Workspace already has its own canonical plan assignment
+     *    (workspace_plan_assignments stays the ONE access/entitlement
+     *    authority; nothing here asks PlatformSubscription what features
+     *    this Workspace gets);
+     *  - the SAME Workspace also has a local PlatformSubscription whose
+     *    CURRENT status still grantsAccess() — read purely as PROVENANCE,
+     *    proof this specific Draft Business is a stranded paid V1
+     *    self-signup, never a second access authority. A canceled, unpaid
+     *    or paused subscription proves the opposite and must not be waved
+     *    through;
+     *  - no ACTIVE AgencyClientWorkspaceRelationship names this Workspace
+     *    as a managed Client — that activation path is deliberately the
+     *    client owner's own explicit confirmation over real placeholder
+     *    data (ClientBusinessActivationController), never an automatic
+     *    flip.
+     *
+     * BusinessManager::activateForConfirmedSignup() re-verifies the
+     * Business still belongs to this exact Workspace under its own
+     * Workspace-before-Business lock before writing anything, and itself
+     * only ever transitions a genuinely Draft row, returning true only when
+     * THIS call performed that transition — this method's own Draft check
+     * is the fast, user-facing mirror of that same rule, never the only
+     * enforcement. A stale-reference mismatch it raises is a concurrent
+     * Business reassignment landing mid-request: opportunistic repair only,
+     * so that one attempt is reported and skipped rather than failing this
+     * page render.
+     *
+     * @return Business|null the Business THIS call actually transitioned to
+     *         Active, for the caller to act on directly — never re-queried,
+     *         since WorkspaceRepository::businessesForWorkspace() caches its
+     *         result per request and updateStatus() does not invalidate
+     *         that cache key. null whenever no repair applied, including a
+     *         candidate that failed the Draft check inside
+     *         activateForConfirmedSignup() itself (a race since this
+     *         method's own read) or the stale-reference mismatch above.
+     */
+    private function repairStrandedConfirmedSignupBusiness(Workspace $workspace, string $roleKey, int $userId): ?Business
+    {
+        if ($roleKey !== 'owner') {
+            return null;
+        }
+
+        $businesses = $this->accessibleBusinesses($workspace, $userId);
+
+        if ($businesses->count() !== 1) {
+            return null;
+        }
+
+        $candidate = $businesses->first();
+
+        if ($candidate->status !== BusinessStatus::Draft) {
+            return null;
+        }
+
+        if (! $this->entitlementManager->getWorkspaceEntitlementSummary($workspace)->isAssigned) {
+            return null;
+        }
+
+        if ($this->agencyClientRelationshipRepository->findActiveForClientWorkspace((int) $workspace->id) !== null) {
+            return null;
+        }
+
+        $subscription = $this->platformSubscriptionManager->findForWorkspace($workspace);
+
+        if ($subscription === null || ! $subscription->status->grantsAccess()) {
+            return null;
+        }
+
+        try {
+            return $this->businessManager->activateForConfirmedSignup($candidate) ? $candidate : null;
+        } catch (BusinessWorkspaceMismatchException $e) {
+            report($e);
+
+            return null;
+        }
     }
 
     /**

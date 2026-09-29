@@ -246,15 +246,56 @@ class BusinessManager
      * call). Idempotent and safe to call on every re-entry into that seam: a
      * Business that is not currently Draft (already Active from an earlier
      * call) is left untouched.
+     *
+     * WORKSPACE-BEFORE-BUSINESS, UNDER LOCK (ChatGPT review correction).
+     * $business is the caller's own read, taken before any lock here — a
+     * caller (WorkspaceController's historical repair among them) derives
+     * its authority to activate (the Workspace's plan assignment, its
+     * PlatformSubscription) from the Workspace it read $business FROM. If a
+     * concurrent WorkspaceManager::reassignBusiness() moves this exact
+     * Business to a different Workspace between that read and this method's
+     * lock, activating on the strength of the OLD Workspace's authority
+     * would cross Workspaces. So the Workspace $business claimed at read
+     * time is locked FIRST (findForUpdate(), the same order
+     * updateOwnBusinessProfile() and reassignBusiness() already use), the
+     * Business second, and a stale mismatch throws the identical typed
+     * BusinessWorkspaceMismatchException updateOwnBusinessProfile() reuses
+     * for the same scenario — never a bespoke string check.
+     *
+     * @return bool true only when THIS call performed the Draft -> Active
+     *              transition; false for a row that was already Active (or
+     *              never Draft). V1SignupManager's own caller ignores this:
+     *              a repeated webhook or Checkout-return revisit replaying
+     *              an already-activated Business is expected, not an error.
+     *
+     * @throws BusinessWorkspaceMismatchException $business no longer belongs
+     *         to the Workspace it was read from — a stale caller reference.
      */
-    public function activateForConfirmedSignup(Business $business): void
+    public function activateForConfirmedSignup(Business $business): bool
     {
-        DB::transaction(function () use ($business): void {
+        $expectedWorkspaceId = (int) $business->workspace_id;
+
+        return DB::transaction(function () use ($business, $expectedWorkspaceId): bool {
+            $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+            $workspaceRepository->findForUpdate($expectedWorkspaceId);
+
             $locked = $this->businessRepository->findForUpdate($business->id);
 
-            if ($locked !== null && $locked->status === BusinessStatus::Draft) {
-                $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+            if ($locked === null || (int) $locked->workspace_id !== $expectedWorkspaceId) {
+                throw new BusinessWorkspaceMismatchException(
+                    $business->id,
+                    $expectedWorkspaceId,
+                    $locked === null ? 0 : (int) $locked->workspace_id,
+                );
             }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                return false;
+            }
+
+            $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+
+            return true;
         });
     }
 

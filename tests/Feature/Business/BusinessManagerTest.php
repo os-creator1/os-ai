@@ -15,6 +15,7 @@ use App\Library\Business\BusinessManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -246,6 +247,95 @@ class BusinessManagerTest extends TestCase
 
         $this->assertSame($originalName, Business::find($business->id)->name);
         Event::assertNotDispatched(BusinessUpdated::class);
+    }
+
+    // -----------------------------------------------------------------
+    // ChatGPT review correction — activateForConfirmedSignup() must
+    // revalidate the Business's Workspace under lock, mirroring
+    // updateOwnBusinessProfile()'s own Workspace-before-Business order
+    // above, since a caller (WorkspaceController's historical V1 repair)
+    // derives its activation authority (the plan assignment, the
+    // PlatformSubscription) from the Workspace it read the Business FROM,
+    // not from wherever that Business happens to be by the time the lock
+    // is acquired.
+    // -----------------------------------------------------------------
+
+    public function test_activate_for_confirmed_signup_transitions_a_genuinely_draft_business(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $this->assertSame(BusinessStatus::Draft, $business->status);
+
+        $manager = app(BusinessManager::class);
+        $transitioned = $manager->activateForConfirmedSignup($business);
+
+        $this->assertTrue($transitioned);
+        $activated = Business::find($business->id);
+        $this->assertSame(BusinessStatus::Active, $activated->status);
+        $this->assertNotNull($activated->activated_at);
+    }
+
+    public function test_activate_for_confirmed_signup_is_a_no_op_for_an_already_active_business(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $manager = app(BusinessManager::class);
+        $this->assertTrue($manager->activateForConfirmedSignup($business));
+
+        // Idempotent replay — a repeated webhook or Checkout-return visit.
+        $transitionedAgain = $manager->activateForConfirmedSignup(Business::find($business->id));
+
+        $this->assertFalse($transitionedAgain, 'A row that is already Active did not transition on this call.');
+        $this->assertSame(BusinessStatus::Active, Business::find($business->id)->status);
+    }
+
+    /**
+     * Deterministic stale-Workspace-reference reproduction, via the
+     * CANONICAL reassignment seam (WorkspaceManager::reassignBusiness())
+     * rather than a raw DB update: create the Business in Workspace A,
+     * reassign it to Workspace B through that seam, and call
+     * activateForConfirmedSignup() with the caller's own STALE in-memory
+     * $business model — still showing Workspace A — exactly modeling "the
+     * caller derived its authority from A before a concurrent reassignment
+     * moved the Business to B." The typed BusinessWorkspaceMismatchException
+     * must fire, B's Business must remain Draft, and nothing may be
+     * activated using A's authority.
+     */
+    public function test_activate_for_confirmed_signup_denies_and_leaves_draft_when_business_workspace_relationship_is_stale(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $originalWorkspaceId = $business->workspace_id;
+
+        $otherWorkspace = Workspace::create(['name' => 'Other', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
+
+        $admin = User::create([
+            'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $otherWorkspace, \App\Enums\Entitlement\WorkspacePlanTier::Core, $admin->id,
+            'Fixture assignment so reassignBusiness() may target this Workspace.', true, 0,
+        );
+
+        // The reassignment itself operates on a FRESH read; $business (the
+        // caller's own reference) is never refreshed afterwards.
+        app(WorkspaceManager::class)->reassignBusiness((int) $customer->user_id, $business->fresh(), $otherWorkspace);
+
+        $manager = app(BusinessManager::class);
+
+        try {
+            $manager->activateForConfirmedSignup($business);
+            $this->fail('Expected BusinessWorkspaceMismatchException.');
+        } catch (BusinessWorkspaceMismatchException $e) {
+            $this->assertSame($business->id, $e->businessId);
+            $this->assertSame($originalWorkspaceId, $e->expectedWorkspaceId);
+            $this->assertSame($otherWorkspace->id, $e->actualWorkspaceId);
+        }
+
+        $reloaded = Business::find($business->id);
+        $this->assertSame(BusinessStatus::Draft, $reloaded->status, 'Nothing in the target Workspace was activated using the source Workspace\'s authority.');
+        $this->assertSame($otherWorkspace->id, $reloaded->workspace_id, 'The reassignment itself is unaffected by the refused activation.');
     }
 
     public function test_upsert_primary_location_delegates_invariant_and_dispatches_event(): void
