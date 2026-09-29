@@ -8,6 +8,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Documents\DocumentManager;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Payments\PaymentManager;
+use App\Library\Payments\StripeConnectManager;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Exceptions\Payments\RefundException;
 use App\Exceptions\Payments\StripeConnectException;
@@ -29,7 +30,7 @@ class DocumentsController extends CustomerBaseController
 {
     use ResolvesBusinessTenancy;
 
-    public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments) {}
+    public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments, private readonly StripeConnectManager $connect) {}
 
     public function listing(string $workspaceUid, string $businessUid): View
     {
@@ -41,6 +42,12 @@ class DocumentsController extends CustomerBaseController
             'locations' => BusinessLocation::where('business_id', $business->id)->whereIn('id', $ids)->where('lifecycle_state', 'active')->get(),
             'contacts' => Contacts::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
             'opportunities' => CrmOpportunity::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
+            // Navigation coherence pass — Phase 8: this Business cannot
+            // actually be paid on any invoice/proposal until it connects its
+            // own Stripe account (BusinessPaymentsController), and until now
+            // that page was reachable only by guessing its URL. See the
+            // banner in the index view.
+            'chargeReady' => $this->connect->isChargeReady($business),
         ]);
     }
 

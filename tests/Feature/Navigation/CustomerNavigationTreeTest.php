@@ -190,7 +190,12 @@ class CustomerNavigationTreeTest extends TestCase
 
             $this->assertNotFalse($position, "[{$tier->value}] offers Opportunities.");
             $this->assertSame('contacts', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Contacts.");
-            $this->assertSame('automations', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Automations.");
+            // Contract 15 (Calendar) inserted its entry between Opportunities
+            // and Automations after this assertion was first written; both
+            // Core and Growth are packaged for calendar (2026_08_13_120007),
+            // so it renders for both tiers here.
+            $this->assertSame('calendar', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Calendar.");
+            $this->assertSame('automations', $keys[$position + 2] ?? null, "[{$tier->value}] with Automations directly after Calendar.");
             $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]), $this->menuLinks($html));
             $this->assertNotContains('advisor', $keys, "[{$tier->value}] Advisor stays out of the Business sidebar.");
 
@@ -928,6 +933,18 @@ class CustomerNavigationTreeTest extends TestCase
     public function test_the_query_count_does_not_grow_with_the_number_of_features(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+
+        // Query-budget test correction (customer-navigation-coherence-pass).
+        // featureKeysForCatalog() memoizes per REQUEST, keyed only by the plan
+        // catalog id (EloquentWorkspacePlanFeatureRepository). tenant()'s own
+        // fixture setup above already resolves this Workspace's plan catalog
+        // in the SAME ambient request, which silently pre-warms that cache
+        // before $baseline is measured below — so $baseline was paying one
+        // query less than a genuine first, cold page load ever would, purely
+        // from fixture-setup order. A fresh request before EACH measurement
+        // puts both readings on the identical cold footing the comment two
+        // lines below already assumed applied to both.
+        $this->app->instance('request', \Illuminate\Http\Request::create('/dashboard'));
 
         $three = CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES;
         $baseline = $this->countQueriesResolving($workspace, $business, $three, $customer->user_id);

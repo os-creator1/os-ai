@@ -4,6 +4,12 @@
 <h4>Proposals and invoices</h4>
 <x-flash-alert />
 @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+@unless($chargeReady)
+    <div class="alert alert-warning d-flex justify-content-between align-items-center">
+        <span>Connect Stripe to accept online payments on your invoices and proposals.</span>
+        <a class="btn btn-primary btn-sm" href="{{ route('customer.workspaces.businesses.payments.connect.show', [$workspaceUid, $businessUid]) }}">Connect Stripe</a>
+    </div>
+@endunless
 <div class="card p-2 mb-2">
     <h5>New draft</h5>
     <form method="post" action="{{ route('customer.workspaces.businesses.documents.store', [$workspaceUid, $businessUid]) }}">

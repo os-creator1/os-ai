@@ -250,15 +250,27 @@ class WorkspaceAccountCreationBoundaryTest extends TestCase
      */
     public function test_settings_account_opens_the_current_account_directly(): void
     {
-        // An Agency account frame links its own account page directly.
+        // Agency UI defects correction (see CustomerMenuBuilder::accountFrame()
+        // and CustomerNavigationTreeTest::
+        // test_the_agency_account_frame_sends_client_accounts_to_the_client_list):
+        // the account frame's "accounts" sidebar entry opens the real client
+        // list, never the bare account overview — this test previously
+        // asserted the pre-correction destination and was never updated when
+        // that fix landed. customer.workspaces.show is still reachable, from
+        // Settings -> "Agency account details", checked below.
         [$agency, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
         $this->switchToAccount($agencyWorkspace)->assertRedirect(route('user.home'));
 
         $links = $this->menuLinks($this->home()->assertOk()->getContent());
 
-        $this->assertContains(route('customer.workspaces.show', $agencyWorkspace->uid), $links);
+        $this->assertContains(route('customer.workspaces.clients.index', $agencyWorkspace->uid), $links);
+        $this->assertNotContains(route('customer.workspaces.show', $agencyWorkspace->uid), $links);
         $this->assertNotContains(route('customer.workspaces.index'), $links);
+
+        $this->get(route('customer.workspaces.settings.show', $agencyWorkspace->uid))
+            ->assertOk()
+            ->assertSee(route('customer.workspaces.show', $agencyWorkspace->uid), false);
 
         // A Growth account has no account destination at all.
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);

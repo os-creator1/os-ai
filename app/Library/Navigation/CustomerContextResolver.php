@@ -92,6 +92,47 @@ final class CustomerContextResolver
             }
         }
 
+        // 2b. Navigation coherence pass — a route that is structurally
+        //     ACCOUNT-frame-only (a closed, explicit list; never inferred
+        //     from the route merely lacking {businessUid}, since several
+        //     genuinely Business-Settings-shared routes — plan.show,
+        //     team.show, agency-plan.* — also carry only {workspaceUid} and
+        //     must NOT be forced here) is itself a deliberate signal that
+        //     this request stands in the Account frame for that Workspace,
+        //     exactly as if the actor had just used the context switcher's
+        //     account option. A stale remembered Business preference must
+        //     never outrank what the visited URL already says.
+        //
+        //     Bug this fixes: an Agency owner who currently has their own
+        //     Business selected (the ordinary case — CustomerContextResolver
+        //     defaults a lone selectable Business in, and step 4 below would
+        //     otherwise re-select it here) opens "All client accounts" from
+        //     the context switcher, or the Prospecting / Agency Settings
+        //     surfaces, or types one of those URLs directly. The page itself
+        //     rendered correctly, but step 4 (business preference) ran
+        //     before this method ever asked what frame the ROUTE names, so
+        //     the shell kept showing the stale Business-frame sidebar with
+        //     nothing active and the stale Business name in the header.
+        //
+        //     GET only, deliberately. A mutation on one of these routes —
+        //     'customer.workspaces.clients.view-as' chief among them, which
+        //     shares this exact prefix — is an action, not a "visit", and
+        //     must never itself plant an account-frame preference: doing so
+        //     on the View-as START request left that preference behind for
+        //     every request AFTER the session later ended, silently keeping
+        //     the Agency actor in the Account frame instead of resolving
+        //     back to their own Business the moment they exited (correction,
+        //     found by AgencyViewAsContextResolutionTest).
+        if ($request->isMethod('GET') && $routeWorkspaceUid !== null && $this->isAccountFrameOnlyRoute($request)) {
+            $accountWorkspace = $this->findWorkspace($workspaces, $routeWorkspaceUid);
+
+            if ($accountWorkspace !== null && $accountWorkspace->isActive && $accountWorkspace->hasAccountHome()) {
+                $this->preference->rememberAccount($accountWorkspace->uid);
+
+                return $this->context($userId, $workspaces, $accountWorkspace, null, ContextSource::AccountPreference, null, $preferenceCleared);
+            }
+        }
+
         // 3. Workspace selection: route, then preference, then the only one.
         $selectedWorkspace = null;
 
@@ -277,6 +318,41 @@ final class CustomerContextResolver
         }
 
         return $result;
+    }
+
+    /**
+     * Navigation coherence pass — the closed inventory step 2b consults.
+     * Exact names plus trailing-dot prefixes, the same shape
+     * CustomerMenuBuilder's own *_SETTINGS_ROUTES and ViewAsRouteClassification's
+     * DENIED_PREFIXES already use. Deliberately excludes every route this
+     * codebase intentionally shares between both frames — plan.show,
+     * team.show and agency-plan.* all carry only {workspaceUid} too, but stay
+     * OFF this list because a Core/Growth or Active-client actor reaches them
+     * from Business Settings and must stay in the Business frame there.
+     */
+    private const ACCOUNT_FRAME_ONLY_ROUTES = [
+        'customer.workspaces.show',
+        'customer.workspaces.settings.show',
+        'customer.workspaces.clients.',
+        'customer.workspaces.prospecting.',
+        'customer.workspaces.agency.saas.',
+    ];
+
+    private function isAccountFrameOnlyRoute(Request $request): bool
+    {
+        $name = $request->route()?->getName();
+
+        if ($name === null) {
+            return false;
+        }
+
+        foreach (self::ACCOUNT_FRAME_ONLY_ROUTES as $entry) {
+            if ($name === $entry || (str_ends_with($entry, '.') && str_starts_with($name, $entry))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function routeParameter(Request $request, string $name): ?string

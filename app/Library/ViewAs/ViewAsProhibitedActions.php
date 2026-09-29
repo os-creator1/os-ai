@@ -50,6 +50,17 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.gbp.bind',
         'customer.workspaces.businesses.gbp.unbind',
         'customer.gbp.oauth.callback',
+        // Navigation coherence pass — Lane C Task 1's fixed, workspace-
+        // agnostic "Connect existing Stripe account" OAuth callback
+        // (routes/customer.php) carries no {workspaceUid} and finishes
+        // establishing the Agency's OWN Stripe SaaS-revenue connection from
+        // signed OAuth state, exactly the credential-class action
+        // 'customer.workspaces.agency.saas.' is already prohibited for —
+        // it simply lives outside that prefix because Stripe's own OAuth
+        // settings register only one fixed redirect_uri per platform
+        // client_id. Left unclassified, ViewAsRouteBoundaryTest already
+        // failed on it; the classification here is what actually blocks it.
+        'customer.agency.stripe.connect-existing.callback',
         // API credentials / sending-server configuration
         'customer.developer.generate',
         'customer.developer.server',

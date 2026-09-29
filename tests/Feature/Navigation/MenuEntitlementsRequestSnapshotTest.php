@@ -356,6 +356,16 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
             return $this->queriesDuring(fn () => MenuEntitlements::forBusiness(app(EntitlementManager::class), $workspace, $business, $features, (int) $customer->user_id));
         };
 
+        // Query-budget test correction (customer-navigation-coherence-pass).
+        // featureKeysForCatalog() memoizes per REQUEST, keyed only by the
+        // plan catalog id (EloquentWorkspacePlanFeatureRepository). tenant()'s
+        // own fixture setup above already resolves this Workspace's plan
+        // catalog in the SAME ambient request, which silently pre-warms that
+        // cache before $baseline is ever measured — so $baseline was paying
+        // one query less than a real, first, cold page load ever would. A
+        // fresh request before EACH measurement puts both on the identical,
+        // genuinely cold footing the comment below already assumed applied.
+        $this->freshRequest();
         $baseline = $count(CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES);
 
         // Shared customer request query-budget optimization (Automations

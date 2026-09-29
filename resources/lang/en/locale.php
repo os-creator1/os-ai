@@ -969,6 +969,24 @@
             'Opportunities'           => 'Opportunities',
             'Messaging'               => 'Messaging',
             'Sender identities'       => 'Sender identities',
+            // Customer navigation coherence pass — Calendar (Contract 15),
+            // Packages & Products (Contract 16) and Payments & Contracts
+            // (Contract 17) each added a top-level CustomerMenuBuilder entry
+            // without a matching locale.menu key; MenuItem's label fallback
+            // meant the English sidebar already read correctly, but
+            // CustomerShellTranslationTest::
+            // test_every_navigation_label_has_an_english_translation()
+            // extracts every literal label straight from the builder's
+            // source and requires each to resolve here, so a translator
+            // working from this file alone would otherwise never see these
+            // three.
+            'Calendar'                => 'Calendar',
+            'Packages & Products'     => 'Packages & Products',
+            'Payments & Contracts'    => 'Payments & Contracts',
+            'Your agency plan'        => 'Your agency plan',
+            'Stripe account'          => 'Stripe account',
+            'Resale plans'            => 'Resale plans',
+            'Agency revenue'          => 'Agency revenue',
         ],
 
         'currencies' => [

@@ -47,7 +47,7 @@ class DocumentsControllerTest extends TestCase
 
     private function allowEntitlement(): void
     {
-        $this->app->bind(DocumentsController::class, fn ($app) => new class($app->make(DocumentManager::class), $app->make(EntitlementManager::class), $app->make(LocationAccessGuard::class), $app->make(\App\Library\Payments\PaymentManager::class)) extends DocumentsController {
+        $this->app->bind(DocumentsController::class, fn ($app) => new class($app->make(DocumentManager::class), $app->make(EntitlementManager::class), $app->make(LocationAccessGuard::class), $app->make(\App\Library\Payments\PaymentManager::class), $app->make(\App\Library\Payments\StripeConnectManager::class)) extends DocumentsController {
             protected function entitlementAllows(\App\Models\Workspace $workspace, \App\Models\Business $business): bool { return true; }
         });
     }
