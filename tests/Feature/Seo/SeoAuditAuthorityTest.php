@@ -3,6 +3,7 @@
 namespace Tests\Feature\Seo;
 
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Http\Controllers\Customer\Business\SeoAuditController;
 use App\Jobs\Seo\RunSeoAuditForRevision;
@@ -224,16 +225,28 @@ class SeoAuditAuthorityTest extends TestCase
     // 2. Execution-time entitlement (§10.3).
     // =================================================================
 
-    public function test_while_seo_module_is_planned_an_automatic_publish_creates_no_audit_data(): void
+    /**
+     * Sub-slice H flipped SeoModule to Available, so the REAL entitlement
+     * manager (no bypass) now allows a Growth Business — and still refuses
+     * a Core one, which lacks seo_module entirely.
+     */
+    public function test_an_automatic_publish_creates_audit_data_only_for_an_entitled_business(): void
     {
-        [, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
-        $website = $this->publishWebsite($business, [$this->page()]);
+        [, $growthBusiness] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $growthWebsite = $this->publishWebsite($growthBusiness, [$this->page()]);
 
-        // The REAL entitlement manager: SeoModule is Planned, so not allowed.
-        (new RunSeoAuditForRevision((int) $business->id, (int) $website->id, (int) $website->published_revision_id))
+        (new RunSeoAuditForRevision((int) $growthBusiness->id, (int) $growthWebsite->id, (int) $growthWebsite->published_revision_id))
             ->handle($this->runner(), app(EntitlementManager::class));
 
-        $this->assertSame(0, SeoAuditRun::query()->count(), 'A Planned feature must not accumulate audit data.');
+        $this->assertSame(1, SeoAuditRun::query()->where('business_id', $growthBusiness->id)->count());
+
+        [, $coreBusiness] = $this->entitledTenant(WorkspacePlanTier::Core);
+        $coreWebsite = $this->publishWebsite($coreBusiness, [$this->page()]);
+
+        (new RunSeoAuditForRevision((int) $coreBusiness->id, (int) $coreWebsite->id, (int) $coreWebsite->published_revision_id))
+            ->handle($this->runner(), app(EntitlementManager::class));
+
+        $this->assertSame(0, SeoAuditRun::query()->where('business_id', $coreBusiness->id)->count(), 'Core lacks seo_module and must not accumulate audit data.');
     }
 
     public function test_an_allowed_entitlement_lets_the_same_job_path_run(): void
@@ -277,21 +290,32 @@ class SeoAuditAuthorityTest extends TestCase
     /**
      * The whole point of re-checking at EXECUTION time rather than at
      * dispatch: the entitlement was fine when the publish queued the job and
-     * is gone by the time the worker picks it up.
+     * is gone by the time the worker picks it up. Now that SeoModule is
+     * Available, that loss is genuinely per-Business — simulated here with
+     * the same disableBusinessFeature() a real plan downgrade would use —
+     * rather than piggybacking on the feature being globally Planned.
      */
     public function test_entitlement_lost_between_dispatch_and_execution_makes_the_job_a_no_op(): void
     {
         Queue::fake();
 
-        [, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        [$customer, $business] = $this->entitledTenant(WorkspacePlanTier::Growth);
         $website = $this->publishWebsite($business, [$this->page()]);
 
         // Dispatched while the publish was happening...
         RunSeoAuditForRevision::dispatch((int) $business->id, (int) $website->id, (int) $website->published_revision_id);
         Queue::assertPushed(RunSeoAuditForRevision::class);
 
-        // ...and by the time the worker runs it the feature is not allowed
-        // (SeoModule is Planned — the real decision, no stubbing).
+        // ...and by the time the worker runs it the Business's own
+        // entitlement has been withdrawn (a real per-Business override, not
+        // a stub).
+        app(EntitlementManager::class)->disableBusinessFeature(
+            $business,
+            PlatformFeature::SeoModule,
+            (int) $customer->user_id,
+            'SeoAuditAuthorityTest coverage.',
+        );
+
         (new RunSeoAuditForRevision((int) $business->id, (int) $website->id, (int) $website->published_revision_id))
             ->handle($this->runner(), app(EntitlementManager::class));
 
@@ -410,8 +434,8 @@ class SeoAuditAuthorityTest extends TestCase
     {
         Queue::fake();
 
-        // No bypass binding: SeoModule is Planned, so the real chain 404s.
-        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        // No bypass binding: Core lacks seo_module, so the real chain 404s.
+        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Core);
         $this->publishWebsite($business, [$this->page()]);
         $this->authenticateAsSeoCustomer($customer);
 

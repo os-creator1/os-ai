@@ -711,7 +711,12 @@ class SeoCitationsTest extends TestCase
         $large = count($this->capturedQueries(fn () => $this->get($url)->assertOk()));
 
         $this->assertSame($small, $large, 'The Citations page must not issue queries per Location or per citation.');
-        $this->assertLessThanOrEqual(24, $large);
+        // Ceiling raised from 24 to 26 by Contract 18 Sub-slice H: the SEO
+        // entry's entitlement snapshot now resolves two more shared feature
+        // keys (seo_basic_visibility, seo_module) on every customer-shell
+        // page render, not just this one — a fixed, row-count-independent
+        // cost, which is exactly what $small === $large above already proves.
+        $this->assertLessThanOrEqual(26, $large);
     }
 
     public function test_the_link_safety_used_for_rendering_is_the_same_boundary_used_for_writing(): void

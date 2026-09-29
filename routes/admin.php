@@ -884,4 +884,99 @@
             Route::delete('{font}', 'PlatformThemeFontController@destroy')->name('destroy');
             Route::get('{font}/preview', 'PlatformThemeFontController@servePreview')->name('preview');
         });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Niche Blueprints + Template Library (Contract 20 §12.F / §18.F)
+        |--------------------------------------------------------------------------
+        |
+        | Blueprint §30 names TWO distinct Platform Owner sidebar surfaces —
+        | "Niche Blueprints" and "Template Library" — sharing the same
+        | underlying domain authority (NicheBlueprintPublisher, Sub-slice B)
+        | but never collapsed into one route group or one controller.
+        |
+        | Niche Blueprints is the authoring surface: create/inspect a
+        | Blueprint, manage its single draft version and components, publish,
+        | supersede. EVERY write goes through NicheBlueprintPublisher — no
+        | route here ever touches a niche_blueprint_* table directly.
+        |
+        | Template Library is the read-only catalog surface: inspect Blueprint
+        | identities, their published/draft/superseded versions and component
+        | inventory, in an admin-readable representation. It owns no writes at
+        | all and no second persistence model — it reads the exact same
+        | niche_blueprints/niche_blueprint_versions/niche_blueprint_components
+        | rows Niche Blueprints authors.
+        |
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape as
+        | workspace-plan-catalog.index above, and the same
+        | EnsureUserIsAdministrator + 'can:access backend' defense-in-depth as
+        | every other entry in this group. No Agency or customer path exists
+        | to either surface (§6.1, §15).
+        |
+        */
+        Route::prefix('niche-blueprints')->name('niche-blueprints.')->group(function () {
+            Route::get('/', 'NicheBlueprintController@index')->name('index');
+            Route::get('create', 'NicheBlueprintController@create')->name('create');
+            Route::post('/', 'NicheBlueprintController@store')->name('store');
+
+            // Every route below binds {blueprint}/{version}/{component}
+            // implicitly. `->missing()` is the established pattern this file
+            // already uses (see UsageBillingController's business routes
+            // above): without it, a syntactically valid but nonexistent
+            // identifier lets ModelNotFoundException reach the global
+            // Handler, which renders that as a literal 500 in every
+            // non-local environment (Handler::render()) rather than a 404.
+            // This does not replace the version-belongs-to-blueprint /
+            // component-belongs-to-version checks the controller itself
+            // still performs via abort(404) — those guard a resolved-but-
+            // mismatched pair, a different failure this does not reach.
+            Route::prefix('{blueprint}')->whereUuid('blueprint')->group(function () {
+                Route::get('/', 'NicheBlueprintController@show')->name('show')
+                    ->missing(fn () => abort(404));
+                Route::patch('/', 'NicheBlueprintController@update')->name('update')
+                    ->missing(fn () => abort(404));
+                Route::post('activate', 'NicheBlueprintController@activate')->name('activate')
+                    ->missing(fn () => abort(404));
+                Route::post('deactivate', 'NicheBlueprintController@deactivate')->name('deactivate')
+                    ->missing(fn () => abort(404));
+
+                Route::post('versions', 'NicheBlueprintController@storeVersion')->name('versions.store')
+                    ->missing(fn () => abort(404));
+
+                Route::prefix('versions/{version}')->whereUuid('version')->group(function () {
+                    Route::patch('/', 'NicheBlueprintController@updateVersion')->name('versions.update')
+                        ->missing(fn () => abort(404));
+                    Route::delete('/', 'NicheBlueprintController@destroyVersion')->name('versions.destroy')
+                        ->missing(fn () => abort(404));
+                    Route::post('publish', 'NicheBlueprintController@publishVersion')->name('versions.publish')
+                        ->missing(fn () => abort(404));
+                    Route::post('supersede', 'NicheBlueprintController@supersedeVersion')->name('versions.supersede')
+                        ->missing(fn () => abort(404));
+
+                    Route::post('components', 'NicheBlueprintController@storeComponent')->name('components.store')
+                        ->missing(fn () => abort(404));
+
+                    Route::prefix('components/{component}')->whereNumber('component')->group(function () {
+                        Route::patch('/', 'NicheBlueprintController@updateComponent')->name('components.update')
+                            ->missing(fn () => abort(404));
+                        Route::delete('/', 'NicheBlueprintController@destroyComponent')->name('components.destroy')
+                            ->missing(fn () => abort(404));
+                    });
+                });
+            });
+        });
+
+        Route::prefix('template-library')->name('template-library.')->group(function () {
+            Route::get('/', 'BlueprintTemplateLibraryController@index')->name('index');
+
+            // Same `->missing()` boundary as the Niche Blueprints group above.
+            Route::prefix('{blueprint}')->whereUuid('blueprint')->group(function () {
+                Route::get('/', 'BlueprintTemplateLibraryController@show')->name('show')
+                    ->missing(fn () => abort(404));
+                Route::get('versions/{version}', 'BlueprintTemplateLibraryController@showVersion')
+                    ->whereUuid('version')
+                    ->name('versions.show')
+                    ->missing(fn () => abort(404));
+            });
+        });
     });

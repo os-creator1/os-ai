@@ -33,33 +33,77 @@ class SeoReviewsBoundaryTest extends TestCase
     private const FORBIDDEN_CONCEPTS = '/rating|ratings|star|stars|sentiment|satisf|happy|unhappy|nps|score|incentiv|reward|discount|coupon|gift|prize|quota|target|goal|leaderboard|ranking|\brank\b|redirect|short-?link|shorten|click|track(?!ing_logs)|divert|funnel|filter-by/i';
 
     // -----------------------------------------------------------------
-    // Planned => fail-closed
+    // Entitlement, now that Sub-slice H has flipped SeoModule to Available.
     // -----------------------------------------------------------------
 
-    public function test_both_seo_features_remain_planned(): void
+    public function test_both_seo_features_are_available_after_sub_slice_hs_flip(): void
     {
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoModule->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::SeoBasicVisibility->value));
     }
 
-    public function test_every_real_reviews_route_is_404_for_every_tier_while_seo_module_is_planned(): void
+    public function test_every_real_reviews_route_reaches_growth_and_agency_and_denies_core(): void
     {
-        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+        foreach ([WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$customer, $business, $workspace] = $this->entitledTenant($tier);
-            $location = $this->reviewLocation($business);
-            $request = $this->makeReviewRequest($business, $location);
+            $this->reviewLocation($business);
             $this->authenticateAsSeoCustomer($customer, $this->reviewPermissions());
-            $before = $this->dbFingerprint(['seo_review_requests', 'seo_location_review_links']);
 
-            $this->get($this->reviewsUrl($workspace, $business))->assertNotFound();
-            $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $location->uid), ['review_url' => 'https://g.page/r/x'])->assertNotFound();
-            $this->post($this->reviewRoute('link.clear', $workspace, $business, (string) $location->uid))->assertNotFound();
-            $this->post($this->reviewRoute('requests.store', $workspace, $business, (string) $location->uid), ['channel' => 'sms'])->assertNotFound();
-            $this->post($this->reviewRoute('requests.reviewed', $workspace, $business, (string) $request->uid))->assertNotFound();
-            $this->post($this->reviewRoute('requests.declined', $workspace, $business, (string) $request->uid))->assertNotFound();
-
-            $this->assertSame($before, $this->dbFingerprint(['seo_review_requests', 'seo_location_review_links']), 'A fail-closed write must persist nothing.');
+            $this->get($this->reviewsUrl($workspace, $business))->assertOk();
         }
+
+        // seo_module is Growth+Agency only (contract §5.1); Core is denied
+        // exactly as before the flip, and a refused write persists nothing.
+        [$core, $coreBusiness, $coreWorkspace] = $this->entitledTenant(WorkspacePlanTier::Core);
+        $coreLocation = $this->reviewLocation($coreBusiness);
+        $coreRequest = $this->makeReviewRequest($coreBusiness, $coreLocation);
+        $this->authenticateAsSeoCustomer($core, $this->reviewPermissions());
+        $before = $this->dbFingerprint(['seo_review_requests', 'seo_location_review_links']);
+
+        $this->get($this->reviewsUrl($coreWorkspace, $coreBusiness))->assertNotFound();
+        $this->put($this->reviewRoute('link.save', $coreWorkspace, $coreBusiness, (string) $coreLocation->uid), ['review_url' => 'https://g.page/r/x'])->assertNotFound();
+        $this->post($this->reviewRoute('link.clear', $coreWorkspace, $coreBusiness, (string) $coreLocation->uid))->assertNotFound();
+        $this->post($this->reviewRoute('requests.store', $coreWorkspace, $coreBusiness, (string) $coreLocation->uid), ['channel' => 'sms'])->assertNotFound();
+        $this->post($this->reviewRoute('requests.reviewed', $coreWorkspace, $coreBusiness, (string) $coreRequest->uid))->assertNotFound();
+        $this->post($this->reviewRoute('requests.declined', $coreWorkspace, $coreBusiness, (string) $coreRequest->uid))->assertNotFound();
+
+        $this->assertSame($before, $this->dbFingerprint(['seo_review_requests', 'seo_location_review_links']), 'A fail-closed write must persist nothing.');
+    }
+
+    /**
+     * The combined, real-entitlement chain the flip must not weaken: a
+     * Growth Business (real seo_module decision, no bypass) reaches the
+     * write routes, but a Selected-scope staff member still cannot write a
+     * review link or request for a Location they were never granted, and
+     * view_seo alone (no manage_seo) still reads but cannot write — proving
+     * tenancy, LocationAccessGuard and the capability gate all still apply
+     * through the now-Available real controller for the surface this
+     * task's flip newly exposes.
+     */
+    public function test_a_growth_actors_write_still_enforces_location_acl_through_the_real_controller(): void
+    {
+        [$owner, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $granted = $this->reviewLocation($business, 'Granted Branch');
+        $hidden = $this->reviewLocation($business, 'Hidden Branch');
+
+        $staff = $this->selectedScopeMember($workspace, [$granted]);
+        $this->authenticateAsSeoCustomer($staff, $this->reviewPermissions());
+
+        // The Location this staff member was never granted: 404, real
+        // controller, real seo_module entitlement, no bypass.
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $hidden->uid), ['review_url' => 'https://g.page/r/hidden'])->assertNotFound();
+        $this->assertSame(0, \App\Models\SeoLocationReviewLink::query()->where('business_location_id', $hidden->id)->count());
+
+        // The Location they WERE granted: the real, Available controller
+        // lets the write through.
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $granted->uid), ['review_url' => 'https://g.page/r/granted'])->assertSessionHas('status', 'success');
+        $this->assertSame(1, \App\Models\SeoLocationReviewLink::query()->where('business_location_id', $granted->id)->count());
+
+        // The manage_seo capability, independent of both tenancy and
+        // entitlement: view_seo alone (no manage_seo) reads but cannot write.
+        $this->authenticateAsSeoCustomer($owner, ['view_seo', 'view_google_business_profile', 'website']);
+        $this->get($this->reviewsUrl($workspace, $business))->assertOk();
+        $this->put($this->reviewRoute('link.save', $workspace, $business, (string) $granted->uid), ['review_url' => 'https://g.page/r/blocked'])->assertUnauthorized();
     }
 
     public function test_the_production_controller_gates_on_seo_module_and_the_two_seo_capabilities(): void

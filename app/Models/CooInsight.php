@@ -27,6 +27,13 @@ class CooInsight extends Model
 
     public const SUBJECT_OPPORTUNITY = 'opportunity';
 
+    /**
+     * Contract 19 §5.1/§12 19.C — a MoveExplanation row whose selected move is
+     * a status-exception Attention item rather than an Opportunity. See
+     * NextBestMoveSubject for how subject_id is derived.
+     */
+    public const SUBJECT_NEXT_BEST_MOVE = 'next_best_move';
+
     protected $table = 'coo_insights';
 
     /**

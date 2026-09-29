@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Coo;
 
+use App\Enums\Coo\CooInsightKind;
 use App\Library\Coo\Insight\CooInsightFacts;
 use App\Library\Coo\Insight\CooInsightOutputValidator;
 use Tests\TestCase;
@@ -103,10 +104,29 @@ class CooInsightOutputValidatorTest extends TestCase
         ]));
     }
 
-    /** @param array<int, array<string, mixed>> $statements */
-    private function validate(array $statements): ?array
+    /**
+     * Contract 19 §12 19.C — a MoveExplanation statement must cite at least
+     * one valid fact_ref, of any class, including "unknown". Every other
+     * kind — including this same statement validated with no kind at all,
+     * exactly as PerformanceDiagnosis calls it — is completely unaffected:
+     * an "unknown" statement citing nothing is still accepted for it.
+     */
+    public function test_move_explanation_requires_at_least_one_fact_ref_even_for_unknown(): void
     {
-        return (new CooInsightOutputValidator())->validate(json_encode(['statements' => $statements]), $this->facts());
+        $ungrounded = [['class' => 'unknown', 'text' => 'These figures alone do not show what to do about it.', 'fact_refs' => []]];
+
+        $this->assertNotNull($this->validate($ungrounded), 'Unaffected: no kind at all still accepts it.');
+        $this->assertNotNull($this->validate($ungrounded, CooInsightKind::PerformanceDiagnosis), 'Unaffected: PerformanceDiagnosis still accepts it.');
+        $this->assertNull($this->validate($ungrounded, CooInsightKind::MoveExplanation), 'MoveExplanation rejects an unknown statement citing nothing.');
+
+        $grounded = [['class' => 'unknown', 'text' => 'Bookings are not tracked here.', 'fact_refs' => ['metric.new_contacts']]];
+        $this->assertNotNull($this->validate($grounded, CooInsightKind::MoveExplanation), 'A real, valid fact_ref satisfies the requirement.');
+    }
+
+    /** @param array<int, array<string, mixed>> $statements */
+    private function validate(array $statements, ?CooInsightKind $kind = null): ?array
+    {
+        return (new CooInsightOutputValidator())->validate(json_encode(['statements' => $statements]), $this->facts(), $kind);
     }
 
     private function facts(): CooInsightFacts

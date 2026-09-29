@@ -15,6 +15,9 @@ use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEntitlementRevokedException;
 use App\Library\Opportunity\Exceptions\OpportunityLocationAccessRevokedException;
 use App\Library\Opportunity\Exceptions\OpportunityPaidEffectEstimateMissingException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPayerChangedException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectPriceChangedException;
+use App\Library\Opportunity\Exceptions\OpportunityPaidEffectWalletInsufficientException;
 use App\Models\BusinessLocation;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
@@ -279,13 +282,31 @@ final class OpportunityAuthorityGuard
      *
      * The awaiting-approval Opportunity owns the approved customer action
      * ceiling. At confirmation there is no execution yet; its snapshot is
-     * compared with that approval record on each execution attempt. The
-     * estimator and live payer/wallet recheck belong to 19.E.
+     * compared with that approval record on each execution attempt.
+     *
+     * Implementation Contract 19 §12 19.E, R-3 — $liveEstimate is the SAME
+     * ActionCostEstimator recomputation OpportunityManager::
+     * beginExecutionAttempt() takes immediately before this call, passed in
+     * rather than resolved here so this guard stays a pure comparison over
+     * caller-supplied values (matching every other gate in this class). At
+     * approval time ($execution === null) it is not consulted at all — the
+     * snapshot completeness check above is the whole check. At EXECUTION
+     * time ($execution !== null) for a `paid_effect` action, a null
+     * $liveEstimate is refused outright: "no current estimate" means the
+     * meter, rate or pricing configuration that priced this action at
+     * approval time has since disappeared or become unresolvable, and this
+     * guard can no longer prove the action is still within what was
+     * approved. That is never reinterpreted as free or unchanged — it fails
+     * exactly like a missing approval-time estimate (§12 19.E). A non-null
+     * live estimate is checked with R-3's three live comparisons: same
+     * payer, no higher price/no retired price version, and the wallet still
+     * covers it.
      */
     public function assertPaidEffectIsCovered(
         Opportunity $lockedOpportunity,
         string $actionKey,
         ?OpportunityActionExecution $execution = null,
+        ?ActionCostEstimate $liveEstimate = null,
     ): void {
         if (! OpportunityActionRegistry::hasPaidEffect($actionKey)) {
             return;
@@ -317,6 +338,89 @@ final class OpportunityAuthorityGuard
                 $actionKey
             );
         }
+
+        if ($execution === null) {
+            // The approval-time call: the stored/about-to-be-stored snapshot
+            // check above is the whole check here. There is no prior
+            // execution attempt to recompute against yet.
+            return;
+        }
+
+        if ($liveEstimate === null) {
+            // R-3 — execution recomputes the estimate from LIVE state.
+            // "No current estimate" is not "no change": it means the meter,
+            // rate or pricing configuration that made this action priceable
+            // has disappeared or become unresolvable since approval, and
+            // this guard can no longer PROVE the paid action is still
+            // within what was approved. That is refused exactly like a
+            // missing approval-time estimate — never silently treated as
+            // free or unchanged.
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        $ceiling = ActionCostEstimate::fromSnapshot($approval);
+
+        if ($ceiling === null) {
+            // Unreachable while $complete required every field above, kept
+            // as a fail-closed guard against that coupling ever drifting.
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $liveEstimate->sameFundingAs($ceiling)) {
+            throw OpportunityPaidEffectPayerChangedException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if ($liveEstimate->priceVersion !== $ceiling->priceVersion || $liveEstimate->exceedsCeiling($ceiling)) {
+            throw OpportunityPaidEffectPriceChangedException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $liveEstimate->walletSufficient) {
+            throw OpportunityPaidEffectWalletInsufficientException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+    }
+
+    /**
+     * Implementation Contract 19 §5.3, §12 19.E — for a `paid_effect`
+     * action, compute and validate the estimate BEFORE any approval is
+     * granted: "an insufficient wallet is surfaced before approval, not
+     * discovered at execution." Returns the `action_cost_*` snapshot to
+     * persist alongside the awaiting_approval transition, or null when the
+     * action is not `paid_effect` at all — nothing to compute, and every
+     * registered action today, add_phone included, takes this branch.
+     *
+     * A separate, independently-callable method (rather than inlined in
+     * OpportunityManager::requestApproval()) for the same reason every
+     * other gate lives here: ONE implementation, and one a synthetic,
+     * unregistered action key can exercise directly in tests without first
+     * satisfying assertActionIsExecutable()'s registry-integrity checks,
+     * which require a genuinely registered, executor-supported action no
+     * test may fabricate (R-0).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function estimatePaidEffectForApproval(Opportunity $lockedOpportunity, string $actionKey, ActionCostEstimator $estimator): ?array
+    {
+        if (! OpportunityActionRegistry::hasPaidEffect($actionKey)) {
+            return null;
+        }
+
+        $business = $lockedOpportunity->business;
+
+        if ($business === null) {
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        $estimate = $estimator->estimateForAction($business, $actionKey);
+
+        if ($estimate === null) {
+            throw OpportunityPaidEffectEstimateMissingException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        if (! $estimate->walletSufficient) {
+            throw OpportunityPaidEffectWalletInsufficientException::forAction((int) $lockedOpportunity->id, $actionKey);
+        }
+
+        return $estimate->toSnapshot();
     }
 
     /** @return array<string, mixed> */

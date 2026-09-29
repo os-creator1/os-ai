@@ -507,10 +507,21 @@ class BlueprintInstallMissingCommandTest extends TestCase
     // §12.C — this sub-slice's own scope discipline
     // =====================================================================
 
-    public function test_this_sub_slice_ships_no_customer_surface_and_no_production_adapter(): void
+    /**
+     * This sub-slice (C) itself still ships no customer HTTP surface — that
+     * remains Sub-slice E. The "no production adapter" half of this test's
+     * original name described Sub-slice C's OWN deliverable at the time it
+     * landed; CrmPipelineComponentAdapter is Sub-slice D's, and D has since
+     * landed additively on top of C without changing anything C shipped
+     * (§11 rule 3), so the assertions below were updated the same way
+     * BlueprintComponentAdapterSeamTest's Sub-slice A boundary was: moved
+     * from "must not exist" to "exists, additively" when the owning
+     * sub-slice landed.
+     */
+    public function test_this_sub_slice_ships_no_customer_surface(): void
     {
         // The control: the same mechanism resolves a class this sub-slice DOES
-        // ship, so the three refusals below are genuine absence rather than a
+        // ship, so the refusal below is genuine absence rather than a
         // misspelled namespace that would make this test vacuous.
         $this->assertTrue(class_exists(\App\Console\Commands\InstallMissingBlueprintComponentsCommand::class));
 
@@ -518,22 +529,19 @@ class BlueprintInstallMissingCommandTest extends TestCase
             class_exists('App\Http\Controllers\Customer\Business\NicheBlueprintController'),
             'The customer HTTP surface is Sub-slice E, not this one.'
         );
-        $this->assertFalse(
-            class_exists('App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter'),
-            'The first real adapter is Sub-slice D, not this one.'
-        );
 
-        // Neither name appears anywhere under app/ either, so the absence is
-        // of the surface itself and not merely of one class file.
-        foreach (['NicheBlueprintController', 'CrmPipelineComponentAdapter'] as $symbol) {
-            $this->assertSame([], $this->appFilesMentioning($symbol));
-        }
+        // Sub-slice F landed the PLATFORM OWNER admin surface, so the bare
+        // class name 'NicheBlueprintController' now legitimately appears
+        // under app/ (App\Http\Controllers\Admin\NicheBlueprintController).
+        // The fully-qualified Customer namespace fragment is what must still
+        // be absent everywhere — that is Sub-slice E, still not built.
+        $this->assertSame([], $this->appFilesMentioning('Customer\\Business\\NicheBlueprintController'));
 
-        // A container booted with no test registration has NO adapter at all:
-        // §10's registry "ships empty, deliberately", so nothing in this slice
-        // can install anything into a real Business until Sub-slice D
-        // registers the first real adapter.
-        $this->assertSame([], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
+        // Sub-slice D's real adapter, registered additively in
+        // AppServiceProvider (§11 rule 3) — present, and still the only
+        // adapter, since no later sub-slice has registered another one.
+        $this->assertTrue(class_exists('App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter'));
+        $this->assertSame(['crm_pipeline'], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
     }
 
     // =====================================================================

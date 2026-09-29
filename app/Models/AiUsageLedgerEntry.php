@@ -32,6 +32,8 @@ class AiUsageLedgerEntry extends Model
         'uid',
         'workspace_id',
         'business_id',
+        'scope_type',
+        'scope_id',
         'category',
         'lane',
         'model_route',
@@ -56,6 +58,7 @@ class AiUsageLedgerEntry extends Model
     protected $casts = [
         'workspace_id' => 'integer',
         'business_id' => 'integer',
+        'scope_id' => 'integer',
         'category' => AiUsageCategory::class,
         'lane' => AiLane::class,
         'model_route' => AiModelRoute::class,

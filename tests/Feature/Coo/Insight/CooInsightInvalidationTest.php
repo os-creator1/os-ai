@@ -142,15 +142,23 @@ class CooInsightInvalidationTest extends TestCase
         Queue::fake();
         Artisan::call('coo:dispatch-insight-reviews');
         Queue::assertPushed(GenerateCooInsight::class, fn (GenerateCooInsight $job): bool => $job->businessId === (int) $active->id && $job->trigger === CooInsightTrigger::MultiSignalChange->value);
+        // Contract 19 §12 19.C — the daily sweep also asks whether the
+        // currently selected move can now be explained.
+        Queue::assertPushed(GenerateCooInsight::class, fn (GenerateCooInsight $job): bool => $job->businessId === (int) $active->id && $job->trigger === CooInsightTrigger::MoveExplanation->value);
         Queue::assertNotPushed(GenerateCooInsight::class, fn (GenerateCooInsight $job): bool => $job->businessId === (int) $inactive->id);
 
         Queue::fake();
         Artisan::call('coo:dispatch-insight-reviews', ['--monthly' => true]);
         Queue::assertPushed(GenerateCooInsight::class, fn (GenerateCooInsight $job): bool => $job->trigger === CooInsightTrigger::MonthlyReview->value);
+        // The monthly sweep is E-3 only: 19.C rides the DAILY sweep, not this one.
+        Queue::assertNotPushed(GenerateCooInsight::class, fn (GenerateCooInsight $job): bool => $job->trigger === CooInsightTrigger::MoveExplanation->value);
 
+        // Contract 19 §12 19.C — one active Business now costs two dispatches
+        // on the daily sweep (E-1 and MoveExplanation), so --limit=1 still
+        // bounds it to exactly one Business, at exactly two job pushes.
         Queue::fake();
         Artisan::call('coo:dispatch-insight-reviews', ['--limit' => 1, '--page' => 1]);
-        Queue::assertPushedTimes(GenerateCooInsight::class, 1);
+        Queue::assertPushedTimes(GenerateCooInsight::class, 2);
 
         Queue::fake();
         config(['services.openai.active' => false]);

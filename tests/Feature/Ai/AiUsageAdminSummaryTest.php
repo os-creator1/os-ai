@@ -231,6 +231,8 @@ class AiUsageAdminSummaryTest extends TestCase
             'uid' => (string) Str::uuid(),
             'workspace_id' => $workspace->id,
             'business_id' => $business?->id,
+            'scope_type' => 'workspace',
+            'scope_id' => $workspace->id,
             'category' => 'website_generation',
             'lane' => 'product',
             'model_route' => 'routine',

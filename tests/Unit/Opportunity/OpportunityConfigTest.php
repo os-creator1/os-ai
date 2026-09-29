@@ -74,6 +74,9 @@ class OpportunityConfigTest extends TestCase
             [
                 'enabled', 'queue', 'run_timeout_minutes', 'max_candidates_per_run', 'snooze_sweep_minutes',
                 'fingerprint_version', 'scoring_version',
+                // Implementation Contract 19 §5.4(3), §12 19.D/19.E — the
+                // approval lifecycle's own knobs.
+                'approval_window_minutes', 'action_cost_estimate_ttl_minutes',
                 // COO C-1 — the automatic trigger's own knobs. This list is a
                 // closed inventory: a slice that adds a key adds it here too.
                 'trigger_debounce_minutes', 'sweep_stale_hours', 'sweep_limit', 'sweep_page',
@@ -87,6 +90,8 @@ class OpportunityConfigTest extends TestCase
         $this->assertIsInt($config['snooze_sweep_minutes']);
         $this->assertIsInt($config['fingerprint_version']);
         $this->assertIsInt($config['scoring_version']);
+        $this->assertIsInt($config['approval_window_minutes']);
+        $this->assertIsInt($config['action_cost_estimate_ttl_minutes']);
         $this->assertIsInt($config['trigger_debounce_minutes']);
         $this->assertIsInt($config['sweep_stale_hours']);
         $this->assertIsInt($config['sweep_limit']);

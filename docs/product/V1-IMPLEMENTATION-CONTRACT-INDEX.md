@@ -23,10 +23,22 @@ wave plan. Does not authorize implementation.
 | 13 | [Enforce Workspace:Business 1:1](./implementation-contracts/13-ENFORCE-WORKSPACE-BUSINESS-ONE-TO-ONE.md) | 10, 12 (both, verified zero-violation) | `businesses` table DDL | SERIAL ONLY | Critical | S | independent product modules | 10 + 12 verified zero-violation | Contract 13 §18 |
 | 14 | [Dead-model cleanup](./implementation-contracts/14-DEAD-MODEL-CLEANUP.md) | 13 (hard), implicitly 1–12 | every symbol/table named in its own §3 | A or B | Low | M | independent product modules | 13 merged, full series complete | Contract 14 §18 |
 
-**Independent product-module slices** (Roadmap §"Slices 15–18") have no
-contract in this factory — they were explicitly out of the 14-priority
-scope this task requested, and remain available as filler for any lane
-with spare capacity in any wave, per the Roadmap's own note.
+**Independent product-module slices** (Roadmap §"Slices 15–18") were out of
+the 14-priority scope this index's own table tracks, and this note
+originally said none of them had a contract yet. That is no longer true —
+[Contract 15](./implementation-contracts/15-CALENDAR-BOOKING-AVAILABILITY.md),
+[16](./implementation-contracts/16-PACKAGES-PRODUCTS-CATALOG.md),
+[17](./implementation-contracts/17-PROPOSAL-CONTRACT-ESIGNATURE.md) and
+[18](./implementation-contracts/18-SEO-EXPANSION.md) each now exist as their
+own full implementation contract, none of them carries a dependency/wave
+relationship to the 14-contract factory this table's columns describe, so
+they are listed here by name rather than folded into the table above.
+**Contract 18 (SEO Expansion)** specifically: Sub-slices A, B, D, E, F and G
+are built and merged; Sub-slice H (this correction's own lane) performs the
+final availability/navigation integration for what is built; Sub-slice C
+(Search Console) remains unbuilt, gated on unresolved external Google
+verification (OD-4) and a data-use sign-off (OD-5) — see Contract 18 §19,
+§21.H for both requirements before C may start.
 
 ## Wave mapping (for reference, full detail in the Roadmap)
 

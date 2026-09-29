@@ -174,7 +174,7 @@ final class WebsiteDraftPageService
             $slug = null;
         }
 
-        $sections = $attributes['sections'] ?? ($existing->sections ?? []);
+        $sections = $this->normalizeSections($attributes['sections'] ?? ($existing->sections ?? []));
         $validAssetUids = WebsiteAsset::where('website_id', $website->id)->pluck('uid')->all();
         $validFormUids = WebsiteForm::where('website_id', $website->id)->pluck('uid')->all();
 
@@ -189,6 +189,52 @@ final class WebsiteDraftPageService
             'meta_description' => $attributes['meta_description'] ?? null,
             'noindex' => (bool) ($attributes['noindex'] ?? false),
         ];
+    }
+
+    /**
+     * A `hero` section's editor always renders Primary/Secondary button
+     * fields, so an owner who never touches them submits
+     * `primary_cta`/`secondary_cta` as a fully-blank {label: '', url: ''}
+     * object rather than omitting the key — indistinguishable, in
+     * intent, from never having a button at all. WebsiteSectionValidator
+     * correctly requires both `label` and `url` once that key is
+     * genuinely present (a half-filled button is a real mistake worth
+     * rejecting), so a merely-untouched button must never reach it as
+     * "present" in the first place. Every other section type is
+     * returned unchanged.
+     *
+     * @param  array  $sections  the raw, still-unvalidated sections array
+     * @return array the same array, with any hero section's fully-blank
+     *               primary_cta/secondary_cta removed
+     */
+    private function normalizeSections(array $sections): array
+    {
+        foreach ($sections as $index => $section) {
+            if (($section['type'] ?? null) !== 'hero' || ! is_array($section['data'] ?? null)) {
+                continue;
+            }
+
+            foreach (['primary_cta', 'secondary_cta'] as $ctaKey) {
+                $cta = $section['data'][$ctaKey] ?? null;
+
+                if (is_array($cta) && self::isBlankCtaValue($cta['label'] ?? null) && self::isBlankCtaValue($cta['url'] ?? null)) {
+                    unset($sections[$index]['data'][$ctaKey]);
+                }
+            }
+        }
+
+        return $sections;
+    }
+
+    /**
+     * Matches the `required_with` rule's own notion of blank (null, or a
+     * string that trims to empty) rather than PHP's `empty()`, which also
+     * treats the legitimate value "0" as blank and would otherwise let a
+     * half-filled `label: "0"` CTA disappear instead of failing validation.
+     */
+    private static function isBlankCtaValue(mixed $value): bool
+    {
+        return $value === null || (is_string($value) && trim($value) === '');
     }
 
     private function clearExistingHomepage(Website $website): void
