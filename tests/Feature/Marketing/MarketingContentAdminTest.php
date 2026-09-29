@@ -398,4 +398,43 @@ class MarketingContentAdminTest extends TestCase
         $this->delete(route('admin.marketing-content.testimonials.destroy', ['testimonial' => $missingId]))
             ->assertNotFound();
     }
+
+    /**
+     * Review correction round 2 (P2): clearing the "Order" field submits an
+     * empty string, which ConvertEmptyStringsToNull turns into null before
+     * validation (a `nullable` rule accepts it) — persisting that null into
+     * the non-nullable `position` column used to fail as a database error.
+     * The controller now keeps the existing position instead.
+     */
+    public function test_clearing_the_order_field_on_update_keeps_the_existing_position(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Q?', 'answer' => 'A.', 'position' => 5, 'is_visible' => true]);
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            'question' => 'Updated question?',
+            'answer' => 'Updated answer.',
+            'position' => '',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faq->id, 'position' => 5]);
+
+        $testimonial = MarketingTestimonial::query()->create([
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 7,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => '',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseHas('marketing_testimonials', ['id' => $testimonial->id, 'position' => 7]);
+    }
 }

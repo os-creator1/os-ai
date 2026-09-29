@@ -89,6 +89,13 @@ class MarketingContentController extends AdminBaseController
         $this->faqs->update($faq, [
             ...$request->validated(),
             'is_visible' => $request->boolean('is_visible'),
+            // Review correction: an operator clearing the "Order" field
+            // submits an empty string, which ConvertEmptyStringsToNull
+            // turns into null before the (nullable) validation rule ever
+            // sees it — a null would otherwise reach this non-nullable
+            // column and fail as a database error rather than a friendly
+            // one. Keep the current position instead of persisting null.
+            'position' => $request->validated('position') ?? $faq->position,
         ]);
 
         return redirect()
@@ -155,6 +162,10 @@ class MarketingContentController extends AdminBaseController
             ...$request->safe()->except('poster_image'),
             'poster_image_path' => $newPosterPath,
             'is_visible' => $request->boolean('is_visible'),
+            // Review correction: see the identical note in updateFaq() —
+            // a cleared "Order" field must not persist null into this
+            // non-nullable column.
+            'position' => $request->validated('position') ?? $testimonial->position,
         ]);
 
         // Content-hashed filenames mean re-uploading the same photo, or two
