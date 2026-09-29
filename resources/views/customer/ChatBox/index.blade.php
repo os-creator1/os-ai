@@ -11,6 +11,15 @@
 
 @section('page-style')
     <!-- Page css files -->
+    {{-- app-chat.css / app-chat-list.css still supply this page's off-canvas
+         sidebar geometry (mobile slide-in transforms, fixed header/composer
+         heights, PerfectScrollbar sizing) that public/js/scripts/pages/chat.js
+         reads directly. Removing them would mean re-deriving that geometry
+         from scratch with real mobile-regression risk, so this page keeps
+         loading them for LAYOUT only — every visual choice they used to make
+         (color, gradient, shadow, avatar, canvas, bubble, empty state) is
+         overridden below with Business OS tokens, so none of their old skin
+         survives on screen. --}}
     <link rel="stylesheet" href="{{ asset(mix('css/base/pages/app-chat.css')) }}">
     <link rel="stylesheet" href="{{ asset(mix('css/base/pages/app-chat-list.css')) }}">
     <link rel="stylesheet" href="{{ asset(mix('vendors/css/extensions/sweetalert2.min.css')) }}">
@@ -274,6 +283,251 @@
             background-image: none;
         }
 
+        /*
+         * Modern Business OS pass. The two rules above already stopped the
+         * Vuexy wallpaper; everything below stops the rest of its skin —
+         * gradients, drop shadows, hardcoded whites — while leaving every
+         * geometry rule those two stylesheets still supply (position,
+         * transform, flex, the fixed header/composer heights chat.js reads)
+         * completely alone.
+         */
+
+        .conversations-page-header {
+            margin-bottom: var(--space-4);
+        }
+
+        .conversations-page-header p {
+            color: var(--color-text-muted);
+        }
+
+        .chat-application .content-area-wrapper {
+            box-shadow: none;
+        }
+
+        /* Sidebar filter row: one compact segmented control, not four
+           loose, full-height buttons. */
+        .sidebar-content .tab-group.btn-group {
+            background-color: var(--color-surface-secondary);
+            border-radius: var(--radius-md);
+            display: flex;
+            gap: 0;
+            padding: var(--space-1);
+            width: 100%;
+        }
+
+        .sidebar-content .tab-group.btn-group .tab-button {
+            border: 0 !important;
+            border-radius: var(--radius-sm) !important;
+            box-shadow: none !important;
+            flex: 1 1 auto;
+            font-size: var(--type-caption-size);
+            padding: var(--space-1) var(--space-2) !important;
+        }
+
+        .sidebar-content .tab-group.btn-group .tab-button.btn-outline-primary {
+            background-color: transparent !important;
+            color: var(--color-text-secondary) !important;
+        }
+
+        .sidebar-content .tab-group.btn-group .tab-button.btn-outline-primary:hover {
+            background-color: var(--color-surface) !important;
+            color: var(--color-text-primary) !important;
+        }
+
+        .chat-application .sidebar-content .chat-fixed-search {
+            align-items: center;
+            height: auto;
+            padding: var(--space-3) var(--space-4);
+        }
+
+        .chat-application .sidebar-content .chat-list-title {
+            color: var(--color-text-muted);
+            font-size: var(--type-caption-size);
+            letter-spacing: 0.04em;
+            margin: var(--space-4) var(--space-4) var(--space-2);
+            text-transform: uppercase;
+        }
+
+        /* Conversation rows: quiet hover, a tokenized selected state
+           instead of a purple gradient, and room for an initials avatar. */
+        .chat-application .sidebar-content .chat-user-list-wrapper li {
+            align-items: center;
+            border-radius: var(--radius-md);
+            margin: 0 var(--space-2);
+            padding: var(--space-3);
+            transition: background-color 120ms ease;
+            width: calc(100% - (var(--space-2) * 2));
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li:hover {
+            background: var(--color-row-hover) !important;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h1,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h2,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h3,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h4,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h5,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active h6,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active .card-text,
+        .chat-application .sidebar-content .chat-user-list-wrapper li.active .chat-time {
+            background: var(--color-primary-soft-bg) !important;
+            color: var(--color-text-primary) !important;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li .chat-info {
+            margin-top: 0;
+            min-width: 0;
+            padding: 0 var(--space-3);
+            width: auto !important;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper li.pinned-row {
+            border-left: 3px solid var(--color-primary);
+            padding-left: calc(var(--space-3) - 3px);
+        }
+
+        /* flex-shrink: 0 on both non-text columns is the other half of the
+           text-truncate fix above — the meta column (time + unread badge)
+           and the avatar must never be the ones that give up their width;
+           the name/preview text is what's meant to truncate. */
+        .chat-application .sidebar-content .chat-user-list-wrapper .chat-meta {
+            align-items: flex-end;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            gap: var(--space-1);
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper .chat-time {
+            float: none !important;
+            margin-bottom: 0 !important;
+            white-space: nowrap;
+        }
+
+        .chat-application .sidebar-content .chat-user-list-wrapper .notification_count {
+            float: none !important;
+            font-size: 0.6875rem;
+        }
+
+        .conversation-row-avatar {
+            align-items: center;
+            display: inline-flex;
+            flex-shrink: 0;
+            font-size: var(--type-label-size);
+            font-weight: var(--type-label-weight);
+            height: 40px !important;
+            justify-content: center;
+            width: 40px !important;
+        }
+
+        /* The deliberate empty-selection state, replacing the old floating
+           icon-in-a-shadow-chip look. */
+        .start-chat-area {
+            margin: 0 auto;
+            max-width: 320px;
+            padding: var(--space-6);
+            text-align: center;
+        }
+
+        .start-chat-area .start-chat-icon {
+            align-items: center;
+            background: var(--color-primary-soft-bg) !important;
+            box-shadow: none !important;
+            color: var(--color-primary);
+            display: inline-flex;
+            height: 72px;
+            justify-content: center;
+            padding: 0 !important;
+            width: 72px;
+        }
+
+        .start-chat-area .start-chat-icon svg {
+            height: 28px !important;
+            width: 28px !important;
+        }
+
+        .start-chat-area .start-chat-text {
+            background: none !important;
+            box-shadow: none !important;
+            color: var(--color-text-primary);
+            font-size: var(--type-section-heading-size);
+            font-weight: var(--type-section-heading-weight);
+            padding: 0 !important;
+        }
+
+        .start-chat-area .start-chat-description {
+            color: var(--color-text-muted);
+            font-size: var(--type-body-size);
+            margin: var(--space-2) 0 var(--space-4);
+        }
+
+        .start-chat-area .btn {
+            margin-top: var(--space-2);
+        }
+
+        /* Chat header: a quiet surface with a hairline border, not a
+           Vuexy-white bar with its own drop shadow. */
+        .chat-application .chat-app-window .active-chat .chat-header {
+            background-color: var(--color-surface);
+            border-bottom: 1px solid var(--color-border-subtle);
+            padding: 0 var(--space-4);
+        }
+
+        .chat-application .chat-app-window .active-chat .chat-header .cursor-pointer {
+            border-radius: var(--radius-sm);
+            padding: var(--space-1);
+            transition: background-color 120ms ease;
+        }
+
+        .chat-application .chat-app-window .active-chat .chat-header .cursor-pointer:hover {
+            background-color: var(--color-row-hover);
+        }
+
+        /* Composer: wraps instead of overflowing on narrow widths, and the
+           template picker gets a fixed lane instead of dominating the row. */
+        .chat-application .chat-app-window .chat-app-form {
+            flex-wrap: wrap;
+            gap: var(--space-2);
+            height: auto;
+            min-height: 65px;
+            padding: var(--space-3) var(--space-4);
+        }
+
+        .chat-application .chat-app-window .chat-app-form .form-send-message {
+            flex: 1 1 220px;
+            margin: 0 !important;
+            min-width: 0;
+        }
+
+        .composer-template-select {
+            flex: 0 0 auto;
+            width: 160px;
+        }
+
+        @media (max-width: 575.98px) {
+            .composer-template-select {
+                width: 100%;
+            }
+        }
+
+        /* Message bubbles: the design system's own chat tokens, not a
+           purple gradient with a drop shadow. */
+        .chat-application .chat-app-window .chats .chat-body .chat-content {
+            background: var(--color-chat-bubble-out);
+            box-shadow: none;
+            color: var(--color-button-text);
+            margin: 0 var(--space-4) var(--space-3) 0;
+            max-width: min(560px, 78%);
+        }
+
+        .chat-application .chat-app-window .chats .chat-left .chat-body .chat-content {
+            background: var(--color-chat-bubble-in);
+            color: var(--color-text-primary);
+            margin: 0 0 var(--space-3) var(--space-4);
+        }
+
     </style>
 
 @endsection
@@ -284,6 +538,10 @@
 
 
 @section('content')
+    <div class="conversations-page-header">
+        <h1 class="h3 mb-0">{{ __('locale.menu.Conversations') }}</h1>
+        <p class="text-caption mb-0">Manage customer conversations and follow up from one place.</p>
+    </div>
     <div class="body-content-overlay"></div>
     <!-- Main chat area -->
     <section class="chat-app-window">
@@ -296,9 +554,11 @@
                 {{ __('locale.labels.new_conversion') }}
             </h4>
             <h4 class="sidebar-toggle start-chat-text d-none d-md-block">
-                <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
-                   class="text-dark">{{ __('locale.labels.new_conversion') }}</a>
+                No conversation selected
             </h4>
+            <p class="start-chat-description d-none d-md-block">Choose a conversation on the left, or start a new one.</p>
+            <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
+               class="btn btn-primary btn-sm d-none d-md-inline-flex">{{ __('locale.labels.new_conversion') }}</a>
         </div>
         <!--/ To load Conversation -->
 
@@ -365,7 +625,7 @@
                         </div>
 
 
-                        <div class=" me-1">
+                        <div class="composer-template-select me-1">
                             <select class="form-select select2" id="sms_template" data-placeholder="Select Template">
                                 <option value="0">Select Template</option>
                                 @foreach($templates as $template)
