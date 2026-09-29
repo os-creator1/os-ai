@@ -197,8 +197,40 @@ class ExternalCalendarNotificationRegistrationTest extends TestCase
 
         $this->registrar()->ensureRegistered($connection);
 
+        // Google mechanically has no in-place renewal — the registrar tries
+        // renewNotifications() FIRST (proving it was attempted at all), gets
+        // registrationNotFound(), and falls back to a fresh
+        // registerNotifications() exactly once.
+        $this->assertSame(1, $this->fakeGoogle->renewCalls);
+        $this->assertSame('old-resource', $this->fakeGoogle->renewRequests[0]['registrationId']);
         $this->assertSame(1, $this->fakeGoogle->registerCalls);
         $this->assertNotSame('old-resource', $connection->fresh()->notification_registration_id);
+
+        // The now-superseded old channel is torn down best-effort, AFTER
+        // the new registration is already the persisted/authoritative one.
+        $this->assertSame(1, $this->fakeGoogle->unregisterCalls);
+        $this->assertSame('old-resource', $this->fakeGoogle->unregisterRequests[0]['registrationId']);
+        $this->assertSame('old-channel', $this->fakeGoogle->unregisterRequests[0]['channelId']);
+    }
+
+    public function test_a_google_replacement_channel_survives_a_failed_teardown_of_the_old_one(): void
+    {
+        $connection = $this->createActiveConnection($this->staff, ExternalCalendarProvider::Google, [
+            'notification_channel_id' => 'old-channel',
+            'notification_registration_id' => 'old-resource',
+            'notification_expires_at' => now()->addHours(2),
+        ]);
+        $this->fakeGoogle->throwOnUnregister = ExternalCalendarProviderException::providerUnavailable();
+
+        // Must not throw — a failed best-effort teardown of the old channel
+        // must never invalidate the already-persisted new registration.
+        $this->registrar()->ensureRegistered($connection);
+
+        $fresh = $connection->fresh();
+        $this->assertNotSame('old-resource', $fresh->notification_registration_id);
+        $this->assertNotNull($fresh->notification_registration_id);
+        $this->assertTrue($fresh->notification_expires_at->isFuture());
+        $this->assertSame(1, $this->fakeGoogle->unregisterCalls);
     }
 
     public function test_a_healthy_future_dated_registration_is_not_churned_needlessly(): void
@@ -211,8 +243,55 @@ class ExternalCalendarNotificationRegistrationTest extends TestCase
 
         $this->registrar()->ensureRegistered($connection);
 
+        // needsRegistration() short-circuits before ANY provider call —
+        // not renewed, not re-registered.
+        $this->assertSame(0, $this->fakeGoogle->renewCalls);
         $this->assertSame(0, $this->fakeGoogle->registerCalls);
         $this->assertSame('healthy-resource', $connection->fresh()->notification_registration_id);
+    }
+
+    public function test_an_outlook_expiring_subscription_is_renewed_in_place_never_reregistered(): void
+    {
+        $connection = $this->createActiveConnection($this->staff, ExternalCalendarProvider::Outlook, [
+            'notification_registration_id' => 'sub-old',
+            'notification_expires_at' => now()->addHours(2), // inside the default 24h renewal lead
+        ]);
+        $newExpiry = now()->addDays(7)->startOfSecond(); // DB datetime columns drop sub-second precision
+        $this->fakeOutlook->renewalResult = new ExternalCalendarNotificationRegistration(
+            registrationId: 'sub-old',
+            channelId: null,
+            expiresAt: $newExpiry,
+        );
+
+        $this->registrar()->ensureRegistered($connection);
+
+        $this->assertSame(1, $this->fakeOutlook->renewCalls);
+        $this->assertSame('sub-old', $this->fakeOutlook->renewRequests[0]['registrationId']);
+        $this->assertSame(0, $this->fakeOutlook->registerCalls, 'a healthy Microsoft subscription must be PATCHed, never re-created');
+        $this->assertSame(0, $this->fakeOutlook->unregisterCalls);
+
+        $fresh = $connection->fresh();
+        $this->assertSame('sub-old', $fresh->notification_registration_id);
+        $this->assertTrue($fresh->notification_expires_at->equalTo($newExpiry));
+    }
+
+    public function test_an_outlook_subscription_that_has_disappeared_falls_back_to_a_fresh_registration_exactly_once(): void
+    {
+        $connection = $this->createActiveConnection($this->staff, ExternalCalendarProvider::Outlook, [
+            'notification_registration_id' => 'sub-old',
+            'notification_expires_at' => now()->addHours(2),
+        ]);
+        $this->fakeOutlook->throwOnRenew = ExternalCalendarProviderException::registrationNotFound();
+
+        $this->registrar()->ensureRegistered($connection);
+
+        $this->assertSame(1, $this->fakeOutlook->renewCalls);
+        $this->assertSame(1, $this->fakeOutlook->registerCalls, 'exactly one fallback registration — never retried');
+
+        $fresh = $connection->fresh();
+        $this->assertNotSame('sub-old', $fresh->notification_registration_id);
+        $this->assertNotNull($fresh->notification_registration_id);
+        $this->assertTrue($fresh->notification_expires_at->isFuture());
     }
 
     public function test_renewal_provider_failure_keeps_polling_and_internal_bookings_functional(): void

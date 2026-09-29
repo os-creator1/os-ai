@@ -5,6 +5,7 @@ namespace Tests\Feature\Calendar\ExternalCalendar;
 use App\DTO\Calendar\ExternalCalendarBusyEvent;
 use App\DTO\Calendar\ExternalCalendarSyncPage;
 use App\Enums\Calendar\ExternalCalendarProvider;
+use App\Library\Calendar\ExternalCalendar\ExternalCalendarNotificationRegistrar;
 use App\Library\Calendar\ExternalCalendar\ExternalCalendarWebhookToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -246,6 +247,48 @@ class ExternalCalendarWebhookTest extends TestCase
 
         $response->assertOk();
         $this->assertSame(0, $this->fakeGoogle->fullBusyCalls + $this->fakeGoogle->incrementalBusyCalls);
+    }
+
+    public function test_google_a_replaced_channel_rejects_the_old_identity_but_accepts_the_new_one(): void
+    {
+        $connection = $this->registeredGoogleConnection();
+        $oldChannelId = $connection->notification_channel_id;
+        $oldResourceId = $connection->notification_registration_id;
+        $urlToken = ExternalCalendarWebhookToken::forConnection($connection->uid, 'google');
+
+        // Force a renewal-driven replacement — Google mechanically has no
+        // in-place renewal, so ensureRegistered() always creates a NEW
+        // channel with a NEW identity here and best-effort tears down the
+        // old one, exactly as ExternalCalendarNotificationRegistrar's own
+        // renew-then-fallback path does on a real expiring channel.
+        app(ExternalCalendarNotificationRegistrar::class)->ensureRegistered($connection, force: true);
+        $fresh = $connection->fresh();
+
+        $this->assertNotSame($oldChannelId, $fresh->notification_channel_id);
+        $this->assertNotSame($oldResourceId, $fresh->notification_registration_id);
+        $this->assertSame(1, $this->fakeGoogle->unregisterCalls);
+
+        // The OLD channel/resource identity is no longer the stored
+        // authoritative registration and must be rejected indistinguishably
+        // from any other forged proof, even though the URL token (keyed
+        // only to the connection, not the channel identity) is still valid.
+        $oldResponse = $this->postJson(
+            route('public.calendar.webhooks.google', ['connectionUid' => $connection->uid, 'token' => $urlToken]),
+            [],
+            ['X-Goog-Channel-ID' => $oldChannelId, 'X-Goog-Resource-ID' => $oldResourceId, 'X-Goog-Channel-Token' => $urlToken, 'X-Goog-Resource-State' => 'exists']
+        );
+        $oldResponse->assertNotFound();
+        $this->assertSame(0, $this->fakeGoogle->fullBusyCalls + $this->fakeGoogle->incrementalBusyCalls);
+
+        // The NEW identity is accepted and triggers a pull.
+        $this->fakeGoogle->fullBusyQueue[] = new ExternalCalendarSyncPage([], 'cursor', true);
+        $newResponse = $this->postJson(
+            route('public.calendar.webhooks.google', ['connectionUid' => $connection->uid, 'token' => $urlToken]),
+            [],
+            $this->googleHeaders($fresh)
+        );
+        $newResponse->assertOk();
+        $this->assertSame(1, $this->fakeGoogle->fullBusyCalls + $this->fakeGoogle->incrementalBusyCalls);
     }
 
     // -----------------------------------------------------------------

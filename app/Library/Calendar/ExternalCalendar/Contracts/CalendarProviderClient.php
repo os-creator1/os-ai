@@ -72,4 +72,25 @@ interface CalendarProviderClient
      * @throws ExternalCalendarProviderException
      */
     public function unregisterNotifications(string $accessToken, string $registrationId, ?string $channelId): void;
+
+    /**
+     * Review correction — an IN-PLACE renewal of an existing registration,
+     * extending its expiration without changing its identity (Microsoft
+     * Graph `PATCH /subscriptions/{id}`). Google Calendar push channels
+     * mechanically have no such operation; that implementation throws
+     * ExternalCalendarProviderException::registrationNotFound() immediately,
+     * without any HTTP call, so the two providers share one caller-side
+     * fallback path (ExternalCalendarNotificationRegistrar) rather than the
+     * caller branching per provider.
+     *
+     * MUST throw ExternalCalendarProviderException::registrationNotFound()
+     * — never any other classification — whenever the provider reports the
+     * specific registration id as gone (Microsoft 404) or the operation is
+     * mechanically unsupported (Google, always). The caller's only correct
+     * response to that classification is a fresh registerNotifications()
+     * call; it must never retry the same renewal.
+     *
+     * @throws ExternalCalendarProviderException
+     */
+    public function renewNotifications(string $accessToken, string $registrationId, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration;
 }

@@ -2,6 +2,7 @@
 
 namespace App\Library\Calendar\ExternalCalendar;
 
+use App\DTO\Calendar\ExternalCalendarNotificationRegistration;
 use App\Enums\Calendar\ExternalCalendarConnectionState;
 use App\Enums\Calendar\ExternalCalendarProvider;
 use App\Exceptions\Calendar\ExternalCalendarProviderException;
@@ -40,11 +41,24 @@ final class ExternalCalendarNotificationRegistrar
     }
 
     /**
-     * Registers a fresh channel/subscription when none exists, or when the
-     * existing one is missing/expiring within the configured lead time.
+     * Renews or registers a channel/subscription when none exists, or when
+     * the existing one is missing/expiring within the configured lead time.
      * $force skips that check (used right after a connection activates, so
      * push notifications start as close to immediately as possible rather
      * than waiting for the next sweep).
+     *
+     * Review correction — provider-specific renewal semantics. When a live
+     * registration already exists, an IN-PLACE renewal is attempted FIRST
+     * (Microsoft Graph `PATCH /subscriptions/{id}`; Google has none, so its
+     * client throws registrationNotFound() immediately, before any HTTP
+     * call). Only when that renewal reports registrationNotFound() — the
+     * one classification meaning "this exact registration cannot be
+     * extended, never any other failure" — does this fall back to a fresh
+     * registerNotifications() call, exactly once, followed by a best-effort
+     * teardown of the now-superseded old registration. Any OTHER renewal
+     * failure is recorded as an ordinary sync failure and leaves the
+     * existing (still provider-valid) registration in place — it is never
+     * blindly replaced.
      */
     public function ensureRegistered(ExternalCalendarConnection $connection, bool $force = false): void
     {
@@ -68,19 +82,65 @@ final class ExternalCalendarNotificationRegistrar
             return;
         }
 
-        $proofToken = ExternalCalendarWebhookToken::forConnection((string) $connection->uid, $provider->value);
-        $notificationUrl = $this->notificationUrlFor($provider, (string) $connection->uid, $proofToken);
+        $client = $this->connections->clientFor($provider);
         $requestedExpiry = now()->addMinutes((int) config("calendar_external.notifications.{$this->configKey($provider)}_expiration_minutes"));
 
+        $existingRegistrationId = $connection->notification_registration_id;
+
+        if (! empty($existingRegistrationId)) {
+            try {
+                $renewed = $client->renewNotifications($accessToken, $existingRegistrationId, $requestedExpiry);
+                $this->persist($connection, $renewed);
+
+                return;
+            } catch (ExternalCalendarProviderException $exception) {
+                if ($exception->classification !== ExternalCalendarProviderException::FAILURE_REGISTRATION_NOT_FOUND) {
+                    // A real provider failure (rate limited, unavailable,
+                    // timeout, ...) — the EXISTING registration is still
+                    // provider-valid as far as we know, so it is left
+                    // completely untouched. Polling remains the fallback.
+                    $this->connections->markFailure($connection, $exception);
+
+                    return;
+                }
+
+                // Falls through — this specific registration cannot be
+                // renewed (Google: mechanically, always; Microsoft: this
+                // one id is gone). Registered fresh below, exactly once.
+            }
+        }
+
+        $proofToken = ExternalCalendarWebhookToken::forConnection((string) $connection->uid, $provider->value);
+        $notificationUrl = $this->notificationUrlFor($provider, (string) $connection->uid, $proofToken);
+
         try {
-            $registration = $this->connections->clientFor($provider)
-                ->registerNotifications($accessToken, $notificationUrl, $proofToken, $requestedExpiry);
+            $registration = $client->registerNotifications($accessToken, $notificationUrl, $proofToken, $requestedExpiry);
         } catch (ExternalCalendarProviderException $exception) {
             $this->connections->markFailure($connection, $exception);
 
             return;
         }
 
+        $oldChannelId = $connection->notification_channel_id;
+        $this->persist($connection, $registration);
+
+        // Best-effort only, and only AFTER the new registration is already
+        // the persisted, authoritative one — see class docblock. A stale
+        // old channel/subscription that somehow still delivers a
+        // notification after this point fails ExternalCalendarWebhookController's
+        // proof check regardless, because that check compares against the
+        // (now new) persisted identity, not the provider's own bookkeeping.
+        if (! empty($existingRegistrationId) && $existingRegistrationId !== $registration->registrationId) {
+            try {
+                $client->unregisterNotifications($accessToken, $existingRegistrationId, $oldChannelId);
+            } catch (Throwable) {
+                // Genuinely best-effort — see class docblock.
+            }
+        }
+    }
+
+    private function persist(ExternalCalendarConnection $connection, ExternalCalendarNotificationRegistration $registration): void
+    {
         DB::table('external_calendar_connections')
             ->where('id', $connection->id)
             ->update([

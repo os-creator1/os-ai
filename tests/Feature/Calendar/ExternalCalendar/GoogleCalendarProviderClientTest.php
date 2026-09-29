@@ -44,11 +44,17 @@ class GoogleCalendarProviderClientTest extends TestCase
         $query1 = $this->queryFrom($recorded[0][0]->url());
         $this->assertSame('sync-old', $query1['syncToken'] ?? null);
         $this->assertSame('true', $query1['singleEvents'] ?? null);
+        $this->assertSame('true', $query1['showDeleted'] ?? null, 'a syncToken read is exactly where Google reports deletions');
+        $this->assertSame('250', $query1['maxResults'] ?? null);
+        $this->assertArrayNotHasKey('timeMin', $query1, 'timeMin/timeMax are never allowed alongside syncToken');
+        $this->assertArrayNotHasKey('timeMax', $query1);
         $this->assertArrayNotHasKey('pageToken', $query1);
 
         $query2 = $this->queryFrom($recorded[1][0]->url());
         $this->assertSame('sync-old', $query2['syncToken'] ?? null, 'page 2 must still carry the original syncToken');
         $this->assertSame('true', $query2['singleEvents'] ?? null, 'page 2 must still carry singleEvents');
+        $this->assertSame('true', $query2['showDeleted'] ?? null, 'page 2 must still carry showDeleted');
+        $this->assertSame('250', $query2['maxResults'] ?? null, 'page 2 must still carry maxResults');
         $this->assertSame('page-2', $query2['pageToken'] ?? null);
 
         $this->assertCount(2, $page->events);
@@ -72,6 +78,8 @@ class GoogleCalendarProviderClientTest extends TestCase
         Http::assertSentCount(1);
         $query = $this->queryFrom(Http::recorded()[0][0]->url());
         $this->assertSame('sync-old', $query['syncToken'] ?? null);
+        $this->assertSame('true', $query['showDeleted'] ?? null);
+        $this->assertSame('250', $query['maxResults'] ?? null);
         $this->assertArrayNotHasKey('pageToken', $query);
         $this->assertSame('sync-only', $page->nextCursor);
     }

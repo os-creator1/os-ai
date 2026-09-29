@@ -159,7 +159,21 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
         // pageToken-only request. An earlier version of this method
         // replaced the query wholesale on page 2, silently dropping
         // syncToken/singleEvents from every page after the first.
-        $baseQuery = ['syncToken' => $cursor, 'singleEvents' => 'true'];
+        //
+        // Review correction — query hardening. `maxResults` is now explicit
+        // and stable across every page (was previously only set on the
+        // full-sync query). `showDeleted` is explicit and MUST stay true: a
+        // syncToken response is exactly where Google reports deletions
+        // (§5.6 rule 1's tombstones), so setting it false here would
+        // silently stop discovering them. `timeMin`/`timeMax` are
+        // DELIBERATELY never included alongside `syncToken` — Google's API
+        // explicitly rejects that combination.
+        $baseQuery = [
+            'syncToken' => $cursor,
+            'singleEvents' => 'true',
+            'showDeleted' => 'true',
+            'maxResults' => 250,
+        ];
 
         do {
             $query = $baseQuery;
@@ -223,6 +237,22 @@ final class GoogleCalendarProviderClient implements CalendarProviderClient
             : $requestedExpiry->clone()->utc();
 
         return new ExternalCalendarNotificationRegistration($resourceId, $channelId, $grantedExpiration);
+    }
+
+    /**
+     * https://developers.google.com/calendar/api/guides/push — Google
+     * Calendar push channels have NO in-place renewal operation of any
+     * kind: the only way to extend coverage is a brand new `events.watch`
+     * call with a fresh, unique channel id (registerNotifications()).
+     * Always throws registrationNotFound() immediately, before any HTTP
+     * call — never attempts to PATCH a watch channel, because no such
+     * endpoint exists.
+     *
+     * @throws ExternalCalendarProviderException always, with classification registrationNotFound()
+     */
+    public function renewNotifications(string $accessToken, string $registrationId, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        throw ExternalCalendarProviderException::registrationNotFound();
     }
 
     /**

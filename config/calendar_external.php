@@ -59,6 +59,21 @@ return [
         // member's attention. Not itself a state transition (no schema for
         // one exists) — surfaced to the connection settings view only.
         'stale_after_consecutive_failures' => env('CALENDAR_EXTERNAL_STALE_AFTER_FAILURES', 5),
+
+        // Review correction — the rolling-window interval. A provider's
+        // incremental/delta cursor never widens the ORIGINAL bounded window
+        // a full sync established (Microsoft's own documentation ties a
+        // delta token to the calendarView start/end it was created with;
+        // Google's syncToken carries incremental state, not a wider
+        // timeMin/timeMax). Without a periodic full re-read, the local busy
+        // cache would silently stop covering the product's configured
+        // "next full_sync_window_days" horizon as time passes, even while
+        // every incremental sync keeps succeeding. Bounded well below
+        // full_sync_window_days so the cache never drifts far behind the
+        // configured horizon, and well above the 15-minute incremental
+        // cadence so this never becomes the dominant source of provider
+        // request volume.
+        'full_resync_interval_hours' => env('CALENDAR_EXTERNAL_FULL_RESYNC_INTERVAL_HOURS', 24),
     ],
 
     // Review correction, §11/§12.F — provider push-notification channel

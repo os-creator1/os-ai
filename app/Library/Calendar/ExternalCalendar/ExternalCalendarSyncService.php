@@ -63,7 +63,7 @@ class ExternalCalendarSyncService
         }
 
         $client = $this->connections->clientFor($provider);
-        $useIncremental = ! $forceFull && ! empty($connection->sync_cursor);
+        $useIncremental = ! $forceFull && ! $this->needsFullResync($connection);
 
         try {
             $page = $useIncremental
@@ -84,6 +84,27 @@ class ExternalCalendarSyncService
         }
 
         $this->applyPage($connection, $page, isFullSync: ! $useIncremental);
+    }
+
+    /**
+     * Review correction, §5.6/§11 — the rolling-window decision. A cursor
+     * existing is NOT by itself proof the local cache still covers the
+     * product's configured future horizon: neither provider's incremental
+     * mechanism widens the bounded window its OWN originating full read
+     * established (see config/calendar_external.php's own note). An
+     * otherwise-healthy incremental cursor is therefore still routed to a
+     * full read once the last full read is missing or old enough that the
+     * cached window has meaningfully drifted behind "now".
+     */
+    private function needsFullResync(ExternalCalendarConnection $connection): bool
+    {
+        if (empty($connection->sync_cursor) || $connection->last_full_synced_at === null) {
+            return true;
+        }
+
+        $intervalHours = (int) config('calendar_external.sync.full_resync_interval_hours');
+
+        return $connection->last_full_synced_at->addHours($intervalHours)->isPast();
     }
 
     /**
@@ -160,16 +181,30 @@ class ExternalCalendarSyncService
 
             // §5.6 rule 4 — the cursor advances WITH the data, in the same
             // transaction, never ahead of it.
+            $update = [
+                'sync_cursor' => $page->nextCursor,
+                'last_synced_at' => now(),
+                'last_sync_failure_at' => null,
+                'sync_failure_count' => 0,
+                'failure_classification' => null,
+                'updated_at' => now(),
+            ];
+
+            // Review correction — last_full_synced_at moves ONLY here,
+            // ONLY for a full sync whose entire paginated read completed
+            // (the same condition rule 2's reconciliation above already
+            // requires), and in the SAME transaction as the cursor and the
+            // reconciliation it describes. An incremental sync's success
+            // never touches it — see needsFullResync()'s own docblock for
+            // why overloading last_synced_at for this purpose would be
+            // wrong.
+            if ($isFullSync && $page->complete) {
+                $update['last_full_synced_at'] = now();
+            }
+
             DB::table('external_calendar_connections')
                 ->where('id', $connection->id)
-                ->update([
-                    'sync_cursor' => $page->nextCursor,
-                    'last_synced_at' => now(),
-                    'last_sync_failure_at' => null,
-                    'sync_failure_count' => 0,
-                    'failure_classification' => null,
-                    'updated_at' => now(),
-                ]);
+                ->update($update);
         });
 
         $connection->refresh();

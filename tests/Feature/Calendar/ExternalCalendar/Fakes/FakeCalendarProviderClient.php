@@ -63,6 +63,15 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
 
     public ?ExternalCalendarProviderException $throwOnUnregister = null;
 
+    public ?ExternalCalendarNotificationRegistration $renewalResult = null;
+
+    public ?ExternalCalendarProviderException $throwOnRenew = null;
+
+    public int $renewCalls = 0;
+
+    /** @var array<int, array{registrationId: string, requestedExpiry: CarbonInterface}> */
+    public array $renewRequests = [];
+
     public function __construct(private readonly ExternalCalendarProvider $providerEnum)
     {
     }
@@ -149,6 +158,33 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
         if ($this->throwOnUnregister !== null) {
             throw $this->throwOnUnregister;
         }
+    }
+
+    /**
+     * Default behavior mirrors the real clients' own contract: Google
+     * mechanically has no renewal at all (always registrationNotFound(),
+     * before "touching" anything); Microsoft renews IN PLACE, keeping the
+     * SAME registrationId, unless a test overrides `renewalResult`/
+     * `throwOnRenew` to simulate a 404-gone subscription.
+     */
+    public function renewNotifications(string $accessToken, string $registrationId, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        $this->renewCalls++;
+        $this->renewRequests[] = ['registrationId' => $registrationId, 'requestedExpiry' => $requestedExpiry];
+
+        if ($this->throwOnRenew !== null) {
+            throw $this->throwOnRenew;
+        }
+
+        if ($this->providerEnum === ExternalCalendarProvider::Google) {
+            throw ExternalCalendarProviderException::registrationNotFound();
+        }
+
+        return $this->renewalResult ?? new ExternalCalendarNotificationRegistration(
+            registrationId: $registrationId,
+            channelId: null,
+            expiresAt: $requestedExpiry,
+        );
     }
 
     /** @param array<int, ExternalCalendarSyncPage|ExternalCalendarProviderException> $queue */

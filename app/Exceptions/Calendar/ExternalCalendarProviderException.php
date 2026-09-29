@@ -29,6 +29,16 @@ final class ExternalCalendarProviderException extends RuntimeException
 
     public const FAILURE_CURSOR_INVALID = 'cursor_invalid';
 
+    /**
+     * Review correction, §11/§12.F renewal semantics — the provider has no
+     * in-place renewal for this kind of registration (Google push channels
+     * mechanically never do), or reports the specific registration id as
+     * gone (Microsoft Graph 404 on `PATCH /subscriptions/{id}`). The only
+     * correct response to this classification is a fresh
+     * registerNotifications() call — never a retry of the same renewal.
+     */
+    public const FAILURE_REGISTRATION_NOT_FOUND = 'registration_not_found';
+
     private function __construct(public readonly string $classification)
     {
         parent::__construct($classification);
@@ -75,6 +85,11 @@ final class ExternalCalendarProviderException extends RuntimeException
         return new self(self::FAILURE_CURSOR_INVALID);
     }
 
+    public static function registrationNotFound(): self
+    {
+        return new self(self::FAILURE_REGISTRATION_NOT_FOUND);
+    }
+
     /** §9.8-equivalent — an authorization the provider has invalidated. */
     public function isRevocation(): bool
     {
@@ -90,6 +105,7 @@ final class ExternalCalendarProviderException extends RuntimeException
             self::FAILURE_PROVIDER_UNAVAILABLE => 'The calendar provider is temporarily unavailable.',
             self::FAILURE_TIMEOUT => 'The request to the calendar provider timed out. Its outcome is unknown; please try again shortly.',
             self::FAILURE_CURSOR_INVALID => 'The calendar sync needs to restart from a full read.',
+            self::FAILURE_REGISTRATION_NOT_FOUND => 'The calendar notification registration needs to be recreated.',
             default => 'The calendar provider returned an unexpected response.',
         };
     }

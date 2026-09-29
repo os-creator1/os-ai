@@ -65,14 +65,27 @@ trait CreatesExternalCalendarFixtures
 
     protected function createActiveConnection(User $user, ExternalCalendarProvider $provider = ExternalCalendarProvider::Google, array $overrides = []): ExternalCalendarConnection
     {
-        return ExternalCalendarConnection::create(array_merge([
+        $defaults = [
             'user_id' => $user->id,
             'provider' => $provider,
             'state' => ExternalCalendarConnectionState::Active,
             'refresh_token_encrypted' => Crypt::encryptString('seeded-refresh-token'),
             'connected_at' => now(),
             'last_refreshed_at' => now(),
-        ], $overrides));
+        ];
+
+        // Review correction — a cursor existing without a prior full sync is
+        // not a realistic state; the real system always sets both together
+        // (ExternalCalendarSyncService::applyPage()). Defaulting
+        // last_full_synced_at to "just now" whenever a fixture seeds a
+        // cursor means an ordinary "test incremental behavior" fixture
+        // doesn't have to say so twice; a rolling-window test that wants a
+        // genuinely missing/stale full sync overrides it explicitly.
+        if (array_key_exists('sync_cursor', $overrides) && ! array_key_exists('last_full_synced_at', $overrides)) {
+            $defaults['last_full_synced_at'] = now();
+        }
+
+        return ExternalCalendarConnection::create(array_merge($defaults, $overrides));
     }
 
     protected function signedStateFor(ExternalCalendarConnection $connection): string

@@ -224,6 +224,32 @@ final class MicrosoftCalendarProviderClient implements CalendarProviderClient
     }
 
     /**
+     * https://learn.microsoft.com/graph/api/subscription-update
+     * — `PATCH /subscriptions/{id}` with a fresh `expirationDateTime` ONLY.
+     * Graph keeps the SAME subscription id and clientState; this never
+     * POSTs a replacement. A 404 means the subscription no longer exists
+     * (expired past grace, or removed provider-side) and CANNOT be
+     * renewed — that specific case is reported as
+     * registrationNotFound() so the caller falls back to
+     * registerNotifications() exactly once, never retried here.
+     */
+    public function renewNotifications(string $accessToken, string $registrationId, CarbonInterface $requestedExpiry): ExternalCalendarNotificationRegistration
+    {
+        $response = $this->patchJsonAuthed($accessToken, self::GRAPH_BASE . '/subscriptions/' . $registrationId, [
+            'expirationDateTime' => $requestedExpiry->clone()->utc()->toIso8601ZuluString(),
+        ]);
+
+        $id = $response['id'] ?? null;
+        $expirationDateTime = $response['expirationDateTime'] ?? null;
+
+        if (! is_string($id) || $id === '' || ! is_string($expirationDateTime)) {
+            throw ExternalCalendarProviderException::unexpectedResponse();
+        }
+
+        return new ExternalCalendarNotificationRegistration($id, null, Carbon::parse($expirationDateTime)->utc());
+    }
+
+    /**
      * https://learn.microsoft.com/graph/api/subscription-delete
      * — `DELETE /subscriptions/{id}`, 204 on success. A missing/already-gone
      * subscription id is a harmless no-op, never an error.
@@ -304,6 +330,21 @@ final class MicrosoftCalendarProviderClient implements CalendarProviderClient
     }
 
     /** @return array<string, mixed> */
+    private function patchJsonAuthed(string $accessToken, string $url, array $body): array
+    {
+        try {
+            $response = Http::withToken($accessToken)
+                ->connectTimeout((int) config('calendar_external.http.connect_timeout_seconds'))
+                ->timeout((int) config('calendar_external.http.request_timeout_seconds'))
+                ->patch($url, $body);
+        } catch (Throwable) {
+            throw ExternalCalendarProviderException::timeout();
+        }
+
+        return $this->classified($response);
+    }
+
+    /** @return array<string, mixed> */
     private function get(string $accessToken, string $url, array $query): array
     {
         try {
@@ -329,6 +370,11 @@ final class MicrosoftCalendarProviderClient implements CalendarProviderClient
         return match ($response->status()) {
             400, 401 => throw ExternalCalendarProviderException::invalidGrant(),
             403 => throw ExternalCalendarProviderException::accessDenied(),
+            // A 404 on any Graph call this client makes means the named
+            // resource (most relevantly: the subscription a PATCH/DELETE
+            // targeted) no longer exists — never renewable, only
+            // re-creatable.
+            404 => throw ExternalCalendarProviderException::registrationNotFound(),
             410 => throw ExternalCalendarProviderException::unexpectedResponse(),
             429 => throw ExternalCalendarProviderException::rateLimited(),
             default => throw ($response->serverError()
