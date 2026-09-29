@@ -4,9 +4,22 @@
     latest message and when the conversation last moved. Shared by the pinned
     rail and the loaded list so both read the same.
 --}}
-<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}">
-    <span class="avatar">
-        <img src="{{asset('images/profile/profile.jpg')}}" height="36" width="54" alt="Avatar"/>
+@php
+    $rowInitials = '';
+    if (!empty($displayName)) {
+        foreach (preg_split('/\s+/', trim($displayName)) as $part) {
+            if ($part !== '') {
+                $rowInitials .= mb_strtoupper(mb_substr($part, 0, 1));
+            }
+            if (mb_strlen($rowInitials) >= 2) {
+                break;
+            }
+        }
+    }
+@endphp
+<li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}" class="{{ $chat->pinned ? 'pinned-row' : '' }}">
+    <span class="avatar bg-light-primary conversation-row-avatar" aria-hidden="true">
+        {{ $rowInitials !== '' ? $rowInitials : mb_substr((string) $chat->to, -2) }}
     </span>
     <div class="chat-info flex-grow-1">
         <h6 class="mb-0 text-truncate" data-role="conversation-row-title">{{ !empty($displayName) ? $displayName : $chat->to }}</h6>
