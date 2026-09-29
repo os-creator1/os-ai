@@ -55,7 +55,7 @@ class RecoveryTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->recordedStep('a'), $this->endStep()]);
         $contact = $this->contactFor($business);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         $this->makeStale($enrollment);
 
@@ -78,7 +78,7 @@ class RecoveryTest extends TestCase
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->recordedStep('a'), $this->endStep()]);
         $contact = $this->contactFor($business);
-        app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         Bus::fake([AdvanceWorkflowEnrollment::class]);
 
@@ -140,7 +140,7 @@ class RecoveryTest extends TestCase
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->recordedStep('external'), $this->endStep()]);
         $contact = $this->contactFor($business);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         // Move the cursor onto the external step and abandon a claim there.
         $externalNodeId = (int) DB::table('automation_workflow_nodes')

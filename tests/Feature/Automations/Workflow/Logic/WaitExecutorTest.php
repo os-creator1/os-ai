@@ -69,7 +69,7 @@ class WaitExecutorTest extends TestCase
         ]);
 
         $contact = $this->contactFor($business);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         app(WorkflowAdvancer::class)->advance($enrollment);
 
@@ -253,7 +253,7 @@ class WaitExecutorTest extends TestCase
             $this->endStep(),
         ]);
         $contact = $this->contactFor($business);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         app(WorkflowAdvancer::class)->advance($enrollment);
 
@@ -312,7 +312,7 @@ class WaitExecutorTest extends TestCase
         Queue::fake();
         Bus::fake();
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         Queue::assertNothingPushed();
@@ -377,7 +377,7 @@ class WaitExecutorTest extends TestCase
             ->update(['config' => json_encode(['mode' => 'until_datetime', 'at' => 'not a date'])]);
 
         $contact = $this->contactFor($business);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
 
         app(WorkflowAdvancer::class)->advance($enrollment);
 

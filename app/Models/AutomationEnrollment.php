@@ -37,6 +37,7 @@ class AutomationEnrollment extends Model
         'workflow_id',
         'version_id',
         'contact_id',
+        'business_location_id',
         'status',
         'current_node_id',
         'resume_at',
@@ -87,6 +88,19 @@ class AutomationEnrollment extends Model
     public function contact(): BelongsTo
     {
         return $this->belongsTo(Contacts::class, 'contact_id');
+    }
+
+    /**
+     * THE PINNED RUN LOCATION (lane contract §6). Set once, at enrollment,
+     * by `WorkflowEnrollmentService::enroll()` — the only writer — and never
+     * reassigned afterwards. Nullable only for a historical row that
+     * predates this column and whose Location could not be proven at
+     * backfill (`AutomationEnrollmentLocationBackfillV1`); every enrollment
+     * created from here on has one.
+     */
+    public function businessLocation(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'business_location_id');
     }
 
     public function currentNode(): BelongsTo

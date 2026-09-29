@@ -37,6 +37,8 @@
                                           each: ->id, ->name, ->archived
       iterable $crmStages               optional; their stages,
                                           each: ->id, ->pipeline_id, ->name, ->archived
+      array  $businessLocations         each: ['id', 'name', 'active'] — every
+                                          Location of this Business (lane contract §11)
 --}}
 
 @php
@@ -78,6 +80,12 @@
         ],
         'dateOffsets' => \App\Library\Automation\Workflow\NodeTypeRegistry::DATE_OFFSET_ALLOWLIST,
         'contactSources' => \App\Library\Automation\Workflow\NodeTypeRegistry::CONTACT_SOURCES,
+        // Not narrowed to what this actor may themselves choose (§18 query
+        // budget — see the controller). Publish is the authoritative ACL
+        // gate; a choice this actor cannot make is refused there, by name.
+        'locations' => [
+            'options' => $businessLocations ?? [],
+        ],
     ];
 
     // Every icon the canvas, picker and panels draw, rendered once through the
@@ -240,6 +248,35 @@
                         <dt class="col-4 col-md-3 text-label">{{ __('locale.labels.status') }}</dt>
                         <dd class="col-8 col-md-9" data-role="wf-settings-status">{{ $statusLabel }}</dd>
                     </dl>
+                </x-card>
+
+                {{-- Location run-scope foundation (lane contract §11): which Locations
+                     may cause a NEW run. Kept deliberately simple — one radio choice,
+                     a checkbox list for Selected/One shown only when relevant. Publish
+                     is the authoritative gate (WorkflowCompiler::validateLocationScope());
+                     this control only offers what the acting staff member may
+                     themselves choose. --}}
+                <x-card class="mt-3">
+                    <h2 class="h6 mb-1">{{ __('automations.v2.builder.location_scope_title') }}</h2>
+                    <p class="text-muted small mb-3">{{ __('automations.v2.builder.location_scope_description') }}</p>
+                    <div class="alert alert-danger d-none" data-role="wf-location-errors" role="alert"></div>
+                    <div role="radiogroup" aria-label="{{ __('automations.v2.builder.location_scope_title') }}" data-role="wf-location-scope-group">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="wf-location-scope" id="wf-location-scope-all" value="all" data-role="wf-location-scope-option">
+                            <label class="form-check-label" for="wf-location-scope-all">{{ __('automations.v2.builder.location_scope_all') }}</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="wf-location-scope" id="wf-location-scope-one" value="one" data-role="wf-location-scope-option">
+                            <label class="form-check-label" for="wf-location-scope-one">{{ __('automations.v2.builder.location_scope_one') }}</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="wf-location-scope" id="wf-location-scope-selected" value="selected" data-role="wf-location-scope-option">
+                            <label class="form-check-label" for="wf-location-scope-selected">{{ __('automations.v2.builder.location_scope_selected') }}</label>
+                        </div>
+                    </div>
+                    <div class="mt-2" data-role="wf-location-picker" hidden>
+                        <div data-role="wf-location-picker-list"></div>
+                    </div>
                 </x-card>
             </div>
 

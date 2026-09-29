@@ -4,10 +4,13 @@ namespace App\Library\Automation\Workflow;
 
 use App\Enums\Automation\Workflow\ConditionOperator;
 use App\Enums\Automation\Workflow\WorkflowEdgeKind;
+use App\Enums\Automation\Workflow\WorkflowLocationScope;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\Business;
 use App\Models\ContactGroupFields;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -44,6 +47,7 @@ class WorkflowCompiler
         private readonly WorkflowDefinitionValidator $validator,
         private readonly NodeTypeRegistry $registry,
         private readonly WorkflowReferenceCatalogLoader $catalogs,
+        private readonly LocationAccessGuard $locationAccess,
     ) {
     }
 
@@ -55,10 +59,17 @@ class WorkflowCompiler
      *        so the request pays for one read rather than two. Without it the
      *        compiler loads the catalog itself — once, and only when the document
      *        references a group or field at all.
+     * @param int|null $actingUserId the staff member editing/publishing, when the
+     *        caller has one (every HTTP request does; a background/recovery path
+     *        never does, §14.3, and passes null). Location run-scope foundation
+     *        (lane contract §12/§14): when present, an "All Locations" choice or
+     *        a selected Location this actor cannot access is refused here — the
+     *        authoritative gate, not merely a UI restriction. Null skips this one
+     *        check only; every other reference check still runs regardless.
      *
      * @return array<string, list<string>>
      */
-    public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null): array
+    public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null, ?int $actingUserId = null): array
     {
         // A catalog answers for exactly one Business. Checking a workflow against
         // another Business's catalog would turn a tenancy check into a leak, so
@@ -77,7 +88,9 @@ class WorkflowCompiler
             return $errors;
         }
 
-        return $this->validateReferences($version, $definition, $catalog);
+        $errors = $this->validateReferences($version, $definition, $catalog);
+
+        return $this->validateLocationScope($version, $definition, $catalog, $actingUserId, $errors);
     }
 
     /**
@@ -343,6 +356,81 @@ class WorkflowCompiler
 
             foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references) as $error) {
                 $errors[$entry['key']][] = $error;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Location run-scope foundation (lane contract §10/§12/§14/§18) — every
+     * reason a document's Location scope cannot publish, checked against
+     * real rows and (when an actor is known) real staff authority.
+     *
+     * Deliberately separate from `validateReferences()`'s group/field/CRM
+     * checks: this reads document-level fields, not node config, and its
+     * ACL half is conditional on an actor being known at all, which none of
+     * the others are.
+     *
+     * READS THE SAME CATALOG (§18), never a query of its own, when the
+     * caller already holds one — exactly the reason
+     * `WorkflowReferenceCatalogLoader` folded Locations into its existing
+     * single statement rather than giving this method a `business_locations`
+     * query to call. Only a caller with no catalog at all (autosave,
+     * publish — neither is §18's query-budget-tested Builder GET) pays for
+     * one here, and only when the document actually names a Location.
+     *
+     * @param array<string, list<string>> $errors
+     *
+     * @return array<string, list<string>>
+     */
+    private function validateLocationScope(AutomationWorkflowVersion $version, array $definition, ?WorkflowReferenceCatalog $catalog, ?int $actingUserId, array $errors): array
+    {
+        ['scope' => $scope, 'ids' => $ids] = WorkflowDefinitionValidator::locationScopeFrom($definition);
+        $businessId = (int) $version->business_id;
+
+        if ($scope === WorkflowLocationScope::All) {
+            if ($actingUserId !== null) {
+                $business = Business::query()->find($businessId);
+
+                if ($business !== null && ! $this->locationAccess->userHasAllLocationReach($actingUserId, $business)) {
+                    $errors[WorkflowDefinitionValidator::DOCUMENT_KEY][] = 'You don\'t have access to all locations. Choose specific locations instead.';
+                }
+            }
+
+            return $errors;
+        }
+
+        // Selected / One: every submitted id must be a real, ACTIVE Location
+        // of THIS Business — answered from the catalog when one is already
+        // held, loaded once (and only once, only if this document actually
+        // has ids to check) otherwise.
+        $catalog ??= $ids === [] ? null : $this->catalogs->forBusiness($businessId);
+
+        foreach ($ids as $id) {
+            $location = $catalog?->location($id);
+
+            if ($location === null) {
+                $errors[WorkflowDefinitionValidator::DOCUMENT_KEY][] = 'One of this workflow\'s selected Locations does not belong to this business.';
+
+                continue;
+            }
+
+            if (! $location['active']) {
+                $errors[WorkflowDefinitionValidator::DOCUMENT_KEY][] = 'One of this workflow\'s selected Locations is archived. Choose an active Location.';
+            }
+        }
+
+        if ($actingUserId !== null) {
+            $business = Business::query()->find($businessId);
+            $accessible = $business === null ? [] : $this->locationAccess->accessibleLocationIdsForBusiness($actingUserId, $business);
+
+            foreach ($ids as $id) {
+                if (! in_array($id, $accessible, true)) {
+                    $errors[WorkflowDefinitionValidator::DOCUMENT_KEY][] = 'You don\'t have access to one of the Locations selected for this workflow.';
+
+                    break;
+                }
             }
         }
 

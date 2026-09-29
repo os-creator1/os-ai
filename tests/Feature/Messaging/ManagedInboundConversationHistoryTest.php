@@ -242,7 +242,7 @@ class ManagedInboundConversationHistoryTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
         $contact = $this->contact($business, $this->contactGroup($business), '14155559006');
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, 'manual:14155559006');
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'manual:14155559006');
         $this->assertNotNull($enrollment);
         $this->enrolledAt($enrollment, Carbon::now()->subHours(2));
 

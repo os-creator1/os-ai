@@ -77,7 +77,7 @@ class ClaimConcurrencyTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->recordedStep('contested'), $this->endStep()]);
         $contact = $this->contactFor($business);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         $node = AutomationWorkflowNode::query()->findOrFail($enrollment->current_node_id);
 
         return [$enrollment, $node];

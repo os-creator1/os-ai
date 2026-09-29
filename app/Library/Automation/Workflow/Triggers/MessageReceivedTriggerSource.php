@@ -13,6 +13,7 @@ use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflow;
 use App\Models\Business;
+use App\Models\ChatBox;
 use App\Models\Contacts;
 use App\Models\Reports;
 use Illuminate\Support\Carbon;
@@ -69,6 +70,7 @@ class MessageReceivedTriggerSource implements TriggerSource
     public const SKIPPED_CAUSATION_DEPTH = 'causation_depth';
     public const SKIPPED_COOLDOWN = 'cooldown';
     public const SKIPPED_NOT_ENROLLED = 'not_enrolled';
+    public const SKIPPED_NO_LOCATION = 'no_location';
 
     public function __construct(private readonly EnrollmentService $enrollments)
     {
@@ -125,6 +127,15 @@ class MessageReceivedTriggerSource implements TriggerSource
             return $result;
         }
 
+        // The authoritative Location for this trigger is the conversation's
+        // own (lane contract §9) — the canonical `chat_boxes.location_id` the
+        // inbound path itself proved when the thread was opened, NOT
+        // re-derived from the Contact: a message's occurrence belongs to its
+        // conversation, and that is the one record this domain already
+        // treats as authoritative for Location (Contract 06). No Location
+        // proven on the conversation means no run for any listening workflow.
+        $locationId = $this->conversationLocationId((int) $business->id, self::normalizePhone((string) $contact->phone));
+
         // One read for the whole fan-out: what was this contact answering?
         [$producerWorkflowId, $producerDepth] = $this->precedingAutomationProducer(
             (int) $business->id,
@@ -147,7 +158,13 @@ class MessageReceivedTriggerSource implements TriggerSource
                 continue;
             }
 
-            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $event->occurrenceKey, $depth);
+            if ($locationId === null) {
+                $result = $this->skip($result, self::SKIPPED_NO_LOCATION);
+
+                continue;
+            }
+
+            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $locationId, $event->occurrenceKey, $depth);
 
             if ($enrollment === null) {
                 $result = $this->skip($result, $reason);
@@ -185,6 +202,43 @@ class MessageReceivedTriggerSource implements TriggerSource
             ->get();
 
         return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    /**
+     * The Location of the one conversation this Business has with this
+     * number, when it is unambiguous — the canonical `chat_boxes.location_id`
+     * a live writer already proved (`ChatBox::singleActiveLocationIdFor()`,
+     * Contract 06) when this thread was opened. Never re-resolved from
+     * scratch here: an existing thread keeps the Location it opened with,
+     * and this trigger reads exactly that fact, the same one Conversations
+     * itself shows.
+     *
+     * Mirrors `theOneSubscribedContact()`'s own "ambiguous means null, never
+     * a guess" shape: `(business_id, to)` alone (no `from`, no `user_id`)
+     * can match more than one thread if this Contact has messaged more than
+     * one of the Business's own numbers, and picking one would be exactly
+     * the kind of guess this lane's contract forbids.
+     */
+    private function conversationLocationId(int $businessId, string $phone): ?int
+    {
+        if ($phone === '') {
+            return null;
+        }
+
+        $matches = ChatBox::query()
+            ->where('business_id', $businessId)
+            ->where('to', $phone)
+            ->orderBy('id')
+            ->limit(2)
+            ->get(['id', 'location_id']);
+
+        if ($matches->count() !== 1) {
+            return null;
+        }
+
+        $locationId = $matches->first()->location_id;
+
+        return $locationId === null ? null : (int) $locationId;
     }
 
     /**
@@ -270,17 +324,18 @@ class MessageReceivedTriggerSource implements TriggerSource
     private function enrollOutsideCooldown(
         AutomationWorkflow $workflow,
         Contacts $contact,
+        int $locationId,
         string $occurrenceKey,
         int $depth,
     ): array {
-        return DB::transaction(function () use ($workflow, $contact, $occurrenceKey, $depth): array {
+        return DB::transaction(function () use ($workflow, $contact, $locationId, $occurrenceKey, $depth): array {
             Contacts::query()->whereKey($contact->getKey())->lockForUpdate()->first();
 
             if ($this->inCooldown($workflow, $contact)) {
                 return [null, self::SKIPPED_COOLDOWN];
             }
 
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth);
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $locationId, $occurrenceKey, $depth);
 
             // Null here is EnrollmentService's own refusal: a redelivered
             // message losing its unique key, a contact still part-way through,

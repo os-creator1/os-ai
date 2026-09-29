@@ -2,6 +2,7 @@
 
 namespace App\Library\Automation\Workflow;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Models\Business;
 use Illuminate\Support\Facades\DB;
 
@@ -22,11 +23,16 @@ use Illuminate\Support\Facades\DB;
  *            Advisor's `opportunities`. Archived rows arrive too, flagged, so a
  *            workflow still pointing at one is told it is archived rather than
  *            that it does not exist.
+ *   LOCATION business_locations, filtered on business_id (Location run-scope
+ *            foundation, lane contract §18) — a flat list, so it rides the same
+ *            "parent with no children" shape a childless contact group already
+ *            uses: `child_id` is always null.
  *
- * One statement rather than two because the Builder reads this catalog on every
+ * One statement rather than three because the Builder reads this catalog on every
  * load, and §18 holds that load to a fixed number of feature-owned queries: the
- * CRM pickers must not cost a query of their own. Each half selects the same
- * columns under neutral names, and `source` says which half a row came from.
+ * CRM pickers must not cost a query of their own, and neither must the Location
+ * picker. Each branch selects the same columns under neutral names, and `source`
+ * says which branch a row came from.
  */
 class WorkflowReferenceCatalogLoader
 {
@@ -70,9 +76,32 @@ class WorkflowReferenceCatalogLoader
                 'crm_pipeline_stages.archived_at as child_archived_at',
             ]);
 
+        $location = DB::table('business_locations')
+            ->where('business_id', $businessId)
+            ->select([
+                DB::raw("'location' as source"),
+                DB::raw('0 as parent_position'),
+                'business_locations.id as parent_id',
+                'business_locations.name as parent_name',
+                // Reuses this slot for the lifecycle STRING, not a timestamp —
+                // `business_locations` has no archived_at semantics identical
+                // to the CRM half's (it also carries `archived_at`, but
+                // `lifecycle_state` is the authoritative column everywhere
+                // else this codebase checks Location eligibility). Read back
+                // as a plain string only for source = 'location' rows below.
+                'business_locations.lifecycle_state as parent_archived_at',
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                DB::raw('null as field_type'),
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+            ]);
+
         // Contact groups by name (as before); pipelines and their stages in the
-        // order the CRM board shows them.
-        $rows = $contact->unionAll($crm)
+        // order the CRM board shows them; Locations by name.
+        $rows = $contact->unionAll($crm)->unionAll($location)
             ->orderBy('source')
             ->orderBy('parent_position')
             ->orderBy('parent_name')
@@ -85,9 +114,20 @@ class WorkflowReferenceCatalogLoader
         $fields = [];
         $pipelines = [];
         $stages = [];
+        $locations = [];
 
         foreach ($rows as $row) {
             $parentId = (int) $row->parent_id;
+
+            if ($row->source === 'location') {
+                $locations[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'active' => $row->parent_archived_at === BusinessLocationLifecycleState::Active->value,
+                ];
+
+                continue;
+            }
 
             if ($row->source === 'crm') {
                 $pipelines[$parentId] ??= [
@@ -128,6 +168,6 @@ class WorkflowReferenceCatalogLoader
 
         ksort($fields);
 
-        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages);
+        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $locations);
     }
 }

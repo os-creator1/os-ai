@@ -10,6 +10,7 @@ import { createAutosave } from './autosave.js'
 import { createApiClient } from './api.js'
 import { createStepPicker } from './step-picker.js'
 import { createTestPanel } from './test-panel.js'
+import { createLocationScopeControl } from './location-scope.js'
 import { listRecipes } from './recipes.js'
 import { newNode, countNodes, insertAt, insertBranchAt, removeFrom, moveWithin } from './document-model.js'
 import { renderDocumentBanner, hasErrors, countIssues } from './validation.js'
@@ -161,6 +162,19 @@ function initBuilder(root) {
     }
 
     // ---------------------------------------------------------------
+    // Location run-scope (lane contract §11) — the Settings tab
+    // ---------------------------------------------------------------
+
+    const locationScopeEl = root.querySelector('#wf-tabs-settings')
+    const locationScope = locationScopeEl
+        ? createLocationScopeControl({
+              containerEl: locationScopeEl,
+              locations: data.locations || { options: [], accessibleIds: [], hasAllReach: true },
+              onChange: onDocumentChanged,
+          })
+        : null
+
+    // ---------------------------------------------------------------
     // Document edits
     // ---------------------------------------------------------------
 
@@ -299,6 +313,12 @@ function initBuilder(root) {
         )
 
         renderDocumentBanner(bannerEl, errors, 'This workflow has :count issue(s) to fix before it can publish.')
+
+        if (locationScope) {
+            locationScope.render(doc, readOnly)
+            locationScope.renderErrors(errors)
+        }
+
         undoButton.disabled = readOnly || !history.canUndo()
         redoButton.disabled = readOnly || !history.canRedo()
 

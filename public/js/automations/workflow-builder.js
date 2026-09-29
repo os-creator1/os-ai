@@ -2,15 +2,15 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ "./resources/js/automations/workflow-builder/api.js"
+/***/ "./resources/js/automations/workflow-builder/api.js":
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/api.js ***!
   \**********************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createApiClient: () => (/* binding */ createApiClient)
+/* harmony export */   "createApiClient": () => (/* binding */ createApiClient)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
@@ -134,17 +134,17 @@ function createApiClient(basePath) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/autosave.js"
+/***/ "./resources/js/automations/workflow-builder/autosave.js":
 /*!***************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/autosave.js ***!
   \***************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createAutosave: () => (/* binding */ createAutosave)
+/* harmony export */   "createAutosave": () => (/* binding */ createAutosave)
 /* harmony export */ });
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
 function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
@@ -287,17 +287,17 @@ function createAutosave(_ref) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js"
+/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js":
 /*!**********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/canvas-renderer.js ***!
   \**********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   renderCanvas: () => (/* binding */ renderCanvas)
+/* harmony export */   "renderCanvas": () => (/* binding */ renderCanvas)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _summaries_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./summaries.js */ "./resources/js/automations/workflow-builder/summaries.js");
@@ -544,29 +544,29 @@ function renderBranches(node, handlers, state, depth) {
   return split;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/conditions.js"
+/***/ "./resources/js/automations/workflow-builder/conditions.js":
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/conditions.js ***!
   \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   BOOLEAN_SUBJECTS: () => (/* binding */ BOOLEAN_SUBJECTS),
-/* harmony export */   CUSTOM_FIELD_PREFIX: () => (/* binding */ CUSTOM_FIELD_PREFIX),
-/* harmony export */   GROUP_SUBJECTS: () => (/* binding */ GROUP_SUBJECTS),
-/* harmony export */   REPLIED_SUBJECT: () => (/* binding */ REPLIED_SUBJECT),
-/* harmony export */   SUBJECT_LABELS: () => (/* binding */ SUBJECT_LABELS),
-/* harmony export */   TEXT_SUBJECTS: () => (/* binding */ TEXT_SUBJECTS),
-/* harmony export */   customFieldId: () => (/* binding */ customFieldId),
-/* harmony export */   describeCondition: () => (/* binding */ describeCondition),
-/* harmony export */   isDateSubject: () => (/* binding */ isDateSubject),
-/* harmony export */   needsOperand: () => (/* binding */ needsOperand),
-/* harmony export */   operatorLabel: () => (/* binding */ operatorLabel),
-/* harmony export */   subjectLabel: () => (/* binding */ subjectLabel),
-/* harmony export */   subjectOperators: () => (/* binding */ subjectOperators)
+/* harmony export */   "BOOLEAN_SUBJECTS": () => (/* binding */ BOOLEAN_SUBJECTS),
+/* harmony export */   "CUSTOM_FIELD_PREFIX": () => (/* binding */ CUSTOM_FIELD_PREFIX),
+/* harmony export */   "GROUP_SUBJECTS": () => (/* binding */ GROUP_SUBJECTS),
+/* harmony export */   "REPLIED_SUBJECT": () => (/* binding */ REPLIED_SUBJECT),
+/* harmony export */   "SUBJECT_LABELS": () => (/* binding */ SUBJECT_LABELS),
+/* harmony export */   "TEXT_SUBJECTS": () => (/* binding */ TEXT_SUBJECTS),
+/* harmony export */   "customFieldId": () => (/* binding */ customFieldId),
+/* harmony export */   "describeCondition": () => (/* binding */ describeCondition),
+/* harmony export */   "isDateSubject": () => (/* binding */ isDateSubject),
+/* harmony export */   "needsOperand": () => (/* binding */ needsOperand),
+/* harmony export */   "operatorLabel": () => (/* binding */ operatorLabel),
+/* harmony export */   "subjectLabel": () => (/* binding */ subjectLabel),
+/* harmony export */   "subjectOperators": () => (/* binding */ subjectOperators)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
@@ -695,30 +695,30 @@ function describeCondition(condition, catalogs) {
   return "".concat(label, " ").concat(words, " \u201C").concat(operand, "\u201D");
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/constants.js"
+/***/ "./resources/js/automations/workflow-builder/constants.js":
 /*!****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/constants.js ***!
   \****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   CONTACT_SOURCE_LABELS: () => (/* binding */ CONTACT_SOURCE_LABELS),
-/* harmony export */   ENROLLMENT_POLICY_LABELS: () => (/* binding */ ENROLLMENT_POLICY_LABELS),
-/* harmony export */   INSERTABLE_TYPES: () => (/* binding */ INSERTABLE_TYPES),
-/* harmony export */   NODE_ICONS: () => (/* binding */ NODE_ICONS),
-/* harmony export */   NODE_LABELS: () => (/* binding */ NODE_LABELS),
-/* harmony export */   NODE_TYPES: () => (/* binding */ NODE_TYPES),
-/* harmony export */   STEP_CATALOG: () => (/* binding */ STEP_CATALOG),
-/* harmony export */   TRIGGER_TYPES: () => (/* binding */ TRIGGER_TYPES),
-/* harmony export */   closesSequence: () => (/* binding */ closesSequence),
-/* harmony export */   defaultConfigFor: () => (/* binding */ defaultConfigFor),
-/* harmony export */   isBranching: () => (/* binding */ isBranching),
-/* harmony export */   isTerminal: () => (/* binding */ isTerminal),
-/* harmony export */   offsetLabel: () => (/* binding */ offsetLabel),
-/* harmony export */   triggerTypeInfo: () => (/* binding */ triggerTypeInfo)
+/* harmony export */   "CONTACT_SOURCE_LABELS": () => (/* binding */ CONTACT_SOURCE_LABELS),
+/* harmony export */   "ENROLLMENT_POLICY_LABELS": () => (/* binding */ ENROLLMENT_POLICY_LABELS),
+/* harmony export */   "INSERTABLE_TYPES": () => (/* binding */ INSERTABLE_TYPES),
+/* harmony export */   "NODE_ICONS": () => (/* binding */ NODE_ICONS),
+/* harmony export */   "NODE_LABELS": () => (/* binding */ NODE_LABELS),
+/* harmony export */   "NODE_TYPES": () => (/* binding */ NODE_TYPES),
+/* harmony export */   "STEP_CATALOG": () => (/* binding */ STEP_CATALOG),
+/* harmony export */   "TRIGGER_TYPES": () => (/* binding */ TRIGGER_TYPES),
+/* harmony export */   "closesSequence": () => (/* binding */ closesSequence),
+/* harmony export */   "defaultConfigFor": () => (/* binding */ defaultConfigFor),
+/* harmony export */   "isBranching": () => (/* binding */ isBranching),
+/* harmony export */   "isTerminal": () => (/* binding */ isTerminal),
+/* harmony export */   "offsetLabel": () => (/* binding */ offsetLabel),
+/* harmony export */   "triggerTypeInfo": () => (/* binding */ triggerTypeInfo)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
@@ -920,24 +920,24 @@ function offsetLabel(offset) {
   return "".concat(offset, " before");
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/document-model.js"
+/***/ "./resources/js/automations/workflow-builder/document-model.js":
 /*!*********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/document-model.js ***!
   \*********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   cloneDocument: () => (/* binding */ cloneDocument),
-/* harmony export */   countNodes: () => (/* binding */ countNodes),
-/* harmony export */   insertAt: () => (/* binding */ insertAt),
-/* harmony export */   insertBranchAt: () => (/* binding */ insertBranchAt),
-/* harmony export */   moveWithin: () => (/* binding */ moveWithin),
-/* harmony export */   newNode: () => (/* binding */ newNode),
-/* harmony export */   removeFrom: () => (/* binding */ removeFrom),
-/* harmony export */   sequenceDepthOf: () => (/* binding */ sequenceDepthOf)
+/* harmony export */   "cloneDocument": () => (/* binding */ cloneDocument),
+/* harmony export */   "countNodes": () => (/* binding */ countNodes),
+/* harmony export */   "insertAt": () => (/* binding */ insertAt),
+/* harmony export */   "insertBranchAt": () => (/* binding */ insertBranchAt),
+/* harmony export */   "moveWithin": () => (/* binding */ moveWithin),
+/* harmony export */   "newNode": () => (/* binding */ newNode),
+/* harmony export */   "removeFrom": () => (/* binding */ removeFrom),
+/* harmony export */   "sequenceDepthOf": () => (/* binding */ sequenceDepthOf)
 /* harmony export */ });
 function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
@@ -1111,18 +1111,18 @@ function countNodes(doc) {
   return count;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/dom.js"
+/***/ "./resources/js/automations/workflow-builder/dom.js":
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/dom.js ***!
   \**********************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   el: () => (/* binding */ el),
-/* harmony export */   icon: () => (/* binding */ icon)
+/* harmony export */   "el": () => (/* binding */ el),
+/* harmony export */   "icon": () => (/* binding */ icon)
 /* harmony export */ });
 // Automations V2 (contract §13.1) — the two DOM helpers every builder module
 // shares. Elements are built with textContent, never innerHTML, so nothing a
@@ -1153,17 +1153,17 @@ function icon(name, className) {
   return wrap;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/drawer.js"
+/***/ "./resources/js/automations/workflow-builder/drawer.js":
 /*!*************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/drawer.js ***!
   \*************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createDrawer: () => (/* binding */ createDrawer)
+/* harmony export */   "createDrawer": () => (/* binding */ createDrawer)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
@@ -1784,17 +1784,17 @@ function createDrawer(_ref) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/history.js"
+/***/ "./resources/js/automations/workflow-builder/history.js":
 /*!**************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/history.js ***!
   \**************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createHistory: () => (/* binding */ createHistory)
+/* harmony export */   "createHistory": () => (/* binding */ createHistory)
 /* harmony export */ });
 // Automations V2 (contract §13.1, V2-D) — client-side document-history
 // undo/redo. Bounded to 50 snapshots, exactly as the contract specifies.
@@ -1851,600 +1851,146 @@ function createHistory(initialDocument) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/index.js"
-/*!************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/index.js ***!
-  \************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony import */ var _canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./canvas-renderer.js */ "./resources/js/automations/workflow-builder/canvas-renderer.js");
-/* harmony import */ var _drawer_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./drawer.js */ "./resources/js/automations/workflow-builder/drawer.js");
-/* harmony import */ var _history_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./history.js */ "./resources/js/automations/workflow-builder/history.js");
-/* harmony import */ var _zoom_pan_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./zoom-pan.js */ "./resources/js/automations/workflow-builder/zoom-pan.js");
-/* harmony import */ var _autosave_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./autosave.js */ "./resources/js/automations/workflow-builder/autosave.js");
-/* harmony import */ var _api_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./api.js */ "./resources/js/automations/workflow-builder/api.js");
-/* harmony import */ var _step_picker_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./step-picker.js */ "./resources/js/automations/workflow-builder/step-picker.js");
-/* harmony import */ var _test_panel_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./test-panel.js */ "./resources/js/automations/workflow-builder/test-panel.js");
-/* harmony import */ var _recipes_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./recipes.js */ "./resources/js/automations/workflow-builder/recipes.js");
-/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
-/* harmony import */ var _validation_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./validation.js */ "./resources/js/automations/workflow-builder/validation.js");
-/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
-function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
-function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
-function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
-function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
-function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
-function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
-function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
-function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
-function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
-function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
-function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
-// Automations V2 (contract §13, V2-D) — the builder's entry point. One
-// bundled ES module (contract §13.1), exposed as `window.AutomationsWorkflowBuilder`
-// so the Blade views (which cannot use `import` directly) can call it after
-// this bundle loads.
-
-
-
-
-
-
-
-
-
-
-
-
-var STATUS_LABELS = {
-  draft: 'Draft',
-  published: 'Published',
-  paused: 'Paused',
-  archived: 'Archived'
-};
-function initBuilder(root) {
-  var dataEl = document.getElementById('wf-builder-data');
-  if (!dataEl) {
-    return;
-  }
-  var data = JSON.parse(dataEl.textContent);
-  var doc = data.draft.definition;
-  var errors = data.draft.errors || {};
-  var selectedKey = null;
-  var path = null;
-  var status = data.workflow.status || 'draft';
-  var readOnly = status === 'archived';
-  var canvasRootEl = root.querySelector('[data-role="wf-canvas-root"]');
-  var saveStateEl = root.querySelector('[data-role="wf-save-state"]');
-  var bannerEl = root.querySelector('[data-role="wf-document-errors"]');
-  var undoButton = root.querySelector('[data-role="wf-undo"]');
-  var redoButton = root.querySelector('[data-role="wf-redo"]');
-  var publishButton = root.querySelector('[data-role="wf-publish"]');
-  var publishLabel = root.querySelector('[data-role="wf-publish-label"]');
-  var pauseButton = root.querySelector('[data-role="wf-pause"]');
-  var resumeButton = root.querySelector('[data-role="wf-resume"]');
-  var statusEl = root.querySelector('[data-role="wf-status"]');
-  var noticeEl = root.querySelector('[data-role="wf-header-notice"]');
-  var testButton = root.querySelector('[data-role="wf-test-workflow"]');
-  var viewportEl = root.querySelector('[data-role="wf-canvas-viewport"]');
-  var surfaceEl = root.querySelector('[data-role="wf-canvas-surface"]');
-  var workspaceEl = root.querySelector('[data-role="wf-workspace"]');
-  var api = (0,_api_js__WEBPACK_IMPORTED_MODULE_5__.createApiClient)(data.basePath);
-  var history = (0,_history_js__WEBPACK_IMPORTED_MODULE_2__.createHistory)(doc);
-  var zoomPan = (0,_zoom_pan_js__WEBPACK_IMPORTED_MODULE_3__.createZoomPan)(viewportEl, surfaceEl);
-  var picker = (0,_step_picker_js__WEBPACK_IMPORTED_MODULE_6__.createStepPicker)(root);
-  root.querySelector('[data-role="wf-zoom-in"]').addEventListener('click', zoomPan.zoomIn);
-  root.querySelector('[data-role="wf-zoom-out"]').addEventListener('click', zoomPan.zoomOut);
-  root.querySelector('[data-role="wf-zoom-reset"]').addEventListener('click', zoomPan.reset);
-  root.querySelector('[data-role="wf-zoom-fit"]').addEventListener('click', zoomPan.fit);
-
-  // ---------------------------------------------------------------
-  // Header: save state, status, lifecycle
-  // ---------------------------------------------------------------
-
-  function setSaveState(state) {
-    saveStateEl.dataset.state = state;
-    var label = {
-      saving: 'Saving…',
-      saved: 'All changes saved',
-      error: 'Offline — changes kept locally'
-    }[state];
-    saveStateEl.querySelector('[data-role="wf-save-state-label"]').textContent = label || '';
-  }
-  function showNotice(message, tone) {
-    noticeEl.textContent = message || '';
-    noticeEl.dataset.tone = tone || 'info';
-    noticeEl.hidden = !message;
-  }
-  function renderStatus() {
-    statusEl.dataset.status = status;
-    statusEl.textContent = STATUS_LABELS[status] || status;
-    pauseButton.hidden = status !== 'published';
-    resumeButton.hidden = status !== 'paused';
-    publishButton.hidden = readOnly;
-    publishLabel.textContent = status === 'draft' ? 'Publish' : 'Publish changes';
-  }
-  var autosave = (0,_autosave_js__WEBPACK_IMPORTED_MODULE_4__.createAutosave)({
-    api: api,
-    workflowBasePath: data.basePath,
-    initialRevision: data.draft.revision,
-    onStateChange: setSaveState,
-    onSaved: function onSaved(body) {
-      errors = body.errors || {};
-      rerender();
-    },
-    onConflict: function onConflict() {
-      bannerEl.classList.remove('d-none');
-      bannerEl.innerHTML = '';
-      bannerEl.appendChild(Object.assign(document.createElement('p'), {
-        className: 'mb-0',
-        textContent: 'This workflow changed somewhere else. Reload to get the latest version before editing.'
-      }));
-    }
-  });
-
-  // ---------------------------------------------------------------
-  // Panels: inspector and test
-  // ---------------------------------------------------------------
-
-  function syncPanels() {
-    workspaceEl.classList.toggle('has-panel', drawer.isOpen() || testPanel.isOpen());
-  }
-  var drawer = (0,_drawer_js__WEBPACK_IMPORTED_MODULE_1__.createDrawer)({
-    drawerEl: root.querySelector('[data-role="wf-drawer"]'),
-    catalogs: data.catalogs,
-    dateOffsets: data.dateOffsets,
-    limits: data.limits,
-    onSave: function onSave(node, config) {
-      node.config = config;
-      onDocumentChanged();
-    },
-    onDelete: function onDelete(node) {
-      deleteNode(node, true);
-    },
-    onClose: function onClose(node) {
-      selectedKey = null;
-      syncPanels();
-      rerender();
-      var card = node && canvasRootEl.querySelector("[data-node-key=\"".concat(CSS.escape(node.key), "\"]"));
-      if (card) {
-        card.focus({
-          preventScroll: true
-        });
-      }
-    }
-  });
-  var testPanel = (0,_test_panel_js__WEBPACK_IMPORTED_MODULE_7__.createTestPanel)({
-    panelEl: root.querySelector('[data-role="wf-test-panel"]'),
-    api: api,
-    basePath: data.basePath,
-    beforeRun: function beforeRun() {
-      return autosave.flushPending();
-    },
-    onPath: function onPath(nextPath) {
-      path = nextPath;
-      rerender();
-    },
-    onClose: function onClose() {
-      syncPanels();
-    }
-  });
-  function selectNode(node) {
-    if (testPanel.isOpen()) {
-      testPanel.close();
-    }
-    selectedKey = node.key;
-    drawer.open(node, errors[node.key] || [], {
-      readOnly: readOnly
-    });
-    syncPanels();
-    rerender();
-  }
-
-  // ---------------------------------------------------------------
-  // Document edits
-  // ---------------------------------------------------------------
-
-  function findContainingList(target, list) {
-    if (list.includes(target)) {
-      return list;
-    }
-    var _iterator = _createForOfIteratorHelper(list),
-      _step;
-    try {
-      for (_iterator.s(); !(_step = _iterator.n()).done;) {
-        var node = _step.value;
-        if (node.type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
-          var inYes = findContainingList(target, node.yes || []);
-          if (inYes) return inYes;
-          var inNo = findContainingList(target, node.no || []);
-          if (inNo) return inNo;
-        } else if (Array.isArray(node.next)) {
-          var found = findContainingList(target, node.next);
-          if (found) return found;
-        }
-      }
-    } catch (err) {
-      _iterator.e(err);
-    } finally {
-      _iterator.f();
-    }
-    return null;
-  }
-  function stepCount(node) {
-    if (node.type !== _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
-      return 0;
-    }
-    var count = function count(list) {
-      return list.reduce(function (total, child) {
-        return total + 1 + stepCount(child);
-      }, 0);
-    };
-    return count(node.yes || []) + count(node.no || []);
-  }
-  function deleteNode(node, alreadyConfirmed) {
-    if (readOnly) {
-      return;
-    }
-    var inner = stepCount(node);
-    if (!alreadyConfirmed || inner > 0) {
-      var message = inner > 0 ? "Delete this If / Else and the ".concat(inner, " step").concat(inner === 1 ? '' : 's', " inside it?") : 'Delete this step?';
-      if (!window.confirm(message)) {
-        return;
-      }
-    }
-    var list = findContainingList(node, doc.root.next || []);
-    if (list) {
-      if (selectedKey === node.key) {
-        drawer.close();
-      }
-      (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.removeFrom)(list, node);
-      onDocumentChanged();
-    }
-  }
-  function onDocumentChanged() {
-    history.push(doc);
-    if (path) {
-      // A test result describes the document it ran on, not this one.
-      path = null;
-    }
-    rerender();
-    autosave.schedule(doc);
-  }
-  function requestAdd(anchorEl, list, index, depth) {
-    var trailing = index === list.length;
-    var canBranch = !(data.limits && depth >= data.limits.maxBranchDepth);
-    var types = _constants_js__WEBPACK_IMPORTED_MODULE_11__.INSERTABLE_TYPES.filter(function (type) {
-      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
-        return canBranch;
-      }
-
-      // End closes a path, so it is only offered where nothing follows.
-      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.END) {
-        return trailing;
-      }
-      return true;
-    });
-    var hints = {};
-    if (!trailing && canBranch) {
-      hints[_constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE] = 'The steps below move into its Yes path.';
-    }
-    picker.open(anchorEl, {
-      types: types,
-      hints: hints,
-      note: canBranch ? '' : 'If / Else can’t be nested any deeper here.',
-      onPick: function onPick(type) {
-        var node = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.newNode)(type, (0,_constants_js__WEBPACK_IMPORTED_MODULE_11__.defaultConfigFor)(type));
-        if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE && !trailing) {
-          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.insertBranchAt)(list, index, node);
-        } else {
-          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.insertAt)(list, index, node);
-        }
-        onDocumentChanged();
-        selectNode(node);
-      }
-    });
-  }
-  function rerender() {
-    var nodeCount = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.countNodes)(doc);
-    (0,_canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__.renderCanvas)(doc, canvasRootEl, {
-      onSelect: selectNode,
-      onRequestAdd: requestAdd,
-      onDelete: function onDelete(node) {
-        deleteNode(node, false);
-      },
-      onMove: function onMove(node, list, direction) {
-        if ((0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.moveWithin)(list, node, direction)) {
-          onDocumentChanged();
-        }
-      }
-    }, {
-      errors: errors,
-      nodeCount: nodeCount,
-      limits: data.limits,
-      selectedKey: selectedKey,
-      readOnly: readOnly,
-      catalogs: data.catalogs,
-      path: path
-    });
-    (0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.renderDocumentBanner)(bannerEl, errors, 'This workflow has :count issue(s) to fix before it can publish.');
-    undoButton.disabled = readOnly || !history.canUndo();
-    redoButton.disabled = readOnly || !history.canRedo();
-    var blocked = (0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.hasErrors)(errors);
-    publishButton.disabled = blocked;
-    publishButton.title = blocked ? "Fix ".concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.countIssues)(errors), " issue").concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.countIssues)(errors) === 1 ? '' : 's', " before publishing") : '';
-  }
-
-  // ---------------------------------------------------------------
-  // Toolbar actions
-  // ---------------------------------------------------------------
-
-  function restore(restored) {
-    if (!restored) {
-      return;
-    }
-    drawer.close();
-    doc = restored;
-    path = null;
-    rerender();
-    autosave.schedule(doc);
-  }
-  undoButton.addEventListener('click', function () {
-    return restore(history.undo());
-  });
-  redoButton.addEventListener('click', function () {
-    return restore(history.redo());
-  });
-  publishButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
-    var result;
-    return _regenerator().w(function (_context) {
-      while (1) switch (_context.n) {
-        case 0:
-          publishButton.disabled = true;
-          showNotice('Publishing…', 'info');
-          _context.n = 1;
-          return autosave.flushNow(doc);
-        case 1:
-          _context.n = 2;
-          return api.publish(data.basePath);
-        case 2:
-          result = _context.v;
-          if (!(result.status === 422)) {
-            _context.n = 3;
-            break;
-          }
-          errors = result.body && result.body.errors || {};
-          showNotice('Fix the highlighted steps before publishing.', 'danger');
-          rerender();
-          return _context.a(2);
-        case 3:
-          if (!(result.status >= 200 && result.status < 300)) {
-            _context.n = 4;
-            break;
-          }
-          // A publish turns this draft into the live version; reloading opens
-          // the fresh draft the next edit saves against.
-          showNotice('Published. Contacts who match the trigger now enter this workflow.', 'success');
-          window.location.reload();
-          return _context.a(2);
-        case 4:
-          showNotice(result.body && result.body.message || 'Publishing didn’t work. Try again.', 'danger');
-          rerender();
-        case 5:
-          return _context.a(2);
-      }
-    }, _callee);
-  })));
-  function changeStatus(_x, _x2, _x3) {
-    return _changeStatus.apply(this, arguments);
-  }
-  function _changeStatus() {
-    _changeStatus = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(button, call, done) {
-      var result;
-      return _regenerator().w(function (_context2) {
-        while (1) switch (_context2.n) {
-          case 0:
-            button.disabled = true;
-            _context2.n = 1;
-            return call(data.basePath);
-          case 1:
-            result = _context2.v;
-            button.disabled = false;
-            if (!(result.status >= 200 && result.status < 300 && result.body && result.body.workflow)) {
-              _context2.n = 2;
-              break;
-            }
-            status = result.body.workflow.status;
-            renderStatus();
-            showNotice(done, 'success');
-            return _context2.a(2);
-          case 2:
-            showNotice(result.body && result.body.message || 'That didn’t work. Try again.', 'danger');
-          case 3:
-            return _context2.a(2);
-        }
-      }, _callee2);
-    }));
-    return _changeStatus.apply(this, arguments);
-  }
-  pauseButton.addEventListener('click', function () {
-    if (window.confirm('Pause this workflow? No new contacts enter, and contacts already in it wait where they are until you resume.')) {
-      changeStatus(pauseButton, api.pause, 'Paused. Contacts already in the workflow wait until you resume it.');
-    }
-  });
-  resumeButton.addEventListener('click', function () {
-    changeStatus(resumeButton, api.resume, 'Resumed. The workflow is live again.');
-  });
-  testButton.addEventListener('click', function () {
-    drawer.close();
-    selectedKey = null;
-    testPanel.open();
-    syncPanels();
-  });
-
-  // ---------------------------------------------------------------
-  // Keyboard: ↑/↓ between steps, Enter opens, Delete removes, Esc closes
-  // ---------------------------------------------------------------
-
-  canvasRootEl.addEventListener('keydown', function (event) {
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || !event.target.matches('[data-role="wf-step-card"]')) {
-      return;
-    }
-    var cards = _toConsumableArray(canvasRootEl.querySelectorAll('[data-role="wf-step-card"]'));
-    var index = cards.indexOf(event.target);
-    var next = cards[index + (event.key === 'ArrowDown' ? 1 : -1)];
-    if (next) {
-      event.preventDefault();
-      next.focus();
-      next.scrollIntoView({
-        block: 'nearest',
-        inline: 'nearest'
-      });
-    }
-  });
-  renderStatus();
-  rerender();
-  if (readOnly) {
-    showNotice('This workflow is archived. You can review it, but not change it.', 'info');
-  }
-}
-function initChooser(root) {
-  var scratchCard = root.querySelector('[data-role="wf-chooser-scratch"]');
-  var recipesContainer = root.querySelector('[data-role="wf-chooser-recipes"]');
-  var nameInput = root.querySelector('[data-role="wf-chooser-name"]');
-  var errorEl = root.querySelector('[data-role="wf-chooser-error"]');
-  var createUrl = root.dataset.createUrl;
-  var labelsEl = document.getElementById('wf-recipe-labels');
-  var labels = labelsEl ? JSON.parse(labelsEl.textContent) : {};
-  var api = (0,_api_js__WEBPACK_IMPORTED_MODULE_5__.createApiClient)(createUrl);
-  var busy = false;
-  function showError(message) {
-    if (errorEl) {
-      errorEl.textContent = message || '';
-      errorEl.hidden = !message;
-    }
-  }
-
-  // §20.2 — creating a workflow takes a name and a trigger type, nothing
-  // else. A recipe is then only a starting document: it is saved into the new
-  // workflow's draft through the same autosave any edit uses.
-  function createWorkflow(_x4, _x5) {
-    return _createWorkflow.apply(this, arguments);
-  }
-  function _createWorkflow() {
-    _createWorkflow = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(fallbackName, definition) {
-      var name, triggerType, created, redirect, firstError, opened;
-      return _regenerator().w(function (_context3) {
-        while (1) switch (_context3.p = _context3.n) {
-          case 0:
-            if (!busy) {
-              _context3.n = 1;
-              break;
-            }
-            return _context3.a(2);
-          case 1:
-            name = nameInput && nameInput.value.trim() || fallbackName;
-            triggerType = definition && definition.root.config.trigger_type || 'contact_created';
-            busy = true;
-            showError('');
-            root.classList.add('is-busy');
-            _context3.p = 2;
-            _context3.n = 3;
-            return api.create({
-              name: name,
-              trigger_type: triggerType
-            });
-          case 3:
-            created = _context3.v;
-            redirect = created.body && created.body.redirect;
-            if (!(created.status !== 201 || !redirect)) {
-              _context3.n = 4;
-              break;
-            }
-            firstError = created.body && created.body.errors ? Object.values(created.body.errors)[0][0] : null;
-            showError(firstError || created.body && created.body.message || 'The workflow couldn’t be created. Try again.');
-            return _context3.a(2);
-          case 4:
-            if (!definition) {
-              _context3.n = 6;
-              break;
-            }
-            _context3.n = 5;
-            return api.openDraft(redirect);
-          case 5:
-            opened = _context3.v;
-            if (!(opened.body && typeof opened.body.revision === 'number')) {
-              _context3.n = 6;
-              break;
-            }
-            _context3.n = 6;
-            return api.saveDraft(redirect, definition, opened.body.revision);
-          case 6:
-            window.location.href = redirect;
-          case 7:
-            _context3.p = 7;
-            busy = false;
-            root.classList.remove('is-busy');
-            return _context3.f(7);
-          case 8:
-            return _context3.a(2);
-        }
-      }, _callee3, null, [[2,, 7, 8]]);
-    }));
-    return _createWorkflow.apply(this, arguments);
-  }
-  scratchCard.addEventListener('click', function () {
-    return createWorkflow('Untitled workflow', null);
-  });
-  scratchCard.addEventListener('keydown', function (event) {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      createWorkflow('Untitled workflow', null);
-    }
-  });
-  (0,_recipes_js__WEBPACK_IMPORTED_MODULE_8__.listRecipes)().forEach(function (recipe) {
-    var col = document.createElement('div');
-    col.className = 'col-12 col-md-6 col-xl-3';
-    var card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'wf-chooser-card';
-    card.dataset.role = 'wf-chooser-recipe';
-    card.dataset.recipeKey = recipe.key;
-    var labelSet = labels[recipe.key] || {};
-    var title = document.createElement('span');
-    title.className = 'wf-chooser-card__title';
-    title.textContent = labelSet.title || recipe.titleKey;
-    var description = document.createElement('span');
-    description.className = 'wf-chooser-card__description';
-    description.textContent = labelSet.description || recipe.descriptionKey;
-    card.appendChild(title);
-    card.appendChild(description);
-    col.appendChild(card);
-    recipesContainer.appendChild(col);
-    card.addEventListener('click', function () {
-      createWorkflow(labelSet.title || 'Untitled workflow', recipe.build());
-    });
-  });
-}
-window.AutomationsWorkflowBuilder = {
-  initBuilder: initBuilder,
-  initChooser: initChooser
-};
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/recipes.js"
-/*!**************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/recipes.js ***!
-  \**************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ "./resources/js/automations/workflow-builder/location-scope.js":
+/*!*********************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/location-scope.js ***!
+  \*********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   listRecipes: () => (/* binding */ listRecipes)
+/* harmony export */   "createLocationScopeControl": () => (/* binding */ createLocationScopeControl)
+/* harmony export */ });
+// Location run-scope foundation (lane contract §11, V2-D) — the Settings
+// tab's "Run this automation for" control.
+//
+// DOCUMENT-LEVEL, NOT NODE-LEVEL, exactly like `location_scope`/
+// `location_ids` sit beside `schema_version`/`root` on the server (contract
+// §5A): this module edits `doc.location_scope`/`doc.location_ids` directly,
+// the same document object every other builder module edits, and reports the
+// change through the SAME `onDocumentChanged()` hook the canvas already uses
+// — one autosave path, not a second one.
+//
+// WHO CAN PICK WHAT IS NOT ENFORCED HERE. The server does not hand this page
+// a per-actor accessible-Location list (§18's query budget — computing it
+// would re-derive Business/Workspace/membership a second time on every
+// Builder load). Every option renders enabled; publish
+// (WorkflowCompiler::validateLocationScope(), which re-checks
+// LocationAccessGuard on the value actually submitted) is the authoritative
+// gate, and a Selected-scope staff member choosing a Location — or "All" —
+// they cannot reach is refused there, by name, surfaced through
+// renderErrors() below.
+function createLocationScopeControl(_ref) {
+  var containerEl = _ref.containerEl,
+    locations = _ref.locations,
+    onChange = _ref.onChange;
+  var groupEl = containerEl.querySelector('[data-role="wf-location-scope-group"]');
+  var pickerEl = containerEl.querySelector('[data-role="wf-location-picker"]');
+  var listEl = containerEl.querySelector('[data-role="wf-location-picker-list"]');
+  var errorsEl = containerEl.querySelector('[data-role="wf-location-errors"]');
+  var scopeInputs = Array.from(groupEl.querySelectorAll('[data-role="wf-location-scope-option"]'));
+  var doc = null;
+  var readOnly = false;
+  function currentIds() {
+    return Array.isArray(doc.location_ids) ? doc.location_ids.map(Number) : [];
+  }
+  function renderPicker(scope) {
+    var ids = currentIds();
+    var inputType = scope === 'one' ? 'radio' : 'checkbox';
+    listEl.innerHTML = '';
+    locations.options.forEach(function (loc) {
+      var domId = 'wf-location-option-' + loc.id;
+      var wrapper = document.createElement('div');
+      wrapper.className = 'form-check';
+      var input = document.createElement('input');
+      input.type = inputType;
+      input.className = 'form-check-input';
+      input.name = 'wf-location-picker';
+      input.id = domId;
+      input.value = String(loc.id);
+      input.checked = ids.indexOf(loc.id) !== -1;
+      input.disabled = readOnly;
+      input.addEventListener('change', onPickerChange);
+      var label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.setAttribute('for', domId);
+      label.textContent = loc.active ? loc.name : loc.name + ' (archived)';
+      wrapper.appendChild(input);
+      wrapper.appendChild(label);
+      listEl.appendChild(wrapper);
+    });
+  }
+  function onPickerChange() {
+    // The native radio/checkbox `input` group already enforces "at most
+    // one checked" for "One" and "any number" for "Selected" — nothing
+    // here needs to re-derive that from `inputType`.
+    doc.location_ids = Array.from(listEl.querySelectorAll('input:checked')).map(function (el) {
+      return Number(el.value);
+    });
+    onChange(doc);
+  }
+  function onScopeChange(value) {
+    doc.location_scope = value;
+    if (value === 'all') {
+      doc.location_ids = [];
+    }
+    pickerEl.hidden = value === 'all';
+    renderPicker(value);
+    onChange(doc);
+  }
+  scopeInputs.forEach(function (input) {
+    input.addEventListener('change', function () {
+      if (input.checked) {
+        onScopeChange(input.value);
+      }
+    });
+  });
+  function render(document_, isReadOnly) {
+    doc = document_;
+    readOnly = isReadOnly;
+    var scope = doc.location_scope || 'all';
+    scopeInputs.forEach(function (input) {
+      input.checked = input.value === scope;
+      input.disabled = readOnly;
+    });
+    pickerEl.hidden = scope === 'all';
+    renderPicker(scope);
+  }
+
+  /** Document-level errors mentioning "location", surfaced beside the control. */
+  function renderErrors(errors) {
+    var documentErrors = errors && errors['_document'] || [];
+    var locationErrors = documentErrors.filter(function (message) {
+      return /location/i.test(message);
+    });
+    errorsEl.classList.toggle('d-none', locationErrors.length === 0);
+    errorsEl.innerHTML = '';
+    locationErrors.forEach(function (message) {
+      var p = document.createElement('p');
+      p.className = 'mb-0';
+      p.textContent = message;
+      errorsEl.appendChild(p);
+    });
+  }
+  return {
+    render: render,
+    renderErrors: renderErrors
+  };
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/recipes.js":
+/*!**************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/recipes.js ***!
+  \**************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "listRecipes": () => (/* binding */ listRecipes)
 /* harmony export */ });
 /* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
 // Automations V2 (contract §13.3, task requirement, V2-D) — recipe
@@ -2544,17 +2090,17 @@ function listRecipes() {
   }];
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/step-picker.js"
+/***/ "./resources/js/automations/workflow-builder/step-picker.js":
 /*!******************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/step-picker.js ***!
   \******************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createStepPicker: () => (/* binding */ createStepPicker)
+/* harmony export */   "createStepPicker": () => (/* binding */ createStepPicker)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
@@ -2748,17 +2294,17 @@ function createStepPicker(hostEl) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/summaries.js"
+/***/ "./resources/js/automations/workflow-builder/summaries.js":
 /*!****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/summaries.js ***!
   \****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   summarize: () => (/* binding */ summarize)
+/* harmony export */   "summarize": () => (/* binding */ summarize)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
@@ -3017,17 +2563,17 @@ function summarizeTrigger(config, catalogs) {
   }
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/test-panel.js"
+/***/ "./resources/js/automations/workflow-builder/test-panel.js":
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/test-panel.js ***!
   \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createTestPanel: () => (/* binding */ createTestPanel)
+/* harmony export */   "createTestPanel": () => (/* binding */ createTestPanel)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
@@ -3308,20 +2854,20 @@ function createTestPanel(_ref) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/validation.js"
+/***/ "./resources/js/automations/workflow-builder/validation.js":
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/validation.js ***!
   \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   DOCUMENT_KEY: () => (/* binding */ DOCUMENT_KEY),
-/* harmony export */   countIssues: () => (/* binding */ countIssues),
-/* harmony export */   hasErrors: () => (/* binding */ hasErrors),
-/* harmony export */   renderDocumentBanner: () => (/* binding */ renderDocumentBanner)
+/* harmony export */   "DOCUMENT_KEY": () => (/* binding */ DOCUMENT_KEY),
+/* harmony export */   "countIssues": () => (/* binding */ countIssues),
+/* harmony export */   "hasErrors": () => (/* binding */ hasErrors),
+/* harmony export */   "renderDocumentBanner": () => (/* binding */ renderDocumentBanner)
 /* harmony export */ });
 // Automations V2 (contract §14.4, V2-D) — turning the server's
 // node_key-keyed errors into customer-facing feedback. The server is the
@@ -3360,17 +2906,17 @@ function renderDocumentBanner(bannerEl, errors, messageTemplate) {
   });
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/zoom-pan.js"
+/***/ "./resources/js/automations/workflow-builder/zoom-pan.js":
 /*!***************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/zoom-pan.js ***!
   \***************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createZoomPan: () => (/* binding */ createZoomPan)
+/* harmony export */   "createZoomPan": () => (/* binding */ createZoomPan)
 /* harmony export */ });
 // Automations V2 (contract §13.1, V2-D) — lightweight viewport zoom/pan.
 // No graph library: a CSS transform on one surface element, driven by
@@ -3495,25 +3041,13 @@ function createZoomPan(viewport, surface) {
   };
 }
 
-/***/ },
-
-/***/ "./resources/scss/base/pages/automations-workflow-builder.scss"
-/*!*********************************************************************!*\
-  !*** ./resources/scss/base/pages/automations-workflow-builder.scss ***!
-  \*********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-// extracted by mini-css-extract-plugin
-
-
-/***/ }
+/***/ })
 
 /******/ 	});
 /************************************************************************/
 /******/ 	// The module cache
 /******/ 	var __webpack_module_cache__ = {};
-/******/ 	
+/******/
 /******/ 	// The require function
 /******/ 	function __webpack_require__(moduleId) {
 /******/ 		// Check if module is in cache
@@ -3527,56 +3061,15 @@ __webpack_require__.r(__webpack_exports__);
 /******/ 			// no module.loaded needed
 /******/ 			exports: {}
 /******/ 		};
-/******/ 	
+/******/
 /******/ 		// Execute the module function
-/******/ 		if (!(moduleId in __webpack_modules__)) {
-/******/ 			delete __webpack_module_cache__[moduleId];
-/******/ 			var e = new Error("Cannot find module '" + moduleId + "'");
-/******/ 			e.code = 'MODULE_NOT_FOUND';
-/******/ 			throw e;
-/******/ 		}
 /******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
-/******/ 	
+/******/
 /******/ 		// Return the exports of the module
 /******/ 		return module.exports;
 /******/ 	}
-/******/ 	
-/******/ 	// expose the modules object (__webpack_modules__)
-/******/ 	__webpack_require__.m = __webpack_modules__;
-/******/ 	
+/******/
 /************************************************************************/
-/******/ 	/* webpack/runtime/chunk loaded */
-/******/ 	(() => {
-/******/ 		var deferred = [];
-/******/ 		__webpack_require__.O = (result, chunkIds, fn, priority) => {
-/******/ 			if(chunkIds) {
-/******/ 				priority = priority || 0;
-/******/ 				for(var i = deferred.length; i > 0 && deferred[i - 1][2] > priority; i--) deferred[i] = deferred[i - 1];
-/******/ 				deferred[i] = [chunkIds, fn, priority];
-/******/ 				return;
-/******/ 			}
-/******/ 			var notFulfilled = Infinity;
-/******/ 			for (var i = 0; i < deferred.length; i++) {
-/******/ 				var [chunkIds, fn, priority] = deferred[i];
-/******/ 				var fulfilled = true;
-/******/ 				for (var j = 0; j < chunkIds.length; j++) {
-/******/ 					if ((priority & 1 === 0 || notFulfilled >= priority) && Object.keys(__webpack_require__.O).every((key) => (__webpack_require__.O[key](chunkIds[j])))) {
-/******/ 						chunkIds.splice(j--, 1);
-/******/ 					} else {
-/******/ 						fulfilled = false;
-/******/ 						if(priority < notFulfilled) notFulfilled = priority;
-/******/ 					}
-/******/ 				}
-/******/ 				if(fulfilled) {
-/******/ 					deferred.splice(i--, 1)
-/******/ 					var r = fn();
-/******/ 					if (r !== undefined) result = r;
-/******/ 				}
-/******/ 			}
-/******/ 			return result;
-/******/ 		};
-/******/ 	})();
-/******/ 	
 /******/ 	/* webpack/runtime/define property getters */
 /******/ 	(() => {
 /******/ 		// define getter functions for harmony exports
@@ -3588,12 +3081,12 @@ __webpack_require__.r(__webpack_exports__);
 /******/ 			}
 /******/ 		};
 /******/ 	})();
-/******/ 	
+/******/
 /******/ 	/* webpack/runtime/hasOwnProperty shorthand */
 /******/ 	(() => {
 /******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
 /******/ 	})();
-/******/ 	
+/******/
 /******/ 	/* webpack/runtime/make namespace object */
 /******/ 	(() => {
 /******/ 		// define __esModule on exports
@@ -3604,69 +3097,610 @@ __webpack_require__.r(__webpack_exports__);
 /******/ 			Object.defineProperty(exports, '__esModule', { value: true });
 /******/ 		};
 /******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/jsonp chunk loading */
-/******/ 	(() => {
-/******/ 		// no baseURI
-/******/ 		
-/******/ 		// object to store loaded and loading chunks
-/******/ 		// undefined = chunk not loaded, null = chunk preloaded/prefetched
-/******/ 		// [resolve, reject, Promise] = chunk loading, 0 = chunk loaded
-/******/ 		var installedChunks = {
-/******/ 			"/js/automations/workflow-builder": 0,
-/******/ 			"css/base/pages/automations-workflow-builder": 0
-/******/ 		};
-/******/ 		
-/******/ 		// no chunk on demand loading
-/******/ 		
-/******/ 		// no prefetching
-/******/ 		
-/******/ 		// no preloaded
-/******/ 		
-/******/ 		// no HMR
-/******/ 		
-/******/ 		// no HMR manifest
-/******/ 		
-/******/ 		__webpack_require__.O.j = (chunkId) => (installedChunks[chunkId] === 0);
-/******/ 		
-/******/ 		// install a JSONP callback for chunk loading
-/******/ 		var webpackJsonpCallback = (parentChunkLoadingFunction, data) => {
-/******/ 			var [chunkIds, moreModules, runtime] = data;
-/******/ 			// add "moreModules" to the modules object,
-/******/ 			// then flag all "chunkIds" as loaded and fire callback
-/******/ 			var moduleId, chunkId, i = 0;
-/******/ 			if(chunkIds.some((id) => (installedChunks[id] !== 0))) {
-/******/ 				for(moduleId in moreModules) {
-/******/ 					if(__webpack_require__.o(moreModules, moduleId)) {
-/******/ 						__webpack_require__.m[moduleId] = moreModules[moduleId];
-/******/ 					}
-/******/ 				}
-/******/ 				if(runtime) var result = runtime(__webpack_require__);
-/******/ 			}
-/******/ 			if(parentChunkLoadingFunction) parentChunkLoadingFunction(data);
-/******/ 			for(;i < chunkIds.length; i++) {
-/******/ 				chunkId = chunkIds[i];
-/******/ 				if(__webpack_require__.o(installedChunks, chunkId) && installedChunks[chunkId]) {
-/******/ 					installedChunks[chunkId][0]();
-/******/ 				}
-/******/ 				installedChunks[chunkId] = 0;
-/******/ 			}
-/******/ 			return __webpack_require__.O(result);
-/******/ 		}
-/******/ 		
-/******/ 		var chunkLoadingGlobal = self["webpackChunkos_ai"] = self["webpackChunkos_ai"] || [];
-/******/ 		chunkLoadingGlobal.forEach(webpackJsonpCallback.bind(null, 0));
-/******/ 		chunkLoadingGlobal.push = webpackJsonpCallback.bind(null, chunkLoadingGlobal.push.bind(chunkLoadingGlobal));
-/******/ 	})();
-/******/ 	
+/******/
 /************************************************************************/
-/******/ 	
-/******/ 	// startup
-/******/ 	// Load entry module and return exports
-/******/ 	// This entry module depends on other loaded chunks and execution need to be delayed
-/******/ 	__webpack_require__.O(undefined, ["css/base/pages/automations-workflow-builder"], () => (__webpack_require__("./resources/js/automations/workflow-builder/index.js")))
-/******/ 	var __webpack_exports__ = __webpack_require__.O(undefined, ["css/base/pages/automations-workflow-builder"], () => (__webpack_require__("./resources/scss/base/pages/automations-workflow-builder.scss")))
-/******/ 	__webpack_exports__ = __webpack_require__.O(__webpack_exports__);
-/******/ 	
+var __webpack_exports__ = {};
+// This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
+(() => {
+/*!************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/index.js ***!
+  \************************************************************/
+__webpack_require__.r(__webpack_exports__);
+/* harmony import */ var _canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./canvas-renderer.js */ "./resources/js/automations/workflow-builder/canvas-renderer.js");
+/* harmony import */ var _drawer_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./drawer.js */ "./resources/js/automations/workflow-builder/drawer.js");
+/* harmony import */ var _history_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./history.js */ "./resources/js/automations/workflow-builder/history.js");
+/* harmony import */ var _zoom_pan_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./zoom-pan.js */ "./resources/js/automations/workflow-builder/zoom-pan.js");
+/* harmony import */ var _autosave_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./autosave.js */ "./resources/js/automations/workflow-builder/autosave.js");
+/* harmony import */ var _api_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./api.js */ "./resources/js/automations/workflow-builder/api.js");
+/* harmony import */ var _step_picker_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./step-picker.js */ "./resources/js/automations/workflow-builder/step-picker.js");
+/* harmony import */ var _test_panel_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./test-panel.js */ "./resources/js/automations/workflow-builder/test-panel.js");
+/* harmony import */ var _location_scope_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./location-scope.js */ "./resources/js/automations/workflow-builder/location-scope.js");
+/* harmony import */ var _recipes_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./recipes.js */ "./resources/js/automations/workflow-builder/recipes.js");
+/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
+/* harmony import */ var _validation_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./validation.js */ "./resources/js/automations/workflow-builder/validation.js");
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+function _createForOfIteratorHelper(r, e) { var t = "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (!t) { if (Array.isArray(r) || (t = _unsupportedIterableToArray(r)) || e && r && "number" == typeof r.length) { t && (r = t); var _n = 0, F = function F() {}; return { s: F, n: function n() { return _n >= r.length ? { done: !0 } : { done: !1, value: r[_n++] }; }, e: function e(r) { throw r; }, f: F }; } throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); } var o, a = !0, u = !1; return { s: function s() { t = t.call(r); }, n: function n() { var r = t.next(); return a = r.done, r; }, e: function e(r) { u = !0, o = r; }, f: function f() { try { a || null == t["return"] || t["return"](); } finally { if (u) throw o; } } }; }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+// Automations V2 (contract §13, V2-D) — the builder's entry point. One
+// bundled ES module (contract §13.1), exposed as `window.AutomationsWorkflowBuilder`
+// so the Blade views (which cannot use `import` directly) can call it after
+// this bundle loads.
+
+
+
+
+
+
+
+
+
+
+
+
+
+var STATUS_LABELS = {
+  draft: 'Draft',
+  published: 'Published',
+  paused: 'Paused',
+  archived: 'Archived'
+};
+function initBuilder(root) {
+  var dataEl = document.getElementById('wf-builder-data');
+  if (!dataEl) {
+    return;
+  }
+  var data = JSON.parse(dataEl.textContent);
+  var doc = data.draft.definition;
+  var errors = data.draft.errors || {};
+  var selectedKey = null;
+  var path = null;
+  var status = data.workflow.status || 'draft';
+  var readOnly = status === 'archived';
+  var canvasRootEl = root.querySelector('[data-role="wf-canvas-root"]');
+  var saveStateEl = root.querySelector('[data-role="wf-save-state"]');
+  var bannerEl = root.querySelector('[data-role="wf-document-errors"]');
+  var undoButton = root.querySelector('[data-role="wf-undo"]');
+  var redoButton = root.querySelector('[data-role="wf-redo"]');
+  var publishButton = root.querySelector('[data-role="wf-publish"]');
+  var publishLabel = root.querySelector('[data-role="wf-publish-label"]');
+  var pauseButton = root.querySelector('[data-role="wf-pause"]');
+  var resumeButton = root.querySelector('[data-role="wf-resume"]');
+  var statusEl = root.querySelector('[data-role="wf-status"]');
+  var noticeEl = root.querySelector('[data-role="wf-header-notice"]');
+  var testButton = root.querySelector('[data-role="wf-test-workflow"]');
+  var viewportEl = root.querySelector('[data-role="wf-canvas-viewport"]');
+  var surfaceEl = root.querySelector('[data-role="wf-canvas-surface"]');
+  var workspaceEl = root.querySelector('[data-role="wf-workspace"]');
+  var api = (0,_api_js__WEBPACK_IMPORTED_MODULE_5__.createApiClient)(data.basePath);
+  var history = (0,_history_js__WEBPACK_IMPORTED_MODULE_2__.createHistory)(doc);
+  var zoomPan = (0,_zoom_pan_js__WEBPACK_IMPORTED_MODULE_3__.createZoomPan)(viewportEl, surfaceEl);
+  var picker = (0,_step_picker_js__WEBPACK_IMPORTED_MODULE_6__.createStepPicker)(root);
+  root.querySelector('[data-role="wf-zoom-in"]').addEventListener('click', zoomPan.zoomIn);
+  root.querySelector('[data-role="wf-zoom-out"]').addEventListener('click', zoomPan.zoomOut);
+  root.querySelector('[data-role="wf-zoom-reset"]').addEventListener('click', zoomPan.reset);
+  root.querySelector('[data-role="wf-zoom-fit"]').addEventListener('click', zoomPan.fit);
+
+  // ---------------------------------------------------------------
+  // Header: save state, status, lifecycle
+  // ---------------------------------------------------------------
+
+  function setSaveState(state) {
+    saveStateEl.dataset.state = state;
+    var label = {
+      saving: 'Saving…',
+      saved: 'All changes saved',
+      error: 'Offline — changes kept locally'
+    }[state];
+    saveStateEl.querySelector('[data-role="wf-save-state-label"]').textContent = label || '';
+  }
+  function showNotice(message, tone) {
+    noticeEl.textContent = message || '';
+    noticeEl.dataset.tone = tone || 'info';
+    noticeEl.hidden = !message;
+  }
+  function renderStatus() {
+    statusEl.dataset.status = status;
+    statusEl.textContent = STATUS_LABELS[status] || status;
+    pauseButton.hidden = status !== 'published';
+    resumeButton.hidden = status !== 'paused';
+    publishButton.hidden = readOnly;
+    publishLabel.textContent = status === 'draft' ? 'Publish' : 'Publish changes';
+  }
+  var autosave = (0,_autosave_js__WEBPACK_IMPORTED_MODULE_4__.createAutosave)({
+    api: api,
+    workflowBasePath: data.basePath,
+    initialRevision: data.draft.revision,
+    onStateChange: setSaveState,
+    onSaved: function onSaved(body) {
+      errors = body.errors || {};
+      rerender();
+    },
+    onConflict: function onConflict() {
+      bannerEl.classList.remove('d-none');
+      bannerEl.innerHTML = '';
+      bannerEl.appendChild(Object.assign(document.createElement('p'), {
+        className: 'mb-0',
+        textContent: 'This workflow changed somewhere else. Reload to get the latest version before editing.'
+      }));
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Panels: inspector and test
+  // ---------------------------------------------------------------
+
+  function syncPanels() {
+    workspaceEl.classList.toggle('has-panel', drawer.isOpen() || testPanel.isOpen());
+  }
+  var drawer = (0,_drawer_js__WEBPACK_IMPORTED_MODULE_1__.createDrawer)({
+    drawerEl: root.querySelector('[data-role="wf-drawer"]'),
+    catalogs: data.catalogs,
+    dateOffsets: data.dateOffsets,
+    limits: data.limits,
+    onSave: function onSave(node, config) {
+      node.config = config;
+      onDocumentChanged();
+    },
+    onDelete: function onDelete(node) {
+      deleteNode(node, true);
+    },
+    onClose: function onClose(node) {
+      selectedKey = null;
+      syncPanels();
+      rerender();
+      var card = node && canvasRootEl.querySelector("[data-node-key=\"".concat(CSS.escape(node.key), "\"]"));
+      if (card) {
+        card.focus({
+          preventScroll: true
+        });
+      }
+    }
+  });
+  var testPanel = (0,_test_panel_js__WEBPACK_IMPORTED_MODULE_7__.createTestPanel)({
+    panelEl: root.querySelector('[data-role="wf-test-panel"]'),
+    api: api,
+    basePath: data.basePath,
+    beforeRun: function beforeRun() {
+      return autosave.flushPending();
+    },
+    onPath: function onPath(nextPath) {
+      path = nextPath;
+      rerender();
+    },
+    onClose: function onClose() {
+      syncPanels();
+    }
+  });
+  function selectNode(node) {
+    if (testPanel.isOpen()) {
+      testPanel.close();
+    }
+    selectedKey = node.key;
+    drawer.open(node, errors[node.key] || [], {
+      readOnly: readOnly
+    });
+    syncPanels();
+    rerender();
+  }
+
+  // ---------------------------------------------------------------
+  // Location run-scope (lane contract §11) — the Settings tab
+  // ---------------------------------------------------------------
+
+  var locationScopeEl = root.querySelector('#wf-tabs-settings');
+  var locationScope = locationScopeEl ? (0,_location_scope_js__WEBPACK_IMPORTED_MODULE_8__.createLocationScopeControl)({
+    containerEl: locationScopeEl,
+    locations: data.locations || {
+      options: [],
+      accessibleIds: [],
+      hasAllReach: true
+    },
+    onChange: onDocumentChanged
+  }) : null;
+
+  // ---------------------------------------------------------------
+  // Document edits
+  // ---------------------------------------------------------------
+
+  function findContainingList(target, list) {
+    if (list.includes(target)) {
+      return list;
+    }
+    var _iterator = _createForOfIteratorHelper(list),
+      _step;
+    try {
+      for (_iterator.s(); !(_step = _iterator.n()).done;) {
+        var node = _step.value;
+        if (node.type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
+          var inYes = findContainingList(target, node.yes || []);
+          if (inYes) return inYes;
+          var inNo = findContainingList(target, node.no || []);
+          if (inNo) return inNo;
+        } else if (Array.isArray(node.next)) {
+          var found = findContainingList(target, node.next);
+          if (found) return found;
+        }
+      }
+    } catch (err) {
+      _iterator.e(err);
+    } finally {
+      _iterator.f();
+    }
+    return null;
+  }
+  function stepCount(node) {
+    if (node.type !== _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
+      return 0;
+    }
+    var count = function count(list) {
+      return list.reduce(function (total, child) {
+        return total + 1 + stepCount(child);
+      }, 0);
+    };
+    return count(node.yes || []) + count(node.no || []);
+  }
+  function deleteNode(node, alreadyConfirmed) {
+    if (readOnly) {
+      return;
+    }
+    var inner = stepCount(node);
+    if (!alreadyConfirmed || inner > 0) {
+      var message = inner > 0 ? "Delete this If / Else and the ".concat(inner, " step").concat(inner === 1 ? '' : 's', " inside it?") : 'Delete this step?';
+      if (!window.confirm(message)) {
+        return;
+      }
+    }
+    var list = findContainingList(node, doc.root.next || []);
+    if (list) {
+      if (selectedKey === node.key) {
+        drawer.close();
+      }
+      (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.removeFrom)(list, node);
+      onDocumentChanged();
+    }
+  }
+  function onDocumentChanged() {
+    history.push(doc);
+    if (path) {
+      // A test result describes the document it ran on, not this one.
+      path = null;
+    }
+    rerender();
+    autosave.schedule(doc);
+  }
+  function requestAdd(anchorEl, list, index, depth) {
+    var trailing = index === list.length;
+    var canBranch = !(data.limits && depth >= data.limits.maxBranchDepth);
+    var types = _constants_js__WEBPACK_IMPORTED_MODULE_12__.INSERTABLE_TYPES.filter(function (type) {
+      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
+        return canBranch;
+      }
+
+      // End closes a path, so it is only offered where nothing follows.
+      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.END) {
+        return trailing;
+      }
+      return true;
+    });
+    var hints = {};
+    if (!trailing && canBranch) {
+      hints[_constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE] = 'The steps below move into its Yes path.';
+    }
+    picker.open(anchorEl, {
+      types: types,
+      hints: hints,
+      note: canBranch ? '' : 'If / Else can’t be nested any deeper here.',
+      onPick: function onPick(type) {
+        var node = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.newNode)(type, (0,_constants_js__WEBPACK_IMPORTED_MODULE_12__.defaultConfigFor)(type));
+        if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE && !trailing) {
+          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.insertBranchAt)(list, index, node);
+        } else {
+          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.insertAt)(list, index, node);
+        }
+        onDocumentChanged();
+        selectNode(node);
+      }
+    });
+  }
+  function rerender() {
+    var nodeCount = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.countNodes)(doc);
+    (0,_canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__.renderCanvas)(doc, canvasRootEl, {
+      onSelect: selectNode,
+      onRequestAdd: requestAdd,
+      onDelete: function onDelete(node) {
+        deleteNode(node, false);
+      },
+      onMove: function onMove(node, list, direction) {
+        if ((0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.moveWithin)(list, node, direction)) {
+          onDocumentChanged();
+        }
+      }
+    }, {
+      errors: errors,
+      nodeCount: nodeCount,
+      limits: data.limits,
+      selectedKey: selectedKey,
+      readOnly: readOnly,
+      catalogs: data.catalogs,
+      path: path
+    });
+    (0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.renderDocumentBanner)(bannerEl, errors, 'This workflow has :count issue(s) to fix before it can publish.');
+    if (locationScope) {
+      locationScope.render(doc, readOnly);
+      locationScope.renderErrors(errors);
+    }
+    undoButton.disabled = readOnly || !history.canUndo();
+    redoButton.disabled = readOnly || !history.canRedo();
+    var blocked = (0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.hasErrors)(errors);
+    publishButton.disabled = blocked;
+    publishButton.title = blocked ? "Fix ".concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.countIssues)(errors), " issue").concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.countIssues)(errors) === 1 ? '' : 's', " before publishing") : '';
+  }
+
+  // ---------------------------------------------------------------
+  // Toolbar actions
+  // ---------------------------------------------------------------
+
+  function restore(restored) {
+    if (!restored) {
+      return;
+    }
+    drawer.close();
+    doc = restored;
+    path = null;
+    rerender();
+    autosave.schedule(doc);
+  }
+  undoButton.addEventListener('click', function () {
+    return restore(history.undo());
+  });
+  redoButton.addEventListener('click', function () {
+    return restore(history.redo());
+  });
+  publishButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
+    var result;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          publishButton.disabled = true;
+          showNotice('Publishing…', 'info');
+          _context.n = 1;
+          return autosave.flushNow(doc);
+        case 1:
+          _context.n = 2;
+          return api.publish(data.basePath);
+        case 2:
+          result = _context.v;
+          if (!(result.status === 422)) {
+            _context.n = 3;
+            break;
+          }
+          errors = result.body && result.body.errors || {};
+          showNotice('Fix the highlighted steps before publishing.', 'danger');
+          rerender();
+          return _context.a(2);
+        case 3:
+          if (!(result.status >= 200 && result.status < 300)) {
+            _context.n = 4;
+            break;
+          }
+          // A publish turns this draft into the live version; reloading opens
+          // the fresh draft the next edit saves against.
+          showNotice('Published. Contacts who match the trigger now enter this workflow.', 'success');
+          window.location.reload();
+          return _context.a(2);
+        case 4:
+          showNotice(result.body && result.body.message || 'Publishing didn’t work. Try again.', 'danger');
+          rerender();
+        case 5:
+          return _context.a(2);
+      }
+    }, _callee);
+  })));
+  function changeStatus(_x, _x2, _x3) {
+    return _changeStatus.apply(this, arguments);
+  }
+  function _changeStatus() {
+    _changeStatus = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(button, call, done) {
+      var result;
+      return _regenerator().w(function (_context2) {
+        while (1) switch (_context2.n) {
+          case 0:
+            button.disabled = true;
+            _context2.n = 1;
+            return call(data.basePath);
+          case 1:
+            result = _context2.v;
+            button.disabled = false;
+            if (!(result.status >= 200 && result.status < 300 && result.body && result.body.workflow)) {
+              _context2.n = 2;
+              break;
+            }
+            status = result.body.workflow.status;
+            renderStatus();
+            showNotice(done, 'success');
+            return _context2.a(2);
+          case 2:
+            showNotice(result.body && result.body.message || 'That didn’t work. Try again.', 'danger');
+          case 3:
+            return _context2.a(2);
+        }
+      }, _callee2);
+    }));
+    return _changeStatus.apply(this, arguments);
+  }
+  pauseButton.addEventListener('click', function () {
+    if (window.confirm('Pause this workflow? No new contacts enter, and contacts already in it wait where they are until you resume.')) {
+      changeStatus(pauseButton, api.pause, 'Paused. Contacts already in the workflow wait until you resume it.');
+    }
+  });
+  resumeButton.addEventListener('click', function () {
+    changeStatus(resumeButton, api.resume, 'Resumed. The workflow is live again.');
+  });
+  testButton.addEventListener('click', function () {
+    drawer.close();
+    selectedKey = null;
+    testPanel.open();
+    syncPanels();
+  });
+
+  // ---------------------------------------------------------------
+  // Keyboard: ↑/↓ between steps, Enter opens, Delete removes, Esc closes
+  // ---------------------------------------------------------------
+
+  canvasRootEl.addEventListener('keydown', function (event) {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || !event.target.matches('[data-role="wf-step-card"]')) {
+      return;
+    }
+    var cards = _toConsumableArray(canvasRootEl.querySelectorAll('[data-role="wf-step-card"]'));
+    var index = cards.indexOf(event.target);
+    var next = cards[index + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (next) {
+      event.preventDefault();
+      next.focus();
+      next.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest'
+      });
+    }
+  });
+  renderStatus();
+  rerender();
+  if (readOnly) {
+    showNotice('This workflow is archived. You can review it, but not change it.', 'info');
+  }
+}
+function initChooser(root) {
+  var scratchCard = root.querySelector('[data-role="wf-chooser-scratch"]');
+  var recipesContainer = root.querySelector('[data-role="wf-chooser-recipes"]');
+  var nameInput = root.querySelector('[data-role="wf-chooser-name"]');
+  var errorEl = root.querySelector('[data-role="wf-chooser-error"]');
+  var createUrl = root.dataset.createUrl;
+  var labelsEl = document.getElementById('wf-recipe-labels');
+  var labels = labelsEl ? JSON.parse(labelsEl.textContent) : {};
+  var api = (0,_api_js__WEBPACK_IMPORTED_MODULE_5__.createApiClient)(createUrl);
+  var busy = false;
+  function showError(message) {
+    if (errorEl) {
+      errorEl.textContent = message || '';
+      errorEl.hidden = !message;
+    }
+  }
+
+  // §20.2 — creating a workflow takes a name and a trigger type, nothing
+  // else. A recipe is then only a starting document: it is saved into the new
+  // workflow's draft through the same autosave any edit uses.
+  function createWorkflow(_x4, _x5) {
+    return _createWorkflow.apply(this, arguments);
+  }
+  function _createWorkflow() {
+    _createWorkflow = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(fallbackName, definition) {
+      var name, triggerType, created, redirect, firstError, opened;
+      return _regenerator().w(function (_context3) {
+        while (1) switch (_context3.p = _context3.n) {
+          case 0:
+            if (!busy) {
+              _context3.n = 1;
+              break;
+            }
+            return _context3.a(2);
+          case 1:
+            name = nameInput && nameInput.value.trim() || fallbackName;
+            triggerType = definition && definition.root.config.trigger_type || 'contact_created';
+            busy = true;
+            showError('');
+            root.classList.add('is-busy');
+            _context3.p = 2;
+            _context3.n = 3;
+            return api.create({
+              name: name,
+              trigger_type: triggerType
+            });
+          case 3:
+            created = _context3.v;
+            redirect = created.body && created.body.redirect;
+            if (!(created.status !== 201 || !redirect)) {
+              _context3.n = 4;
+              break;
+            }
+            firstError = created.body && created.body.errors ? Object.values(created.body.errors)[0][0] : null;
+            showError(firstError || created.body && created.body.message || 'The workflow couldn’t be created. Try again.');
+            return _context3.a(2);
+          case 4:
+            if (!definition) {
+              _context3.n = 6;
+              break;
+            }
+            _context3.n = 5;
+            return api.openDraft(redirect);
+          case 5:
+            opened = _context3.v;
+            if (!(opened.body && typeof opened.body.revision === 'number')) {
+              _context3.n = 6;
+              break;
+            }
+            _context3.n = 6;
+            return api.saveDraft(redirect, definition, opened.body.revision);
+          case 6:
+            window.location.href = redirect;
+          case 7:
+            _context3.p = 7;
+            busy = false;
+            root.classList.remove('is-busy');
+            return _context3.f(7);
+          case 8:
+            return _context3.a(2);
+        }
+      }, _callee3, null, [[2,, 7, 8]]);
+    }));
+    return _createWorkflow.apply(this, arguments);
+  }
+  scratchCard.addEventListener('click', function () {
+    return createWorkflow('Untitled workflow', null);
+  });
+  scratchCard.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      createWorkflow('Untitled workflow', null);
+    }
+  });
+  (0,_recipes_js__WEBPACK_IMPORTED_MODULE_9__.listRecipes)().forEach(function (recipe) {
+    var col = document.createElement('div');
+    col.className = 'col-12 col-md-6 col-xl-3';
+    var card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'wf-chooser-card';
+    card.dataset.role = 'wf-chooser-recipe';
+    card.dataset.recipeKey = recipe.key;
+    var labelSet = labels[recipe.key] || {};
+    var title = document.createElement('span');
+    title.className = 'wf-chooser-card__title';
+    title.textContent = labelSet.title || recipe.titleKey;
+    var description = document.createElement('span');
+    description.className = 'wf-chooser-card__description';
+    description.textContent = labelSet.description || recipe.descriptionKey;
+    card.appendChild(title);
+    card.appendChild(description);
+    col.appendChild(card);
+    recipesContainer.appendChild(col);
+    card.addEventListener('click', function () {
+      createWorkflow(labelSet.title || 'Untitled workflow', recipe.build());
+    });
+  });
+}
+window.AutomationsWorkflowBuilder = {
+  initBuilder: initBuilder,
+  initChooser: initChooser
+};
+})();
+
 /******/ })()
 ;

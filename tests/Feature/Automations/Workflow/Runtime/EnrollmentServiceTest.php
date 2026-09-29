@@ -48,7 +48,7 @@ class EnrollmentServiceTest extends TestCase
         [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()]);
         $contact = $this->contactFor($business);
 
-        $enrollment = $this->service()->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = $this->service()->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         $this->assertNotNull($enrollment);
         $this->assertSame((int) $version->id, (int) $enrollment->version_id, 'The version must be pinned at enrollment.');
@@ -69,8 +69,8 @@ class EnrollmentServiceTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()]);
         $contact = $this->contactFor($business);
 
-        $first = $this->service()->enroll($workflow, $contact, (string) $contact->id);
-        $second = $this->service()->enroll($workflow, $contact, (string) $contact->id);
+        $first = $this->service()->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
+        $second = $this->service()->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         $this->assertNotNull($first);
         $this->assertNull($second, 'A repeated trigger must return null rather than enrolling twice.');
@@ -104,24 +104,24 @@ class EnrollmentServiceTest extends TestCase
 
         $workflow = $workflow->fresh();
 
-        $first = $this->service()->enroll($workflow, $contact, '2026');
+        $first = $this->service()->enroll($workflow, $contact, $contact->location_id, '2026');
         $this->assertNotNull($first);
 
         // Still in flight: the guard refuses a second concurrent journey even for
         // a different occurrence.
         $this->assertNull(
-            $this->service()->enroll($workflow, $contact, '2027'),
+            $this->service()->enroll($workflow, $contact, $contact->location_id, '2027'),
             'A contact cannot be in one workflow twice at once.',
         );
 
         DB::table('automation_enrollments')->where('id', $first->id)
             ->update(['status' => EnrollmentStatus::Completed->value, 'current_node_id' => null]);
 
-        $nextYear = $this->service()->enroll($workflow, $contact, '2027');
+        $nextYear = $this->service()->enroll($workflow, $contact, $contact->location_id, '2027');
 
         $this->assertNotNull($nextYear, 'Next year must be allowed to enroll once the previous journey ended.');
         $this->assertNull(
-            $this->service()->enroll($workflow, $contact, '2026'),
+            $this->service()->enroll($workflow, $contact, $contact->location_id, '2026'),
             'The occurrence that already ran must still be refused.',
         );
     }
@@ -136,7 +136,7 @@ class EnrollmentServiceTest extends TestCase
         $foreignContact = $this->contactFor($businessB, 'Theirs');
 
         $this->assertNull(
-            $this->service()->enroll($workflow, $foreignContact, (string) $foreignContact->id),
+            $this->service()->enroll($workflow, $foreignContact, $foreignContact->location_id, (string) $foreignContact->id),
             "Another Business's contact must never enter this workflow.",
         );
         $this->assertSame(0, DB::table('automation_enrollments')->count());
@@ -151,13 +151,13 @@ class EnrollmentServiceTest extends TestCase
         app(WorkflowLifecycleService::class)->pause($workflow->fresh());
 
         $this->assertNull(
-            $this->service()->enroll($workflow->fresh(), $contact, (string) $contact->id),
+            $this->service()->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id),
             'A paused workflow must not accept new enrollments.',
         );
 
         app(WorkflowLifecycleService::class)->archive($workflow->fresh());
 
-        $this->assertNull($this->service()->enroll($workflow->fresh(), $contact, (string) $contact->id));
+        $this->assertNull($this->service()->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id));
         $this->assertSame(0, DB::table('automation_enrollments')->count());
     }
 
@@ -169,7 +169,7 @@ class EnrollmentServiceTest extends TestCase
             ->createWorkflowWithDraft($business, 'Never published', WorkflowTriggerType::ContactCreated);
         $contact = $this->contactFor($business);
 
-        $this->assertNull($this->service()->enroll($workflow, $contact, (string) $contact->id));
+        $this->assertNull($this->service()->enroll($workflow, $contact, $contact->location_id, (string) $contact->id));
     }
 
     /** Lane F §6.1 — automations cascading into each other are bounded. */
@@ -183,6 +183,7 @@ class EnrollmentServiceTest extends TestCase
             $this->service()->enroll(
                 $workflow,
                 $contact,
+                $contact->location_id,
                 (string) $contact->id,
                 WorkflowLimits::MAX_CAUSATION_DEPTH + 1,
             ),
@@ -192,6 +193,7 @@ class EnrollmentServiceTest extends TestCase
         $ok = $this->service()->enroll(
             $workflow,
             $contact,
+            $contact->location_id,
             (string) $contact->id,
             WorkflowLimits::MAX_CAUSATION_DEPTH,
         );
@@ -207,7 +209,7 @@ class EnrollmentServiceTest extends TestCase
         [$workflow, $versionOne] = $this->publishWorkflow($business, [$this->endStep()]);
         $contact = $this->contactFor($business);
 
-        $enrollment = $this->service()->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = $this->service()->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         // Publish a second version.
         $drafts = app(WorkflowDraftService::class);
@@ -231,7 +233,7 @@ class EnrollmentServiceTest extends TestCase
 
         // And a brand-new contact does start on version two.
         $newContact = $this->contactFor($business, 'Later');
-        $later = $this->service()->enroll($workflow->fresh(), $newContact, (string) $newContact->id);
+        $later = $this->service()->enroll($workflow->fresh(), $newContact, $newContact->location_id, (string) $newContact->id);
 
         $this->assertSame((int) $versionTwo->id, (int) $later->version_id);
     }

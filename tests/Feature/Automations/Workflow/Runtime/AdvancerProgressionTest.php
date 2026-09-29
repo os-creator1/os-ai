@@ -51,7 +51,7 @@ class AdvancerProgressionTest extends TestCase
         [$workflow] = $this->publishWorkflow($business, $steps);
         $contact = $this->contactFor($business);
 
-        return app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        return app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
     }
 
     /** A journey runs its steps in order and finishes at the end of the path. */
@@ -211,7 +211,7 @@ class AdvancerProgressionTest extends TestCase
         $registry->register(app(\App\Library\Automation\Workflow\Executors\TriggerNodeExecutor::class));
         $registry->register(app(\App\Library\Automation\Workflow\Executors\EndNodeExecutor::class));
         $this->app->instance(\App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry::class, $registry);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         $this->advancer()->advance($enrollment);
 
@@ -239,7 +239,7 @@ class AdvancerProgressionTest extends TestCase
             $this->endStep(),
         ]);
         $contact = $this->contactFor($business);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         // Republish with a longer body BEFORE the journey runs.
         $drafts = app(WorkflowDraftService::class);

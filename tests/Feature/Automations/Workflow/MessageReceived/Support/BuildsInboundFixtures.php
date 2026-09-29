@@ -49,10 +49,22 @@ trait BuildsInboundFixtures
 
     /**
      * An inbound message as the legacy path records it — a real incoming
-     * Reports row — and the event the path emits for it.
+     * Reports row, the conversation thread it lands in (Contract 06 §5 —
+     * DLRController opens/reuses this same ChatBox alongside the Reports
+     * row, never without it), and the event the path emits for it.
+     *
+     * Location run-scope foundation (lane contract §9): the ChatBox row is
+     * what `MessageReceivedTriggerSource` now reads the trigger's Location
+     * from — never the Contact directly (§9's own "authoritative subject
+     * for THAT occurrence" rule) — so a fixture that opened a Reports row
+     * without its ChatBox would silently starve every test here of a
+     * Location and fail closed on all of them, not exercise the rule this
+     * lane exists to prove.
      */
     protected function legacyInbound(Business $business, string $contactPhone): InboundMessageReceived
     {
+        $this->ensureConversation($business, $contactPhone);
+
         $report = Reports::create([
             'user_id' => $business->customer_id,
             'business_id' => $business->id,
@@ -70,10 +82,38 @@ trait BuildsInboundFixtures
         return InboundMessageReceived::fromLegacyReport((int) $business->id, $contactPhone, (int) $report->id);
     }
 
-    /** An inbound message as the managed path records it. */
+    /** An inbound message as the managed path records it — same conversation rule. */
     protected function managedInbound(Business $business, string $contactPhone, int $operationId): InboundMessageReceived
     {
+        $this->ensureConversation($business, $contactPhone);
+
         return InboundMessageReceived::fromManagedOperation((int) $business->id, '+' . $contactPhone, $operationId);
+    }
+
+    /**
+     * The ChatBox this Business's conversation with $contactPhone lives in,
+     * opened exactly like the real inbound path opens one (DLRController,
+     * Contract 06 §5) if it does not exist yet: same match key, same
+     * single-Active-Location-or-null Location resolution
+     * (`ChatBox::singleActiveLocationIdFor()`), decided once, when the
+     * thread opens, and kept from then on.
+     */
+    private function ensureConversation(Business $business, string $contactPhone): ChatBox
+    {
+        $box = ChatBox::query()->firstOrNew([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => self::BUSINESS_NUMBER,
+            'to' => $contactPhone,
+        ]);
+
+        if (! $box->exists) {
+            $box->uid = (string) Str::uuid();
+            $box->location_id = ChatBox::singleActiveLocationIdFor((int) $business->id);
+            $box->save();
+        }
+
+        return $box;
     }
 
     /**
@@ -124,17 +164,7 @@ trait BuildsInboundFixtures
      */
     protected function conversationMessage(Business $business, string $contactPhone, string $direction, Carbon $at): void
     {
-        $box = ChatBox::query()->firstOrNew([
-            'user_id' => $business->customer_id,
-            'business_id' => $business->id,
-            'from' => self::BUSINESS_NUMBER,
-            'to' => $contactPhone,
-        ]);
-
-        if (! $box->exists) {
-            $box->uid = (string) Str::uuid();
-            $box->save();
-        }
+        $box = $this->ensureConversation($business, $contactPhone);
 
         DB::table('chat_box_messages')->insert([
             'box_id' => $box->id,

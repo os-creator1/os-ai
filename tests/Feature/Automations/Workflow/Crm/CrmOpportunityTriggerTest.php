@@ -59,6 +59,33 @@ class CrmOpportunityTriggerTest extends TestCase
         Bus::fake([AdvanceWorkflowEnrollment::class]);
     }
 
+    /**
+     * Location run-scope foundation (lane contract §9/§17): `crmTenant()`
+     * (shared, cross-domain `CreatesCrmFixtures`/`CreatesCustomerContextFixtures`
+     * — outside this lane's file scope, so left untouched) creates a
+     * Business with no Location at all. Every deal `deal()` creates below
+     * goes through the REAL `CrmOpportunityService::create()`, which
+     * resolves `location_id` via `CrmOpportunity::singleActiveLocationIdFor()`
+     * exactly like production — so a Business with no Location produces
+     * deals with no Location, and every enrollment in this file would be
+     * silently refused for want of one. This local wrapper is the one place
+     * that gap is closed, scoped to this test file alone.
+     *
+     * @return array{0: \App\Models\Customer, 1: Business, 2: \App\Models\Workspace}
+     */
+    private function crmTenantWithLocation(string $businessName = 'Harbor Lane Studios', string $workspaceName = 'Harbor Lane'): array
+    {
+        $tenant = $this->crmTenant($businessName, $workspaceName);
+
+        \App\Models\BusinessLocation::create([
+            'business_id' => $tenant[1]->id,
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ]);
+
+        return $tenant;
+    }
+
     /** A published workflow on a CRM trigger, with optional stage-change filters. */
     private function crmWorkflow(Business $business, WorkflowTriggerType $type, array $filters = []): AutomationWorkflow
     {
@@ -103,7 +130,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_opportunity_created_enrolls_the_deals_contact_once(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityCreated);
         $pipeline = $this->standardPipeline($business);
 
@@ -129,6 +156,7 @@ class CrmOpportunityTriggerTest extends TestCase
             'from_stage_id' => null,
             'to_stage_id' => null,
             'outcome' => null,
+            'location_id' => (int) $deal->location_id,
         ], $context->toArray());
 
         Bus::assertDispatched(AdvanceWorkflowEnrollment::class, 1);
@@ -136,7 +164,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_opportunity_moves_stage_enrolls_once_with_the_from_and_to_stages(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
         $newInquiry = $this->stageKeyed($pipeline, 'new_inquiry');
         $qualified = $this->stageKeyed($pipeline, 'qualified');
@@ -159,7 +187,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_stage_filters_admit_only_the_matching_move(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
         $newInquiry = $this->stageKeyed($pipeline, 'new_inquiry');
         $qualified = $this->stageKeyed($pipeline, 'qualified');
@@ -186,7 +214,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_opportunity_marked_won_enrolls_once(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $deal = $this->deal($business);
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityWon);
         $lostWorkflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityLost);
@@ -203,7 +231,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_opportunity_marked_lost_enrolls_once(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $deal = $this->deal($business);
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityLost);
         $wonWorkflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityWon);
@@ -217,7 +245,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_each_trigger_listens_only_for_its_own_event(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
 
         $workflows = [];
@@ -239,7 +267,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_a_replayed_event_does_not_enroll_twice(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityStageChanged);
         $deal = $this->deal($business, $pipeline);
@@ -271,8 +299,8 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_another_businesss_workflow_never_fires(): void
     {
-        [, $business] = $this->crmTenant();
-        [, $other] = $this->crmTenant('Other Studio', 'Other Account');
+        [, $business] = $this->crmTenantWithLocation();
+        [, $other] = $this->crmTenantWithLocation('Other Studio', 'Other Account');
         $theirs = $this->crmWorkflow($other, WorkflowTriggerType::OpportunityCreated);
 
         $this->deal($business);
@@ -283,8 +311,8 @@ class CrmOpportunityTriggerTest extends TestCase
     /** An event naming one Business but another Business's change is refused, not trusted. */
     public function test_an_event_whose_change_belongs_to_another_business_enrolls_nobody(): void
     {
-        [, $business] = $this->crmTenant();
-        [, $other] = $this->crmTenant('Other Studio', 'Other Account');
+        [, $business] = $this->crmTenantWithLocation();
+        [, $other] = $this->crmTenantWithLocation('Other Studio', 'Other Account');
         $theirs = $this->crmWorkflow($other, WorkflowTriggerType::OpportunityCreated);
 
         $deal = $this->deal($business);
@@ -300,7 +328,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_an_event_that_misnames_its_change_enrolls_nobody(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $wonWorkflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityWon);
         $deal = $this->deal($business);
 
@@ -313,7 +341,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_a_paused_workflow_does_not_fire_and_a_resumed_one_does(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityCreated);
 
@@ -328,7 +356,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_an_unpublished_or_archived_workflow_does_not_fire(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $pipeline = $this->standardPipeline($business);
 
         $draftOnly = app(WorkflowDraftService::class)->createWorkflowWithDraft($business, 'Never published', WorkflowTriggerType::OpportunityCreated);
@@ -343,7 +371,7 @@ class CrmOpportunityTriggerTest extends TestCase
 
     public function test_a_deal_whose_contact_is_gone_enrolls_nobody(): void
     {
-        [, $business] = $this->crmTenant();
+        [, $business] = $this->crmTenantWithLocation();
         $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityWon);
         $deal = $this->deal($business);
 
@@ -424,5 +452,46 @@ class CrmOpportunityTriggerTest extends TestCase
         // And the CRM never learned about Automations.
         $crm = (string) file_get_contents(base_path('app/Library/Crm/CrmOpportunityService.php'));
         $this->assertStringNotContainsString('Automation', preg_replace('#/\*.*?\*/#s', '', $crm) ?? '');
+    }
+
+    // =================================================================
+    // Location run-scope foundation (lane contract §9/§17) — the enrollment
+    // pins the deal's OWN Location, read from the same history-joined-to-deal
+    // row every other fact here already comes from.
+    // =================================================================
+
+    public function test_the_enrollment_pins_the_deals_own_location(): void
+    {
+        [, $business] = $this->crmTenantWithLocation();
+        $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityCreated);
+        $pipeline = $this->standardPipeline($business);
+
+        $deal = $this->deal($business, $pipeline);
+
+        $this->assertNotNull($deal->location_id, 'The fixture Business has exactly one Location, so the deal must have resolved it.');
+        $enrollment = AutomationEnrollment::query()->sole();
+        $this->assertSame((int) $deal->location_id, (int) $enrollment->business_location_id);
+
+        $context = $this->source(WorkflowTriggerType::OpportunityCreated)->contextForEnrollment($enrollment);
+        $this->assertSame((int) $deal->location_id, $context->locationId);
+    }
+
+    public function test_a_deal_with_no_provable_location_enrolls_nobody(): void
+    {
+        [, $business] = $this->crmTenantWithLocation();
+        $workflow = $this->crmWorkflow($business, WorkflowTriggerType::OpportunityCreated);
+        $pipeline = $this->standardPipeline($business);
+
+        // Archive the Business's only Location BEFORE the deal is created,
+        // so CrmOpportunityService::create() itself resolves no Location —
+        // the same "no active Location" case production would hit, rather
+        // than mutating an already-enrolled deal after the fact.
+        \App\Models\BusinessLocation::query()->where('business_id', $business->id)
+            ->update(['lifecycle_state' => \App\Enums\Business\BusinessLocationLifecycleState::Archived->value]);
+
+        $deal = $this->deal($business, $pipeline, null, 'No Location deal');
+
+        $this->assertNull($deal->location_id, 'No active Location exists, so the deal itself must resolve to no Location.');
+        $this->assertSame(0, $this->enrollmentsFor($workflow), 'A deal with no provable Location must never start a run.');
     }
 }

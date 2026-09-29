@@ -80,7 +80,7 @@ class WakeConcurrencyTest extends TestCase
         ]);
         $contact = $this->contactFor($business);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->makeWaitDue($enrollment->fresh());

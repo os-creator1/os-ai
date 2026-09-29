@@ -47,7 +47,7 @@ class SendSmsExecutorTest extends TestCase
 
     private function runToCompletion(\App\Models\AutomationWorkflow $workflow, Contacts $contact): \App\Models\AutomationEnrollment
     {
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         return $enrollment->fresh();
@@ -311,7 +311,7 @@ class SendSmsExecutorTest extends TestCase
         $core = $this->captureSendCore(0);
 
         // The contact replies STOP after enrolling but before the step runs.
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         DB::table('contacts')->where('id', $contact->id)
             ->update(['status' => Contacts::STATUS_UNSUBSCRIBE]);
 
@@ -331,7 +331,7 @@ class SendSmsExecutorTest extends TestCase
 
         $core = $this->captureSendCore(0);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         DB::table('contacts')->where('id', $contact->id)->update(['business_id' => null]);
 
         app(WorkflowAdvancer::class)->advance($enrollment->fresh());
@@ -348,7 +348,7 @@ class SendSmsExecutorTest extends TestCase
 
         $core = $this->captureSendCore(1);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         $advancer = app(WorkflowAdvancer::class);
 
         for ($i = 0; $i < 6; $i++) {
@@ -404,7 +404,7 @@ class SendSmsExecutorTest extends TestCase
         $core = $this->captureSendCore(0);
 
         $this->assertNull(
-            app(EnrollmentService::class)->enroll($workflow, $foreignContact, (string) $foreignContact->id),
+            app(EnrollmentService::class)->enroll($workflow, $foreignContact, $foreignContact->location_id, (string) $foreignContact->id),
             'Another Business\'s contact must never enter this workflow.',
         );
         $this->assertSame(0, $core->count());
@@ -417,7 +417,7 @@ class SendSmsExecutorTest extends TestCase
 
         $core = $this->captureSendCore(1, succeed: false);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         $advancer = app(WorkflowAdvancer::class);
 
         $advancer->advance($enrollment);

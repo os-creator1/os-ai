@@ -585,4 +585,37 @@ class DateReachedTriggerTest extends TestCase
     {
         $this->assertSame(EnrollmentPolicy::OncePerOccurrence, DateReachedTriggerSource::expectedPolicy());
     }
+
+    // -----------------------------------------------------------------
+    // Location run-scope foundation (lane contract §9/§17) — the sweep pins
+    // the Contact's own Location, and fails closed without one.
+    // -----------------------------------------------------------------
+
+    public function test_the_enrollment_pins_the_contacts_own_location(): void
+    {
+        Bus::fake([AdvanceWorkflowEnrollment::class]);
+        [$business, $group, $field] = $this->dateTenant();
+        $this->publishDateWorkflow($business, $group, $field);
+        $contact = $this->contact($business, $group, '12025551201', '1990-06-15', $field);
+
+        $this->assertNotNull($contact->location_id);
+        $result = $this->trigger()->sweep(CarbonImmutable::parse('2026-06-15 09:00:00', 'UTC'), 100);
+
+        $this->assertSame(1, $result['enrolled']);
+        $enrollment = AutomationEnrollment::query()->sole();
+        $this->assertSame((int) $contact->location_id, (int) $enrollment->business_location_id);
+    }
+
+    public function test_a_contact_with_no_location_is_never_swept_in(): void
+    {
+        [$business, $group, $field] = $this->dateTenant();
+        $this->publishDateWorkflow($business, $group, $field);
+        $contact = $this->contact($business, $group, '12025551202', '1990-06-15', $field);
+        $contact->forceFill(['location_id' => null])->save();
+
+        $result = $this->trigger()->sweep(CarbonImmutable::parse('2026-06-15 09:00:00', 'UTC'), 100);
+
+        $this->assertSame(0, $result['enrolled'], 'A Contact whose Location cannot be proven must never be swept in, however due its date is.');
+        $this->assertSame(0, AutomationEnrollment::query()->count());
+    }
 }

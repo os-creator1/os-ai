@@ -49,7 +49,8 @@ class AutomationSendTaggingTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $this->contactFor($business), 'manual:1');
+        $taggingContact1 = $this->contactFor($business);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $taggingContact1, $taggingContact1->location_id, 'manual:1');
         $stepRunId = $this->stepRunOn($enrollment);
 
         $report = $this->context()->during($stepRunId, fn () => $this->outbound($business, '14155553001'));
@@ -71,7 +72,8 @@ class AutomationSendTaggingTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $this->contactFor($business), 'manual:2');
+        $taggingContact2 = $this->contactFor($business);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $taggingContact2, $taggingContact2->location_id, 'manual:2');
         $stepRunId = $this->stepRunOn($enrollment);
 
         $event = $this->context()->during($stepRunId, fn () => $this->legacyInbound($business, '14155553003'));
@@ -150,7 +152,7 @@ class AutomationSendTaggingTest extends TestCase
         $this->app->instance(CampaignRepository::class, $mock);
         $this->app->forgetInstance(NodeExecutorRegistry::class);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, 'contact:' . $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, 'contact:' . $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $sendStep = AutomationStepRun::query()
@@ -187,7 +189,8 @@ class AutomationSendTaggingTest extends TestCase
     {
         [, $business] = $this->entitledTenant();
         [$workflow] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::ManualEnrollment);
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $this->contactFor($business), 'manual:3');
+        $taggingContact3 = $this->contactFor($business);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $taggingContact3, $taggingContact3->location_id, 'manual:3');
         $report = $this->outbound($business, '14155553010', $this->stepRunOn($enrollment));
 
         // Step runs cascade from their enrollment; the message must not follow

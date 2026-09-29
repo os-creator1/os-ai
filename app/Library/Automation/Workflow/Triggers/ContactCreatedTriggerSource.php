@@ -67,11 +67,17 @@ class ContactCreatedTriggerSource implements TriggerSource
 
         $enrolled = 0;
 
+        // The authoritative Location for this trigger is the Contact's own —
+        // never a guess, never a "first" or "primary" fallback (lane contract
+        // §9). No Location proven on the Contact means no run, enforced
+        // centrally by EnrollmentService for every candidate workflow below.
+        $locationId = $contact->location_id === null ? null : (int) $contact->location_id;
+
         foreach ($this->listeningWorkflows($contact, $source) as $workflow) {
             // The occurrence key is the contact id: a contact is created once,
             // so `once_ever` and `once_per_occurrence` agree, and a replayed
             // job composes the same key and loses the same claim.
-            $enrollment = $this->enrollments->enroll($workflow, $contact, (string) $contact->getKey());
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $locationId, (string) $contact->getKey());
 
             if ($enrollment === null) {
                 continue;

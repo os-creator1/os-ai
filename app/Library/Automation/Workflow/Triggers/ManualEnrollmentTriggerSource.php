@@ -59,7 +59,15 @@ class ManualEnrollmentTriggerSource implements TriggerSource
             return null;
         }
 
-        $enrollment = $this->enrollments->enroll($workflow, $contact, $requestUid);
+        // The authoritative Location is the selected Contact's own (lane
+        // contract §9) — never assigned or mutated here. A Contact with no
+        // Location is refused clearly, synchronously, before this job is
+        // even dispatched (AutomationWorkflowEnrollmentsController::manual());
+        // this is the same, silent EnrollmentService refusal every other
+        // trigger source relies on as the defense-in-depth boundary.
+        $locationId = $contact->location_id === null ? null : (int) $contact->location_id;
+
+        $enrollment = $this->enrollments->enroll($workflow, $contact, $locationId, $requestUid);
 
         if ($enrollment !== null) {
             AdvanceWorkflowEnrollment::dispatch((int) $enrollment->getKey());

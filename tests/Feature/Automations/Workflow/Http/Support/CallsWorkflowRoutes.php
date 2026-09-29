@@ -109,7 +109,7 @@ trait CallsWorkflowRoutes
         $contact = $this->contactFor($business);
 
         // A real journey, so the logs route has something that exists.
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
 
         return [
             'customer' => $customer,
