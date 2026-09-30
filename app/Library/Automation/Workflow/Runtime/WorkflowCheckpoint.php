@@ -2,6 +2,7 @@
 
 namespace App\Library\Automation\Workflow\Runtime;
 
+use App\Enums\Automation\Workflow\WorkflowLocationCheckpointState;
 use App\Enums\Automation\Workflow\WorkflowVersionState;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
@@ -35,11 +36,28 @@ use App\Models\Workspace;
  *   this is a checkpoint guarantee, not atomicity with external revocation: an
  *   entitlement withdrawn between the two lets exactly one more step run, and
  *   that bounded window is accepted rather than papered over.
+ *
+ * LOCATION RUN-SCOPE FOUNDATION (independent review, pre-merge finding #2).
+ * An enrollment's `business_location_id` is pinned once and never reassigned
+ * (§13), but the LOCATION ROW ITSELF is not immutable — it can be archived
+ * at any time by its owner, including while a run is sitting mid-journey
+ * waiting on a `wait` node. Re-deriving the Location's current state HERE,
+ * on every checkpoint — exactly like the entitlement and Business-active
+ * checks beside it — is what stops a run admitted while its Location was
+ * active from waking up and executing a sensitive action (a send, a
+ * notification) after that Location is archived. An archived Location HOLDS
+ * the run (reversible — `BusinessLocationManager::reactivateLocation()`
+ * exists), the same shape as a currently-denied entitlement; a Location that
+ * cannot be proven at all — a historical row this lane's own backfill could
+ * not resolve — EXITS it, honestly, rather than holding it forever
+ * unresumable.
  */
 class WorkflowCheckpoint
 {
-    public function __construct(private readonly EntitlementManager $entitlementManager)
-    {
+    public function __construct(
+        private readonly EntitlementManager $entitlementManager,
+        private readonly WorkflowLocationAdmission $locationAdmission,
+    ) {
     }
 
     /**
@@ -107,6 +125,22 @@ class WorkflowCheckpoint
         // subscription would be destructive and surprising.
         if (! $this->entitled($workspace, $business)) {
             return CheckpointResult::held('not_entitled');
+        }
+
+        // THE PINNED RUN LOCATION, re-checked live (review finding #2). Never
+        // the Contact's current Location — the enrollment's own
+        // business_location_id, exactly as §13 pins it.
+        $locationState = $this->locationAdmission->checkpointState(
+            $enrollment->business_location_id,
+            (int) $business->id,
+        );
+
+        if ($locationState === WorkflowLocationCheckpointState::Unresolved) {
+            return CheckpointResult::exit('location_unresolved');
+        }
+
+        if ($locationState === WorkflowLocationCheckpointState::Archived) {
+            return CheckpointResult::held('location_archived');
         }
 
         $contact = Contacts::query()->find($enrollment->contact_id);
