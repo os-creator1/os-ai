@@ -2,9 +2,6 @@
 
     namespace App\Http\Requests\ChatBox;
 
-    use App\Library\Messaging\ManagedDispatchDelegate;
-    use App\Models\Business;
-    use App\Rules\Phone;
     use Illuminate\Foundation\Http\FormRequest;
 
     class SentRequest extends FormRequest
@@ -22,27 +19,19 @@
         /**
          * Get the validation rules that apply to the request.
          *
-         * Customer Experience Slice 3 correction — a managed Business's
-         * compose form no longer submits 'sender_id' at all (the outbound
-         * sender is resolved server-side from the Business's own managed
-         * identity, never from this request), so requiring it unconditionally
-         * rejected every managed send with a 422 before the controller ever
-         * ran. This is a best-effort classification only, exactly like
-         * ChatBoxController's own isManaged() checks — the controller's
-         * tenancy-verified Business remains the only authority for what the
-         * send actually does; a wrong guess here only changes which
-         * validation error a malformed request receives, never what gets sent.
+         * Sender requirements depend on the selected Business's transport.
+         * That decision deliberately happens in ChatBoxController only after
+         * the Workspace/Business pair and the actor's access have been
+         * resolved. Looking up a route Business here would run before that
+         * tenancy boundary and let a foreign Business's managed state change
+         * the validation response.
          *
          * @return array
          */
         public function rules(): array
         {
-            $businessUid = $this->route('businessUid');
-            $businessId = is_string($businessUid) ? Business::query()->where('uid', $businessUid)->value('id') : null;
-            $isManaged = $businessId !== null && ManagedDispatchDelegate::isManaged((int) $businessId);
-
             return [
-                'sender_id' => $isManaged ? ['nullable'] : ['required', new Phone($this->sender_id)],
+                'sender_id' => ['nullable'],
                 'recipient' => 'required',
                 'message'   => 'required',
                 'idempotency_token' => 'required|uuid',

@@ -38,6 +38,7 @@
     use App\Models\Workspace;
     use App\Repositories\Contracts\CampaignRepository;
     use App\Repositories\Contracts\WorkspaceRepository;
+    use App\Rules\Phone;
     use Illuminate\Auth\Access\AuthorizationException;
     use Illuminate\Contracts\Foundation\Application;
     use Illuminate\Contracts\View\Factory;
@@ -325,9 +326,23 @@
 
             $owner = $this->owner($business);
 
+            // Transport is classified from the already tenancy-verified
+            // Business before any legacy sending-server rule is applied. A
+            // managed Business may legitimately retain an active legacy/BYO
+            // connection during migration; that coexistence must not make a
+            // browser-supplied legacy server mandatory or divert the send
+            // away from the managed dispatcher.
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
+
+            if (! $managedTransport) {
+                Validator::make($request->all(), [
+                    'sender_id' => ['required', new Phone($request->input('sender_id'))],
+                ])->validate();
+            }
+
             $businessHasSendingServers = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->exists();
 
-            if ($businessHasSendingServers && ! isset($request->sending_server)) {
+            if (! $managedTransport && $businessHasSendingServers && ! isset($request->sending_server)) {
                 return $back('Please select your sending server');
             }
 
@@ -376,8 +391,6 @@
             // ManagedMessageDispatcher — never the legacy coverage,
             // PhoneNumbers or Senderid tables below, and never trusted from
             // this request's own 'sender_id' input.
-            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id);
-
             if (! $managedTransport) {
                 if (! $activeSubscription) {
                     // A V1 platform-backed Business (it passed the check

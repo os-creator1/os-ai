@@ -8,7 +8,9 @@ use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\ChatBox;
 use App\Models\Country;
 use App\Models\CustomerBasedPricingPlan;
+use App\Models\CustomerBasedSendingServer;
 use App\Models\PlansCoverageCountries;
+use App\Models\SendingServer;
 use App\Models\Subscription;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -138,6 +140,83 @@ class V1ManagedNewConversationTest extends TestCase
         $this->assertSame(0, Subscription::query()->count());
         $this->assertSame(0, CustomerBasedPricingPlan::query()->count());
         $this->assertSame(0, PlansCoverageCountries::query()->count());
+    }
+
+    public function test_a_managed_business_with_a_legacy_connection_still_uses_managed_transport_without_a_submitted_server(): void
+    {
+        $tenant = $this->v1ManagedTenant();
+        $this->authenticateAs($tenant['customer']);
+        $country = $this->usCountry();
+
+        $legacyServer = SendingServer::create([
+            'name' => 'Coexisting legacy server',
+            'user_id' => $tenant['business']->customer_id,
+            'settings' => SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'two_way' => true,
+            'plain' => true,
+            'mms' => true,
+            'account_sid' => 'ACtest',
+            'auth_token' => 'authtest',
+        ]);
+
+        CustomerBasedSendingServer::create([
+            'user_id' => $tenant['business']->customer_id,
+            'business_id' => $tenant['business']->id,
+            'sending_server' => $legacyServer->id,
+            'status' => true,
+        ]);
+
+        $response = $this->post(
+            route('customer.workspaces.businesses.conversations.sent', [$tenant['workspace']->uid, $tenant['business']->uid]),
+            [
+                'sms_type' => 'plain',
+                'country_code' => (string) $country->id,
+                'recipient' => '4155559988',
+                'message' => 'Managed transport wins during coexistence',
+                'idempotency_token' => (string) Str::uuid(),
+            ],
+        );
+
+        $response->assertRedirect();
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+        $this->assertSame((int) $tenant['number']->id, $this->fakeAdapter->sentRequests[0]->businessMessagingNumberId);
+        $this->assertSame(0, Subscription::query()->count());
+        $this->assertSame(0, CustomerBasedPricingPlan::query()->count());
+        $this->assertSame(0, PlansCoverageCountries::query()->count());
+    }
+
+    public function test_a_foreign_managed_business_and_an_unknown_business_have_identical_denials_before_transport_validation(): void
+    {
+        $actor = $this->subscribedWorkspace(WorkspacePlanTier::Growth);
+        $actorBusiness = $this->addBusiness($actor['customer'], $actor['workspace'], 'Actor Business', BusinessStatus::Active);
+        $foreign = $this->v1ManagedTenant();
+        $this->authenticateAs($actor['customer']);
+        $country = $this->usCountry();
+
+        $payload = [
+            'sms_type' => 'plain',
+            'country_code' => (string) $country->id,
+            'recipient' => '4155559977',
+            'message' => 'A probe without a sender',
+            'idempotency_token' => (string) Str::uuid(),
+        ];
+
+        $foreignResponse = $this->postJson(
+            route('customer.workspaces.businesses.conversations.sent', [$actor['workspace']->uid, $foreign['business']->uid]),
+            $payload,
+        );
+        $unknownResponse = $this->postJson(
+            route('customer.workspaces.businesses.conversations.sent', [$actor['workspace']->uid, (string) Str::uuid()]),
+            $payload,
+        );
+
+        $foreignResponse->assertNotFound();
+        $unknownResponse->assertNotFound();
+        $this->assertSame($foreignResponse->getContent(), $unknownResponse->getContent());
+        $this->assertSame(0, ChatBox::where('business_id', $actorBusiness->id)->count());
+        $this->assertSame(0, ChatBox::where('business_id', $foreign['business']->id)->count());
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
     }
 
     public function test_the_new_conversation_compose_screen_never_shows_price_plan_unavailable_for_a_v1_managed_business(): void
