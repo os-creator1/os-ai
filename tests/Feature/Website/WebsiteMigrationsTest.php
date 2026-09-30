@@ -147,6 +147,13 @@ class WebsiteMigrationsTest extends TestCase
             // has any foreign-key relationship to `websites`, so neither
             // participates in this drop-order dance.
             'website_guided_generation_attempts' => database_path('migrations/2026_10_12_090002_create_website_guided_generation_attempts_table.php'),
+            // Website Builder redesign added one more table with a
+            // (nullable) FK straight to `websites` — same reasoning,
+            // same fix. Its OWN foreign keys to questionnaire_definitions/
+            // questionnaire_versions are untouched throughout this test
+            // (neither of those tables is ever dropped here), so only
+            // this one table needs to be unwound and rebuilt.
+            'questionnaire_responses' => database_path('migrations/2026_10_13_090003_create_questionnaire_responses_table.php'),
         ];
 
         $websites = require $paths['websites'];
@@ -158,12 +165,16 @@ class WebsiteMigrationsTest extends TestCase
         $forms = require $paths['website_forms'];
         $domains = require $paths['website_domains'];
         $guidedGenerationAttempts = require $paths['website_guided_generation_attempts'];
+        $questionnaireResponses = require $paths['questionnaire_responses'];
 
         try {
-            // Reverse order: guided generation attempts, then domains,
-            // then form submissions, then forms, then assets, then the
-            // published_revision_id column/FK, then revisions, then
-            // pages, then websites.
+            // Reverse order: questionnaire responses, then guided
+            // generation attempts, then domains, then form submissions,
+            // then forms, then assets, then the published_revision_id
+            // column/FK, then revisions, then pages, then websites.
+            $questionnaireResponses->down();
+            $this->assertFalse(Schema::hasTable('questionnaire_responses'));
+
             $guidedGenerationAttempts->down();
             $this->assertFalse(Schema::hasTable('website_guided_generation_attempts'));
 
@@ -194,10 +205,11 @@ class WebsiteMigrationsTest extends TestCase
         } finally {
             // Forward order: websites, pages, revisions,
             // published_revision_id, assets, forms, form submissions,
-            // domains, guided generation attempts — restore the schema so
-            // RefreshDatabase's transaction rollback for THIS test
-            // doesn't leave the next test file with a mismatched schema
-            // (these are raw DDL changes outside any transaction).
+            // domains, guided generation attempts, questionnaire
+            // responses — restore the schema so RefreshDatabase's
+            // transaction rollback for THIS test doesn't leave the next
+            // test file with a mismatched schema (these are raw DDL
+            // changes outside any transaction).
             $websites->up();
             $pages->up();
             $revisions->up();
@@ -207,6 +219,7 @@ class WebsiteMigrationsTest extends TestCase
             $formSubmissions->up();
             $domains->up();
             $guidedGenerationAttempts->up();
+            $questionnaireResponses->up();
         }
 
         $this->assertTrue(Schema::hasTable('websites'));
@@ -216,6 +229,7 @@ class WebsiteMigrationsTest extends TestCase
         $this->assertTrue(Schema::hasTable('website_forms'));
         $this->assertTrue(Schema::hasTable('website_form_submissions'));
         $this->assertTrue(Schema::hasTable('website_domains'));
+        $this->assertTrue(Schema::hasTable('questionnaire_responses'));
         $this->assertTrue(Schema::hasColumn('websites', 'published_revision_id'));
     }
 }

@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Models\Business;
+use App\Models\BusinessBackdrop;
 use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\CatalogItem;
 use App\Models\CatalogItemLocationOverride;
@@ -124,6 +125,19 @@ final class WebsitePageStrategy
     }
 
     /**
+     * Website Builder redesign — mirrors galleryEligible()'s own
+     * reasoning: a Backdrops page is only worth generating once at least
+     * one real, available BusinessBackdrop exists. "No backdrops entered
+     * -> no Backdrops page" (task instruction).
+     */
+    public function backdropsEligible(Business $business): bool
+    {
+        return BusinessBackdrop::where('business_id', $business->id)
+            ->where('availability', true)
+            ->exists();
+    }
+
+    /**
      * Acceptance-correction Blocker 2/3: the single deterministic
      * "required page set," as real page INSTANCES with their own
      * canonical entity facts — never the template's generic page-type
@@ -138,9 +152,14 @@ final class WebsitePageStrategy
      * exactly, so a page built by the deterministic starter draft and
      * one built by guided generation always resolve to the same URL.
      *
+     * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section
+     *         questionnaire answer (already resolved from QuestionnaireResponse.answers by the
+     *         caller — this class stays free of a Questionnaire model dependency, matching its
+     *         own "reads only canonical Business/saved-location/Service/CatalogItem/WebsiteAsset
+     *         data" contract), or null when the owner did not add one.
      * @return array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, allowed_section_types: array<int, string>, entity: ?array}>
      */
-    public function buildPlan(Business $business, WebsiteTemplate $template, Website $website): array
+    public function buildPlan(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null): array
     {
         $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
         $allowed = fn (string $type) => $manifestByType->get($type)['allowed_section_types'] ?? [];
@@ -247,6 +266,30 @@ final class WebsitePageStrategy
             ];
         }
 
+        if ($hasType('backdrops') && $this->backdropsEligible($business)) {
+            $plan[] = [
+                'page_key' => 'backdrops',
+                'page_type' => 'backdrops',
+                'is_home' => false,
+                'slug' => 'backdrops',
+                'title' => 'Backdrops',
+                'allowed_section_types' => $allowed('backdrops'),
+                'entity' => null,
+            ];
+        }
+
+        if ($hasType('custom_section') && $customSection !== null) {
+            $plan[] = [
+                'page_key' => 'custom_section',
+                'page_type' => 'custom_section',
+                'is_home' => false,
+                'slug' => Str::slug($customSection['title']),
+                'title' => $customSection['title'],
+                'allowed_section_types' => $allowed('custom_section'),
+                'entity' => null,
+            ];
+        }
+
         if ($hasType('location')) {
             foreach ($this->eligibleLocations($business) as $location) {
                 $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
@@ -287,9 +330,17 @@ final class WebsitePageStrategy
      *    ensurePhotoBoothQuoteForm()` the deterministic starter draft
      *    already uses), never something AI writes.
      *
-     * This filters both out of every plan entry's `allowed_section_types`
+     * Website Builder redesign adds two more for the identical reason:
+     *  - 'backdrops': always built by MediaBindingService::bindBackdrops()
+     *    from the Business's own real BusinessBackdropImage rows.
+     *  - 'custom_section': the wizard's optional editorial section is
+     *    fully composed from the owner's own questionnaire answer
+     *    (WebsiteSetupAnswerApplier) before generation ever calls AI —
+     *    the main guided-generation client never writes or rewrites it.
+     *
+     * This filters all four out of every plan entry's `allowed_section_types`
      * before the plan is ever shown to AI or checked by the output
-     * validator, so neither impossible option is ever offered or
+     * validator, so none of these impossible options is ever offered or
      * accepted in the first place — never relied on as the only defense.
      *
      * @param  array  $plan  buildPlan()'s output
@@ -297,7 +348,7 @@ final class WebsitePageStrategy
     public static function withoutAiUnfillableSections(array $plan): array
     {
         foreach ($plan as $index => $page) {
-            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery', 'form']));
+            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery', 'form', 'backdrops', 'custom_section']));
         }
 
         return $plan;

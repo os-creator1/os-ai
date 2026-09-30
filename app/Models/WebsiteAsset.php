@@ -32,10 +32,17 @@ class WebsiteAsset extends Model
         'alt_text',
         'content_hash',
         'first_published_at',
+        'sort_order',
+        'is_cover',
+        'title',
+        'category_tag',
+        'source_catalog_item_image_id',
     ];
 
     protected $casts = [
         'first_published_at' => 'datetime',
+        'sort_order' => 'integer',
+        'is_cover' => 'boolean',
     ];
 
     public function generateUid()
@@ -46,6 +53,12 @@ class WebsiteAsset extends Model
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);
+    }
+
+    /** The package image this gallery photo was mirrored from, if any (see MediaBindingService::mirrorPackageImages()). */
+    public function sourceCatalogItemImage(): BelongsTo
+    {
+        return $this->belongsTo(CatalogItemImage::class, 'source_catalog_item_image_id');
     }
 
     public function url(): string

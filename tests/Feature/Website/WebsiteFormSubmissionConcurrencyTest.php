@@ -97,6 +97,7 @@ class WebsiteFormSubmissionConcurrencyTest extends TestCase
             'name' => 'Lock Probe Site',
         ]);
         $this->form = $this->website->forms()->create([
+            'business_id' => $this->website->business_id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),

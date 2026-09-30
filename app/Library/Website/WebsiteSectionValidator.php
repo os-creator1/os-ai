@@ -149,6 +149,34 @@ final class WebsiteSectionValidator
                 'heading' => 'nullable|string|max:120',
                 'form_uid' => 'required|string',
             ],
+            // Built entirely by MediaBindingService::bindBackdrops() from
+            // real BusinessBackdropImage rows, never AI-authored — image
+            // references are resolved URLs (BusinessBackdropImage::url()),
+            // not Website-asset uids, since a backdrop's photos are
+            // Business-owned, not Website-owned (see
+            // create_business_backdrops_table migration).
+            WebsiteSectionType::Backdrops => [
+                'heading' => 'nullable|string|max:120',
+                'items' => 'required|array|min:1|max:20',
+                'items.*.name' => 'required|string|max:160',
+                'items.*.description' => 'nullable|string|max:500',
+                'items.*.availability' => 'required|boolean',
+                'items.*.images' => 'required|array|min:1|max:10',
+                'items.*.images.*.url' => 'required|string',
+                'items.*.images.*.alt_text' => 'nullable|string|max:160',
+            ],
+            // The wizard's single optional editorial/story section —
+            // images ARE ordinary WebsiteAsset uids (this content is
+            // website-presentation-specific, not a reusable canonical
+            // business fact), so it is asset-reference-checked exactly
+            // like Gallery/Services below.
+            WebsiteSectionType::CustomSection => [
+                'heading' => 'required|string|max:120',
+                'body' => 'required|string|max:5000',
+                'layout' => 'required|in:image_left,image_right,stacked,grid',
+                'images' => 'nullable|array|max:12',
+                'images.*' => 'string',
+            ],
         };
 
         $validator = ValidatorFacade::make($data, $rules);
@@ -226,6 +254,12 @@ final class WebsiteSectionValidator
         if ($type === WebsiteSectionType::Services || $type === WebsiteSectionType::Gallery) {
             foreach (($data['items'] ?? []) as $i => $item) {
                 $this->checkAssetValue($item['image'] ?? null, "items.{$i}.image", $validAssetUids, $allowAssetReferences, $errors);
+            }
+        }
+
+        if ($type === WebsiteSectionType::CustomSection) {
+            foreach (($data['images'] ?? []) as $i => $imageUid) {
+                $this->checkAssetValue($imageUid ?? null, "images.{$i}", $validAssetUids, $allowAssetReferences, $errors);
             }
         }
 

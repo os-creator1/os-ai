@@ -131,6 +131,16 @@ class WebsiteTemplateSeeder extends Seeder
                 ['page_type' => 'gallery', 'is_home' => false, 'allowed_section_types' => ['hero', 'gallery', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'gallery', 'contact_details']],
                 ['page_type' => 'contact', 'is_home' => false, 'allowed_section_types' => ['hero', 'contact_details', 'form'], 'default_section_order' => ['hero', 'contact_details', 'form']],
                 ['page_type' => 'location', 'is_home' => false, 'allowed_section_types' => ['hero', 'text', 'services', 'faq', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'text', 'services', 'faq', 'contact_details']],
+                // Website Builder redesign — only planned when the Business
+                // has at least one real BusinessBackdrop (WebsitePageStrategy::
+                // backdropsEligible()); the 'backdrops' section itself is
+                // always built server-side, never by AI.
+                ['page_type' => 'backdrops', 'is_home' => false, 'allowed_section_types' => ['hero', 'backdrops', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'backdrops', 'contact_details']],
+                // Website Builder redesign — only planned when the owner's
+                // questionnaire answers included one; the 'custom_section'
+                // content itself is applied server-side from that answer,
+                // never written by the main guided-generation AI call.
+                ['page_type' => 'custom_section', 'is_home' => false, 'allowed_section_types' => ['hero', 'custom_section', 'cta', 'contact_details'], 'default_section_order' => ['hero', 'custom_section', 'contact_details']],
             ],
         ];
     }

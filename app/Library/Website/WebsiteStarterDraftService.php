@@ -153,6 +153,34 @@ final class WebsiteStarterDraftService
     public function createFromTemplate(Business $business, WebsiteTemplate $template, ?string $name = null): Website
     {
         return DB::transaction(function () use ($business, $template, $name) {
+            $website = $this->createShellFromTemplate($business, $template, $name);
+
+            // A pre-existing Website (createShellFromTemplate()'s own
+            // idempotency) already has its own pages — never rebuild them
+            // here, only a brand-new shell gets its starter pages.
+            if ($website->pages()->doesntExist()) {
+                $this->buildPagesFromTemplate($website, $business);
+            }
+
+            return $website;
+        });
+    }
+
+    /**
+     * Website Builder redesign — the wizard's template-choice step needs
+     * the Website row to exist immediately (so later steps have
+     * somewhere to attach uploaded photos/forms to) WITHOUT eagerly
+     * building starter pages that guided generation is about to replace
+     * anyway the moment the wizard finishes (GuidedGenerationCommitService
+     * always deletes and recreates the full page set — building starter
+     * pages here would be pure waste, and briefly-published or previewed
+     * placeholder content the owner never asked for). Idempotent, exactly
+     * like createFromTemplate(): a second call for the same Business
+     * returns its existing Website unchanged.
+     */
+    public function createShellFromTemplate(Business $business, WebsiteTemplate $template, ?string $name = null): Website
+    {
+        return DB::transaction(function () use ($business, $template, $name) {
             Business::whereKey($business->id)->lockForUpdate()->firstOrFail();
 
             $existing = Website::where('business_id', $business->id)->first();
@@ -160,16 +188,12 @@ final class WebsiteStarterDraftService
                 return $existing;
             }
 
-            $website = Website::create([
+            return Website::create([
                 'business_id' => $business->id,
                 'name' => $name ?: Str::limit($business->name, 120, ''),
                 'theme' => $template->theme,
                 'template_key' => $template->key,
             ]);
-
-            $this->buildPagesFromTemplate($website, $business);
-
-            return $website;
         });
     }
 
@@ -703,6 +727,7 @@ final class WebsiteStarterDraftService
         return $website->forms()->firstOrCreate(
             ['type' => WebsiteForm::TYPE_QUOTE_REQUEST],
             [
+                'business_id' => $website->business_id,
                 'name' => 'Photo Booth Quote Request',
                 'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
                 'submit_label' => 'Request a quote',

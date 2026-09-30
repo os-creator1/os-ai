@@ -7,6 +7,7 @@ use App\Enums\Catalog\CatalogItemType;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
 use App\Models\Business;
 use App\Models\CatalogItem;
+use App\Models\CatalogItemImage;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +74,8 @@ final class CatalogItemManager
             $attributes['description'] ?? null,
             $attributes['price_minor'] ?? null,
             $attributes['currency_code'] ?? null,
+            $attributes['featured'] ?? false,
+            $attributes['source_questionnaire_item_key'] ?? null,
         );
 
         return DB::transaction(function () use ($business, $validated, $actorUserId) {
@@ -121,6 +124,8 @@ final class CatalogItemManager
                 array_key_exists('description', $attributes) ? $attributes['description'] : $locked->description,
                 array_key_exists('price_minor', $attributes) ? $attributes['price_minor'] : $locked->price_minor,
                 array_key_exists('currency_code', $attributes) ? $attributes['currency_code'] : $locked->currency_code,
+                array_key_exists('featured', $attributes) ? $attributes['featured'] : $locked->featured,
+                array_key_exists('source_questionnaire_item_key', $attributes) ? $attributes['source_questionnaire_item_key'] : $locked->source_questionnaire_item_key,
             );
 
             $locked->fill($validated);
@@ -213,6 +218,48 @@ final class CatalogItemManager
     }
 
     /**
+     * Website Builder redesign — the wizard's package step attaches an
+     * uploaded image (already stored to disk by the caller; this method
+     * only creates the owning DB row) as the item's cover, replacing any
+     * prior cover exactly once (single-cover invariant enforced here, at
+     * the application layer, matching this class's own convention of
+     * never enforcing that class of business rule at the DB layer — see
+     * `validate()`'s price/currency co-nullable check for the same
+     * pattern).
+     *
+     * @param  array{disk: string, path: string, mime_type: string, size: int, width: ?int, height: ?int, alt_text: ?string}  $imageAttributes
+     */
+    public function attachImage(Business $business, CatalogItem $item, array $imageAttributes): CatalogItemImage
+    {
+        return DB::transaction(function () use ($business, $item, $imageAttributes) {
+            $locked = $this->lockItemForBusiness($business, $item);
+
+            CatalogItemImage::where('catalog_item_id', $locked->id)->update(['is_cover' => false]);
+
+            $nextPosition = (int) (CatalogItemImage::where('catalog_item_id', $locked->id)->max('position') ?? -1) + 1;
+
+            return CatalogItemImage::create($imageAttributes + [
+                'catalog_item_id' => $locked->id,
+                'position' => $nextPosition,
+                'is_cover' => true,
+            ]);
+        });
+    }
+
+    /**
+     * Website Builder redesign — "Edit setup answers" resolves a package
+     * it already created back to its canonical row by this idempotency
+     * key, so re-running the wizard updates the existing package instead
+     * of creating a duplicate.
+     */
+    public function findBySourceKey(Business $business, string $sourceQuestionnaireItemKey): ?CatalogItem
+    {
+        return CatalogItem::where('business_id', $business->id)
+            ->where('source_questionnaire_item_key', $sourceQuestionnaireItemKey)
+            ->first();
+    }
+
+    /**
      * Contract §6/§7 — never trusts the caller's copy of `$item`: re-loads
      * it fresh, under lock, by primary key alone, then verifies its own
      * persisted `business_id` matches the given `Business`. A foreign
@@ -278,9 +325,9 @@ final class CatalogItemManager
      * `archived_at` can never reach `fill()`/`create()` through this
      * method, however the caller's own `$attributes` array was shaped.
      *
-     * @return array{type: string, name: string, description: ?string, price_minor: ?int, currency_code: ?string}
+     * @return array{type: string, name: string, description: ?string, price_minor: ?int, currency_code: ?string, featured: bool, source_questionnaire_item_key: ?string}
      */
-    private function validate(mixed $type, mixed $name, mixed $description, mixed $priceMinor, mixed $currencyCode): array
+    private function validate(mixed $type, mixed $name, mixed $description, mixed $priceMinor, mixed $currencyCode, mixed $featured = false, mixed $sourceQuestionnaireItemKey = null): array
     {
         $typeEnum = is_string($type) ? CatalogItemType::tryFrom($type) : null;
 
@@ -321,6 +368,10 @@ final class CatalogItemManager
             'description' => $description,
             'price_minor' => $priceMinor,
             'currency_code' => $currencyCode,
+            'featured' => (bool) $featured,
+            'source_questionnaire_item_key' => $sourceQuestionnaireItemKey !== null && $sourceQuestionnaireItemKey !== ''
+                ? (string) $sourceQuestionnaireItemKey
+                : null,
         ];
     }
 

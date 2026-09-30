@@ -47,6 +47,7 @@ class WebsiteFormTest extends TestCase
     private function createQuoteForm(Website $website): WebsiteForm
     {
         return $website->forms()->create([
+            'business_id' => $website->business_id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Photo Booth Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),

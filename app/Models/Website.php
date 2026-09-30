@@ -33,11 +33,13 @@ class Website extends Model
         'published_revision_id',
         'theme',
         'template_key',
+        'gallery_page_enabled',
     ];
 
     protected $casts = [
         'status' => WebsiteStatus::class,
         'theme' => 'array',
+        'gallery_page_enabled' => 'boolean',
     ];
 
     /**
@@ -117,6 +119,11 @@ class Website extends Model
     public function guidedGenerationAttempts(): HasMany
     {
         return $this->hasMany(WebsiteGuidedGenerationAttempt::class);
+    }
+
+    public function questionnaireResponses(): HasMany
+    {
+        return $this->hasMany(QuestionnaireResponse::class);
     }
 
     /**

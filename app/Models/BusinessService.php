@@ -20,6 +20,7 @@ class BusinessService extends Model
         'currency_code',
         'status',
         'sort_order',
+        'source_questionnaire_item_key',
     ];
 
     protected $casts = [
