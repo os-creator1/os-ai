@@ -142,6 +142,41 @@ class AutomationEnrollmentLocationBackfillV1
      *
      * Once the immutable phone is known, the rest is unchanged: the ONE
      * unambiguous `chat_boxes` thread for (business_id, that phone).
+     *
+     * CORRECTED (independent review, correction round 3) — two tenant/
+     * parsing defects in the report join itself:
+     *
+     *   1. TENANT BOUNDARY. `trigger_occurrence_key` is a plain string with
+     *      no foreign key to `reports`, so nothing stopped a malformed or
+     *      cross-tenant historical row from naming a Report that belongs to
+     *      a DIFFERENT Business. The join now requires
+     *      `r.business_id = e.business_id` explicitly — the exact
+     *      tenant-bound shape `backfillCrmTriggered()`'s own
+     *      `crm_opportunity_history` join already uses below. Without it, a
+     *      Business A enrollment referencing a Business B Report would
+     *      resolve Business B's phone, and if Business A happens to also
+     *      have a conversation with that same phone, would wrongly assign
+     *      Business A's Location for that (foreign, coincidental) thread.
+     *   2. MALFORMED-SUFFIX PARSING. `CAST(SUBSTRING(...) AS UNSIGNED)` in
+     *      non-strict SQL mode does not fail on a non-numeric suffix — it
+     *      silently takes the leading numeric PREFIX (`CAST('123-junk' AS
+     *      UNSIGNED)` = `123`), so `report:123-junk` would previously match
+     *      Report 123 exactly as if the key had been clean. The
+     *      `REGEXP` guard below accepts only the canonical
+     *      `report:{positive integer}` shape — no junk suffix, no leading
+     *      zero, no sign — before the CAST ever runs, so a malformed key
+     *      joins nothing and the row stays NULL.
+     *
+     * The resolved `chat_boxes.location_id` is additionally verified to
+     * belong to the SAME Business (`business_locations.business_id =
+     * e.business_id`) before it is ever used, rather than trusted merely
+     * because it sits on a conversation row already selected by
+     * `business_id`. The live writer's own invariant
+     * (`ChatBox::singleActiveLocationIdFor()` only ever selects a Location
+     * already scoped to the conversation's own Business) means this should
+     * never actually diverge, but the join makes it a verified fact for
+     * this backfill rather than an assumption borrowed from a writer this
+     * class does not control.
      */
     private function backfillMessageReceived(): int
     {
@@ -151,11 +186,15 @@ class AutomationEnrollmentLocationBackfillV1
             ->join('reports as r', function ($join): void {
                 $join->on('r.id', '=', DB::raw(
                     "CAST(SUBSTRING(e.trigger_occurrence_key, LENGTH('report:') + 1) AS UNSIGNED)"
-                ));
+                ))->on('r.business_id', '=', 'e.business_id');
             })
             ->where('e.trigger_type', 'message_received')
             ->whereNull('e.business_location_id')
-            ->where('e.trigger_occurrence_key', 'like', 'report:%')
+            // Canonical `report:{positive integer}` only — a malformed
+            // suffix (`report:123-junk`, `report:`, `report:01`) must never
+            // reach the CAST/SUBSTRING above, which would otherwise accept
+            // it via MySQL's non-strict leading-digit truncation.
+            ->where('e.trigger_occurrence_key', 'regexp', '^report:[1-9][0-9]*$')
             ->where('r.direction', Reports::DIRECTION_INCOMING)
             ->whereNotNull('r.to')
             ->where('r.to', '!=', '')
@@ -163,6 +202,14 @@ class AutomationEnrollmentLocationBackfillV1
             ->select(['e.id as enrollment_id', 'e.business_id', 'r.to as phone'])
             ->chunkById(self::CHUNK_SIZE, function ($rows) use (&$updated): void {
                 foreach ($rows as $row) {
+                    // Every matching thread is counted here, regardless of
+                    // whether it carries a Location — ambiguity is about
+                    // how many conversations exist for this (business,
+                    // phone), not how many of them happen to have a
+                    // Location. Folding a Business-ownership join into this
+                    // query would silently drop a NULL-location thread from
+                    // the count and could turn a genuinely ambiguous pair
+                    // into a false single match.
                     $matches = DB::table('chat_boxes')
                         ->where('business_id', $row->business_id)
                         ->where('to', $row->phone)
@@ -176,10 +223,26 @@ class AutomationEnrollmentLocationBackfillV1
                         continue;
                     }
 
+                    $locationId = (int) $matches->first();
+
+                    // Verified, not assumed: the resolved Location must
+                    // itself belong to this same Business before it is ever
+                    // used, even though the live writer's own invariant
+                    // (ChatBox::singleActiveLocationIdFor()) should already
+                    // guarantee it.
+                    $locationBelongsToBusiness = DB::table('business_locations')
+                        ->where('id', $locationId)
+                        ->where('business_id', $row->business_id)
+                        ->exists();
+
+                    if (! $locationBelongsToBusiness) {
+                        continue;
+                    }
+
                     $affected = DB::table('automation_enrollments')
                         ->where('id', $row->enrollment_id)
                         ->whereNull('business_location_id')
-                        ->update(['business_location_id' => (int) $matches->first()]);
+                        ->update(['business_location_id' => $locationId]);
 
                     $updated += $affected;
                 }

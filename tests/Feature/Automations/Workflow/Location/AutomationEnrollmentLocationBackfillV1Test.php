@@ -283,6 +283,152 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
     }
 
     /**
+     * THE TENANT-BOUNDARY ONE (correction round 3).
+     * `trigger_occurrence_key` is a plain string with no foreign key to
+     * `reports`, so a malformed historical enrollment for Business A can
+     * name a Report id that actually belongs to a DIFFERENT Business B.
+     * The join must require `reports.business_id = automation_enrollments
+     * .business_id`, or Business B's phone evidence would be used to find
+     * a matching Business A conversation and wrongly assign a Business A
+     * Location. The tempting same-phone Business A conversation genuinely
+     * exists here — a bug that dropped the Business-id join predicate
+     * would silently resolve it.
+     */
+    public function test_a_foreign_business_report_is_never_backfilled_even_with_a_tempting_same_phone_conversation(): void
+    {
+        [, $businessA] = $this->entitledTenant();
+        [, $businessB] = $this->entitledTenant();
+        $this->assertNotSame((int) $businessA->id, (int) $businessB->id, 'Sanity: the two Businesses must actually differ.');
+
+        $foreignPhone = '13105550199';
+
+        // The Report this occurrence key names belongs to Business B, not A.
+        $foreignReport = $this->historicalReport($businessB, $foreignPhone);
+        $this->assertNotSame(
+            (int) $businessA->id,
+            (int) $foreignReport->business_id,
+            'Sanity: the referenced Report must genuinely belong to the OTHER Business.',
+        );
+
+        // Business A ALSO has exactly one, otherwise-perfectly-matching
+        // conversation for that same phone — the tempting wrong answer a
+        // join without the Business-id predicate would land on.
+        $temptingLocation = $this->businessLocation($businessA);
+        ChatBox::create([
+            'user_id' => $businessA->customer_id,
+            'business_id' => $businessA->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550188',
+            'to' => $foreignPhone,
+            'location_id' => $temptingLocation->id,
+        ]);
+        $this->assertSame(
+            1,
+            ChatBox::query()->where('business_id', $businessA->id)->where('to', $foreignPhone)->count(),
+            'Sanity: Business A\'s tempting same-phone conversation must genuinely be unambiguous.',
+        );
+
+        $contact = $this->contactFor($businessA);
+        [$workflow, $version] = $this->publishWorkflow($businessA, [$this->endStep()], WorkflowTriggerType::MessageReceived);
+        $enrollmentId = $this->historicalEnrollment(
+            $businessA, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $foreignReport->id,
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull(
+            $this->locationIdOf($enrollmentId),
+            'A Report owned by a different Business must never resolve this enrollment, however tempting the coincidental match.',
+        );
+        $this->assertSame(0, $result['message_received']);
+    }
+
+    /**
+     * MALFORMED-SUFFIX PARSING (correction round 3). MySQL's
+     * `CAST(SUBSTRING(...) AS UNSIGNED)` does not fail on a non-numeric
+     * suffix in non-strict mode — it silently takes the leading numeric
+     * prefix. `report:{real id}-junk` must never be partially converted
+     * and matched as if it named that real Report cleanly.
+     */
+    public function test_a_malformed_occurrence_key_suffix_is_never_partially_matched(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = $this->businessLocation($business);
+        $contact = $this->contactFor($business);
+
+        $report = $this->historicalReport($business, $contact->phone);
+        ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550177',
+            'to' => $contact->phone,
+            'location_id' => $location->id,
+        ]);
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $report->id . '-junk',
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull(
+            $this->locationIdOf($enrollmentId),
+            'A malformed occurrence-key suffix must never be partially cast and matched to the real Report.',
+        );
+        $this->assertSame(0, $result['message_received']);
+    }
+
+    /**
+     * THE CONVERSATION-LOCATION OWNERSHIP ONE (human clarification, round
+     * 3). Even the ONE unambiguous matching conversation must not be
+     * trusted blindly: its `location_id` is verified to belong to the SAME
+     * Business before it is ever used. Forces the anomaly directly (the
+     * live writer, `ChatBox::singleActiveLocationIdFor()`, would never
+     * produce it) to prove the backfill's own verification, not the
+     * writer's invariant, is what refuses it.
+     */
+    public function test_a_conversations_location_belonging_to_a_different_business_is_never_used(): void
+    {
+        [, $business] = $this->entitledTenant();
+        [, $otherBusiness] = $this->entitledTenant();
+        $foreignLocation = BusinessLocation::query()->where('business_id', $otherBusiness->id)->firstOrFail();
+
+        $contact = $this->contactFor($business);
+        $report = $this->historicalReport($business, $contact->phone);
+
+        // The ONE matching conversation for (business, phone) — but its
+        // location_id has been forced (data-integrity anomaly) to point at
+        // a Location belonging to a DIFFERENT Business.
+        $box = ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550166',
+            'to' => $contact->phone,
+            'location_id' => null,
+        ]);
+        DB::table('chat_boxes')->where('id', $box->id)->update(['location_id' => $foreignLocation->id]);
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $report->id,
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull(
+            $this->locationIdOf($enrollmentId),
+            'A conversation Location belonging to a different Business must never be used, even as the sole unambiguous match.',
+        );
+        $this->assertSame(0, $result['message_received']);
+    }
+
+    /**
      * `operation:{id}` — the managed inbound path — has NO durable
      * per-message phone evidence anywhere (§ the method's own docblock).
      * Even a perfectly matching, unambiguous conversation for the
