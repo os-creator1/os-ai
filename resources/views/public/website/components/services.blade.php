@@ -7,7 +7,7 @@
         @foreach (($data['items'] ?? []) as $item)
             <div class="website-service-card">
                 @if (! empty($item['image']) && isset($assetsByUid[$item['image']]))
-                    <img src="{{ $assetsByUid[$item['image']]['url'] }}" alt="{{ $assetsByUid[$item['image']]['alt_text'] ?? '' }}">
+                    <img src="{{ $assetsByUid[$item['image']]['url'] }}" alt="{{ $assetsByUid[$item['image']]['alt_text'] ?? '' }}" loading="lazy">
                 @endif
                 <h3>{{ $item['name'] ?? '' }}</h3>
                 @if (! empty($item['description']))

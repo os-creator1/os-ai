@@ -1630,6 +1630,9 @@
             Route::get('/history', 'Business\WebsiteController@history')->name('history');
             Route::post('/history/{revisionUid}/rollback', 'Business\WebsiteController@rollback')->name('history.rollback');
 
+            Route::get('/rebuild', 'Business\WebsiteController@rebuildForm')->name('rebuild.form');
+            Route::post('/rebuild', 'Business\WebsiteController@rebuild')->name('rebuild');
+
             Route::post('/assets', 'Business\WebsiteController@storeAsset')->name('assets.store');
             Route::delete('/assets/{assetUid}', 'Business\WebsiteController@destroyAsset')->name('assets.destroy');
 

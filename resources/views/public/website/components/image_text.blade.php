@@ -2,7 +2,7 @@
 <section class="website-section website-image-text website-image-position-{{ $data['image_position'] ?? 'left' }}">
     @if (! empty($data['image']) && isset($assetsByUid[$data['image']]))
         <div class="website-image-text-media">
-            <img src="{{ $assetsByUid[$data['image']]['url'] }}" alt="{{ $assetsByUid[$data['image']]['alt_text'] ?? '' }}">
+            <img src="{{ $assetsByUid[$data['image']]['url'] }}" alt="{{ $assetsByUid[$data['image']]['alt_text'] ?? '' }}" loading="lazy">
         </div>
     @endif
     <div class="website-image-text-content">

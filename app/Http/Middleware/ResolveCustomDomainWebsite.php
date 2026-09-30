@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Enums\Website\WebsiteDomainStatus;
 use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
+use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
 use App\Library\Website\Seo\WebsiteLocalBusinessStructuredData;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
@@ -50,6 +51,7 @@ class ResolveCustomDomainWebsite
         private readonly WebsitePublicEntitlementGate $gate,
         private readonly WebsiteLocalBusinessStructuredData $structuredData,
         private readonly WebsiteAddressPrivacyGate $privacyGate,
+        private readonly WebsiteBreadcrumbStructuredData $breadcrumbs,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -191,6 +193,14 @@ class ResolveCustomDomainWebsite
             ? $this->structuredData->build($localBusiness, $canonicalUrl)
             : null;
 
+        // BreadcrumbList: the same real, deterministic page/URL facts
+        // every other piece of structured data on this page already
+        // uses — never AI, never fabricated — and only on an indexable
+        // page for the same reason localBusinessJsonLd is.
+        $breadcrumbJsonLd = $indexable
+            ? $this->breadcrumbs->build($page, $urlFor(['is_home' => true, 'slug' => null]), $urlFor, $snapshot['pages'])
+            : null;
+
         // The site "actually works" on this domain — active certificate,
         // published, gate passed, this exact page resolved from the
         // live snapshot — so indexing is allowed unless the page opted
@@ -206,6 +216,7 @@ class ResolveCustomDomainWebsite
             'allowIndexing' => true,
             'canonicalUrl' => $canonicalUrl,
             'localBusinessJsonLd' => $localBusinessJsonLd,
+            'breadcrumbJsonLd' => $breadcrumbJsonLd,
             'navigationPages' => collect($snapshot['pages'])->map(fn ($candidate) => [
                 'uid' => $candidate['uid'],
                 'title' => $candidate['title'],

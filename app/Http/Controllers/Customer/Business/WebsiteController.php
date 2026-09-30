@@ -11,9 +11,11 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Website\StoreWebsiteAssetRequest;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsiteAssetUploadService;
 use App\Library\Website\WebsiteDraftPageService;
+use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDesigns;
 use App\Library\Website\WebsiteStarterDraftService;
@@ -21,8 +23,10 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Website;
 use App\Models\WebsiteForm;
+use App\Models\WebsiteGuidedGenerationAttempt;
 use App\Models\WebsitePage;
 use App\Models\WebsiteRevision;
+use App\Models\WebsiteTemplate;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
@@ -30,6 +34,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -65,6 +70,8 @@ class WebsiteController extends CustomerBaseController
         private readonly WebsiteAiDraftGenerator $aiGenerator,
         private readonly WebsiteStarterDraftService $starterDrafts,
         private readonly BusinessKnowledgeProfileManager $profiles,
+        private readonly WebsitePageStrategy $pageStrategy,
+        private readonly GuidedGenerationCommitService $guidedGeneration,
     ) {
     }
 
@@ -103,11 +110,20 @@ class WebsiteController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.setup', [$workspaceUid, $businessUid]);
         }
 
+        // Acceptance-correction Blocker 9 — "expose a clear missing-media
+        // checklist": the most recent guided-generation attempt's own
+        // warnings (MediaBindingService's real, deterministic findings —
+        // e.g. "no uploaded photos", "not enough distinct photos for
+        // every slot") surfaced directly on the dashboard, never a
+        // fabricated or generic message.
+        $latestAttempt = $website->guidedGenerationAttempts()->latest('id')->first();
+
         return view('customer.business.website.show', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
             'pageCount' => $website->pages()->count(),
+            'mediaWarnings' => $latestAttempt?->warnings ?? [],
         ]);
     }
 
@@ -120,14 +136,36 @@ class WebsiteController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
         }
 
+        $completeness = $this->profiles->completenessCheck($business);
+        $eligibleLocations = $this->pageStrategy->eligibleLocations($business);
+        $needsMoreInfoLocations = $this->pageStrategy->locationsNeedingMoreInfo($business);
+
         return view('customer.business.website.setup', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
+            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
             'designs' => WebsiteStarterDesigns::all(),
             'services' => $business->services()->where('status', 'active')->orderBy('sort_order')->limit(4)->get(),
             'location' => $business->primaryLocation()->first(),
             'reusable' => WebsiteStarterDraftService::isPhotoBooth($business) ? $this->starterDrafts->reusableContent($business) : null,
+            // "Website completeness" (task instruction) — the real,
+            // deterministic facts the page-strategy engine and the
+            // About/FAQ builders actually consult, never a pretend list.
+            // No `photoCount` here on purpose (acceptance-correction
+            // Blocker 9's "NEW-WEBSITE MEDIA FLOW"): no Website row (and
+            // therefore no WebsiteAsset rows at all) exists yet at this
+            // screen, so there is no real count to compute — the view's
+            // own static "add real photos after your site is created"
+            // line states that honestly instead of faking a number.
+            'completeness' => [
+                'missingFieldKeys' => $completeness->missingFieldKeys,
+                'staleFieldKeys' => $completeness->staleFieldKeys,
+                'eligibleServiceCount' => $this->pageStrategy->eligibleServices($business)->count(),
+                'eligibleCatalogCount' => $this->pageStrategy->eligibleCatalogItems($business)->count(),
+                'eligibleLocationCount' => $eligibleLocations->count(),
+                'needsMoreInfoLocationCount' => $needsMoreInfoLocations->count(),
+            ],
         ]);
     }
 
@@ -142,15 +180,35 @@ class WebsiteController extends CustomerBaseController
 
         $request->validate([
             'design' => 'nullable|in:clean,bold,premium,blank',
+            'template_key' => 'nullable|string|max:40',
             'name' => 'nullable|string|max:120',
         ]);
 
-        if (! $request->filled('design') && ! $request->filled('name')) {
+        if (! $request->filled('design') && ! $request->filled('template_key') && ! $request->filled('name')) {
             throw ValidationException::withMessages(['design' => ['Choose a design to start your website.']]);
         }
 
-        $design = $request->input('design', 'blank');
-        $website = $this->starterDrafts->create($business, $design, $request->input('name'));
+        // The four-template picker (task instruction: "replace the
+        // current generic Clean/Bold/Premium selection") — resolved
+        // against the operator-owned, `is_active`-checked catalog. The
+        // older `design` (clean/bold/premium/blank) path stays fully
+        // functional and untouched for a business that still submits it
+        // (e.g. the "Start with a blank website" link), never removed —
+        // only no longer the primary path the setup screen itself offers.
+        if ($request->filled('template_key')) {
+            $template = WebsiteTemplate::where('key', $request->input('template_key'))
+                ->where('is_active', true)
+                ->first();
+
+            if ($template === null) {
+                throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+            }
+
+            $website = $this->starterDrafts->createFromTemplate($business, $template, $request->input('name'));
+        } else {
+            $design = $request->input('design', 'blank');
+            $website = $this->starterDrafts->create($business, $design, $request->input('name'));
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -328,7 +386,7 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
-    public function generate(string $workspaceUid, string $businessUid): RedirectResponse
+    public function generate(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -336,6 +394,27 @@ class WebsiteController extends CustomerBaseController
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
+        }
+
+        // Acceptance-correction Blocker 1 — the normal full-site
+        // generation action for a template-backed Website is the
+        // guided AI runtime (deterministic WebsitePageStrategy plan ->
+        // AI -> validate -> media-bind -> atomic commit), never the
+        // older, unguided WebsiteAiDraftGenerator. The old generator
+        // remains the path ONLY for a legacy, non-template (`design`
+        // clean/bold/premium/blank) Website, which has no WebsiteTemplate
+        // to build a deterministic plan from.
+        if ($website->template_key !== null) {
+            $template = WebsiteTemplate::where('key', $website->template_key)->where('is_active', true)->first();
+
+            if ($template === null) {
+                return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                    'status' => 'error',
+                    'message' => "This website's template is no longer available. Contact support.",
+                ]);
+            }
+
+            return $this->runGuidedGeneration($request, $workspaceUid, $businessUid, $business, $website, $template, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION);
         }
 
         $succeeded = $this->aiGenerator->generate($website);
@@ -407,6 +486,102 @@ class WebsiteController extends CustomerBaseController
         return redirect()->route('customer.workspaces.businesses.website.history', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
             'message' => 'Website rolled back.',
+        ]);
+    }
+
+    /**
+     * Website Generator + Local SEO Completion — "Rebuild website from
+     * template" (task instruction). Shows which template is currently
+     * selected, the choice of a new one, and states plainly that a
+     * rebuild replaces every current DRAFT page while the site that is
+     * actually live right now (if published) keeps serving completely
+     * unaffected until the owner explicitly publishes the rebuilt draft.
+     */
+    public function rebuildForm(string $workspaceUid, string $businessUid): View|Factory|Application
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        return view('customer.business.website.rebuild', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'website' => $website,
+            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
+            'currentPageCount' => $website->pages()->count(),
+            'isPublished' => $website->published_revision_id !== null,
+        ]);
+    }
+
+    public function rebuild(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        $request->validate([
+            'template_key' => 'required|string|max:40',
+            // Explicit confirmation (task instruction, step 3) — never
+            // inferred from merely visiting the page or clicking once.
+            'confirm_rebuild' => 'accepted',
+        ]);
+
+        $template = WebsiteTemplate::where('key', $request->input('template_key'))
+            ->where('is_active', true)
+            ->first();
+
+        if ($template === null) {
+            throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+        }
+
+        // Acceptance-correction Blocker 1/4 — the customer-facing
+        // "Rebuild website from template" action now goes through the
+        // SAME guided AI runtime as full generation (fixed by this
+        // correction to genuinely replace the draft, atomically, rather
+        // than the earlier deterministic-only rebuild path).
+        return $this->runGuidedGeneration($request, $workspaceUid, $businessUid, $business, $website, $template, WebsiteGuidedGenerationAttempt::MODE_REBUILD);
+    }
+
+    /**
+     * Shared by generate() (full generation, resolving the Website's
+     * OWN current template) and rebuild() (an explicitly chosen,
+     * possibly different template) — both are, from the guided-generation
+     * runtime's point of view, "replace this Website's entire draft with
+     * a freshly AI-written batch for this template's deterministic page
+     * plan," differing only in which WebsiteTemplate and user-facing
+     * copy apply.
+     */
+    private function runGuidedGeneration(Request $request, string $workspaceUid, string $businessUid, Business $business, Website $website, WebsiteTemplate $template, string $mode): RedirectResponse
+    {
+        // A fresh idempotency nonce per page render (the hidden form
+        // field both the "Generate"/"Regenerate" button and the rebuild
+        // confirmation form carry) — a genuine double submit of the SAME
+        // rendered form carries the SAME nonce and converges to one
+        // attempt; a later, deliberate resubmission after seeing a
+        // failure gets a fresh nonce and is never permanently stuck
+        // (acceptance-correction Blocker 6).
+        $idempotencyKey = (string) $request->input('idempotency_key', (string) Str::uuid());
+
+        $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
+            ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey)
+            : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey);
+
+        if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+            return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                'status' => 'success',
+                'message' => $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD && $website->published_revision_id !== null
+                    ? 'Draft rebuilt with AI. Your currently published site is unaffected until you review and publish this draft.'
+                    : 'Draft content generated. Review and edit before publishing.',
+            ]);
+        }
+
+        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'error',
+            'message' => $attempt->failure_reason ?: 'AI generation is currently unavailable. Please try again later or add pages manually.',
         ]);
     }
 

@@ -21,15 +21,37 @@
         </x-alert>
     @endif
 
+    @if (! empty($mediaWarnings))
+        <x-alert variant="warning" class="mb-3">
+            <strong>Missing media checklist:</strong>
+            <ul class="mb-0">
+                @foreach ($mediaWarnings as $warning)
+                    <li>{{ $warning }}</li>
+                @endforeach
+            </ul>
+        </x-alert>
+    @endif
+
     <div class="row">
         <div class="col-md-6 mb-3">
             <x-card title="Pages">
                 <p class="text-caption">{{ $pageCount }} page(s).</p>
                 <x-button variant="primary" href="{{ route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid]) }}">Manage pages</x-button>
-                @if ($pageCount === 0)
+                {{--
+                    Acceptance-correction Blocker 1 — a template-backed
+                    Website (guided AI runtime) already has deterministic
+                    starter content the moment it is created, so this
+                    action must stay available (as "Regenerate") past
+                    $pageCount === 0, unlike the legacy, non-template
+                    design-only path below it which only ever offers this
+                    once, before any page exists.
+                --}}
+                @if ($website->template_key !== null || $pageCount === 0)
                     <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
                         @csrf
-                        <x-button variant="outline" type="submit">Generate draft with AI</x-button>
+                        {{-- A fresh nonce per page render — see WebsiteController::runGuidedGeneration()'s own docblock. --}}
+                        <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
+                        <x-button variant="outline" type="submit">{{ $website->template_key !== null && $pageCount > 0 ? 'Regenerate draft with AI' : 'Generate draft with AI' }}</x-button>
                     </form>
                 @endif
             </x-card>

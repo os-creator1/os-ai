@@ -65,6 +65,15 @@
     @if (! empty($localBusinessJsonLd ?? null))
         <script type="application/ld+json">{!! json_encode($localBusinessJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     @endif
+    {{--
+        BreadcrumbList (Website Generator + Local SEO Completion) — same
+        JSON_HEX_* escaping discipline as localBusinessJsonLd above, and
+        only ever passed for a genuinely indexable custom-domain page
+        (App\Http\Middleware\ResolveCustomDomainWebsite::renderPage()).
+    --}}
+    @if (! empty($breadcrumbJsonLd ?? null))
+        <script type="application/ld+json">{!! json_encode($breadcrumbJsonLd, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    @endif
     @php($theme = $websiteMeta['theme'] ?? [])
     @if (! empty($theme))
         <style>

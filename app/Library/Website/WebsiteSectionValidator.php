@@ -26,10 +26,21 @@ final class WebsiteSectionValidator
      *        any non-empty asset reference is itself a validation failure
      * @param array $validFormUids uids of WebsiteForm rows belonging to this
      *        Website — a `form` section's form_uid must match one of these
+     * @param bool $requireImageOnImageText false ONLY for the guided-generation
+     *        pre-binding pass (acceptance-correction round 2, Blocker 1):
+     *        AI is forbidden from ever supplying an asset reference
+     *        ($allowAssetReferences=false already enforces that), so an
+     *        `image_text` section it writes can never legally carry a
+     *        non-empty `image` value either — this section's own image
+     *        is filled afterward by MediaBindingService, from a real
+     *        asset the AI never chose. The ordinary draft/editor path
+     *        (WebsiteDraftPageService::createPage(), unchanged) always
+     *        leaves this true: a customer-edited `image_text` section
+     *        still requires a real, chosen photo.
      * @return array the validated (structurally unchanged) sections array
      * @throws ValidationException
      */
-    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true, array $validFormUids = []): array
+    public function validate(array $sections, array $validAssetUids, bool $allowAssetReferences = true, array $validFormUids = [], bool $requireImageOnImageText = true): array
     {
         $errors = [];
 
@@ -54,7 +65,7 @@ final class WebsiteSectionValidator
             }
 
             try {
-                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences, $validFormUids);
+                $this->validateData($type, $section['data'], $validAssetUids, $allowAssetReferences, $validFormUids, $requireImageOnImageText);
             } catch (ValidationException $e) {
                 foreach ($e->errors() as $field => $messages) {
                     $errors["sections.{$index}.{$field}"] = $messages;
@@ -72,7 +83,7 @@ final class WebsiteSectionValidator
     /**
      * @throws ValidationException
      */
-    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences, array $validFormUids = []): void
+    private function validateData(WebsiteSectionType $type, array $data, array $validAssetUids, bool $allowAssetReferences, array $validFormUids = [], bool $requireImageOnImageText = true): void
     {
         $rules = match ($type) {
             WebsiteSectionType::Hero => [
@@ -93,7 +104,7 @@ final class WebsiteSectionValidator
             WebsiteSectionType::ImageText => [
                 'heading' => 'nullable|string|max:120',
                 'body' => 'required|string|max:3000',
-                'image' => 'required|string',
+                'image' => $requireImageOnImageText ? 'required|string' : 'nullable|string',
                 'image_position' => 'required|in:left,right',
             ],
             WebsiteSectionType::Services => [
@@ -168,8 +179,15 @@ final class WebsiteSectionValidator
             if (str_contains($field, '*')) {
                 $buttons = $data['buttons'] ?? [];
                 foreach ($buttons as $i => $button) {
-                    if (isset($button['url']) && ! WebsiteUrlRules::isValid((string) $button['url'])) {
-                        $errors["buttons.{$i}.url"][] = 'The URL must be https, tel:, or mailto: only.';
+                    // A `cta` button is the one place the internal-link
+                    // engine (Website Generator + Local SEO Completion)
+                    // points a visitor at another page on the SAME
+                    // Website — e.g. a service page's "See all services"
+                    // button — so it alone accepts a root-relative path
+                    // alongside https/tel/mailto (WebsiteUrlRules::
+                    // isValid()'s bounded $allowInternalPath extension).
+                    if (isset($button['url']) && ! WebsiteUrlRules::isValid((string) $button['url'], allowInternalPath: true)) {
+                        $errors["buttons.{$i}.url"][] = 'The URL must be https, tel:, mailto:, or a same-site path only.';
                     }
                 }
 

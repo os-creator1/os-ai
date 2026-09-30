@@ -361,8 +361,16 @@ final class BusinessKnowledgeProfileManager
             }
         }
 
-        if ($business->industry !== null) {
-            $pack = QuestionPack::where('applies_to_industry', $business->industry->value)
+        // §6.3 step 2 is reachable only when industry is genuinely set.
+        // An older/never-onboarded Business may store an empty string
+        // rather than a true SQL NULL in this nullable enum-cast column
+        // (WebsiteStarterDraftService::isPhotoBooth() documents the same
+        // quirk) — reading the raw value first and treating '' as unset
+        // avoids Eloquent's enum cast throwing before this method's own
+        // null check ever runs.
+        $rawIndustry = $business->getRawOriginal('industry');
+        if ($rawIndustry !== null && $rawIndustry !== '') {
+            $pack = QuestionPack::where('applies_to_industry', $rawIndustry)
                 ->whereNull('applies_to_vertical_key')
                 ->where('is_active', true)
                 ->orderByDesc('version')
