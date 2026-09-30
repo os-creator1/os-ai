@@ -2,16 +2,19 @@
 
 namespace App\Library\Website\GuidedGeneration;
 
+use App\Library\Website\WebsiteStarterDraftService;
 use App\Models\Website;
 
 /**
  * Website Guided Generation contract §8.7, completed by this lane,
- * strengthened by acceptance-correction Blocker 9. The ONE place that
- * ever assigns an image to a generated page — the AI text batch never
- * carries an image field (§8.3), and this service never invents one
- * either: it can only ever choose among `WebsiteAsset` rows that already
- * belong to this exact Website (never a cross-Website reference). A
- * slot with no eligible asset is left empty and recorded in `warnings`
+ * strengthened by acceptance-correction Blocker 9 and independent-review
+ * correction round 4. The ONE place that ever assigns an image OR a form
+ * to a generated page — the AI text batch never carries an image field
+ * (§8.3) or a form_uid, and this service never invents either: an image
+ * can only ever come from a `WebsiteAsset` row that already belongs to
+ * this exact Website, and a form can only ever be the Website's own real
+ * `WebsiteForm` row (never a cross-Website reference, never AI-invented).
+ * A slot with no eligible asset is left empty and recorded in `warnings`
  * (task instruction: "expose a clear missing-media checklist"), never
  * silently rendered broken and never filled with a placeholder.
  *
@@ -35,7 +38,15 @@ use App\Models\Website;
  *    categorically rejects any `image` value in AI-authored content
  *    (§8.3), so a 'gallery' section is never something the guided AI
  *    client asks for or the output validator accepts — this service is
- *    the only source of that section's content.
+ *    the only source of that section's content;
+ *  - the Contact page's own `form` section — built ENTIRELY here
+ *    (bindForms()) from the Website's real quote-request form, reusing
+ *    WebsiteStarterDraftService::ensurePhotoBoothQuoteForm() exactly as
+ *    the deterministic starter draft does, so a generated or rebuilt
+ *    Contact page always retains a real, submittable, Website-owned
+ *    form — 'form' is never something the guided AI client asks for or
+ *    the output validator accepts (WebsitePageStrategy::
+ *    withoutAiUnfillableSections()).
  *
  * `about`/team photography is deliberately NOT a supported purpose yet:
  * the `about` page_type's own manifest does not allow any image-bearing
@@ -51,6 +62,8 @@ final class MediaBindingService
      */
     public function bind(Website $website, array $pages): array
     {
+        $pages = $this->bindForms($website, $pages);
+
         $assets = $website->assets()->orderBy('id')->get();
         $warnings = [];
 
@@ -158,6 +171,38 @@ final class MediaBindingService
 
         if ($dropped) {
             $warnings[] = 'An image_text section could not be given a real photo and was left out of its page.';
+        }
+
+        return $pages;
+    }
+
+    /**
+     * The Contact page's `form` section is always constructed here from
+     * the Website's real quote-request form, never merged with anything
+     * AI wrote (AI is never asked for, and the output validator never
+     * accepts, a 'form' section — see class docblock). Idempotent and
+     * side-effect-free beyond that one form row: ensurePhotoBoothQuoteForm()
+     * reuses an existing form rather than creating a duplicate, exactly
+     * as the deterministic starter draft's own Contact page already
+     * does, so a Contact page built either way ends up with the same
+     * real, submittable form. Runs before the asset lookup above and
+     * independently of photo availability — a Contact page's form is
+     * never conditional on whether any photos have been uploaded yet.
+     */
+    private function bindForms(Website $website, array $pages): array
+    {
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'contact') {
+                continue;
+            }
+
+            $hasForm = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form');
+            if ($hasForm) {
+                continue;
+            }
+
+            $form = WebsiteStarterDraftService::ensurePhotoBoothQuoteForm($website);
+            $pages[$index]['sections'][] = ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => $form->uid]];
         }
 
         return $pages;

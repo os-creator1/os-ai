@@ -47,6 +47,20 @@ class MediaBindingServiceTest extends TestCase
         ];
     }
 
+    private function contactPageArray(?array $sections = null): array
+    {
+        return [
+            'page_key' => 'contact',
+            'page_type' => 'contact',
+            'is_home' => false,
+            'slug' => 'photo-booth-contact',
+            'title' => 'Contact',
+            'seo_title' => null,
+            'meta_description' => null,
+            'sections' => $sections ?? [['type' => 'hero', 'data' => ['heading' => 'Contact']]],
+        ];
+    }
+
     public function test_no_assets_leaves_pages_unchanged_and_warns(): void
     {
         [, $business] = $this->entitledTenant();
@@ -259,5 +273,73 @@ class MediaBindingServiceTest extends TestCase
         $gallerySection = collect($result['pages'][0]['sections'])->firstWhere('type', 'gallery');
         $this->assertNull($gallerySection);
         $this->assertNotEmpty($result['warnings']);
+    }
+
+    /**
+     * Independent-review correction round 4: guided generation must
+     * preserve the starter Contact page's working quote-request form.
+     * AI can never safely supply a form_uid, so the Contact page's
+     * `form` section is always built here, from the Website's own real
+     * form — never merged with anything AI wrote.
+     */
+    public function test_contact_page_gets_a_real_website_owned_form_section(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+
+        $result = app(MediaBindingService::class)->bind($website, [$this->contactPageArray()]);
+
+        $formSection = collect($result['pages'][0]['sections'])->firstWhere('type', 'form');
+        $this->assertNotNull($formSection, 'MediaBindingService must append a real form section to the Contact page.');
+
+        $form = $website->forms()->sole();
+        $this->assertSame($form->uid, $formSection['data']['form_uid']);
+    }
+
+    public function test_binding_the_contact_page_never_creates_a_duplicate_form(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+
+        app(MediaBindingService::class)->bind($website, [$this->contactPageArray()]);
+        app(MediaBindingService::class)->bind($website->fresh(), [$this->contactPageArray()]);
+
+        $this->assertSame(1, $website->forms()->count(), 'A second bind (e.g. a rebuild) must reuse the same form, never create a duplicate.');
+    }
+
+    public function test_a_contact_page_that_already_carries_a_form_section_is_never_given_a_second_one(): void
+    {
+        // Defense in depth: the output validator already refuses any
+        // AI-authored 'form' section before this service ever runs
+        // (WebsitePageStrategy::withoutAiUnfillableSections()), so this
+        // should never actually happen in production — but this service
+        // must never duplicate a form slot that is somehow already
+        // present either.
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+
+        $page = $this->contactPageArray([
+            ['type' => 'hero', 'data' => ['heading' => 'Contact']],
+            ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => 'already-set-value']],
+        ]);
+
+        $result = app(MediaBindingService::class)->bind($website, [$page]);
+
+        $formSections = collect($result['pages'][0]['sections'])->where('type', 'form');
+        $this->assertCount(1, $formSections);
+        $this->assertSame('already-set-value', $formSections->first()['data']['form_uid']);
+        $this->assertSame(0, $website->forms()->count(), 'No form should be created when the page already carries one.');
+    }
+
+    public function test_a_non_contact_page_never_receives_a_form_section(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+
+        $result = app(MediaBindingService::class)->bind($website, [$this->homePageArray()]);
+
+        $formSection = collect($result['pages'][0]['sections'])->firstWhere('type', 'form');
+        $this->assertNull($formSection);
+        $this->assertSame(0, $website->forms()->count());
     }
 }

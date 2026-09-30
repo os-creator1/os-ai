@@ -414,4 +414,98 @@ class GuidedGenerationCommitServiceTest extends TestCase
         $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->fresh()->status);
         $this->assertSame(0, $website->pages()->count());
     }
+
+    /**
+     * Independent-review correction round 4: guided generation must
+     * preserve the starter Contact page's working quote-request form.
+     * AI's own batch (validBatchFor()) never writes a form_uid — it
+     * cannot safely supply one — so this proves MediaBindingService
+     * attaches the Website's real, reusable form during commit.
+     */
+    public function test_full_generation_gives_the_contact_page_a_real_website_owned_form(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
+        $this->mockAiClient($this->validBatchFor($plan));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-form-full');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status);
+
+        $contactPage = $website->pages()->where('slug', 'photo-booth-contact')->firstOrFail();
+        $formSection = collect($contactPage->sections)->firstWhere('type', 'form');
+        $this->assertNotNull($formSection, 'The generated Contact page must retain a form section.');
+
+        $form = $website->forms()->sole();
+        $this->assertSame($form->uid, $formSection['data']['form_uid']);
+    }
+
+    /**
+     * A rebuild must reuse the SAME form the deterministic starter draft
+     * already created for this Website — never create a second,
+     * orphaned one — exactly like a rebuild reuses the Website's real
+     * uploaded photos rather than requiring them to be re-uploaded.
+     */
+    public function test_rebuild_reuses_the_websites_existing_form_never_duplicating_it(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = app(WebsiteStarterDraftService::class)->createFromTemplate($business, $template);
+        $existingForm = $website->forms()->sole();
+
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website->fresh());
+        $this->mockAiClient($this->validBatchFor($plan));
+
+        $attempt = app(GuidedGenerationCommitService::class)->rebuild($business, $website->fresh(), $template, $customer->user_id, 'idem-form-rebuild');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED, $attempt->status);
+        $this->assertSame(1, $website->forms()->count(), 'Rebuild must reuse the Website\'s existing form, never create a duplicate.');
+
+        $contactPage = $website->pages()->where('slug', 'photo-booth-contact')->firstOrFail();
+        $formSection = collect($contactPage->sections)->firstWhere('type', 'form');
+        $this->assertSame($existingForm->uid, $formSection['data']['form_uid']);
+    }
+
+    /**
+     * AI is never offered 'form' as an allowed section type
+     * (WebsitePageStrategy::withoutAiUnfillableSections()) — if a
+     * provider ignores that and writes one anyway, the whole batch must
+     * still fail, exactly like an AI-invented page_key or a prohibited
+     * claim does. An AI-supplied form_uid is never trusted.
+     */
+    public function test_an_ai_authored_form_section_fails_the_whole_batch(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $this->seed(WebsiteTemplateSeeder::class);
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
+
+        $pages = collect($plan)->map(function ($page) {
+            $sections = [['type' => 'hero', 'data' => ['heading' => $page['title']]]];
+            if ($page['page_key'] === 'contact') {
+                $sections[] = ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => 'ai-invented-form-uid']];
+            }
+
+            return [
+                'page_key' => $page['page_key'],
+                'title' => $page['title'],
+                'seo_title' => $page['title'] . ' seo title',
+                'meta_description' => $page['title'] . ' meta description for this specific page.',
+                'sections' => $sections,
+            ];
+        })->values()->all();
+
+        $this->mockAiClient(json_encode(['pages' => $pages]));
+
+        $attempt = app(GuidedGenerationCommitService::class)->generateFull($business, $website, $template, $customer->user_id, 'idem-ai-form-attempt');
+
+        $this->assertSame(WebsiteGuidedGenerationAttempt::STATUS_FAILED, $attempt->status);
+        $this->assertSame(0, $website->pages()->count());
+        $this->assertSame(0, $website->forms()->count(), 'An AI-invented form_uid must never result in a form being created either.');
+    }
 }

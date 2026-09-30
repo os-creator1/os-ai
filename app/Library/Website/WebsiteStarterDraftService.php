@@ -671,7 +671,7 @@ final class WebsiteStarterDraftService
             $sections[] = $contact;
         }
 
-        $form = $this->ensurePhotoBoothQuoteForm($website);
+        $form = self::ensurePhotoBoothQuoteForm($website);
         $sections[] = ['type' => 'form', 'data' => ['heading' => 'Request a quote', 'form_uid' => $form->uid]];
 
         $this->pages->createPage($website, [
@@ -692,9 +692,13 @@ final class WebsiteStarterDraftService
      * Idempotent: reuses an existing Photo Booth quote-request form
      * rather than creating a duplicate — mirrors
      * WebsiteFormsController::store()'s own creation payload exactly, so
-     * a form created either way is identical.
+     * a form created either way is identical. Public and static (does
+     * not depend on $this) so MediaBindingService's guided-generation
+     * form binding can reuse this exact same creation logic rather than
+     * duplicating it — a Contact page's form is always this real,
+     * Website-owned form, whichever code path built the page.
      */
-    private function ensurePhotoBoothQuoteForm(Website $website): WebsiteForm
+    public static function ensurePhotoBoothQuoteForm(Website $website): WebsiteForm
     {
         return $website->forms()->firstOrCreate(
             ['type' => WebsiteForm::TYPE_QUOTE_REQUEST],

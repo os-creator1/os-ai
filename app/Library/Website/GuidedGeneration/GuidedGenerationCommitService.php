@@ -89,7 +89,7 @@ final class GuidedGenerationCommitService
     private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode): WebsiteGuidedGenerationAttempt
     {
         $plan = $this->pageStrategy->buildPlan($business, $template, $website);
-        $aiPlan = WebsitePageStrategy::withoutAiGallerySections($plan);
+        $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
         $facts = $this->client->canonicalFacts($business);
         $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey);
 

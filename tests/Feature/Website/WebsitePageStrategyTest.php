@@ -278,4 +278,33 @@ class WebsitePageStrategyTest extends TestCase
 
         $this->assertSame($first->id, $second->id);
     }
+
+    /**
+     * Independent-review correction round 4: 'form', like 'gallery', can
+     * never validly come from the guided-generation AI client — a
+     * Contact page's form is always the Website's own real
+     * quote-request form, attached server-side by MediaBindingService,
+     * never something AI is asked to invent or choose.
+     */
+    public function test_gallery_and_form_are_always_excluded_from_ai_facing_allowed_section_types(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        $website = $this->createWebsite($business);
+
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
+        $contactBefore = collect($plan)->firstWhere('page_type', 'contact');
+        $this->assertContains('form', $contactBefore['allowed_section_types'], 'The template manifest itself must still allow a form on Contact.');
+
+        $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
+
+        foreach ($aiPlan as $page) {
+            $this->assertNotContains('gallery', $page['allowed_section_types']);
+            $this->assertNotContains('form', $page['allowed_section_types']);
+        }
+
+        // Every other allowed type on the Contact page survives untouched.
+        $contactAfter = collect($aiPlan)->firstWhere('page_type', 'contact');
+        $this->assertContains('hero', $contactAfter['allowed_section_types']);
+    }
 }

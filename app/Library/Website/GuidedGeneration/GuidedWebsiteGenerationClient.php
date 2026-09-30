@@ -53,7 +53,7 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
-     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output, already passed through WebsitePageStrategy::withoutAiGallerySections()
+     * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output, already passed through WebsitePageStrategy::withoutAiUnfillableSections()
      * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
     public function generate(Business $business, array $plan, ?int $actorUserId = null): ?array

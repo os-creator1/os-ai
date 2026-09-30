@@ -267,24 +267,37 @@ final class WebsitePageStrategy
     }
 
     /**
-     * Acceptance-correction Blocker 9: a 'gallery' section can never
-     * validly come from the guided-generation AI client — the section
-     * validator's `allowAssetReferences: false` rule rejects ANY
-     * non-empty `items.*.image` value, while the section's own shape
-     * simultaneously requires at least one non-empty `image`. A
-     * 'gallery' page's photo content is always built by
-     * MediaBindingService from real assets instead. This filters
-     * 'gallery' out of every plan entry's `allowed_section_types`
+     * Acceptance-correction Blocker 9 (gallery) and independent-review
+     * correction round 4 (form): two section types can never validly
+     * come from the guided-generation AI client, for the same underlying
+     * reason — their content must always reference a real, existing
+     * Website-owned record the AI is never trusted to invent or choose:
+     *
+     *  - 'gallery': the section validator's `allowAssetReferences: false`
+     *    rule rejects ANY non-empty `items.*.image` value, while the
+     *    section's own shape simultaneously requires at least one
+     *    non-empty `image`. Its photo content is always built by
+     *    MediaBindingService from real assets instead.
+     *  - 'form': AI can never safely supply a `form_uid` — it has no way
+     *    to know the Website's real form UID, and guided output
+     *    validation is never given a list of valid form UIDs to check an
+     *    AI-invented one against. The Contact page's form is always the
+     *    Website's own real quote-request form, attached by
+     *    MediaBindingService (the same `WebsiteStarterDraftService::
+     *    ensurePhotoBoothQuoteForm()` the deterministic starter draft
+     *    already uses), never something AI writes.
+     *
+     * This filters both out of every plan entry's `allowed_section_types`
      * before the plan is ever shown to AI or checked by the output
-     * validator, so the impossible option is never offered or accepted
-     * in the first place — never relied on as the only defense.
+     * validator, so neither impossible option is ever offered or
+     * accepted in the first place — never relied on as the only defense.
      *
      * @param  array  $plan  buildPlan()'s output
      */
-    public static function withoutAiGallerySections(array $plan): array
+    public static function withoutAiUnfillableSections(array $plan): array
     {
         foreach ($plan as $index => $page) {
-            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery']));
+            $plan[$index]['allowed_section_types'] = array_values(array_diff($page['allowed_section_types'], ['gallery', 'form']));
         }
 
         return $plan;
