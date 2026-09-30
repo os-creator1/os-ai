@@ -2,52 +2,54 @@
 
 namespace App\Library\Website\Gallery;
 
-use App\Library\Website\WebsiteAiGenerationClient;
 use App\Models\Business;
 use App\Models\WebsiteAsset;
-use Throwable;
 
 /**
- * Website Builder redesign — a thin wrapper on the existing
- * WebsiteAiGenerationClient seam (the same one guided generation already
- * uses; not a second, competing AI integration) producing an editable
- * DRAFT alt-text suggestion per uploaded gallery photo, from the
- * Business/niche context and the photo's own category tag. Failure is
- * always non-fatal — mirrors every other AI-seam-failure pattern already
- * in this codebase (WebsiteAiDraftGenerator's pause/outage handling): the
- * asset's `alt_text` is simply left blank/editable, never blocking the
- * upload itself.
+ * Independent-review correction round — the earlier version of this class
+ * spent one AiGateway-budgeted call PER uploaded photo while never
+ * actually sending the photograph itself, only the business name, the
+ * category tag and the existing title. That is not a real use of vision;
+ * it is real money spent to have a model invent generic prose it could
+ * not possibly ground in the image. For this correction, alt text is
+ * produced deterministically from structured metadata already on hand —
+ * zero AI calls:
+ *
+ *  1. A user-provided description/title always wins verbatim.
+ *  2. Otherwise a short, factual sentence is composed from the
+ *     Business's name plus whatever category/context tag the photo
+ *     carries (booth type, backdrop, event type) — never invented detail.
+ *  3. A photo with no usable metadata at all (no title, no category, no
+ *     business name) is left with empty alt text — an accurate empty
+ *     string is safer than a fabricated generic caption for a genuinely
+ *     decorative or context-free image.
+ *
+ * A real vision-grounded suggestion (sending the actual image bytes to a
+ * model, in one bounded batch, only for assets that remain undescribed
+ * after this deterministic pass) is an explicitly deferred follow-up —
+ * this class's own job is only to prove out the safe, free, always-
+ * available baseline first, and to never regenerate an asset's alt text
+ * it did not just create.
  */
 final class WebsiteAssetAltTextGenerator
 {
-    public function __construct(private readonly WebsiteAiGenerationClient $client)
+    public function suggest(Business $business, WebsiteAsset $asset): ?string
     {
-    }
+        if (is_string($asset->title) && trim($asset->title) !== '') {
+            return trim(mb_substr($asset->title, 0, 160));
+        }
 
-    public function suggest(Business $business, WebsiteAsset $asset, ?int $actorUserId = null): ?string
-    {
-        $messages = [
-            ['role' => 'system', 'content' => 'You write short, accurate, descriptive image alt text for accessibility and SEO. Never invent details you cannot know from the given context — describe the general scene, never specific people, brands, or claims. Respond with a single JSON object: {"alt_text": string}. Keep it under 125 characters.'],
-            ['role' => 'user', 'content' => json_encode([
-                'business_name' => $business->name,
-                'category' => $asset->category_tag,
-                'existing_title' => $asset->title,
-            ])],
-        ];
+        $category = is_string($asset->category_tag) ? trim(str_replace(['_', '-'], ' ', $asset->category_tag)) : '';
+        $businessName = trim((string) $business->name);
 
-        try {
-            $raw = $this->client->complete($messages, $business, $actorUserId);
-
-            if ($raw === null) {
-                return null;
-            }
-
-            $decoded = json_decode($raw, true);
-            $altText = $decoded['alt_text'] ?? null;
-
-            return is_string($altText) && trim($altText) !== '' ? trim(mb_substr($altText, 0, 160)) : null;
-        } catch (Throwable) {
+        if ($category === '' && $businessName === '') {
             return null;
         }
+
+        $sentence = $category !== ''
+            ? trim($category . ($businessName !== '' ? ' — ' . $businessName : ''))
+            : $businessName;
+
+        return trim(mb_substr($sentence, 0, 160));
     }
 }

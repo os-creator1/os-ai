@@ -43,6 +43,7 @@ class WebsiteTemplateSeeder extends Seeder
         return [
             [
                 'key' => 'photo_booth_modern',
+                'niche_key' => 'photo_booth_service',
                 'display_name' => 'Modern',
                 'description' => 'High-contrast, confident, and direct — a bold dark hero with a strong first impression.',
                 'theme' => [
@@ -60,6 +61,7 @@ class WebsiteTemplateSeeder extends Seeder
             ],
             [
                 'key' => 'photo_booth_editorial',
+                'niche_key' => 'photo_booth_service',
                 'display_name' => 'Editorial',
                 'description' => 'Warm, narrative-led, and generously spaced — serif headlines and a considered pace.',
                 'theme' => [
@@ -77,6 +79,7 @@ class WebsiteTemplateSeeder extends Seeder
             ],
             [
                 'key' => 'photo_booth_luxury',
+                'niche_key' => 'photo_booth_service',
                 'display_name' => 'Luxury',
                 'description' => 'Restrained and elegant — a muted gold and charcoal palette built around tiered packages.',
                 'theme' => [
@@ -94,6 +97,7 @@ class WebsiteTemplateSeeder extends Seeder
             ],
             [
                 'key' => 'photo_booth_conversion',
+                'niche_key' => 'photo_booth_service',
                 'display_name' => 'Conversion',
                 'description' => 'Punchy and direct — event-type quick-picks and a clear numbered booking process.',
                 'theme' => [

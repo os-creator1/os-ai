@@ -7,12 +7,16 @@ use App\Library\Business\BusinessBackdropManager;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Business\BusinessLocationManager;
 use App\Library\Catalog\CatalogItemManager;
+use App\Library\Website\Setup\QuestionnaireStepResolver;
+use App\Library\Website\WebsiteFormPresets;
 use App\Models\Business;
+use App\Models\BusinessBackdrop;
 use App\Models\BusinessService;
+use App\Models\CatalogItem;
 use App\Models\QuestionnaireResponse;
 use App\Models\Website;
 use App\Models\WebsiteForm;
-use App\Library\Website\WebsiteFormPresets;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -41,19 +45,58 @@ final class WebsiteSetupAnswerApplier
         private readonly BusinessLocationManager $locations,
         private readonly CatalogItemManager $catalogItems,
         private readonly BusinessBackdropManager $backdrops,
+        private readonly QuestionnaireStepResolver $stepResolver,
     ) {
     }
 
+    /**
+     * Independent-review correction round: iterates only the CURRENTLY
+     * VISIBLE steps (QuestionnaireStepResolver::visibleSteps(), evaluated
+     * against these same $answers) rather than every step the definition
+     * has ever declared. A step an earlier answer has since hidden (e.g.
+     * "backdrops" once "offers_backdrops" was changed to false) keeps
+     * whatever stale value it still carries in `answers`, but that value
+     * is never applied to a canonical record here — the exact
+     * requirement that a hidden step's stale answer must not later be
+     * applied.
+     *
+     * Also reconciles, not merely upserts: for each of the three
+     * source-keyed repeatable modules, a submitted entry's own
+     * source_questionnaire_item_key set that no longer includes a
+     * previously-created canonical row's key means the owner removed
+     * that entry — the row is archived/deactivated (never hard-deleted,
+     * never touched if it carries a NULL or different source key, i.e.
+     * was created manually outside the wizard).
+     */
     public function apply(Business $business, Website $website, QuestionnaireResponse $response, int $actorUserId): void
     {
-        $steps = $response->version->steps();
+        $steps = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
         $answers = $response->answers ?? [];
 
         DB::transaction(function () use ($business, $website, $steps, $answers, $actorUserId) {
+            // Reconciliation accumulates across every visible step of a
+            // given target_module (a questionnaire may reasonably have
+            // more than one business_service step, e.g. Photobooth's
+            // "booth_types" and "services_event_types") — null means "no
+            // such step was even visible this run," which must never
+            // trigger reconciliation, versus an empty array, which means
+            // a visible step was genuinely submitted with zero entries.
+            $submittedServiceKeys = null;
+            $submittedPackageKeys = null;
+            $submittedBackdropKeys = null;
+
             foreach ($steps as $step) {
                 $value = $answers[$step['key']] ?? null;
 
                 if ($value === null || $value === '' || $value === []) {
+                    if ($step['target_module'] === 'business_service') {
+                        $submittedServiceKeys = array_merge($submittedServiceKeys ?? [], []);
+                    } elseif ($step['target_module'] === 'catalog_item') {
+                        $submittedPackageKeys = array_merge($submittedPackageKeys ?? [], []);
+                    } elseif ($step['target_module'] === 'backdrop') {
+                        $submittedBackdropKeys = array_merge($submittedBackdropKeys ?? [], []);
+                    }
+
                     continue;
                 }
 
@@ -61,9 +104,9 @@ final class WebsiteSetupAnswerApplier
                     'business' => $this->applyBusinessField($business, $step['target_field'], $value),
                     'business_location' => $this->applyLocationFields($business, $value),
                     'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $value, $actorUserId),
-                    'business_service' => $this->applyServices($business, $value),
-                    'catalog_item' => $this->applyPackages($business, $value),
-                    'backdrop' => $this->applyBackdrops($business, $value),
+                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys ?? [], $this->applyServices($business, $value)),
+                    'catalog_item' => $submittedPackageKeys = array_merge($submittedPackageKeys ?? [], $this->applyPackages($business, $value)),
+                    'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys ?? [], $this->applyBackdrops($business, $value)),
                     'website_form' => $this->applyForm($business, $website, $value),
                     // 'gallery', 'answers', 'custom_section': presentation-
                     // only or already-canonical-elsewhere — left in
@@ -71,6 +114,18 @@ final class WebsiteSetupAnswerApplier
                     // WebsitePageStrategy/MediaBindingService at generation.
                     default => null,
                 };
+            }
+
+            if ($submittedServiceKeys !== null) {
+                $this->reconcileRemovedServices($business, $submittedServiceKeys);
+            }
+
+            if ($submittedPackageKeys !== null) {
+                $this->reconcileRemovedPackages($business, $submittedPackageKeys);
+            }
+
+            if ($submittedBackdropKeys !== null) {
+                $this->reconcileRemovedBackdrops($business, $submittedBackdropKeys);
             }
         });
     }
@@ -121,11 +176,18 @@ final class WebsiteSetupAnswerApplier
 
     /**
      * @param  array<int, array{key: string, name: string, description: ?string, starting_price: ?int, currency_code: ?string}>  $items
+     * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedServices()
      */
-    private function applyServices(Business $business, array $items): void
+    private function applyServices(Business $business, array $items): array
     {
+        $submittedKeys = [];
+
         foreach ($items as $position => $item) {
             $sourceKey = $item['key'] ?? null;
+            if ($sourceKey !== null) {
+                $submittedKeys[] = $sourceKey;
+            }
+
             $name = (string) ($item['name'] ?? '');
             $attributes = [
                 'business_id' => $business->id,
@@ -143,21 +205,65 @@ final class WebsiteSetupAnswerApplier
                 ? BusinessService::where('business_id', $business->id)->where('source_questionnaire_item_key', $sourceKey)->first()
                 : null;
 
-            if ($existing !== null) {
-                $existing->fill($attributes)->save();
-            } else {
-                BusinessService::create($attributes);
+            try {
+                if ($existing !== null) {
+                    $existing->fill($attributes)->save();
+                } else {
+                    BusinessService::create($attributes);
+                }
+            } catch (UniqueConstraintViolationException) {
+                // Independent-review correction round: two concurrent
+                // submissions can both miss the find-by-source-key lookup
+                // above and both attempt a create — the ci_business_
+                // source_item_unique-style index on business_services
+                // refuses the loser, which re-fetches the winner's row and
+                // updates it instead of surfacing a 500.
+                $winner = $sourceKey !== null
+                    ? BusinessService::where('business_id', $business->id)->where('source_questionnaire_item_key', $sourceKey)->first()
+                    : null;
+
+                if ($winner === null) {
+                    throw new \DomainException('Could not save this service.');
+                }
+
+                $winner->fill($attributes)->save();
             }
         }
+
+        return $submittedKeys;
+    }
+
+    /**
+     * Independent-review correction round: any of this Business's OWN
+     * wizard-created services (a non-null source key) that is no longer
+     * present in this submission is deactivated — never hard-deleted,
+     * never touching a manually created service (source key NULL).
+     *
+     * @param  array<int, string>  $submittedKeys
+     */
+    private function reconcileRemovedServices(Business $business, array $submittedKeys): void
+    {
+        BusinessService::where('business_id', $business->id)
+            ->whereNotNull('source_questionnaire_item_key')
+            ->whereNotIn('source_questionnaire_item_key', $submittedKeys === [] ? [''] : $submittedKeys)
+            ->where('status', BusinessServiceStatus::Active->value)
+            ->update(['status' => BusinessServiceStatus::Inactive->value]);
     }
 
     /**
      * @param  array<int, array{key: string, name: string, description: ?string, price_minor: ?int, currency_code: ?string, featured: bool, features: array<int, string>, image: ?array}>  $items
+     * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedPackages()
      */
-    private function applyPackages(Business $business, array $items): void
+    private function applyPackages(Business $business, array $items): array
     {
+        $submittedKeys = [];
+
         foreach ($items as $item) {
             $sourceKey = $item['key'] ?? null;
+            if ($sourceKey !== null) {
+                $submittedKeys[] = $sourceKey;
+            }
+
             $attributes = [
                 'type' => 'package',
                 'name' => (string) ($item['name'] ?? ''),
@@ -170,24 +276,59 @@ final class WebsiteSetupAnswerApplier
 
             $existing = $sourceKey !== null ? $this->catalogItems->findBySourceKey($business, $sourceKey) : null;
 
-            $catalogItem = $existing !== null
-                ? $this->catalogItems->update($business, $existing, $attributes)
-                : $this->catalogItems->create($business, $attributes);
+            try {
+                $catalogItem = $existing !== null
+                    ? $this->catalogItems->update($business, $existing, $attributes)
+                    : $this->catalogItems->create($business, $attributes);
+            } catch (UniqueConstraintViolationException) {
+                $winner = $sourceKey !== null ? $this->catalogItems->findBySourceKey($business, $sourceKey) : null;
+
+                if ($winner === null) {
+                    throw new \DomainException('Could not save this package.');
+                }
+
+                $catalogItem = $this->catalogItems->update($business, $winner, $attributes);
+            }
 
             $image = $item['image'] ?? null;
             if ($image !== null && $catalogItem->images()->count() === 0) {
                 $this->catalogItems->attachImage($business, $catalogItem, $image);
             }
         }
+
+        return $submittedKeys;
+    }
+
+    /**
+     * @param  array<int, string>  $submittedKeys
+     */
+    private function reconcileRemovedPackages(Business $business, array $submittedKeys): void
+    {
+        $removed = CatalogItem::where('business_id', $business->id)
+            ->whereNotNull('source_questionnaire_item_key')
+            ->whereNotIn('source_questionnaire_item_key', $submittedKeys === [] ? [''] : $submittedKeys)
+            ->where('lifecycle_state', \App\Enums\Catalog\CatalogItemLifecycleState::Active->value)
+            ->get();
+
+        foreach ($removed as $item) {
+            $this->catalogItems->archive($business, $item);
+        }
     }
 
     /**
      * @param  array<int, array{key: string, name: string, description: ?string, availability: bool, images: array<int, array>}>  $items
+     * @return array<int, string> the submitted entries' own source keys (nulls excluded), for reconcileRemovedBackdrops()
      */
-    private function applyBackdrops(Business $business, array $items): void
+    private function applyBackdrops(Business $business, array $items): array
     {
+        $submittedKeys = [];
+
         foreach ($items as $item) {
             $sourceKey = $item['key'] ?? null;
+            if ($sourceKey !== null) {
+                $submittedKeys[] = $sourceKey;
+            }
+
             $attributes = [
                 'name' => (string) ($item['name'] ?? ''),
                 'description' => $item['description'] ?? null,
@@ -197,9 +338,19 @@ final class WebsiteSetupAnswerApplier
 
             $existing = $sourceKey !== null ? $this->backdrops->findBySourceKey($business, $sourceKey) : null;
 
-            $backdrop = $existing !== null
-                ? $this->backdrops->update($business, $existing, $attributes)
-                : $this->backdrops->create($business, $attributes);
+            try {
+                $backdrop = $existing !== null
+                    ? $this->backdrops->update($business, $existing, $attributes)
+                    : $this->backdrops->create($business, $attributes);
+            } catch (UniqueConstraintViolationException) {
+                $winner = $sourceKey !== null ? $this->backdrops->findBySourceKey($business, $sourceKey) : null;
+
+                if ($winner === null) {
+                    throw new \DomainException('Could not save this backdrop.');
+                }
+
+                $backdrop = $this->backdrops->update($business, $winner, $attributes);
+            }
 
             if ($backdrop->images()->count() === 0) {
                 foreach (($item['images'] ?? []) as $image) {
@@ -207,6 +358,26 @@ final class WebsiteSetupAnswerApplier
                 }
             }
         }
+
+        return $submittedKeys;
+    }
+
+    /**
+     * Deactivation for a backdrop means `availability = false` — the
+     * exact flag WebsitePageStrategy::backdropsEligible() and
+     * MediaBindingService::bindBackdrops() already filter on, so a
+     * removed backdrop simply stops being offered/generated without a
+     * second "active" concept.
+     *
+     * @param  array<int, string>  $submittedKeys
+     */
+    private function reconcileRemovedBackdrops(Business $business, array $submittedKeys): void
+    {
+        BusinessBackdrop::where('business_id', $business->id)
+            ->whereNotNull('source_questionnaire_item_key')
+            ->whereNotIn('source_questionnaire_item_key', $submittedKeys === [] ? [''] : $submittedKeys)
+            ->where('availability', true)
+            ->update(['availability' => false]);
     }
 
     /**

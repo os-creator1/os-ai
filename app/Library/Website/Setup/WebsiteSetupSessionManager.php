@@ -31,6 +31,15 @@ use Illuminate\Support\Facades\DB;
  */
 final class WebsiteSetupSessionManager
 {
+    /**
+     * A conservative ceiling on the persisted `answers` JSON document —
+     * bounds an otherwise-unbounded autosave payload (e.g. a forged
+     * repeatable-group submission with an enormous number of items or an
+     * oversized text field slipping past per-field limits) rather than
+     * ever storing an unbounded blob.
+     */
+    private const MAX_ANSWERS_JSON_BYTES = 200_000;
+
     public function __construct(private readonly QuestionnaireStepResolver $stepResolver)
     {
     }
@@ -117,6 +126,10 @@ final class WebsiteSetupSessionManager
             $answers = $locked->answers ?? [];
             $answers[$stepKey] = $value;
 
+            if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
+                throw new DomainException('This answer is too large to save.');
+            }
+
             $steps = $locked->version->steps();
             $nextStepKey = $this->stepResolver->nextStepKey($steps, $answers, $stepKey);
 
@@ -124,6 +137,36 @@ final class WebsiteSetupSessionManager
                 'answers' => $answers,
                 'answers_revision' => $locked->answers_revision + 1,
                 'current_step_key' => $nextStepKey ?? $stepKey,
+            ])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * Independent-review correction round — updates one step's stored
+     * answer WITHOUT advancing `current_step_key`, unlike saveAnswer().
+     * The custom-section step's inline image upload/remove/improve
+     * actions call this instead: they happen WHILE the owner is still on
+     * that step, not when they click Continue, so they must never
+     * silently move the resume position past it the way saveAnswer()'s
+     * own next-step advancement would.
+     */
+    public function updateAnswerInPlace(QuestionnaireResponse $response, string $stepKey, mixed $value): QuestionnaireResponse
+    {
+        return DB::transaction(function () use ($response, $stepKey, $value) {
+            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
+
+            $answers = $locked->answers ?? [];
+            $answers[$stepKey] = $value;
+
+            if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
+                throw new DomainException('This answer is too large to save.');
+            }
+
+            $locked->forceFill([
+                'answers' => $answers,
+                'answers_revision' => $locked->answers_revision + 1,
             ])->save();
 
             return $locked->refresh();
@@ -149,6 +192,13 @@ final class WebsiteSetupSessionManager
         return $response->refresh();
     }
 
+    /**
+     * Marks the response completed. Callers decide WHEN this may run —
+     * WebsiteWizardController::generate() calls this only after the
+     * website has actually been generated successfully, never before, so
+     * a failed generation leaves the response `in_progress` and
+     * genuinely retryable rather than stranded with no way back in.
+     */
     public function complete(QuestionnaireResponse $response): QuestionnaireResponse
     {
         $steps = $response->version->steps();
@@ -159,6 +209,60 @@ final class WebsiteSetupSessionManager
 
         $response->forceFill([
             'status' => QuestionnaireResponseStatus::Completed,
+            'edit_mode' => false,
+            'completed_at' => now(),
+        ])->save();
+
+        return $response->refresh();
+    }
+
+    /**
+     * "Edit setup answers" reopens the SAME pinned response/version
+     * (never a new one) by flipping it back to `in_progress` so every
+     * existing wizard route's resume check keeps working unmodified;
+     * `edit_mode` records that finishing this session must only
+     * reconcile canonical facts (WebsiteSetupAnswerApplier), never call
+     * guided generation again. Jumps back to the first visible step so
+     * the owner reviews the whole questionnaire, since the back arrow
+     * already lets them reach every earlier step from there.
+     */
+    public function beginEdit(Business $business, QuestionnaireResponse $completed): QuestionnaireResponse
+    {
+        if ((int) $completed->business_id !== (int) $business->id) {
+            throw new DomainException('That setup session does not belong to this Business.');
+        }
+
+        if ($completed->status !== QuestionnaireResponseStatus::Completed) {
+            throw new DomainException('Only a completed setup session can be reopened for editing.');
+        }
+
+        return DB::transaction(function () use ($completed) {
+            $locked = QuestionnaireResponse::whereKey($completed->id)->lockForUpdate()->firstOrFail();
+
+            $firstStepKey = $this->stepResolver->firstStepKey($locked->version->steps(), $locked->answers ?? []);
+
+            $locked->forceFill([
+                'status' => QuestionnaireResponseStatus::InProgress,
+                'edit_mode' => true,
+                'current_step_key' => $firstStepKey,
+                'completed_at' => null,
+            ])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * The edit-existing counterpart to complete(): reconciliation already
+     * ran (WebsiteSetupAnswerApplier::apply()) before this is called, and
+     * this never triggers guided generation — manually edited page
+     * content is never touched by an answer edit alone.
+     */
+    public function completeEdit(QuestionnaireResponse $response): QuestionnaireResponse
+    {
+        $response->forceFill([
+            'status' => QuestionnaireResponseStatus::Completed,
+            'edit_mode' => false,
             'completed_at' => now(),
         ])->save();
 

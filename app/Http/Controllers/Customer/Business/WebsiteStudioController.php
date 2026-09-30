@@ -6,12 +6,12 @@ use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Website\Setup\QuestionnaireResolver;
 use App\Models\Business;
 use App\Models\CatalogItem;
 use App\Models\QuestionnaireResponse;
 use App\Models\Website;
 use App\Models\WebsiteForm;
-use Database\Seeders\PhotoboothWebsiteSetupQuestionnaireSeeder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 
@@ -40,10 +40,39 @@ class WebsiteStudioController extends CustomerBaseController
 
     private const VALID_TABS = ['website', 'packages', 'forms', 'questionnaires'];
 
+    public function __construct(private readonly QuestionnaireResolver $questionnaireResolver)
+    {
+    }
+
+    /**
+     * Independent-review correction round: a Website row exists from the
+     * moment the wizard's template step runs (WebsiteStarterDraftService::
+     * createShellFromTemplate()), long before the questionnaire is
+     * answered or generation ever succeeds — so "a Website row exists"
+     * alone is no longer a safe signal that Studio is the right place to
+     * land. Main Website navigation (this route) now checks for an
+     * active session (a fresh in_progress one, OR a reopened edit_mode
+     * one) FIRST and resumes it at its saved step; only when no session
+     * is active does a Website row's existence route to Studio, and its
+     * absence to the empty state.
+     */
     public function show(string $workspaceUid, string $businessUid, string $tab = 'website'): View|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::WebsiteGeneration->value);
+
+        $definition = $this->questionnaireResolver->resolveForBusiness($business);
+
+        if ($definition !== null) {
+            $activeResponse = QuestionnaireResponse::where('business_id', $business->id)
+                ->where('questionnaire_definition_id', $definition->id)
+                ->where('status', 'in_progress')
+                ->first();
+
+            if ($activeResponse !== null) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $activeResponse->current_step_key]);
+            }
+        }
 
         $website = Website::where('business_id', $business->id)->first();
 
@@ -87,12 +116,12 @@ class WebsiteStudioController extends CustomerBaseController
                 'forms' => WebsiteForm::where('business_id', $business->id)->get(),
             ],
             'questionnaires' => [
-                'responses' => QuestionnaireResponse::where('business_id', $business->id)
-                    ->where('questionnaire_definition_id', function ($query) {
-                        $query->select('id')->from('questionnaire_definitions')->where('key', PhotoboothWebsiteSetupQuestionnaireSeeder::KEY);
-                    })
-                    ->latest('id')
-                    ->get(),
+                'responses' => ($definition = $this->questionnaireResolver->resolveForBusiness($business)) !== null
+                    ? QuestionnaireResponse::where('business_id', $business->id)
+                        ->where('questionnaire_definition_id', $definition->id)
+                        ->latest('id')
+                        ->get()
+                    : collect(),
             ],
             default => [],
         };

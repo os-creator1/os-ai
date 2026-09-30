@@ -43,14 +43,15 @@ trait CreatesWebsiteFixtures
     private const VALID_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
     /**
+     * @param  array<string, mixed>  $businessOverrides
      * @return array{0: Customer, 1: Business, 2: Workspace}
      */
-    protected function entitledTenant(): array
+    protected function entitledTenant(array $businessOverrides = []): array
     {
         $this->ensureRequiredAppConfigRowsExist();
 
         $customer = $this->createCustomer();
-        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes($businessOverrides));
 
         DB::table('businesses')->where('id', $business->id)->update(['status' => BusinessStatus::Active->value]);
 

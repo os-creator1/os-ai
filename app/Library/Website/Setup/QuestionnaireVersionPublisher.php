@@ -25,6 +25,10 @@ use Illuminate\Support\Facades\DB;
  */
 final class QuestionnaireVersionPublisher
 {
+    public function __construct(private readonly QuestionnaireDefinitionValidator $definitionValidator = new QuestionnaireDefinitionValidator())
+    {
+    }
+
     /**
      * Creates a new draft version carrying the given step/question tree.
      * Refuses when the definition already has a draft — the guard column
@@ -32,9 +36,18 @@ final class QuestionnaireVersionPublisher
      * message instead of a raw constraint-violation exception. Callers
      * that want to seed straight to a published version (the Photobooth
      * seeder) call publish() next.
+     *
+     * Independent-review correction round: validated here, the one write
+     * path onto `definition` — a malformed step tree (duplicate keys, an
+     * unknown input_type/target_module, a conditional_visibility rule
+     * that depends on itself or an unknown/later step, and so on) can
+     * never be persisted, let alone published and pinned into a live
+     * QuestionnaireResponse.
      */
     public function createDraft(QuestionnaireDefinition $definition, array $steps): QuestionnaireVersion
     {
+        $this->definitionValidator->validate($steps);
+
         return DB::transaction(function () use ($definition, $steps) {
             $existingDraft = $definition->versions()->where('state', QuestionnaireVersionState::Draft->value)->lockForUpdate()->first();
 

@@ -4,7 +4,6 @@
 
 @section('content')
     @php
-        $backUrl = route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $previousStepKey]);
         $rows = is_array($answer) ? $answer : [];
         // A fixed number of blank rows for a repeatable question — the
         // simplest JS-free way to let an owner add several structured
@@ -17,7 +16,7 @@
 
     <div class="row justify-content-center">
         <div class="col-lg-7">
-            @include('customer.business.website.wizard._progress', ['progress' => $progress, 'backUrl' => $backUrl])
+            @include('customer.business.website.wizard._progress', ['progress' => $progress, 'backStepKey' => $step['key'], 'currentStepKey' => $step['key']])
 
             <x-flash-alert class="mb-3" />
 
@@ -115,8 +114,95 @@
                                         <label class="form-check-label" for="availability-{{ $i }}">Currently available</label>
                                     </div>
                                 @endif
+
+                                {{-- Only one custom section is supported this pass (deliberate v1 limit) — only the first row's fields are shown/used. --}}
+                                @if ($step['target_module'] === 'custom_section' && $i === 0)
+                                    <div class="mb-2">
+                                        <label class="form-label">Body / text</label>
+                                        <textarea name="items[{{ $i }}][body]" rows="4" class="form-control">{{ $row['body'] ?? '' }}</textarea>
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label">Layout</label>
+                                        <select name="items[{{ $i }}][layout]" class="form-select">
+                                            @foreach (['stacked' => 'Stacked', 'image_left' => 'Image on the left', 'image_right' => 'Image on the right', 'grid' => 'Image grid'] as $layoutValue => $layoutLabel)
+                                                <option value="{{ $layoutValue }}" @selected(($row['layout'] ?? 'stacked') === $layoutValue)>{{ $layoutLabel }}</option>
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                    @foreach (($row['images'] ?? []) as $imageUid)
+                                        <input type="hidden" name="items[{{ $i }}][images][]" value="{{ $imageUid }}">
+                                    @endforeach
+                                @endif
                             </x-card>
                         @endfor
+
+                        @if ($step['target_module'] === 'custom_section')
+                            @php $customSectionImages = \App\Models\WebsiteAsset::where('website_id', $website->id)->whereIn('uid', $rows[0]['images'] ?? [])->get(); @endphp
+                            <div class="mb-3">
+                                <label class="form-label d-block">Images</label>
+                                @foreach ($customSectionImages as $image)
+                                    <div class="d-inline-block me-2 mb-2 text-center">
+                                        <img src="{{ asset($image->path) }}" alt="" style="width:80px;height:80px;object-fit:cover;" class="rounded mb-1 d-block">
+                                        <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.custom-section.remove', [$workspaceUid, $businessUid, $image->uid]) }}">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                        </form>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endif
+                        @break
+
+                    @case('photo_upload')
+                        <div class="mb-3">
+                            @foreach ($website->assets()->orderBy('sort_order')->get() as $asset)
+                                <x-card class="mb-2">
+                                    <div class="d-flex gap-3 align-items-start">
+                                        <img src="{{ asset($asset->path) }}" alt="{{ $asset->alt_text }}" style="width:96px;height:96px;object-fit:cover;" class="rounded">
+                                        <div class="flex-grow-1">
+                                            <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.update', [$workspaceUid, $businessUid, $asset->uid]) }}" class="mb-2">
+                                                @csrf
+                                                <div class="row g-2">
+                                                    <div class="col-md-5">
+                                                        <input type="text" name="title" class="form-control form-control-sm" placeholder="Title" value="{{ $asset->title }}">
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <input type="text" name="category_tag" class="form-control form-control-sm" placeholder="Category" value="{{ $asset->category_tag }}">
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Save</button>
+                                                    </div>
+                                                </div>
+                                            </form>
+                                            <div class="d-flex gap-1">
+                                                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.update', [$workspaceUid, $businessUid, $asset->uid]) }}">
+                                                    @csrf
+                                                    <input type="hidden" name="is_cover" value="1">
+                                                    <button type="submit" class="btn btn-sm {{ $asset->is_cover ? 'btn-primary' : 'btn-outline-primary' }}">{{ $asset->is_cover ? 'Cover photo' : 'Make cover' }}</button>
+                                                </form>
+                                                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.move', [$workspaceUid, $businessUid, $asset->uid]) }}">
+                                                    @csrf
+                                                    <input type="hidden" name="direction" value="up">
+                                                    <button type="submit" class="btn btn-sm btn-outline-secondary">&uarr;</button>
+                                                </form>
+                                                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.move', [$workspaceUid, $businessUid, $asset->uid]) }}">
+                                                    @csrf
+                                                    <input type="hidden" name="direction" value="down">
+                                                    <button type="submit" class="btn btn-sm btn-outline-secondary">&darr;</button>
+                                                </form>
+                                                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.remove', [$workspaceUid, $businessUid, $asset->uid]) }}">
+                                                    @csrf
+                                                    @method('DELETE')
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </x-card>
+                            @endforeach
+                        </div>
+                        <input type="hidden" name="value" value="{{ $website->assets()->count() }}">
                         @break
 
                     @default
@@ -130,6 +216,29 @@
                     @endif
                 </div>
             </form>
+
+            @if ($step['input_type'] === 'photo_upload')
+                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspaceUid, $businessUid]) }}" enctype="multipart/form-data" class="mt-3">
+                    @csrf
+                    <label class="form-label">Upload photos</label>
+                    <input type="file" name="photos[]" multiple accept="image/*" class="form-control mb-2">
+                    <x-button type="submit" variant="outline">Upload</x-button>
+                </form>
+            @endif
+
+            @if ($step['target_module'] === 'custom_section')
+                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.custom-section.upload', [$workspaceUid, $businessUid]) }}" enctype="multipart/form-data" class="mt-3 mb-3">
+                    @csrf
+                    <label class="form-label">Add an image</label>
+                    <input type="file" name="photo" accept="image/*" class="form-control mb-2">
+                    <x-button type="submit" variant="outline">Upload image</x-button>
+                </form>
+
+                <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspaceUid, $businessUid]) }}">
+                    @csrf
+                    <x-button type="submit" variant="outline">Improve with AI</x-button>
+                </form>
+            @endif
         </div>
     </div>
 @endsection

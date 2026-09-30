@@ -207,4 +207,143 @@ class WebsiteSetupAnswerApplierTest extends TestCase
         $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
         $this->assertSame('playful', $profile?->brand_voice);
     }
+
+    /**
+     * Independent-review correction round — a step an earlier answer has
+     * since hidden must never be applied, even though its stale value is
+     * still sitting in `answers`. Here "backdrops" is hidden because
+     * "offers_backdrops" is false, yet the response still carries a
+     * leftover `backdrops` answer from before the owner changed their
+     * mind — it must never reach BusinessBackdrop.
+     */
+    private function completedResponseWithSteps($business, $website, array $steps, array $answers): QuestionnaireResponse
+    {
+        return $this->completedResponse($business, $website, $steps, $answers);
+    }
+
+    public function test_a_hidden_steps_stale_answer_is_never_applied(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+
+        $steps = [
+            ['key' => 'offers_backdrops', 'target_module' => 'answers'],
+            ['key' => 'backdrops', 'target_module' => 'backdrop', 'conditional_visibility' => ['depends_on' => 'offers_backdrops', 'condition' => 'equals', 'value' => true]],
+        ];
+        $answers = [
+            'offers_backdrops' => false,
+            // Stale — left over from before the owner changed their answer.
+            'backdrops' => [['key' => 'bd_1', 'name' => 'Sequin Wall', 'description' => null, 'availability' => true, 'images' => []]],
+        ];
+        $response = $this->completedResponseWithSteps($business, $website, $steps, $answers);
+
+        app(WebsiteSetupAnswerApplier::class)->apply($business, $website, $response, $customer->user_id);
+
+        $this->assertSame(0, BusinessBackdrop::where('business_id', $business->id)->count(), 'A hidden steps stale answer must never be applied.');
+    }
+
+    /**
+     * Independent-review correction round — a wizard-created package no
+     * longer present in a later submission is deactivated (archived),
+     * never left dangling as though it were still current; a manually
+     * created package (NULL source key) is never touched by this
+     * reconciliation.
+     */
+    public function test_a_package_removed_from_the_answer_is_archived_while_manual_packages_are_untouched(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $steps = [['key' => 'packages', 'target_module' => 'catalog_item']];
+        $applier = app(WebsiteSetupAnswerApplier::class);
+
+        $manual = app(\App\Library\Catalog\CatalogItemManager::class)->create($business, ['type' => 'package', 'name' => 'Hand-built Package', 'description' => null, 'price_minor' => null, 'currency_code' => null]);
+
+        $first = $this->completedResponse($business, $website, $steps, ['packages' => [
+            ['key' => 'pkg_1', 'name' => 'Wedding Package', 'description' => null, 'price_minor' => 89500, 'currency_code' => 'USD', 'featured' => false, 'features' => []],
+            ['key' => 'pkg_2', 'name' => 'Birthday Package', 'description' => null, 'price_minor' => 45000, 'currency_code' => 'USD', 'featured' => false, 'features' => []],
+        ]]);
+        $applier->apply($business, $website, $first, $customer->user_id);
+        $this->assertSame(3, CatalogItem::where('business_id', $business->id)->count());
+
+        // pkg_2 is removed from this later submission.
+        $second = $this->completedResponse($business, $website, $steps, ['packages' => [
+            ['key' => 'pkg_1', 'name' => 'Wedding Package', 'description' => null, 'price_minor' => 89500, 'currency_code' => 'USD', 'featured' => false, 'features' => []],
+        ]]);
+        $applier->apply($business, $website, $second, $customer->user_id);
+
+        $pkg1 = CatalogItem::where('business_id', $business->id)->where('source_questionnaire_item_key', 'pkg_1')->sole();
+        $pkg2 = CatalogItem::where('business_id', $business->id)->where('source_questionnaire_item_key', 'pkg_2')->sole();
+        $this->assertTrue($pkg1->isActive());
+        $this->assertTrue($pkg2->isArchived(), 'A package removed from the answer must be archived, never left active.');
+        $this->assertTrue($manual->fresh()->isActive(), 'A manually created package must never be touched by reconciliation.');
+    }
+
+    public function test_a_service_removed_from_the_answer_becomes_inactive(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $steps = [['key' => 'services', 'target_module' => 'business_service']];
+        $applier = app(WebsiteSetupAnswerApplier::class);
+
+        $first = $this->completedResponse($business, $website, $steps, ['services' => [
+            ['key' => 'svc_1', 'name' => 'Open-Air Booth', 'description' => null, 'starting_price' => null, 'currency_code' => null],
+        ]]);
+        $applier->apply($business, $website, $first, $customer->user_id);
+
+        $second = $this->completedResponse($business, $website, $steps, ['services' => []]);
+        $applier->apply($business, $website, $second, $customer->user_id);
+
+        $service = BusinessService::where('business_id', $business->id)->where('source_questionnaire_item_key', 'svc_1')->sole();
+        $this->assertSame(\App\Enums\Business\BusinessServiceStatus::Inactive, $service->status);
+    }
+
+    /**
+     * Independent-review correction round — the three
+     * `(business_id, source_questionnaire_item_key)` indexes were
+     * previously plain, not unique, so nothing actually stopped two
+     * concurrent submissions from both missing a find-by-source-key
+     * lookup and both inserting a duplicate row for the same source key.
+     * Proves the database itself now refuses that duplicate directly, the
+     * backstop WebsiteSetupAnswerApplier's own try/catch-and-retry relies
+     * on when a genuine race is lost.
+     */
+    public function test_the_database_refuses_a_duplicate_source_key_for_the_same_business(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => 'First', 'position' => 0, 'source_questionnaire_item_key' => 'pkg_1']);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => 'Second', 'position' => 1, 'source_questionnaire_item_key' => 'pkg_1']);
+    }
+
+    public function test_the_database_allows_multiple_null_source_keys_for_the_same_business(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => 'Manual One', 'position' => 0, 'source_questionnaire_item_key' => null]);
+        CatalogItem::create(['business_id' => $business->id, 'type' => 'package', 'name' => 'Manual Two', 'position' => 1, 'source_questionnaire_item_key' => null]);
+
+        $this->assertSame(2, CatalogItem::where('business_id', $business->id)->count());
+    }
+
+    public function test_a_backdrop_removed_from_the_answer_becomes_unavailable(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $steps = [['key' => 'backdrops', 'target_module' => 'backdrop']];
+        $applier = app(WebsiteSetupAnswerApplier::class);
+
+        $first = $this->completedResponse($business, $website, $steps, ['backdrops' => [
+            ['key' => 'bd_1', 'name' => 'Sequin Wall', 'description' => null, 'availability' => true, 'images' => []],
+        ]]);
+        $applier->apply($business, $website, $first, $customer->user_id);
+
+        $second = $this->completedResponse($business, $website, $steps, ['backdrops' => []]);
+        $applier->apply($business, $website, $second, $customer->user_id);
+
+        $backdrop = BusinessBackdrop::where('business_id', $business->id)->where('source_questionnaire_item_key', 'bd_1')->sole();
+        $this->assertFalse($backdrop->availability);
+    }
 }

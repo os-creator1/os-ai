@@ -40,6 +40,7 @@ class QuestionnaireResponse extends Model
         'questionnaire_definition_id',
         'questionnaire_version_id',
         'status',
+        'edit_mode',
         'current_step_key',
         'answers',
         'answers_revision',
@@ -49,6 +50,7 @@ class QuestionnaireResponse extends Model
 
     protected $casts = [
         'status' => QuestionnaireResponseStatus::class,
+        'edit_mode' => 'boolean',
         'answers' => 'array',
         'answers_revision' => 'integer',
         'started_at' => 'datetime',

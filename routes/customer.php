@@ -1641,6 +1641,16 @@
                 Route::get('/review', 'Business\WebsiteWizardController@reviewGenerate')->name('review');
                 Route::post('/generate', 'Business\WebsiteWizardController@generate')->name('generate');
                 Route::post('/template', 'Business\WebsiteWizardController@chooseTemplate')->name('template');
+
+                Route::post('/gallery/upload', 'Business\WebsiteWizardController@uploadGalleryPhotos')->name('gallery.upload');
+                Route::post('/gallery/{assetUid}/update', 'Business\WebsiteWizardController@updateGalleryPhoto')->name('gallery.update');
+                Route::post('/gallery/{assetUid}/move', 'Business\WebsiteWizardController@moveGalleryPhoto')->name('gallery.move');
+                Route::delete('/gallery/{assetUid}', 'Business\WebsiteWizardController@removeGalleryPhoto')->name('gallery.remove');
+
+                Route::post('/custom-section/image', 'Business\WebsiteWizardController@uploadCustomSectionImage')->name('custom-section.upload');
+                Route::delete('/custom-section/image/{assetUid}', 'Business\WebsiteWizardController@removeCustomSectionImage')->name('custom-section.remove');
+                Route::post('/custom-section/improve', 'Business\WebsiteWizardController@improveCustomSection')->name('custom-section.improve');
+
                 Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
                 Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');
                 Route::post('/{stepKey}/answers', 'Business\WebsiteWizardController@autosaveAnswer')->name('autosave');
