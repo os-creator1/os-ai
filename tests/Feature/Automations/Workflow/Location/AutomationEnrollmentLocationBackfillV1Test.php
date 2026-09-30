@@ -520,6 +520,88 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
         $this->assertNull($this->locationIdOf($enrollmentId));
     }
 
+    /**
+     * MALFORMED-SUFFIX PARSING (correction round 4 — the same defect just
+     * fixed for `message_received`, present here too). MySQL's
+     * `CAST(SUBSTRING(...) AS UNSIGNED)` does not fail on a non-numeric
+     * suffix in non-strict mode — it silently takes the leading numeric
+     * prefix. `crm_opportunity_history:{real id}-junk` must never be
+     * partially converted and matched, even though the referenced history
+     * row and its deal would otherwise resolve perfectly cleanly.
+     */
+    public function test_a_malformed_crm_occurrence_key_suffix_is_never_partially_matched(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $dealLocation = $this->businessLocation($business);
+        $pipeline = $this->standardPipeline($business);
+        $contact = $this->contactFor($business);
+
+        $deal = app(CrmOpportunityService::class)->create($business, $pipeline, $contact, 'Otherwise-clean deal');
+        $deal->forceFill(['location_id' => $dealLocation->id])->save();
+
+        $historyId = DB::table('crm_opportunity_history')
+            ->where('opportunity_id', $deal->id)->where('event', 'created')->value('id');
+        $this->assertNotNull($historyId, 'Sanity: creating a deal must leave a history row.');
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::OpportunityCreated);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::OpportunityCreated, 'crm_opportunity_history:' . $historyId . '-junk',
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull(
+            $this->locationIdOf($enrollmentId),
+            'A malformed CRM occurrence-key suffix must never be partially cast and matched to the real history row.',
+        );
+        $this->assertSame(0, $result['crm']);
+    }
+
+    /**
+     * LOCATION OWNERSHIP (correction round 4). `crm_opportunities
+     * .location_id` carries only a simple FK to `business_locations.id` —
+     * nothing enforces that the referenced Location belongs to the SAME
+     * Business as the opportunity. A same-Business opportunity whose
+     * `location_id` is corrupted to point at a different Business's
+     * Location must never be used, even though every tenant predicate on
+     * the opportunity and history rows themselves is otherwise clean.
+     */
+    public function test_a_crm_opportunity_location_belonging_to_a_different_business_is_never_used(): void
+    {
+        [, $business] = $this->entitledTenant();
+        [, $otherBusiness] = $this->entitledTenant();
+        $foreignLocation = BusinessLocation::query()->where('business_id', $otherBusiness->id)->firstOrFail();
+
+        $pipeline = $this->standardPipeline($business);
+        $contact = $this->contactFor($business);
+
+        $deal = app(CrmOpportunityService::class)->create($business, $pipeline, $contact, 'Corrupted-location deal');
+        // Forced directly (raw update, bypassing any model-level guard) —
+        // CrmOpportunityService would never assign a foreign Business's
+        // Location; this simulates the data-integrity anomaly the review
+        // finding describes.
+        DB::table('crm_opportunities')->where('id', $deal->id)->update(['location_id' => $foreignLocation->id]);
+
+        $historyId = DB::table('crm_opportunity_history')
+            ->where('opportunity_id', $deal->id)->where('event', 'created')->value('id');
+        $this->assertNotNull($historyId, 'Sanity: creating a deal must leave a history row.');
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::OpportunityCreated);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::OpportunityCreated, 'crm_opportunity_history:' . $historyId,
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull(
+            $this->locationIdOf($enrollmentId),
+            'A deal Location belonging to a different Business must never be used, even for an otherwise same-Business opportunity.',
+        );
+        $this->assertSame(0, $result['crm']);
+    }
+
     public function test_the_backfill_is_idempotent_and_never_overwrites_an_already_set_row(): void
     {
         [, $business] = $this->entitledTenant();

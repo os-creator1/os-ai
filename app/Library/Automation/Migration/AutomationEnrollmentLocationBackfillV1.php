@@ -255,6 +255,37 @@ class AutomationEnrollmentLocationBackfillV1
      * The four CRM triggers: the deal's own, never-reassigned
      * `crm_opportunities.location_id`, joined from the occurrence key's own
      * `crm_opportunity_history` row.
+     *
+     * CORRECTED (independent review, correction round 4) — the same two
+     * classes of defect just fixed for `message_received`, present here
+     * too:
+     *
+     *   1. MALFORMED-SUFFIX PARSING. `CAST(SUBSTRING(...) AS UNSIGNED)` in
+     *      non-strict SQL mode does not fail on a non-numeric suffix — it
+     *      silently takes the leading numeric PREFIX, so
+     *      `crm_opportunity_history:123-junk` would previously match
+     *      history row 123 exactly as if the key had been clean. The
+     *      `REGEXP` guard below accepts only the canonical
+     *      `crm_opportunity_history:{positive integer}` shape before the
+     *      CAST/SUBSTRING ever runs.
+     *   2. LOCATION OWNERSHIP. `crm_opportunities.location_id` carries only
+     *      a simple FK to `business_locations.id` — nothing in the schema
+     *      enforces that the referenced Location belongs to the SAME
+     *      Business as the opportunity itself. Confirming
+     *      `o.business_id = h.business_id = e.business_id` (already true
+     *      below) says nothing about `bl.business_id`; a corrupted
+     *      same-Business opportunity could still point `location_id` at a
+     *      Location belonging to a different Business, and the backfill
+     *      would copy that foreign Location into the enrollment. The join
+     *      to `business_locations` now requires
+     *      `bl.business_id = e.business_id` explicitly, enforced in this
+     *      same bounded source query — an INNER JOIN, so a NULL or
+     *      foreign-Business `location_id` simply fails to match and the
+     *      row is never selected, with no extra per-enrollment query.
+     *
+     * Every tenant predicate from before is preserved: history Business
+     * equals enrollment Business, opportunity Business equals history
+     * Business — this join only adds the missing fourth leg.
      */
     private function backfillCrmTriggered(): int
     {
@@ -275,12 +306,22 @@ class AutomationEnrollmentLocationBackfillV1
             ->join('crm_opportunities as o', function ($join): void {
                 $join->on('o.id', '=', 'h.opportunity_id')->on('o.business_id', '=', 'h.business_id');
             })
+            // Location ownership, enforced here rather than trusted from
+            // the opportunity's own Business: an INNER JOIN, so a NULL or
+            // foreign-Business location_id matches nothing and the row is
+            // simply never selected.
+            ->join('business_locations as bl', function ($join): void {
+                $join->on('bl.id', '=', 'o.location_id')->on('bl.business_id', '=', 'e.business_id');
+            })
             ->whereIn('e.trigger_type', $crmTriggerTypes)
             ->whereNull('e.business_location_id')
-            ->where('e.trigger_occurrence_key', 'like', 'crm_opportunity_history:%')
-            ->whereNotNull('o.location_id')
+            // Canonical `crm_opportunity_history:{positive integer}` only —
+            // a malformed suffix must never reach the CAST/SUBSTRING above,
+            // which would otherwise accept it via MySQL's non-strict
+            // leading-digit truncation.
+            ->where('e.trigger_occurrence_key', 'regexp', '^crm_opportunity_history:[1-9][0-9]*$')
             ->orderBy('e.id')
-            ->select(['e.id as enrollment_id', 'o.location_id'])
+            ->select(['e.id as enrollment_id', 'bl.id as location_id'])
             ->chunkById(self::CHUNK_SIZE, function ($rows) use (&$updated): void {
                 foreach ($rows as $row) {
                     $affected = DB::table('automation_enrollments')
