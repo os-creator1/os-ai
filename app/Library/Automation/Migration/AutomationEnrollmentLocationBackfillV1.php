@@ -2,6 +2,7 @@
 
 namespace App\Library\Automation\Migration;
 
+use App\Models\Reports;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -32,7 +33,13 @@ use Illuminate\Support\Facades\DB;
  * time" are provably the same fact:
  *
  *   message_received       The ONE unambiguous ChatBox thread for this
- *                           Business and the enrolled Contact's phone.
+ *                           Business and the phone that ACTUALLY sent
+ *                           the ORIGINAL inbound message — never the
+ *                           enrolled Contact's phone today (CORRECTED,
+ *                           correction round 2; see the method's own
+ *                           docblock for why "the Contact's phone" was
+ *                           itself a mutable-evidence defect of exactly
+ *                           the kind this class exists to avoid).
  *                           `chat_boxes.location_id` is decided only once,
  *                           when the thread first opens, and is never
  *                           reassigned after (`ChatBox`'s own docblock,
@@ -83,26 +90,79 @@ class AutomationEnrollmentLocationBackfillV1
 
     /**
      * message_received: the one unambiguous ChatBox thread for this
-     * Business and the enrolled Contact's own phone number.
+     * Business and the phone that actually sent the ORIGINAL inbound
+     * message — read from that message's own immutable durable record,
+     * never from the enrolled Contact's phone today.
+     *
+     * CORRECTED (independent review, correction round 2). The previous
+     * revision matched `chat_boxes` using the enrolled Contact's CURRENT
+     * `phone`. A Contact's phone is not immutable — nothing in this
+     * repository prevents editing it after a run started — so "exactly
+     * one conversation found for that phone TODAY" does not prove that
+     * conversation (or its Location) is the one this historical run's
+     * trigger actually fired for. A Contact phone change between the
+     * original message and now can make today's lookup match an entirely
+     * different, unrelated thread, at a different Location, than the
+     * historical one — the exact class of defect this method exists to
+     * avoid, just relocated one join further out.
+     *
+     * `trigger_occurrence_key` is namespaced by inbound path
+     * (`InboundMessageReceived`'s own docblock): `report:{id}` for the
+     * legacy path, `operation:{id}` for managed. The two paths have
+     * different durable evidence:
+     *
+     *   report:{id}     The legacy `reports` row's own `to` column — the
+     *                    sender's phone AT THE MOMENT the message arrived
+     *                    (`DLRController::inboundDLR()`'s own comment:
+     *                    "`from` is the Business's own receiving number
+     *                    and `to` the external sender"). Written once at
+     *                    insert and never mutated after — only `status`
+     *                    and `customer_status` are ever updated on a
+     *                    Report row (`InboundWebhookAttributionResolver
+     *                    ::syncCorrelatedReport()`, the only writer that
+     *                    touches an existing Report). This is provably
+     *                    the exact phone `MessageReceivedTriggerSource`
+     *                    itself passed to
+     *                    `InboundMessageReceived::fromLegacyReport()`
+     *                    when this run's enrollment was created.
+     *   operation:{id}  NO durable, per-message evidence exists at all.
+     *                    `InboundWebhookAttributionResolver::persistInbound()`
+     *                    never stores a phone on
+     *                    `business_messaging_operations` — the sender is
+     *                    carried only as an EPHEMERAL event value, used
+     *                    once to open/update the `chat_boxes` thread and
+     *                    then gone (`InboundMessageReceived`'s own
+     *                    docblock: "the managed path persists no
+     *                    per-message sender anywhere"). Left NULL,
+     *                    always — the same deliberate, permanent gap as
+     *                    contact_created/contact_date_reached/
+     *                    manual_enrollment: there is nothing here that
+     *                    could ever be resolved later, by a smarter query
+     *                    or otherwise.
+     *
+     * Once the immutable phone is known, the rest is unchanged: the ONE
+     * unambiguous `chat_boxes` thread for (business_id, that phone).
      */
     private function backfillMessageReceived(): int
     {
         $updated = 0;
 
         DB::table('automation_enrollments as e')
-            ->join('contacts as c', function ($join): void {
-                $join->on('c.id', '=', 'e.contact_id')->on('c.business_id', '=', 'e.business_id');
+            ->join('reports as r', function ($join): void {
+                $join->on('r.id', '=', DB::raw(
+                    "CAST(SUBSTRING(e.trigger_occurrence_key, LENGTH('report:') + 1) AS UNSIGNED)"
+                ));
             })
             ->where('e.trigger_type', 'message_received')
             ->whereNull('e.business_location_id')
+            ->where('e.trigger_occurrence_key', 'like', 'report:%')
+            ->where('r.direction', Reports::DIRECTION_INCOMING)
+            ->whereNotNull('r.to')
+            ->where('r.to', '!=', '')
             ->orderBy('e.id')
-            ->select(['e.id as enrollment_id', 'e.business_id', 'c.phone'])
+            ->select(['e.id as enrollment_id', 'e.business_id', 'r.to as phone'])
             ->chunkById(self::CHUNK_SIZE, function ($rows) use (&$updated): void {
                 foreach ($rows as $row) {
-                    if ($row->phone === null || $row->phone === '') {
-                        continue;
-                    }
-
                     $matches = DB::table('chat_boxes')
                         ->where('business_id', $row->business_id)
                         ->where('to', $row->phone)

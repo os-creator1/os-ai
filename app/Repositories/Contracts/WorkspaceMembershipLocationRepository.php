@@ -19,6 +19,17 @@ interface WorkspaceMembershipLocationRepository extends BaseRepository
     public function isAssigned(WorkspaceMembership $membership, int $businessLocationId): bool;
 
     /**
+     * The bounded-cost sibling of isAssigned() for a caller that must
+     * decide this for MANY memberships against ONE Location at once (a
+     * notification recipient list, primarily) — one query for the whole
+     * set, never one per membership.
+     *
+     * @param  array<int, int>  $membershipIds
+     * @return array<int, int> the subset of $membershipIds holding an explicit grant for $businessLocationId
+     */
+    public function membershipIdsAssignedTo(int $businessLocationId, array $membershipIds): array;
+
+    /**
      * Must verify, in order (Contract 02 §5): (a)
      * $location->business->workspace_id === $membership->workspace_id,
      * throwing CrossWorkspaceAssignmentException otherwise (the ordinary

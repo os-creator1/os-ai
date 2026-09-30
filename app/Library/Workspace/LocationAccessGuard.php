@@ -260,6 +260,84 @@ class LocationAccessGuard
     }
 
     /**
+     * The bounded-cost sibling of userCanAccessLocation() for a caller
+     * that must decide Location reach for MANY memberships against ONE
+     * Location at once — a notification recipient list, primarily.
+     * Automations Location run-scope foundation, review correction:
+     * calling userCanAccessLocation() once per candidate re-derives
+     * Location, Business, Workspace AND the membership itself from
+     * scratch every time, so a recipient list of N staff cost N full
+     * resolveLocationReach() cycles. This method costs at most ONE query
+     * for the whole batch instead.
+     *
+     * PRECONDITION, THE CALLER'S RESPONSIBILITY: every membership given
+     * here is already known ACTIVE and already known to REACH $location's
+     * Business (Contract 02 §6's Business axis) — exactly the predicate
+     * `InternalNotificationNodeExecutor::recipients()` already applies
+     * before it ever reaches here. This method decides ONLY the remaining
+     * Location axis of that same table:
+     *
+     *   location_access_scope = All       -> yes, no query
+     *   location_access_scope = Selected  -> yes iff an explicit
+     *                                         workspace_membership_locations
+     *                                         grant exists, batched
+     *   anything else (malformed)         -> no
+     *
+     * It is not a second, laxer access algorithm: it is the same final
+     * branch resolveLocationReach() itself applies once Business reach is
+     * settled, just without re-deriving that settled fact per membership.
+     * A caller unsure whether Business reach already holds must use
+     * userCanAccessLocation() or accessibleLocationIdsForBusiness()
+     * instead, which both re-derive it.
+     *
+     * Re-derives $location itself fresh — never trusts a passed-in
+     * instance — the same fail-closed discipline as every other method
+     * here; a Location that no longer resolves refuses every candidate.
+     *
+     * @param  iterable<int, WorkspaceMembership>  $memberships  keyed by user id
+     * @return array<int, bool> keyed by the same user ids
+     */
+    public function membershipsWithLocationAccess(BusinessLocation $location, iterable $memberships): array
+    {
+        $result = [];
+
+        $currentLocation = $this->locationRepository->query()->find($location->id);
+
+        if ($currentLocation === null) {
+            foreach ($memberships as $userId => $membership) {
+                $result[$userId] = false;
+            }
+
+            return $result;
+        }
+
+        $selected = [];
+
+        foreach ($memberships as $userId => $membership) {
+            if ($membership->location_access_scope === LocationAccessScope::All) {
+                $result[$userId] = true;
+            } elseif ($membership->location_access_scope === LocationAccessScope::Selected) {
+                $selected[(int) $membership->id] = $userId;
+            } else {
+                $result[$userId] = false;
+            }
+        }
+
+        if ($selected !== []) {
+            $assignedMembershipIds = $this->membershipLocationRepository->membershipIdsAssignedTo(
+                (int) $currentLocation->id,
+                array_keys($selected),
+            );
+
+            foreach ($selected as $membershipId => $userId) {
+                $result[$userId] = in_array($membershipId, $assignedMembershipIds, true);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Delegates entirely to userCanAccessLocation() — no second,
      * independent access algorithm, matching
      * assertUserCanAccessBusiness()'s own precedent exactly.

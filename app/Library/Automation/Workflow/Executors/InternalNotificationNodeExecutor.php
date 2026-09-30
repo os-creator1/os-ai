@@ -53,14 +53,21 @@ use Throwable;
  * above answers "who may see this BUSINESS" — it says nothing about
  * Location, so applied alone it can hand a run at Location A's Contact
  * information to staff authorized only for Location B. Every candidate
- * recipient is additionally required to pass
- * `LocationAccessGuard::userCanAccessLocation()` against the run's own
+ * recipient is additionally required to be authorized for the run's own
  * PINNED Location (the enrollment's `business_location_id`, re-derived
  * fresh here) — never the Contact's current Location, for the same
- * immutability reason the checkpoint uses the pin (§13). The Business owner
- * is not special-cased: the guard's own authority table already grants a
- * direct owner unconditional ('all') reach, so routing them through the
- * same check is correct, not redundant.
+ * immutability reason the checkpoint uses the pin (§13). The Business
+ * owner is checked with `LocationAccessGuard::userCanAccessLocation()`
+ * directly — one call, since there is only ever one owner. The staff loop
+ * uses the guard's bounded `membershipsWithLocationAccess()` instead
+ * (correction round 2): calling the per-user method once per candidate
+ * would cost one full Location/Business/Workspace re-derivation PER
+ * STAFF MEMBER, a query count proportional to staff size; the bounded
+ * method costs at most one additional query for the whole recipient list.
+ * The recipients' own User rows are fetched the same way, one `whereIn`
+ * for every passing candidate, rather than one lazy-loaded
+ * `$membership->user` per candidate — so the whole recipient list costs a
+ * small, fixed number of queries however many staff a Business has.
  */
 class InternalNotificationNodeExecutor implements NodeExecutor
 {
@@ -175,6 +182,11 @@ class InternalNotificationNodeExecutor implements NodeExecutor
             return $recipients;
         }
 
+        // Pass 1: every active, Business-reachable candidate — the SAME
+        // predicate as before this lane, unchanged. No Location decision
+        // yet, so no per-candidate query is spent on it here.
+        $candidates = [];
+
         foreach ($this->memberships->activeForWorkspace($workspace) as $membership) {
             // Defence in depth: activeForWorkspace() already filters is_active,
             // but this is the invariant the exclusion actually depends on, so it
@@ -196,11 +208,29 @@ class InternalNotificationNodeExecutor implements NodeExecutor
                 continue;
             }
 
-            if (! $this->locationAccessGuard->userCanAccessLocation($userId, $location)) {
-                continue;
-            }
+            $candidates[$userId] = $membership;
+        }
 
-            $user = $membership->user;
+        if ($candidates === []) {
+            return $recipients;
+        }
+
+        // Pass 2: the Location axis for every candidate AT ONCE — bounded,
+        // never one query per candidate (see the class docblock).
+        $locationAccess = $this->locationAccessGuard->membershipsWithLocationAccess($location, $candidates);
+
+        $passingUserIds = array_keys(array_filter($candidates, fn ($_, $userId) => $locationAccess[$userId] ?? false, ARRAY_FILTER_USE_BOTH));
+
+        if ($passingUserIds === []) {
+            return $recipients;
+        }
+
+        // One query for every passing candidate's User row, never one
+        // lazy-loaded `$membership->user` per candidate.
+        $users = User::query()->whereIn('id', $passingUserIds)->get()->keyBy('id');
+
+        foreach ($passingUserIds as $userId) {
+            $user = $users->get($userId);
 
             if ($user instanceof User) {
                 $recipients[$userId] = $user;
