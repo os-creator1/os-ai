@@ -3,6 +3,7 @@
 namespace App\Library\Website\GuidedGeneration;
 
 use App\Enums\Catalog\CatalogItemLifecycleState;
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Website\WebsiteStarterDraftService;
 use App\Models\BusinessBackdrop;
 use App\Models\CatalogItem;
@@ -64,16 +65,25 @@ final class MediaBindingService
     /**
      * @param  array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  see WebsitePageStrategy::buildPlan()'s matching parameter
+     * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers (WebsiteSetupAnswerApplier never writes these anywhere canonical — 'faq' has no canonical model — so the wizard controller reads them straight from QuestionnaireResponse.answers and hands them here)
      * @return array{pages: array, warnings: array<int, string>}
      */
-    public function bind(Website $website, array $pages, ?array $customSection = null): array
+    public function bind(Website $website, array $pages, ?array $customSection = null, ?array $customerFaq = null): array
     {
         $pages = $this->bindForms($website, $pages);
         $pages = $this->bindBackdrops($website, $pages);
         $pages = $this->bindCustomSection($pages, $customSection);
+        $pages = $this->bindCustomerFaq($pages, $customerFaq);
         $pages = $this->mirrorPackageImages($website, $pages);
 
-        $assets = $website->assets()->orderBy('id')->get();
+        // Independent-review correction round 2 — only GALLERY-purpose
+        // assets are ever eligible for the hero, image_text pool, or
+        // Gallery page. A custom-section photo or a derived package-
+        // mirror image must never enter this general pool (they exist
+        // for one narrow, already-bound purpose each — see
+        // bindCustomSection()/mirrorPackageImages()). Ordered by the
+        // owner's own gallery `sort_order`, not insertion id.
+        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->get();
         $warnings = [];
 
         if ($assets->isEmpty()) {
@@ -83,8 +93,13 @@ final class MediaBindingService
             return ['pages' => $this->fillGalleryFromAssets($pages, $assets->all(), $warnings), 'warnings' => $warnings];
         }
 
-        $heroAssetUid = $assets->first()->uid;
-        $remainingPool = $assets->slice(1)->values();
+        // Independent-review correction round 2 — the owner's selected
+        // cover (WebsiteGalleryManager::setCover()) is the homepage hero
+        // candidate whenever one is set; only when none exists does the
+        // first asset by sort_order act as the deterministic fallback.
+        $heroAsset = $assets->firstWhere('is_cover', true) ?? $assets->first();
+        $heroAssetUid = $heroAsset->uid;
+        $remainingPool = $assets->reject(fn (WebsiteAsset $asset) => $asset->is($heroAsset))->values();
         // Every asset is still eligible for the round-robin pool at
         // least once, even when only one photo exists in total — a
         // service page's own inline photo is not "the hero repeated on
@@ -307,6 +322,51 @@ final class MediaBindingService
     }
 
     /**
+     * Independent-review correction round 2 — the owner's own
+     * customer-entered FAQ question/answer pairs are appended to the FAQ
+     * page's `faq` section VERBATIM, never through AI (the task's own
+     * instruction: "Do not ask AI to rewrite factual customer-entered
+     * Q&A"). A section AI did write on the same page keeps its own
+     * (general, non-customer-specific) entries; the customer's real
+     * pairs are added alongside them, always present regardless of
+     * whether AI wrote anything for this page at all.
+     *
+     * @param  ?array<int, array{question: string, answer: string}>  $customerFaq
+     */
+    private function bindCustomerFaq(array $pages, ?array $customerFaq): array
+    {
+        if ($customerFaq === null || $customerFaq === []) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'faq') {
+                continue;
+            }
+
+            $sectionIndex = collect($page['sections'] ?? [])->search(fn ($section) => ($section['type'] ?? null) === 'faq');
+
+            if ($sectionIndex === false) {
+                $pages[$index]['sections'][] = ['type' => 'faq', 'data' => ['heading' => 'Frequently Asked Questions', 'items' => []]];
+                $sectionIndex = array_key_last($pages[$index]['sections']);
+            }
+
+            // Customer-entered pairs take priority over AI's generic
+            // filler — WebsiteSectionValidator caps a faq section at 20
+            // items total, so the real, factual customer pairs go first
+            // and AI's own entries only fill whatever room remains.
+            $existingItems = $pages[$index]['sections'][$sectionIndex]['data']['items'] ?? [];
+            $pages[$index]['sections'][$sectionIndex]['data']['items'] = array_slice(
+                array_merge($customerFaq, $existingItems),
+                0,
+                20,
+            );
+        }
+
+        return $pages;
+    }
+
+    /**
      * The Packages page's `services` section lists real CatalogItem
      * facts (WebsitePageStrategy::catalogEntities()) but, like every
      * other AI-authored section, may never carry an image AI chose
@@ -390,6 +450,12 @@ final class MediaBindingService
             'height' => $cover->height,
             'alt_text' => $cover->alt_text,
             'source_catalog_item_image_id' => $cover->id,
+            // Independent-review correction round 2 — a derived,
+            // idempotent copy for section-validator purposes only; it
+            // must never enter the general hero/gallery pool (see
+            // bind()'s own purpose-scoped asset query) and never counts
+            // against a customer's upload storage allowance.
+            'purpose' => WebsiteAssetPurpose::PackageMirror->value,
         ]);
     }
 

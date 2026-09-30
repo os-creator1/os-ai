@@ -3,12 +3,16 @@
 namespace App\Http\Controllers\Customer\Business;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Questionnaire\QuestionnaireResponseStatus;
+use App\Enums\Website\WebsiteAssetPurpose;
+use App\Exceptions\Website\InvalidWebsiteAssetException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Website\Gallery\WebsiteAssetAltTextGenerator;
 use App\Library\Website\Gallery\WebsiteGalleryManager;
 use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\Setup\Exceptions\AnswerRevisionConflictException;
+use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Library\Website\Setup\Exceptions\InvalidAnswerException;
 use App\Library\Website\Setup\QuestionnaireAnswerValidator;
 use App\Library\Website\Setup\QuestionnaireResolver;
@@ -61,6 +65,9 @@ class WebsiteWizardController extends CustomerBaseController
     use ResolvesBusinessTenancy;
 
     private const TEMPLATE_STEP = 'template';
+
+    /** Matches the custom_section section's own persisted-body bound — enforced at output time, never merely requested of the model. */
+    private const CUSTOM_SECTION_BODY_MAX = 800;
 
     public function __construct(
         private readonly WebsiteStarterDraftService $starterDrafts,
@@ -117,11 +124,27 @@ class WebsiteWizardController extends CustomerBaseController
         $response = $this->inProgressResponse($business, $definition);
 
         if ($stepKey === self::TEMPLATE_STEP) {
-            // An in-progress session already exists — the template was
-            // already chosen; send them to their real current step
-            // instead of letting them re-choose mid-flow.
-            if ($response !== null) {
+            // Independent-review correction round 2 — an edit_mode
+            // session never exposes template replacement (the website
+            // already has real, possibly manually edited pages) — send
+            // it back to its own current step instead. A fresh,
+            // first-time in-progress session DOES render the picker
+            // again here (pre-selecting its current choice): this is
+            // exactly how the first question's Back arrow reaches the
+            // template step, and it must actually show the chooser
+            // rather than bounce straight back to the question.
+            if ($response !== null && $response->edit_mode) {
                 return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
+            }
+
+            if ($response !== null) {
+                return view('customer.business.website.wizard.steps.template', [
+                    'workspaceUid' => $workspaceUid,
+                    'businessUid' => $businessUid,
+                    'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
+                    'selectedTemplateKey' => $response->website?->template_key,
+                    'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
+                ]);
             }
 
             if (Website::where('business_id', $business->id)->exists()) {
@@ -132,6 +155,7 @@ class WebsiteWizardController extends CustomerBaseController
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
+                'selectedTemplateKey' => null,
                 'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
             ]);
         }
@@ -175,25 +199,36 @@ class WebsiteWizardController extends CustomerBaseController
             abort(404);
         }
 
-        // Idempotent: a session already in progress (e.g. a double
-        // submit of this same form) resumes rather than creating a
-        // second Website shell or a second questionnaire session.
-        $existingResponse = $this->inProgressResponse($business, $definition);
-        if ($existingResponse !== null) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $existingResponse->current_step_key]);
-        }
-
-        if (Website::where('business_id', $business->id)->exists()) {
-            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
-        }
-
         $request->validate(['template_key' => 'required|string|max:40']);
-
         $nicheKey = $this->questionnaireResolver->nicheKeyFor($business);
         $template = $this->templatesForNiche($nicheKey)->firstWhere('key', $request->input('template_key'));
 
         if ($template === null) {
             throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+        }
+
+        // Independent-review correction round 2 — a session already in
+        // progress reaching this action is the owner CHANGING their
+        // template choice from the wizard's own Back arrow (never
+        // exposed to an edit_mode session — see show()'s own guard), not
+        // a double submit to guard against: update the existing shell in
+        // place (never losing saved answers or creating a second
+        // Website/response) rather than always treating this as a fresh
+        // start. Submitting the SAME template is the ordinary double-
+        // submit case and is just as safely a no-op here.
+        $existingResponse = $this->inProgressResponse($business, $definition);
+        if ($existingResponse !== null) {
+            $website = $existingResponse->website ?? abort(404);
+
+            if ($website->template_key !== $template->key) {
+                $this->starterDrafts->updateShellTemplate($website, $template);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $existingResponse->current_step_key]);
+        }
+
+        if (Website::where('business_id', $business->id)->exists()) {
+            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
         }
 
         $website = $this->starterDrafts->createShellFromTemplate($business, $template);
@@ -233,7 +268,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         try {
             $response = $this->sessionManager->saveAnswer($response, $stepKey, $value, $expectedRevision);
-        } catch (AnswerRevisionConflictException $e) {
+        } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
@@ -262,6 +297,18 @@ class WebsiteWizardController extends CustomerBaseController
         $previousStepKey = $this->stepResolver->previousStepKey($response->version->steps(), $response->answers ?? [], $stepKey);
 
         if ($previousStepKey === null) {
+            // Independent-review correction round 2 — an edit_mode
+            // session has nowhere safe "before" its first question:
+            // template replacement is never exposed to it (see show()),
+            // so Back exits to Studio instead of a dead-end reload of
+            // the same step. A fresh, first-time session genuinely does
+            // have something before its first question — the template
+            // picker — and now actually reaches it (see show()'s own
+            // template-step handling for a non-edit in-progress session).
+            if ($response->edit_mode) {
+                return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
+            }
+
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
         }
 
@@ -286,6 +333,7 @@ class WebsiteWizardController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'editMode' => $response->edit_mode,
+            'answersRevision' => $response->answers_revision,
         ]);
     }
 
@@ -313,7 +361,32 @@ class WebsiteWizardController extends CustomerBaseController
      *    only the AI call), so a double-click can neither reconcile
      *    canonical records twice nor spend AI twice.
      */
-    public function generate(string $workspaceUid, string $businessUid): RedirectResponse
+    /**
+     * Independent-review correction round 2 — a durable compare-and-swap
+     * protocol replaces trusting whatever generate() resolved BEFORE the
+     * lock:
+     *
+     *  - the per-response lock is now a single, non-blocking attempt — a
+     *    generation already in progress returns an immediate, friendly
+     *    redirect rather than blocking 15 seconds and then throwing
+     *    LockTimeoutException;
+     *  - WebsiteSetupSessionManager::beginGeneration(), called ONLY after
+     *    the lock is held, re-reads ownership/status/completeness/
+     *    answers_revision fresh, under a row lock, and REFUSES to enter
+     *    generation at all if any of them no longer match what this
+     *    request observed before acquiring the lock — a response another
+     *    request already completed, or whose answers changed underneath
+     *    it, is never silently reconciled or spent on;
+     *  - successfully entering generation sets `generation_started_at`,
+     *    which saveAnswer()/updateAnswerInPlace() both refuse to write
+     *    through — answers genuinely cannot mutate while an AI call is
+     *    in flight;
+     *  - a technical failure (generateFull() didn't succeed) explicitly
+     *    clears that freeze (recordGenerationFailure()), returning the
+     *    response to a genuinely retryable in_progress state; success
+     *    completes exactly once via complete()/completeEdit().
+     */
+    public function generate(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -323,18 +396,40 @@ class WebsiteWizardController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid]);
         }
 
-        if (! $this->stepResolver->isComplete($response->version->steps(), $response->answers ?? [])) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key])->with([
-                'status' => 'error',
-                'message' => 'Answer every required question before generating your website.',
-            ]);
-        }
-
+        $expectedRevision = (int) $request->input('answers_revision', $response->answers_revision);
         $website = $response->website ?? abort(404);
         $actorUserId = (int) Auth::id();
 
-        return Cache::lock('website-setup-generate:' . $response->id, 30)->block(15, function () use ($workspaceUid, $businessUid, $business, $website, $response, $actorUserId) {
-            $response = $response->fresh();
+        $lock = Cache::lock('website-setup-generate:' . $response->id, 60);
+
+        if (! $lock->get()) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
+                'status' => 'error',
+                'message' => 'Your website is already being generated. Please wait a moment and check back.',
+            ]);
+        }
+
+        try {
+            try {
+                $response = $this->sessionManager->beginGeneration($business, $response, $expectedRevision);
+            } catch (AnswerRevisionConflictException $e) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
+                    'status' => 'error',
+                    'message' => $e->getMessage(),
+                ]);
+            } catch (\DomainException $e) {
+                // Not in progress (already completed by a request that
+                // won the race), or not yet complete: report honestly
+                // rather than pretending generation started.
+                if ($response->fresh()->status === QuestionnaireResponseStatus::Completed) {
+                    return redirect()->route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid]);
+                }
+
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->fresh()->current_step_key])->with([
+                    'status' => 'error',
+                    'message' => $e->getMessage(),
+                ]);
+            }
 
             $this->answerApplier->apply($business, $website, $response, $actorUserId);
 
@@ -349,11 +444,14 @@ class WebsiteWizardController extends CustomerBaseController
 
             $template = WebsiteTemplate::where('key', $website->template_key)->where('is_active', true)->firstOrFail();
             $customSection = $this->customSectionFromAnswers($response);
+            $customerFaq = $this->customerFaqFromAnswers($response);
             $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
-            $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $customSection);
+            $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $customSection, $customerFaq);
 
             if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+                $this->sessionManager->recordGenerationFailure($response);
+
                 return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
                     'status' => 'error',
                     'message' => $attempt->failure_reason ?? 'Generation did not complete. Try again.',
@@ -366,7 +464,9 @@ class WebsiteWizardController extends CustomerBaseController
                 'status' => 'success',
                 'message' => 'Your website is ready! Review it below, then connect a domain or publish whenever you\'re ready.',
             ]);
-        });
+        } finally {
+            $lock->release();
+        }
     }
 
     /**
@@ -427,10 +527,13 @@ class WebsiteWizardController extends CustomerBaseController
             'photos.*' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192',
         ]);
 
-        $assets = $this->gallery->uploadMany($website, $request->file('photos', []), $request->input('category_tag'));
-
-        foreach ($assets as $asset) {
-            $asset->forceFill(['alt_text' => $this->altTextGenerator->suggest($business, $asset)])->save();
+        try {
+            $this->gallery->uploadMany($website, $request->file('photos', []), WebsiteAssetPurpose::Gallery, $request->input('category_tag'));
+        } catch (InvalidWebsiteAssetException $e) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery'])->with([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
@@ -442,10 +545,10 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->firstOrFail();
+        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->where('purpose', WebsiteAssetPurpose::Gallery->value)->firstOrFail();
 
-        $request->validate(['title' => 'nullable|string|max:160', 'category_tag' => 'nullable|string|max:80']);
-        $this->gallery->setTitleAndCategory($website, $asset, $request->input('title'), $request->input('category_tag'));
+        $request->validate(['title' => 'nullable|string|max:160', 'category_tag' => 'nullable|string|max:80', 'alt_text' => 'nullable|string|max:160']);
+        $this->gallery->setTitleAndCategory($website, $asset, WebsiteAssetPurpose::Gallery, $request->input('title'), $request->input('category_tag'), $request->input('alt_text'));
 
         if ($request->boolean('is_cover')) {
             $this->gallery->setCover($website, $asset);
@@ -459,7 +562,9 @@ class WebsiteWizardController extends CustomerBaseController
      * drag-and-drop — the approved scope): swaps this asset with its
      * immediate neighbor, then hands the WHOLE ordered uid list to
      * WebsiteGalleryManager::reorder(), which is the only thing that
-     * actually writes `sort_order`.
+     * actually writes `sort_order`. Scoped to gallery-purpose assets
+     * alone — a custom-section or package-mirror asset is never part of
+     * this ordering.
      */
     public function moveGalleryPhoto(Request $request, string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
     {
@@ -470,7 +575,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         $request->validate(['direction' => 'required|in:up,down']);
 
-        $orderedUids = $website->assets()->orderBy('sort_order')->pluck('uid')->all();
+        $orderedUids = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->pluck('uid')->all();
         $position = array_search($assetUid, $orderedUids, true);
 
         if ($position === false) {
@@ -481,19 +586,24 @@ class WebsiteWizardController extends CustomerBaseController
 
         if ($swapWith >= 0 && $swapWith < count($orderedUids)) {
             [$orderedUids[$position], $orderedUids[$swapWith]] = [$orderedUids[$swapWith], $orderedUids[$position]];
-            $this->gallery->reorder($website, $orderedUids);
+            $this->gallery->reorder($website, WebsiteAssetPurpose::Gallery, $orderedUids);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
     }
 
+    /**
+     * Independent-review correction round 2 — scoped to gallery-purpose
+     * assets alone: this action can never delete a custom-section or
+     * package-mirror image, whatever uid is given.
+     */
     public function removeGalleryPhoto(string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->firstOrFail();
+        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->where('purpose', WebsiteAssetPurpose::Gallery->value)->firstOrFail();
 
         try {
             app(WebsiteAssetUploadService::class)->delete($website, $asset);
@@ -526,7 +636,15 @@ class WebsiteWizardController extends CustomerBaseController
 
         $request->validate(['photo' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192']);
 
-        $assets = $this->gallery->uploadMany($website, [$request->file('photo')], 'custom_section');
+        try {
+            $assets = $this->gallery->uploadMany($website, [$request->file('photo')], WebsiteAssetPurpose::CustomSection);
+        } catch (InvalidWebsiteAssetException $e) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+
         $entry = $this->currentCustomSectionEntry($response);
         $entry['images'][] = $assets[0]->uid;
 
@@ -541,7 +659,11 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->first();
+        // Independent-review correction round 2 — scoped to the
+        // custom-section purpose alone: a gallery photo's uid was never
+        // in this answer's own images list, but this guard also refuses
+        // deleting the FILE for one even if it somehow were.
+        $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->where('purpose', WebsiteAssetPurpose::CustomSection->value)->first();
 
         $entry = $this->currentCustomSectionEntry($response);
         $entry['images'] = array_values(array_diff($entry['images'], [$assetUid]));
@@ -560,11 +682,23 @@ class WebsiteWizardController extends CustomerBaseController
     }
 
     /**
+     * Independent-review correction round 2 — rewritten: the "Improve
+     * with AI" button now submits the answer form's OWN currently-typed
+     * fields (via a `form=`-associated sibling button, never a nested
+     * form) to this action, so it always improves what the owner is
+     * looking at right now, never a stale persisted value. This action
+     * always PERSISTS the submitted text first (exactly like an ordinary
+     * autosave) so a refusal, malformed response, or oversized output
+     * never loses the owner's own typed draft — only a genuinely
+     * successful, bounded AI improvement ever replaces it.
+     *
      * The ONLY place the custom section's copy is ever sent to AI — never
-     * merely because the step was opened, saved, or previewed. One
-     * explicit action, one AiGateway-budgeted call through the SAME seam
-     * (WebsiteAiGenerationClient) the main guided-generation batch uses;
-     * no second AI integration.
+     * merely because the step was opened, saved, resumed, or previewed.
+     * One explicit action, one AiGateway-budgeted call through the SAME
+     * seam (WebsiteAiGenerationClient) the main guided-generation batch
+     * uses; no second AI integration. A per-response lock keyed to the
+     * exact submitted content makes a double-click/concurrent identical
+     * request converge to a single AI spend.
      */
     public function improveCustomSection(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -572,37 +706,94 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
 
-        $entry = $this->currentCustomSectionEntry($response);
+        $submittedItems = array_filter((array) $request->input('items', []), fn ($item) => is_array($item));
+        $submitted = array_values($submittedItems)[0] ?? [];
+        $entry = $this->normalizeRepeatableItem(is_array($submitted) ? $submitted : [], ['target_module' => 'custom_section']);
 
-        $messages = [
-            ['role' => 'system', 'content' => 'You improve one short marketing section of a small business website. Respond with a single JSON object: {"body": string}. Keep the improved copy under 800 characters, factual, and free of invented claims.'],
-            ['role' => 'user', 'content' => json_encode([
-                'business_name' => $business->name,
-                'section_title' => $entry['name'],
-                'current_body' => $entry['body'],
-            ])],
-        ];
-
-        $raw = $this->aiClient->complete($messages, $business, (int) Auth::id());
-        $decoded = $raw !== null ? json_decode($raw, true) : null;
-        $improved = is_array($decoded) ? ($decoded['body'] ?? null) : null;
-
-        if (is_string($improved) && trim($improved) !== '') {
-            $entry['body'] = trim($improved);
-            $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
-
+        try {
+            $this->answerValidator->validate(['input_type' => 'repeatable_group', 'required' => false, 'target_module' => 'custom_section'], [$entry]);
+        } catch (InvalidAnswerException $e) {
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
-                'status' => 'success',
-                'message' => 'Your custom section copy was improved.',
+                'status' => 'error',
+                'message' => $e->getMessage(),
             ]);
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
-            'status' => 'error',
-            'message' => $this->aiClient->lastCallWasBudgetExhausted()
-                ? 'The included AI generation budget is used up for this period.'
-                : 'Could not improve this section right now — your current text is unchanged.',
-        ]);
+        if (trim((string) $entry['body']) === '') {
+            $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+                'status' => 'error',
+                'message' => 'Write something in the body field before asking AI to improve it.',
+            ]);
+        }
+
+        $contentHash = hash('sha256', (string) $entry['body']);
+        $lockKey = 'website-setup-improve-custom-section:' . $response->id;
+        $processedKey = $lockKey . ':done:' . $contentHash;
+
+        return Cache::lock($lockKey, 30)->block(15, function () use ($workspaceUid, $businessUid, $business, $response, $entry, $processedKey) {
+            // Independent-review correction round 2 — a double-click or a
+            // concurrent identical request for the SAME submitted body
+            // waits for this lock, then finds this marker already set and
+            // never spends AI OR touches the persisted answer again: the
+            // winning request's own improved text (already persisted
+            // below, inside its own turn holding this lock) must never be
+            // clobbered by a late duplicate re-persisting the pre-
+            // improvement submitted text.
+            if (Cache::has($processedKey)) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+                    'status' => 'success',
+                    'message' => 'Your custom section copy was improved.',
+                ]);
+            }
+
+            // Persist the owner's own currently-typed text now — this is
+            // what "preserve current text on refusal" means once AI has
+            // not yet even been asked: there is nothing to roll back to
+            // beyond what they just typed, and it must never be lost.
+            // Deferred until after the duplicate check above so a late
+            // duplicate of an ALREADY-improved submission never overwrites
+            // the improvement with the pre-improvement text.
+            $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
+
+            $messages = [
+                ['role' => 'system', 'content' => 'You improve one short marketing section of a small business website. Respond with a single JSON object: {"body": string}. Keep the improved copy under ' . self::CUSTOM_SECTION_BODY_MAX . ' characters, factual, and free of invented claims.'],
+                ['role' => 'user', 'content' => json_encode([
+                    'business_name' => $business->name,
+                    'section_title' => $entry['name'],
+                    'current_body' => $entry['body'],
+                ])],
+            ];
+
+            $raw = $this->aiClient->complete($messages, $business, (int) Auth::id());
+            $decoded = $raw !== null ? json_decode($raw, true) : null;
+            $improved = is_array($decoded) ? ($decoded['body'] ?? null) : null;
+
+            // Independent-review correction round 2 — the output bound is
+            // enforced HERE, after decoding, regardless of whether the
+            // prompt asked the model to stay under it: an oversized
+            // response is treated exactly like a refusal (the owner's
+            // already-persisted, just-typed text is preserved, never a
+            // silently truncated mid-sentence result).
+            if (is_string($improved) && trim($improved) !== '' && mb_strlen(trim($improved)) <= self::CUSTOM_SECTION_BODY_MAX) {
+                $entry['body'] = trim($improved);
+                $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
+                Cache::put($processedKey, true, 60);
+
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+                    'status' => 'success',
+                    'message' => 'Your custom section copy was improved.',
+                ]);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+                'status' => 'error',
+                'message' => $this->aiClient->lastCallWasBudgetExhausted()
+                    ? 'The included AI generation budget is used up for this period.'
+                    : 'Could not improve this section right now — your current text is unchanged.',
+            ]);
+        });
     }
 
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
@@ -731,9 +922,10 @@ class WebsiteWizardController extends CustomerBaseController
     private function valueFromRequest(Request $request, array $step): mixed
     {
         if ($step['input_type'] === 'repeatable_group') {
-            $items = array_filter((array) $request->input('items', []), fn ($item) => is_array($item) && trim((string) ($item['name'] ?? '')) !== '');
+            $nonEmptyCheck = $this->repeatableItemNonEmptyCheck($step);
+            $items = array_filter((array) $request->input('items', []), fn ($item) => is_array($item) && $nonEmptyCheck($item));
 
-            return array_values(array_map(fn (array $item) => $this->normalizeRepeatableItem($item, $step['target_module']), $items));
+            return array_values(array_map(fn (array $item) => $this->normalizeRepeatableItem($item, $step), $items));
         }
 
         if ($step['input_type'] === 'multi_select') {
@@ -748,16 +940,62 @@ class WebsiteWizardController extends CustomerBaseController
     }
 
     /**
+     * A repeatable-group row is "worth keeping" when its OWN shape's
+     * primary field is non-blank — a testimonial needs a quote, an FAQ
+     * entry needs a question, everything else needs a name. Matches
+     * normalizeRepeatableItem()'s own per-shape branching below.
+     */
+    private function repeatableItemNonEmptyCheck(array $step): \Closure
+    {
+        if ($step['target_module'] === 'faq') {
+            return fn (array $item) => trim((string) ($item['question'] ?? '')) !== '';
+        }
+
+        if ($step['target_module'] === 'knowledge_profile' && ($step['target_field'] ?? null) === 'testimonials') {
+            return fn (array $item) => trim((string) ($item['quote'] ?? '')) !== '';
+        }
+
+        return fn (array $item) => trim((string) ($item['name'] ?? '')) !== '';
+    }
+
+    /**
      * The HTML form's own field names/shapes (dollars, newline-separated
      * features, a checkbox's presence) are a presentation concern —
      * normalized here into exactly what WebsiteSetupAnswerApplier
      * expects for each target_module, so the applier itself only ever
      * deals in already-well-shaped domain values.
+     *
+     * Independent-review correction round 2 — testimonials
+     * (target_module='knowledge_profile', target_field='testimonials')
+     * and FAQ entries (target_module='faq') each get their OWN real
+     * field shape (quote/author_name/author_title; question/answer)
+     * instead of being forced through the generic name/description
+     * shape those two canonical destinations never accept.
      */
-    private function normalizeRepeatableItem(array $item, string $targetModule): array
+    private function normalizeRepeatableItem(array $item, array $step): array
     {
+        $targetModule = $step['target_module'];
+        $key = (string) ($item['key'] ?? Str::random(12));
+
+        if ($targetModule === 'faq') {
+            return [
+                'key' => $key,
+                'question' => trim((string) ($item['question'] ?? '')),
+                'answer' => trim((string) ($item['answer'] ?? '')),
+            ];
+        }
+
+        if ($targetModule === 'knowledge_profile' && ($step['target_field'] ?? null) === 'testimonials') {
+            return [
+                'key' => $key,
+                'quote' => trim((string) ($item['quote'] ?? '')),
+                'author_name' => trim((string) ($item['author_name'] ?? '')),
+                'author_title' => trim((string) ($item['author_title'] ?? '')) ?: null,
+            ];
+        }
+
         $normalized = [
-            'key' => (string) ($item['key'] ?? Str::random(12)),
+            'key' => $key,
             'name' => trim((string) ($item['name'] ?? '')),
             'description' => trim((string) ($item['description'] ?? '')) ?: null,
         ];
@@ -808,5 +1046,30 @@ class WebsiteWizardController extends CustomerBaseController
             'body' => $entry['body'] ?? null,
             'images' => $entry['images'] ?? [],
         ];
+    }
+
+    /**
+     * @return ?array<int, array{question: string, answer: string}>
+     */
+    private function customerFaqFromAnswers(QuestionnaireResponse $response): ?array
+    {
+        $entries = $response->answer('faq_items');
+
+        if (! is_array($entries) || $entries === []) {
+            return null;
+        }
+
+        $pairs = array_values(array_filter(array_map(function ($entry) {
+            if (! is_array($entry)) {
+                return null;
+            }
+
+            $question = trim((string) ($entry['question'] ?? ''));
+            $answer = trim((string) ($entry['answer'] ?? ''));
+
+            return $question !== '' && $answer !== '' ? ['question' => $question, 'answer' => $answer] : null;
+        }, $entries)));
+
+        return $pairs === [] ? null : $pairs;
     }
 }

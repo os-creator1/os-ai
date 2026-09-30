@@ -64,7 +64,7 @@ class PhotoboothWebsiteSetupQuestionnaireSeeder extends Seeder
             self::step('backdrops', 'Tell us about your backdrops', 'repeatable_group', true, 'backdrop', null, conditionalVisibility: ['depends_on' => 'offers_backdrops', 'condition' => 'equals', 'value' => true]),
             self::step('gallery', 'Show your work', 'photo_upload', false, 'gallery', null, helpText: 'Upload real event photos — we\'ll build your homepage showcase and Gallery page from these.'),
             self::step('testimonials', 'Any reviews or testimonials you\'d like to feature?', 'repeatable_group', false, 'knowledge_profile', 'testimonials'),
-            self::step('faq_items', 'Frequently asked questions', 'repeatable_group', false, 'answers', null, helpText: 'Add any questions customers often ask.'),
+            self::step('faq_items', 'Frequently asked questions', 'repeatable_group', false, 'faq', null, helpText: 'Add any questions customers often ask — these appear on your FAQ page exactly as written, never rewritten by AI.'),
             self::step('about_story', 'Tell us about your business', 'textarea', true, 'business', 'description', helpText: 'A couple of sentences is plenty — we\'ll help expand it.'),
             self::step('contact_form_fields', 'What information do you need from a lead?', 'multi_select', true, 'website_form', null, options: ['name' => 'Name', 'phone' => 'Phone', 'email' => 'Email', 'event_date' => 'Event date', 'event_type' => 'Event type', 'message' => 'Message']),
             self::step('custom_section', 'Want to add a custom section? (optional)', 'repeatable_group', false, 'custom_section', null, helpText: 'A polished editorial section for anything that doesn\'t fit elsewhere — e.g. "Red Carpet Experience."'),

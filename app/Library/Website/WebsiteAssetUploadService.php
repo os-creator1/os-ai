@@ -2,6 +2,7 @@
 
 namespace App\Library\Website;
 
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Exceptions\Website\InvalidWebsiteAssetException;
 use App\Models\Website;
 use App\Models\WebsiteAsset;
@@ -22,7 +23,7 @@ final class WebsiteAssetUploadService
     /**
      * @throws InvalidWebsiteAssetException
      */
-    public function store(Website $website, UploadedFile $file, ?string $altText = null): WebsiteAsset
+    public function store(Website $website, UploadedFile $file, ?string $altText = null, WebsiteAssetPurpose $purpose = WebsiteAssetPurpose::Gallery): WebsiteAsset
     {
         $contents = file_get_contents($file->getRealPath());
 
@@ -70,6 +71,7 @@ final class WebsiteAssetUploadService
             'height' => $dimensions[1],
             'alt_text' => $altText,
             'content_hash' => $contentHash,
+            'purpose' => $purpose->value,
         ]);
     }
 

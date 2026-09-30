@@ -41,6 +41,7 @@ class QuestionnaireResponse extends Model
         'questionnaire_version_id',
         'status',
         'edit_mode',
+        'generation_started_at',
         'current_step_key',
         'answers',
         'answers_revision',
@@ -55,7 +56,13 @@ class QuestionnaireResponse extends Model
         'answers_revision' => 'integer',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
+        'generation_started_at' => 'datetime',
     ];
+
+    public function isGenerating(): bool
+    {
+        return $this->generation_started_at !== null;
+    }
 
     public function generateUid(): void
     {

@@ -346,4 +346,59 @@ class WebsiteSetupAnswerApplierTest extends TestCase
         $backdrop = BusinessBackdrop::where('business_id', $business->id)->where('source_questionnaire_item_key', 'bd_1')->sole();
         $this->assertFalse($backdrop->availability);
     }
+
+    /**
+     * Independent-review correction round 2 — the EXACT regression
+     * scenario: answer "offers_backdrops" Yes, create a wizard backdrop,
+     * reopen the answers, flip "offers_backdrops" to No (which hides the
+     * "backdrops" step entirely), and save. The wizard-created backdrop
+     * must be deactivated (never left dangling as though still current),
+     * a manually created backdrop must be completely untouched, and
+     * WebsitePageStrategy::backdropsEligible() must now report false —
+     * a disabled backdrop must never keep producing a Backdrops page.
+     */
+    public function test_toggling_offers_backdrops_from_yes_to_no_deactivates_the_wizard_created_backdrop_and_disables_the_page(): void
+    {
+        [$customer, $business] = $this->entitledTenant();
+        $website = $this->createWebsite($business);
+        $steps = [
+            ['key' => 'offers_backdrops', 'target_module' => 'answers'],
+            ['key' => 'backdrops', 'target_module' => 'backdrop', 'conditional_visibility' => ['depends_on' => 'offers_backdrops', 'condition' => 'equals', 'value' => true]],
+        ];
+        $applier = app(WebsiteSetupAnswerApplier::class);
+
+        // A manual backdrop legitimately keeps a Business eligible for a
+        // Backdrops page on its own — so it is deliberately created
+        // ALREADY UNAVAILABLE here: this test's own purpose is to prove
+        // eligibility genuinely flips once the wizard's own backdrop is
+        // the reconciled one, not to prove eligibility survives an
+        // unrelated active backdrop (a distinct, already-proven fact).
+        // Its `availability` value itself — never touched by this
+        // reconciliation regardless of what it is — is what "manual
+        // backdrops remain untouched" asserts below.
+        $manual = app(\App\Library\Business\BusinessBackdropManager::class)->create($business, ['name' => 'Hand-built Backdrop', 'availability' => false]);
+
+        // Step 1: Yes -> backdrop created.
+        $first = $this->completedResponse($business, $website, $steps, [
+            'offers_backdrops' => true,
+            'backdrops' => [['key' => 'bd_1', 'name' => 'Sequin Wall', 'description' => null, 'availability' => true, 'images' => []]],
+        ]);
+        $applier->apply($business, $website, $first, $customer->user_id);
+
+        $wizardBackdrop = BusinessBackdrop::where('business_id', $business->id)->where('source_questionnaire_item_key', 'bd_1')->sole();
+        $this->assertTrue($wizardBackdrop->availability);
+        $this->assertTrue(app(\App\Library\Website\WebsitePageStrategy::class)->backdropsEligible($business));
+
+        // Step 2: edit to No -> the "backdrops" step is now hidden, and
+        // its stale answer (still carrying bd_1) must never be reapplied.
+        $second = $this->completedResponse($business, $website, $steps, [
+            'offers_backdrops' => false,
+            'backdrops' => [['key' => 'bd_1', 'name' => 'Sequin Wall', 'description' => null, 'availability' => true, 'images' => []]],
+        ]);
+        $applier->apply($business, $website, $second, $customer->user_id);
+
+        $this->assertFalse($wizardBackdrop->fresh()->availability, 'The wizard-created backdrop must be deactivated once its module is disabled.');
+        $this->assertFalse($manual->fresh()->availability, 'A manually created backdrop must never be touched by this reconciliation, whatever its own availability value is.');
+        $this->assertFalse(app(\App\Library\Website\WebsitePageStrategy::class)->backdropsEligible($business), 'A disabled backdrop must no longer make the Business eligible for a Backdrops page.');
+    }
 }

@@ -68,10 +68,11 @@ final class GuidedGenerationCommitService
 
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section questionnaire answer (Website Builder redesign) — see WebsitePageStrategy::buildPlan()
+     * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers, appended verbatim to the FAQ page's section — never sent to AI to rewrite (independent-review correction round 2)
      */
-    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null): WebsiteGuidedGenerationAttempt
+    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $customSection);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $customSection, $customerFaq);
     }
 
     /**
@@ -87,12 +88,12 @@ final class GuidedGenerationCommitService
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection
      */
-    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null): WebsiteGuidedGenerationAttempt
+    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $customSection);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $customSection, $customerFaq);
     }
 
-    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?array $customSection = null): WebsiteGuidedGenerationAttempt
+    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection);
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
@@ -103,7 +104,7 @@ final class GuidedGenerationCommitService
         // so two genuinely concurrent identical submissions never both
         // reach the create-and-spend-AI step; the second waits, then
         // converges to the first attempt's row below.
-        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $customSection) {
+        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $customSection, $customerFaq) {
             $existing = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)
                 ->where('idempotency_key', 'like', $materialBase . ':%')
                 ->whereIn('status', [WebsiteGuidedGenerationAttempt::STATUS_PENDING, WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED])
@@ -137,11 +138,11 @@ final class GuidedGenerationCommitService
                     ->firstOrFail();
             }
 
-            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $customSection);
+            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $customSection, $customerFaq);
         });
     }
 
-    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?array $customSection = null): WebsiteGuidedGenerationAttempt
+    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
 
@@ -170,7 +171,7 @@ final class GuidedGenerationCommitService
             // a cleanly recorded `failed` attempt, never an uncaught
             // exception left as a stuck `pending` row or a bare 500.
             $merged = $this->mergePlanWithContent($plan, $aiPages);
-            $bound = $this->mediaBinding->bind($website, $merged, $customSection);
+            $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
 
             DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount) {
                 // Blocker 4 — real rebuild semantics: lock the Website

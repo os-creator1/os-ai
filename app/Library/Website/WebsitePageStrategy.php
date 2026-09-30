@@ -5,6 +5,7 @@ namespace App\Library\Website;
 use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Catalog\CatalogItemLifecycleState;
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Models\Business;
 use App\Models\BusinessBackdrop;
 use App\Models\BusinessKnowledgeProfileFieldState;
@@ -56,6 +57,23 @@ final class WebsitePageStrategy
      * low-value page Google's spam policies discourage.
      */
     public const MIN_GALLERY_ASSETS = 6;
+
+    /**
+     * Independent-review correction round 2 — the deterministic per-plan
+     * ceiling on AI-authored `service_detail`/`location` pages. Without
+     * this, a questionnaire whose per-step repeatable-group limits are
+     * individually reasonable (QuestionnaireAnswerValidator::
+     * MAX_REPEATABLE_ITEMS = 30, across two business_service steps) could
+     * still aggregate into 60+ real BusinessService rows and therefore
+     * 60+ AI-authored pages in ONE generation request — far more than
+     * `config('ai.routes.website_generation')`'s own bounded envelope
+     * (12,000 input / 8,000 output tokens) can ever afford. Reduced
+     * deterministically (always the first N, stably ordered) rather than
+     * refusing the whole generation outright.
+     */
+    public const MAX_SERVICE_DETAIL_PAGES = 20;
+
+    public const MAX_LOCATION_PAGES = 20;
 
     /**
      * Acceptance-correction Blocker 8: a location needs at least this
@@ -119,9 +137,16 @@ final class WebsitePageStrategy
             ->values();
     }
 
+    /**
+     * Independent-review correction round 2 — counts only GALLERY-purpose
+     * assets. Custom-section media and package-mirrored images are
+     * never customer gallery photography and must never inflate this
+     * count (a Business with five gallery photos and one custom-section
+     * image does not meet the six-photo bar).
+     */
     public function galleryEligible(Website $website): bool
     {
-        return $website->assets()->count() >= self::MIN_GALLERY_ASSETS;
+        return $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->count() >= self::MIN_GALLERY_ASSETS;
     }
 
     /**
@@ -205,7 +230,15 @@ final class WebsitePageStrategy
         }
 
         if ($hasType('service_detail')) {
-            foreach ($services as $service) {
+            // Independent-review correction round 2 — bounds the number
+            // of AI-authored pages one generation request can ever be
+            // asked for, regardless of how many BusinessService rows a
+            // questionnaire's own (generously bounded per-step, but
+            // unbounded in aggregate across steps) repeatable-group
+            // answers created. Deterministic and stable: always the
+            // first MAX_SERVICE_DETAIL_PAGES by this Collection's own
+            // existing sort_order.
+            foreach ($services->take(self::MAX_SERVICE_DETAIL_PAGES) as $service) {
                 $plan[] = [
                     'page_key' => 'service:' . $service->uid,
                     'page_type' => 'service_detail',
@@ -291,7 +324,9 @@ final class WebsitePageStrategy
         }
 
         if ($hasType('location')) {
-            foreach ($this->eligibleLocations($business) as $location) {
+            // Independent-review correction round 2 — same aggregate
+            // bound as service_detail pages above, for the same reason.
+            foreach ($this->eligibleLocations($business)->take(self::MAX_LOCATION_PAGES) as $location) {
                 $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
 
                 $plan[] = [

@@ -149,19 +149,48 @@ final class QuestionnaireAnswerValidator
         }
     }
 
+    public const MAX_FAQ_ITEMS = 20;
+
+    public const MAX_FAQ_QUESTION = 200;
+
+    public const MAX_FAQ_ANSWER = 1000;
+
+    public const MAX_TESTIMONIALS = 5;
+
+    public const MAX_TESTIMONIAL_QUOTE = 400;
+
+    public const MAX_TESTIMONIAL_AUTHOR = 80;
+
     private function validateRepeatableGroup(array $step, mixed $value): void
     {
         if (! is_array($value)) {
             throw new InvalidAnswerException('That answer is not valid.');
         }
 
-        if (count($value) > self::MAX_REPEATABLE_ITEMS) {
-            throw new InvalidAnswerException('Too many entries — the limit is ' . self::MAX_REPEATABLE_ITEMS . '.');
+        $targetModule = $step['target_module'] ?? null;
+        $isFaq = $targetModule === 'faq';
+        $isTestimonial = $targetModule === 'knowledge_profile' && ($step['target_field'] ?? null) === 'testimonials';
+
+        $maxItems = $isFaq ? self::MAX_FAQ_ITEMS : ($isTestimonial ? self::MAX_TESTIMONIALS : self::MAX_REPEATABLE_ITEMS);
+        if (count($value) > $maxItems) {
+            throw new InvalidAnswerException("Too many entries — the limit is {$maxItems}.");
         }
 
         foreach ($value as $item) {
             if (! is_array($item)) {
                 throw new InvalidAnswerException('That answer is not valid.');
+            }
+
+            if ($isFaq) {
+                $this->validateFaqEntry($item);
+
+                continue;
+            }
+
+            if ($isTestimonial) {
+                $this->validateTestimonialEntry($item);
+
+                continue;
             }
 
             $name = $item['name'] ?? '';
@@ -174,9 +203,73 @@ final class QuestionnaireAnswerValidator
                 throw new InvalidAnswerException('An entry description is too long.');
             }
 
-            if (($step['target_module'] ?? null) === 'catalog_item') {
+            if ($targetModule === 'catalog_item') {
                 $this->validateCatalogItemEntry($item);
             }
+
+            if ($targetModule === 'custom_section') {
+                $this->validateCustomSectionEntry($item);
+            }
+        }
+    }
+
+    /**
+     * Independent-review correction round 2 — bounds match
+     * WebsiteSectionValidator::CustomSection's own real, generation-time
+     * limits exactly, so a forged/oversized custom-section submission is
+     * refused here at answer time rather than surfacing as a generation
+     * failure much later. Asset ownership itself (an images.* uid
+     * genuinely belonging to this Website, with the correct purpose) is
+     * verified at upload/removal time — this method only bounds shape
+     * and count, since uids reaching here always come from this
+     * Website's own upload endpoint, never raw client input.
+     */
+    private function validateCustomSectionEntry(array $item): void
+    {
+        $body = $item['body'] ?? null;
+        if ($body !== null && (! is_string($body) || mb_strlen($body) > 5000)) {
+            throw new InvalidAnswerException('The custom section body is too long (max 5000 characters).');
+        }
+
+        $layout = $item['layout'] ?? 'stacked';
+        if (! in_array($layout, ['stacked', 'image_left', 'image_right', 'grid'], true)) {
+            throw new InvalidAnswerException('Choose a valid custom section layout.');
+        }
+
+        $images = $item['images'] ?? [];
+        if (! is_array($images) || count($images) > 12) {
+            throw new InvalidAnswerException('A custom section may have at most 12 images.');
+        }
+    }
+
+    private function validateFaqEntry(array $item): void
+    {
+        $question = $item['question'] ?? '';
+        if (! is_string($question) || trim($question) === '' || mb_strlen($question) > self::MAX_FAQ_QUESTION) {
+            throw new InvalidAnswerException('Every FAQ entry needs a question of 1 to ' . self::MAX_FAQ_QUESTION . ' characters.');
+        }
+
+        $answer = $item['answer'] ?? '';
+        if (! is_string($answer) || trim($answer) === '' || mb_strlen($answer) > self::MAX_FAQ_ANSWER) {
+            throw new InvalidAnswerException('Every FAQ entry needs an answer of 1 to ' . self::MAX_FAQ_ANSWER . ' characters.');
+        }
+    }
+
+    private function validateTestimonialEntry(array $item): void
+    {
+        $quote = $item['quote'] ?? '';
+        if (! is_string($quote) || trim($quote) === '' || mb_strlen($quote) > self::MAX_TESTIMONIAL_QUOTE) {
+            throw new InvalidAnswerException('Every testimonial needs a quote of 1 to ' . self::MAX_TESTIMONIAL_QUOTE . ' characters.');
+        }
+
+        $authorName = $item['author_name'] ?? '';
+        if (! is_string($authorName) || trim($authorName) === '' || mb_strlen($authorName) > self::MAX_TESTIMONIAL_AUTHOR) {
+            throw new InvalidAnswerException('Every testimonial needs an author name of 1 to ' . self::MAX_TESTIMONIAL_AUTHOR . ' characters.');
+        }
+
+        $authorTitle = $item['author_title'] ?? null;
+        if ($authorTitle !== null && (! is_string($authorTitle) || mb_strlen($authorTitle) > self::MAX_TESTIMONIAL_AUTHOR)) {
+            throw new InvalidAnswerException('A testimonial author title is too long.');
         }
     }
 

@@ -198,6 +198,36 @@ final class WebsiteStarterDraftService
     }
 
     /**
+     * Independent-review correction round 2 — lets the owner change their
+     * mind about the template from the wizard's own Back arrow, WITHOUT
+     * losing saved answers or creating a second Website/questionnaire
+     * response. Safe only because a pre-generation shell (createShellFromTemplate()'s
+     * own contract) never has any pages yet — guided generation always
+     * builds the real page set for the first time at the end of the
+     * wizard, so there is nothing here to "lose" by swapping the
+     * template early. Refuses once real pages exist (a generated or
+     * rebuilt Website), since that is no longer the pre-generation shell
+     * this method is for.
+     */
+    public function updateShellTemplate(Website $website, WebsiteTemplate $template): Website
+    {
+        return DB::transaction(function () use ($website, $template) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->pages()->exists()) {
+                throw new \DomainException('This website already has generated pages and can no longer have its template swapped this way.');
+            }
+
+            $locked->update([
+                'theme' => $template->theme,
+                'template_key' => $template->key,
+            ]);
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
      * Website Generator + Local SEO Completion — the "Rebuild website
      * from template" flow (task instruction: never destructively
      * overwrite the currently published site). This method ONLY ever
@@ -327,7 +357,7 @@ final class WebsiteStarterDraftService
      */
     private function createGalleryPage(Website $website, Business $business, ?array $contact): void
     {
-        $items = $website->assets()->orderBy('id')->limit(24)->get()
+        $items = $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->limit(24)->get()
             ->map(fn ($asset) => ['image' => $asset->uid])
             ->all();
 

@@ -2,6 +2,7 @@
 
 namespace App\Library\Website\Setup;
 
+use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
 use App\Enums\Questionnaire\QuestionType;
 use DomainException;
 
@@ -30,9 +31,11 @@ final class QuestionnaireDefinitionValidator
 
     public const MAX_OPTIONS = 50;
 
+    public const MAX_PROMPT = 300;
+
     private const VALID_TARGET_MODULES = [
         'business', 'business_location', 'knowledge_profile', 'business_service',
-        'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section',
+        'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section', 'faq',
     ];
 
     private const VALID_BUSINESS_FIELDS = ['name', 'phone', 'email', 'description'];
@@ -40,6 +43,32 @@ final class QuestionnaireDefinitionValidator
     private const VALID_CONDITIONS = ['equals', 'not_equals', 'in', 'not_empty'];
 
     private const OPTION_INPUT_TYPES = [QuestionType::Select->value, QuestionType::MultiSelect->value];
+
+    /**
+     * Independent-review correction round 2 — the real, closed
+     * input_type <-> target_module compatibility matrix. An enum value
+     * accepted by QuestionType alone was never proof that this codebase's
+     * runtime (WebsiteWizardController::valueFromRequest()/
+     * normalizeRepeatableItem(), QuestionnaireAnswerValidator,
+     * WebsiteSetupAnswerApplier) actually has a parser/validator/
+     * application path for that COMBINATION — e.g. a `repeatable_group`
+     * targeting `business` would reach applyBusinessField() with an
+     * array value it cannot use. Every pairing this codebase genuinely
+     * implements is listed here; anything else is refused at publish
+     * time rather than failing later, silently, at answer or generation
+     * time.
+     */
+    private const COMPATIBLE_TARGET_MODULES = [
+        'text' => ['business', 'business_location', 'knowledge_profile', 'answers'],
+        'tel' => ['business', 'business_location', 'knowledge_profile', 'answers'],
+        'email' => ['business', 'knowledge_profile', 'answers'],
+        'textarea' => ['business', 'knowledge_profile', 'answers'],
+        'select' => ['knowledge_profile', 'answers'],
+        'multi_select' => ['website_form', 'knowledge_profile', 'answers'],
+        'boolean' => ['answers', 'knowledge_profile'],
+        'repeatable_group' => ['business_service', 'catalog_item', 'backdrop', 'custom_section', 'faq', 'knowledge_profile'],
+        'photo_upload' => ['gallery'],
+    ];
 
     /**
      * @param  array<int, array<string, mixed>>  $steps
@@ -66,8 +95,13 @@ final class QuestionnaireDefinitionValidator
             }
             $seenKeys[$key] = true;
 
-            if (! is_string($step['prompt'] ?? null) || trim($step['prompt']) === '') {
-                throw new DomainException("Step '{$key}' is missing a prompt.");
+            $prompt = $step['prompt'] ?? null;
+            if (! is_string($prompt) || trim($prompt) === '' || mb_strlen($prompt) > self::MAX_PROMPT) {
+                throw new DomainException("Step '{$key}' is missing a prompt, or its prompt is too long.");
+            }
+
+            if (! is_bool($step['required'] ?? null)) {
+                throw new DomainException("Step '{$key}' has a non-boolean required flag.");
             }
 
             $inputType = $step['input_type'] ?? null;
@@ -80,6 +114,10 @@ final class QuestionnaireDefinitionValidator
                 throw new DomainException("Step '{$key}' has an unsupported target_module.");
             }
 
+            if (! in_array($targetModule, self::COMPATIBLE_TARGET_MODULES[$inputType] ?? [], true)) {
+                throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with a target_module '{$targetModule}' this codebase has no real renderer/parser/validator/application path for.");
+            }
+
             // A null target_field is tolerated even for 'business' — it is
             // a graceful no-op there too (WebsiteSetupAnswerApplier::
             // applyBusinessField() already returns early on one); only a
@@ -87,6 +125,8 @@ final class QuestionnaireDefinitionValidator
             $targetField = $step['target_field'] ?? null;
             if ($targetModule === 'business' && $targetField !== null && ! in_array($targetField, self::VALID_BUSINESS_FIELDS, true)) {
                 throw new DomainException("Step '{$key}' targets 'business' with an unsupported target_field.");
+            } elseif ($targetModule === 'knowledge_profile') {
+                $this->validateKnowledgeProfileCombination($key, $inputType, $targetField);
             } elseif ($targetField !== null && (! is_string($targetField) || mb_strlen($targetField) > 64)) {
                 throw new DomainException("Step '{$key}' has an invalid target_field.");
             }
@@ -103,6 +143,35 @@ final class QuestionnaireDefinitionValidator
 
             $this->validateOptions($key, $step, $inputType);
             $this->validateConditionalVisibility($key, $step, $seenKeys);
+        }
+    }
+
+    /**
+     * `target_field` for `knowledge_profile` must be a real
+     * BusinessKnowledgeProfileFieldKey column — `hours` is deliberately
+     * excluded (never a valid BusinessKnowledgeProfileManager::
+     * updateFields() key; its own write path is updateLocationHours()
+     * alone). A `repeatable_group` targeting `knowledge_profile` is only
+     * ever wired for `testimonials` — WebsiteSetupAnswerApplier has no
+     * other repeatable knowledge_profile application path.
+     */
+    private function validateKnowledgeProfileCombination(string $key, string $inputType, mixed $targetField): void
+    {
+        if (! is_string($targetField)) {
+            throw new DomainException("Step '{$key}' targets 'knowledge_profile' without a target_field.");
+        }
+
+        $validFields = array_filter(
+            array_map(fn (BusinessKnowledgeProfileFieldKey $case) => $case->value, BusinessKnowledgeProfileFieldKey::cases()),
+            fn (string $value) => $value !== BusinessKnowledgeProfileFieldKey::Hours->value,
+        );
+
+        if (! in_array($targetField, $validFields, true)) {
+            throw new DomainException("Step '{$key}' targets 'knowledge_profile' with an unsupported target_field.");
+        }
+
+        if ($inputType === QuestionType::RepeatableGroup->value && $targetField !== BusinessKnowledgeProfileFieldKey::Testimonials->value) {
+            throw new DomainException("Step '{$key}' is a repeatable_group targeting 'knowledge_profile' with no application path for target_field '{$targetField}'.");
         }
     }
 

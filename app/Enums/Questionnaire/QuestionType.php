@@ -27,6 +27,14 @@ enum QuestionType: string
     /** One or more image uploads. */
     case PhotoUpload = 'photo_upload';
 
-    /** A real price + currency, OR "contact for pricing" — never both unset in a way that's ambiguous. */
-    case PriceOrQuote = 'price_or_quote';
+    // Independent-review correction round 2 — `price_or_quote` was
+    // removed: it had no real Blade renderer, no
+    // WebsiteWizardController::valueFromRequest() parser, no
+    // QuestionnaireAnswerValidator branch, and no distinct application
+    // path (a package's own price-or-quote choice is already handled by
+    // the `catalog_item` repeatable-group shape's own price_minor/
+    // currency_code fields — see QuestionnaireDefinitionValidator's
+    // input-type/target-module compatibility check, which now enforces
+    // that every accepted case here has all four before a definition can
+    // ever be published).
 }

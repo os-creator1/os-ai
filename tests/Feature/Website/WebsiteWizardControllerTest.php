@@ -96,10 +96,15 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertOk()
             ->assertSee("What&#039;s your business called?", false);
 
-        // Re-visiting the template step mid-flow must resume, not
-        // re-render the picker or bounce to Studio.
+        // Independent-review correction round 2 — re-visiting the
+        // template step mid-flow (reached via the first question's own
+        // Back arrow) now genuinely renders the picker again, pre-
+        // selecting the current choice, rather than bouncing back to the
+        // question or to Studio — this is what makes Back from the first
+        // question actually work (see test_back_from_the_first_question_
+        // shows_the_template_picker_for_a_first_time_session()).
         $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
-            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+            ->assertOk();
     }
 
     public function test_autosaving_an_answer_advances_to_the_next_step(): void
@@ -604,7 +609,7 @@ class WebsiteWizardControllerTest extends TestCase
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.upload', [$workspace->uid, $business->uid]), [
             'photo' => $this->fakeImageUpload('custom.png'),
         ]);
-        $imageUid = $website->assets()->where('category_tag', 'custom_section')->sole()->uid;
+        $imageUid = $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::CustomSection->value)->sole()->uid;
 
         $response = $this->completeAllRequiredSteps($workspace, $business, [
             'custom_section' => ['items' => [[
@@ -625,5 +630,270 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertSame('Roll out the red carpet for your guests.', $section['data']['body']);
         $this->assertSame('image_left', $section['data']['layout']);
         $this->assertSame([$imageUid], $section['data']['images']);
+    }
+
+    public function test_back_from_the_first_question_shows_the_template_picker_for_a_first_time_session(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.back', [$workspace->uid, $business->uid, 'business_name']))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']));
+
+        $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
+            ->assertOk()
+            ->assertSee('Choose a style');
+    }
+
+    public function test_choosing_a_different_template_from_the_picker_updates_the_same_setup_without_losing_answers(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'business_name']), ['value' => 'Keep My Answer', 'answers_revision' => 1]);
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->where('status', 'in_progress')->sole();
+        $this->assertSame('phone', $response->current_step_key);
+
+        // Back to the template step, then choose a DIFFERENT template.
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_editorial'])
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'phone']));
+
+        $this->assertSame(1, Website::where('business_id', $business->id)->count(), 'Swapping the template must never create a second Website.');
+        $this->assertSame(1, QuestionnaireResponse::where('business_id', $business->id)->count(), 'Swapping the template must never create a second response.');
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame('photo_booth_editorial', $website->template_key);
+
+        $reloaded = $response->fresh();
+        $this->assertSame('Keep My Answer', $reloaded->answer('business_name'), 'Swapping the template must never lose a saved answer.');
+        $this->assertSame('phone', $reloaded->current_step_key, 'Swapping the template must never rewind the resume position.');
+    }
+
+    public function test_an_edit_mode_sessions_back_from_the_first_question_exits_to_studio_never_exposing_template_replacement(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+        $this->completeAllRequiredSteps($workspace, $business);
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]));
+
+        $this->get(route('customer.workspaces.businesses.website.edit-setup', [$workspace->uid, $business->uid]));
+        $reopened = QuestionnaireResponse::where('business_id', $business->id)->where('status', 'in_progress')->sole();
+        $this->assertTrue($reopened->edit_mode);
+        $firstStepKey = $reopened->current_step_key;
+
+        $this->post(route('customer.workspaces.businesses.website.setup.back', [$workspace->uid, $business->uid, $firstStepKey]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.studio.show', [$workspace->uid, $business->uid]));
+
+        // Direct navigation to the template step during an edit_mode
+        // session must never expose template replacement either.
+        $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, $firstStepKey]));
+    }
+
+    /**
+     * Binds a mock whose complete() call is asserted to receive the given
+     * "current_body" — proving Improve with AI sent whatever was
+     * SUBMITTED, never a stale persisted value.
+     */
+    private function bindImproveMockExpectingCurrentBody(string $expectedBody, ?string $improvedReturn): void
+    {
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')
+            ->withArgs(function (array $messages) use ($expectedBody) {
+                $userContent = json_decode(collect($messages)->firstWhere('role', 'user')['content'] ?? '{}', true);
+
+                return ($userContent['current_body'] ?? null) === $expectedBody;
+            })
+            ->andReturn($improvedReturn !== null ? json_encode(['body' => $improvedReturn]) : null);
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+    }
+
+    public function test_improve_with_ai_uses_the_currently_submitted_unsaved_body_not_a_stale_one(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        // Persist an OLD body first via an ordinary autosave.
+        $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'custom_section']), [
+            'items' => [['name' => 'Section', 'body' => 'Old stale body']],
+            'answers_revision' => 1,
+        ]);
+
+        // Bind a mock that only succeeds if it receives the NEW, not-yet-
+        // saved body this request is about to submit.
+        $this->bindImproveMockExpectingCurrentBody('Brand new unsaved body', 'Improved: brand new unsaved body');
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'Brand new unsaved body']],
+        ])->assertSessionHas('status', 'success');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('Improved: brand new unsaved body', $response->answer('custom_section')[0]['body']);
+    }
+
+    public function test_improve_with_ai_preserves_submitted_text_on_oversized_output(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $oversized = str_repeat('x', 801);
+        $this->bindImproveMockExpectingCurrentBody('My body', $oversized);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+        ])->assertSessionHas('status', 'error');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('My body', $response->answer('custom_section')[0]['body'], 'An oversized AI response must never replace the submitted text.');
+    }
+
+    public function test_improve_with_ai_preserves_submitted_text_on_malformed_output(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturn('not valid json {{{');
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+        ])->assertSessionHas('status', 'error');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('My body', $response->answer('custom_section')[0]['body']);
+    }
+
+    public function test_improve_with_ai_preserves_submitted_text_on_refusal(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $this->mockAiClient(null);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+        ])->assertSessionHas('status', 'error');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('My body', $response->answer('custom_section')[0]['body']);
+    }
+
+    public function test_improve_with_ai_reports_budget_exhaustion_distinctly(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(true);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturn(null);
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+        ])->assertSessionHas('message', 'The included AI generation budget is used up for this period.');
+    }
+
+    public function test_improve_with_ai_is_idempotent_against_a_duplicate_submission_and_spends_ai_once(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $calls = 0;
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturnUsing(function () use (&$calls) {
+            $calls++;
+
+            return json_encode(['body' => 'Improved once']);
+        });
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        // Same response id, same exact submitted body, twice in a row —
+        // simulating a double-click.
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'Same body']],
+        ]);
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'Same body']],
+        ]);
+
+        $this->assertSame(1, $calls, 'A duplicate identical improve submission must spend AI exactly once.');
+    }
+
+    /**
+     * Independent-review correction round 2 — a non-empty testimonial
+     * used to reach the canonical knowledge profile in the WRONG shape
+     * (generic name/description instead of quote/author_name/
+     * author_title) and could throw; the seeded faq_items question was
+     * dead input, never wired into the generated FAQ page. Proves both
+     * end to end: no exception, the testimonial reaches
+     * BusinessKnowledgeProfile in its required shape, and the exact
+     * customer FAQ question/answer appear in the generated draft.
+     */
+    public function test_non_empty_testimonials_and_faq_reach_canonical_and_generated_output_without_error(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $response = $this->completeAllRequiredSteps($workspace, $business, [
+            'testimonials' => ['items' => [[
+                'quote' => 'They made our wedding unforgettable!',
+                'author_name' => 'Jamie Rivera',
+                'author_title' => 'Bride',
+            ]]],
+            'faq_items' => ['items' => [[
+                'question' => 'How far in advance should we book?',
+                'answer' => 'At least 6 weeks before your event date.',
+            ]]],
+        ]);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->sole();
+        $this->assertSame([
+            ['quote' => 'They made our wedding unforgettable!', 'author_name' => 'Jamie Rivera', 'author_title' => 'Bride'],
+        ], $profile->testimonials);
+
+        $website = $response->website;
+        $faqPage = $website->fresh()->pages()->where('slug', 'photo-booth-faq')->sole();
+        $faqSection = collect($faqPage->sections)->firstWhere('type', 'faq');
+        $this->assertNotNull($faqSection);
+        $matchingFaqItem = collect($faqSection['data']['items'])->firstWhere('question', 'How far in advance should we book?');
+        $this->assertNotNull($matchingFaqItem, 'The exact customer-entered FAQ question must appear in the generated FAQ section, verbatim.');
+        $this->assertSame('At least 6 weeks before your event date.', $matchingFaqItem['answer']);
+    }
+
+    public function test_empty_optional_testimonials_and_faq_lists_remain_valid_and_generate_successfully(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $this->completeAllRequiredSteps($workspace, $business, [
+            'testimonials' => ['items' => []],
+            'faq_items' => ['items' => []],
+        ]);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+
+        $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
     }
 }

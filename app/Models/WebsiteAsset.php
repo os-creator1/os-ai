@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -37,12 +38,16 @@ class WebsiteAsset extends Model
         'title',
         'category_tag',
         'source_catalog_item_image_id',
+        'purpose',
+        'alt_text_is_custom',
     ];
 
     protected $casts = [
         'first_published_at' => 'datetime',
         'sort_order' => 'integer',
         'is_cover' => 'boolean',
+        'purpose' => WebsiteAssetPurpose::class,
+        'alt_text_is_custom' => 'boolean',
     ];
 
     public function generateUid()

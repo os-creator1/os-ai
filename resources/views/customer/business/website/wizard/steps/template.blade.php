@@ -18,7 +18,7 @@
                     @foreach ($templates as $template)
                         <div class="col-md-3 mb-3">
                             <label class="website-starter-choice d-block h-100" for="website-template-{{ $template->key }}">
-                                <input class="form-check-input me-1" type="radio" name="template_key" id="website-template-{{ $template->key }}" value="{{ $template->key }}" @checked($loop->first) required>
+                                <input class="form-check-input me-1" type="radio" name="template_key" id="website-template-{{ $template->key }}" value="{{ $template->key }}" @checked(isset($selectedTemplateKey) && $selectedTemplateKey ? $template->key === $selectedTemplateKey : $loop->first) required>
                                 <strong>{{ $template->display_name }}</strong>
                                 <span class="website-starter-preview website-starter-preview-{{ $template->key }}" aria-hidden="true">
                                     <span class="website-starter-preview-top"></span>

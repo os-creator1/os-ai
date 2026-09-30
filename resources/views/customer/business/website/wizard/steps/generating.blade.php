@@ -12,6 +12,7 @@
                     <x-slot name="action">
                         <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.generate', [$workspaceUid, $businessUid]) }}">
                             @csrf
+                            <input type="hidden" name="answers_revision" value="{{ $answersRevision }}">
                             <x-button type="submit" variant="primary">Save changes</x-button>
                         </form>
                     </x-slot>
@@ -21,6 +22,7 @@
                     <x-slot name="action">
                         <form method="POST" action="{{ route('customer.workspaces.businesses.website.setup.generate', [$workspaceUid, $businessUid]) }}">
                             @csrf
+                            <input type="hidden" name="answers_revision" value="{{ $answersRevision }}">
                             <x-button type="submit" variant="primary">Generate my website</x-button>
                         </form>
                     </x-slot>

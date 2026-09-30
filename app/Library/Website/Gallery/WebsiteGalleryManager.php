@@ -2,6 +2,7 @@
 
 namespace App\Library\Website\Gallery;
 
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Exceptions\Website\InvalidWebsiteAssetException;
 use App\Library\Website\WebsiteAssetUploadService;
 use App\Models\Website;
@@ -10,12 +11,25 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Website Builder redesign — the wizard's "Show your work" gallery step.
- * v1 scope (explicitly agreed): multi-file upload with per-file progress
- * (a plain client-side concern — each file is one ordinary
- * WebsiteAssetUploadService::store() call) and up/down reordering plus a
- * single cover flag; a queued responsive-image-variant pipeline is
- * explicitly deferred.
+ * Website Builder redesign — the wizard's "Show your work" gallery step,
+ * and (independent-review correction round 2) the custom-section step's
+ * media too. v1 scope (explicitly agreed): multi-file upload with
+ * per-file progress (a plain client-side concern — each file is one
+ * ordinary WebsiteAssetUploadService::store() call) and up/down
+ * reordering plus a single cover flag; a queued responsive-image-variant
+ * pipeline is explicitly deferred.
+ *
+ * Independent-review correction round 2 — every method here now takes an
+ * explicit `WebsiteAssetPurpose` and scopes ALL of its reads/writes to
+ * that purpose alone: a custom-section image can never be listed,
+ * reordered, covered, or removed through the gallery's own operations
+ * and vice versa. This is the actual ownership/purpose boundary — never
+ * the customer-editable `category_tag`. Also enforces the server-side
+ * upload caps the task requires (never merely a UI limit): at most
+ * MAX_GALLERY_ASSETS gallery photos, MAX_CUSTOM_SECTION_ASSETS
+ * custom-section photos, and MAX_TOTAL_UPLOAD_BYTES of combined
+ * customer-uploaded (never a derived package-mirror) storage per
+ * Website.
  *
  * Mirrors CatalogItemManager::reorder()'s lock-then-rewrite-position
  * shape, scoped to one Website's assets instead of one Business's
@@ -23,25 +37,51 @@ use Illuminate\Support\Facades\DB;
  */
 final class WebsiteGalleryManager
 {
-    public function __construct(private readonly WebsiteAssetUploadService $uploads)
-    {
+    public const MAX_GALLERY_ASSETS = 24;
+
+    public const MAX_CUSTOM_SECTION_ASSETS = 6;
+
+    /** 120 MB — combined customer-uploaded (gallery + custom-section) storage per Website. Package mirrors are derived, never customer uploads, and never count against this. */
+    public const MAX_TOTAL_UPLOAD_BYTES = 120 * 1024 * 1024;
+
+    public function __construct(
+        private readonly WebsiteAssetUploadService $uploads,
+        private readonly WebsiteAssetAltTextGenerator $altText,
+    ) {
     }
 
     /**
      * @param  array<int, UploadedFile>  $files
      * @return array<int, WebsiteAsset>
-     * @throws InvalidWebsiteAssetException on the first invalid file — callers that want
-     *         "store what succeeded, report what failed" should call store() per-file themselves instead
+     * @throws InvalidWebsiteAssetException on the first invalid file, or when a server-enforced cap would be exceeded —
+     *         nothing from this call is stored once any file in it would push the Website over a cap.
      */
-    public function uploadMany(Website $website, array $files, ?string $categoryTag = null): array
+    public function uploadMany(Website $website, array $files, WebsiteAssetPurpose $purpose, ?string $categoryTag = null): array
     {
-        return DB::transaction(function () use ($website, $files, $categoryTag) {
-            $nextPosition = (int) ($website->assets()->max('sort_order') ?? -1) + 1;
+        return DB::transaction(function () use ($website, $files, $purpose, $categoryTag) {
+            $existingCount = $website->assets()->where('purpose', $purpose->value)->lockForUpdate()->count();
+            $maxCount = $purpose === WebsiteAssetPurpose::CustomSection ? self::MAX_CUSTOM_SECTION_ASSETS : self::MAX_GALLERY_ASSETS;
+
+            if ($existingCount + count($files) > $maxCount) {
+                throw new InvalidWebsiteAssetException("This Website can have at most {$maxCount} " . ($purpose === WebsiteAssetPurpose::CustomSection ? 'custom-section' : 'gallery') . ' photos.');
+            }
+
+            $existingUploadedBytes = (int) $website->assets()
+                ->whereIn('purpose', [WebsiteAssetPurpose::Gallery->value, WebsiteAssetPurpose::CustomSection->value])
+                ->sum('size');
+            $incomingBytes = array_sum(array_map(fn (UploadedFile $file) => $file->getSize() ?: 0, $files));
+
+            if ($existingUploadedBytes + $incomingBytes > self::MAX_TOTAL_UPLOAD_BYTES) {
+                throw new InvalidWebsiteAssetException('This Website has reached its total uploaded-photo storage limit.');
+            }
+
+            $nextPosition = (int) ($website->assets()->where('purpose', $purpose->value)->max('sort_order') ?? -1) + 1;
             $created = [];
 
             foreach ($files as $file) {
-                $asset = $this->uploads->store($website, $file);
+                $asset = $this->uploads->store($website, $file, null, $purpose);
                 $asset->forceFill(['sort_order' => $nextPosition, 'category_tag' => $categoryTag])->save();
+                $asset->forceFill(['alt_text' => $this->altText->suggest($website->business, $asset)])->save();
                 $created[] = $asset;
                 $nextPosition++;
             }
@@ -51,12 +91,12 @@ final class WebsiteGalleryManager
     }
 
     /**
-     * @param  list<string>  $orderedUids  every one of this Website's asset uids, exactly once
+     * @param  list<string>  $orderedUids  every one of this Website's asset uids OF THIS PURPOSE, exactly once — an asset of a different purpose is never affected by this call
      */
-    public function reorder(Website $website, array $orderedUids): void
+    public function reorder(Website $website, WebsiteAssetPurpose $purpose, array $orderedUids): void
     {
-        DB::transaction(function () use ($website, $orderedUids) {
-            $assets = WebsiteAsset::where('website_id', $website->id)->lockForUpdate()->get()->keyBy('uid');
+        DB::transaction(function () use ($website, $purpose, $orderedUids) {
+            $assets = WebsiteAsset::where('website_id', $website->id)->where('purpose', $purpose->value)->lockForUpdate()->get()->keyBy('uid');
 
             if (count($orderedUids) !== $assets->count()
                 || count(array_unique($orderedUids)) !== count($orderedUids)
@@ -79,22 +119,52 @@ final class WebsiteGalleryManager
      * Single-cover invariant enforced here, at the application layer —
      * matching this codebase's existing convention (CatalogItemManager's
      * price/currency co-nullable check, CatalogItemManager::attachImage()'s
-     * own single-cover clear-then-set) rather than a DB constraint.
+     * own single-cover clear-then-set) rather than a DB constraint. Scoped
+     * to gallery-purpose assets: "cover" only ever means the homepage
+     * hero candidate, never a custom-section or package-mirror image.
      */
     public function setCover(Website $website, WebsiteAsset $asset): void
     {
-        abort_unless($asset->website_id === $website->id, 404);
+        $this->assertOwnedAndPurpose($website, $asset, WebsiteAssetPurpose::Gallery);
 
         DB::transaction(function () use ($website, $asset) {
-            WebsiteAsset::where('website_id', $website->id)->update(['is_cover' => false]);
+            WebsiteAsset::where('website_id', $website->id)->where('purpose', WebsiteAssetPurpose::Gallery->value)->update(['is_cover' => false]);
             $asset->forceFill(['is_cover' => true])->save();
         });
     }
 
-    public function setTitleAndCategory(Website $website, WebsiteAsset $asset, ?string $title, ?string $categoryTag): void
+    /**
+     * Independent-review correction round 2 — updating the customer-
+     * facing title also refreshes an AUTOGENERATED alt text (one this
+     * class/WebsiteAssetAltTextGenerator produced, never one the owner
+     * typed themselves) so the deterministic alt-text policy stays true
+     * after metadata changes, without ever overwriting an alt text the
+     * owner explicitly edited (WebsiteAsset.alt_text_is_custom).
+     */
+    /**
+     * @param  ?string  $customAltText  a non-blank value here is the owner's own explicit alt text and is never
+     *                                  regenerated again; blank (the ordinary case) leaves an already-custom alt
+     *                                  text untouched, or regenerates a still-autogenerated one from the new title/category
+     */
+    public function setTitleAndCategory(Website $website, WebsiteAsset $asset, WebsiteAssetPurpose $purpose, ?string $title, ?string $categoryTag, ?string $customAltText = null): void
     {
-        abort_unless($asset->website_id === $website->id, 404);
+        $this->assertOwnedAndPurpose($website, $asset, $purpose);
 
-        $asset->forceFill(['title' => $title, 'category_tag' => $categoryTag])->save();
+        $updates = ['title' => $title, 'category_tag' => $categoryTag];
+
+        if ($customAltText !== null && trim($customAltText) !== '') {
+            $updates['alt_text'] = trim(mb_substr($customAltText, 0, 160));
+            $updates['alt_text_is_custom'] = true;
+        } elseif (! $asset->alt_text_is_custom) {
+            $preview = (clone $asset)->forceFill($updates);
+            $updates['alt_text'] = $this->altText->suggest($website->business, $preview);
+        }
+
+        $asset->forceFill($updates)->save();
+    }
+
+    private function assertOwnedAndPurpose(Website $website, WebsiteAsset $asset, WebsiteAssetPurpose $purpose): void
+    {
+        abort_unless($asset->website_id === $website->id && $asset->purpose === $purpose, 404);
     }
 }

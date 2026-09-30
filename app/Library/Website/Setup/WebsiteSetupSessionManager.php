@@ -4,6 +4,7 @@ namespace App\Library\Website\Setup;
 
 use App\Enums\Questionnaire\QuestionnaireResponseStatus;
 use App\Library\Website\Setup\Exceptions\AnswerRevisionConflictException;
+use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Models\Business;
 use App\Models\QuestionnaireDefinition;
 use App\Models\QuestionnaireResponse;
@@ -119,6 +120,10 @@ final class WebsiteSetupSessionManager
         return DB::transaction(function () use ($response, $stepKey, $value, $expectedRevision) {
             $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
+            if ($locked->isGenerating()) {
+                throw new GenerationInProgressException('Your website is currently being generated — answers cannot change until it finishes.');
+            }
+
             if ((int) $locked->answers_revision !== $expectedRevision) {
                 throw new AnswerRevisionConflictException((int) $locked->answers_revision);
             }
@@ -157,6 +162,10 @@ final class WebsiteSetupSessionManager
         return DB::transaction(function () use ($response, $stepKey, $value) {
             $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
+            if ($locked->isGenerating()) {
+                throw new GenerationInProgressException('Your website is currently being generated — answers cannot change until it finishes.');
+            }
+
             $answers = $locked->answers ?? [];
             $answers[$stepKey] = $value;
 
@@ -193,6 +202,64 @@ final class WebsiteSetupSessionManager
     }
 
     /**
+     * Independent-review correction round 2 — the durable "generating"
+     * freeze: re-verifies ownership, status, completeness, and the
+     * caller's last-observed answers_revision ALL AT ONCE, under lock,
+     * immediately after the per-response generation lock is acquired —
+     * never trusting whatever the caller resolved before that lock. A
+     * response that is not genuinely `in_progress`/complete/at the
+     * expected revision right now refuses to enter generation at all
+     * (DomainException), rather than silently reconciling/spending AI
+     * against a response a concurrent request already completed or
+     * changed. Success sets `generation_started_at`, which
+     * saveAnswer()/updateAnswerInPlace() both refuse to write through
+     * while set.
+     *
+     * @throws DomainException
+     */
+    public function beginGeneration(Business $business, QuestionnaireResponse $response, int $expectedRevision): QuestionnaireResponse
+    {
+        return DB::transaction(function () use ($business, $response, $expectedRevision) {
+            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->first();
+
+            if ($locked === null || (int) $locked->business_id !== (int) $business->id) {
+                throw new DomainException('That setup session does not belong to this Business.');
+            }
+
+            if ($locked->status !== QuestionnaireResponseStatus::InProgress) {
+                throw new DomainException('This setup session is no longer in progress.');
+            }
+
+            if ($locked->isGenerating()) {
+                throw new DomainException('This website is already being generated.');
+            }
+
+            if ((int) $locked->answers_revision !== $expectedRevision) {
+                throw new AnswerRevisionConflictException((int) $locked->answers_revision);
+            }
+
+            if (! $this->stepResolver->isComplete($locked->version->steps(), $locked->answers ?? [])) {
+                throw new DomainException('Answer every required question before generating your website.');
+            }
+
+            $locked->forceFill(['generation_started_at' => now()])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * A technical failure returns the response to a genuinely retryable
+     * in_progress state — never left frozen in "generating" forever.
+     */
+    public function recordGenerationFailure(QuestionnaireResponse $response): QuestionnaireResponse
+    {
+        $response->forceFill(['generation_started_at' => null])->save();
+
+        return $response->refresh();
+    }
+
+    /**
      * Marks the response completed. Callers decide WHEN this may run —
      * WebsiteWizardController::generate() calls this only after the
      * website has actually been generated successfully, never before, so
@@ -210,6 +277,7 @@ final class WebsiteSetupSessionManager
         $response->forceFill([
             'status' => QuestionnaireResponseStatus::Completed,
             'edit_mode' => false,
+            'generation_started_at' => null,
             'completed_at' => now(),
         ])->save();
 
@@ -263,6 +331,7 @@ final class WebsiteSetupSessionManager
         $response->forceFill([
             'status' => QuestionnaireResponseStatus::Completed,
             'edit_mode' => false,
+            'generation_started_at' => null,
             'completed_at' => now(),
         ])->save();
 

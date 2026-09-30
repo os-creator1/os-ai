@@ -50,15 +50,27 @@ final class WebsiteSetupAnswerApplier
     }
 
     /**
-     * Independent-review correction round: iterates only the CURRENTLY
-     * VISIBLE steps (QuestionnaireStepResolver::visibleSteps(), evaluated
-     * against these same $answers) rather than every step the definition
-     * has ever declared. A step an earlier answer has since hidden (e.g.
-     * "backdrops" once "offers_backdrops" was changed to false) keeps
-     * whatever stale value it still carries in `answers`, but that value
-     * is never applied to a canonical record here — the exact
+     * Independent-review correction round: a step an earlier answer has
+     * since hidden (e.g. "backdrops" once "offers_backdrops" was changed
+     * to false) keeps whatever stale value it still carries in
+     * `answers`, but that value is never applied/written here — the
      * requirement that a hidden step's stale answer must not later be
      * applied.
+     *
+     * Independent-review correction round 2 — reconciliation is NOT
+     * conditioned on visibility the way application is: this method
+     * iterates the FULL step list (not merely the currently-visible
+     * subset) so that a now-HIDDEN backdrop/service/package step still
+     * reconciles as an empty submission — the owner switching
+     * "offers_backdrops" from true to false must deactivate any
+     * wizard-created backdrop, not just stop it from being re-applied
+     * with its stale value. Concretely: the accumulator for a
+     * reconcilable module is initialized to `[]` the moment ANY step of
+     * that module exists anywhere in the definition, whether visible or
+     * not; only a VISIBLE step with a real answer ever calls the actual
+     * write path (applyServices()/applyPackages()/applyBackdrops()) and
+     * contributes keys to it. `null` means "this questionnaire has no
+     * such step at all," which alone skips reconciliation entirely.
      *
      * Also reconciles, not merely upserts: for each of the three
      * source-keyed repeatable modules, a submitted entry's own
@@ -70,43 +82,52 @@ final class WebsiteSetupAnswerApplier
      */
     public function apply(Business $business, Website $website, QuestionnaireResponse $response, int $actorUserId): void
     {
-        $steps = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
+        $allSteps = $response->version->steps();
         $answers = $response->answers ?? [];
+        $visibleKeys = array_column($this->stepResolver->visibleSteps($allSteps, $answers), 'key');
 
-        DB::transaction(function () use ($business, $website, $steps, $answers, $actorUserId) {
-            // Reconciliation accumulates across every visible step of a
-            // given target_module (a questionnaire may reasonably have
-            // more than one business_service step, e.g. Photobooth's
-            // "booth_types" and "services_event_types") — null means "no
-            // such step was even visible this run," which must never
-            // trigger reconciliation, versus an empty array, which means
-            // a visible step was genuinely submitted with zero entries.
+        DB::transaction(function () use ($business, $website, $allSteps, $answers, $visibleKeys, $actorUserId) {
             $submittedServiceKeys = null;
             $submittedPackageKeys = null;
             $submittedBackdropKeys = null;
 
-            foreach ($steps as $step) {
-                $value = $answers[$step['key']] ?? null;
+            foreach ($allSteps as $step) {
+                $module = $step['target_module'];
+                $isReconcilable = in_array($module, ['business_service', 'catalog_item', 'backdrop'], true);
 
-                if ($value === null || $value === '' || $value === []) {
-                    if ($step['target_module'] === 'business_service') {
-                        $submittedServiceKeys = array_merge($submittedServiceKeys ?? [], []);
-                    } elseif ($step['target_module'] === 'catalog_item') {
-                        $submittedPackageKeys = array_merge($submittedPackageKeys ?? [], []);
-                    } elseif ($step['target_module'] === 'backdrop') {
-                        $submittedBackdropKeys = array_merge($submittedBackdropKeys ?? [], []);
-                    }
+                if ($isReconcilable) {
+                    // Every step of a reconcilable module participates in
+                    // reconciliation regardless of visibility — this is
+                    // what makes "null" mean "no such step exists" rather
+                    // than "not visible right now."
+                    match ($module) {
+                        'business_service' => $submittedServiceKeys ??= [],
+                        'catalog_item' => $submittedPackageKeys ??= [],
+                        'backdrop' => $submittedBackdropKeys ??= [],
+                        default => null,
+                    };
+                }
 
+                if (! in_array($step['key'], $visibleKeys, true)) {
+                    // Hidden: never read or apply its stale value —
+                    // reconciliation above already accounted for its
+                    // module without needing its (possibly stale) answer.
                     continue;
                 }
 
-                match ($step['target_module']) {
+                $value = $answers[$step['key']] ?? null;
+
+                if ($value === null || $value === '' || $value === []) {
+                    continue;
+                }
+
+                match ($module) {
                     'business' => $this->applyBusinessField($business, $step['target_field'], $value),
                     'business_location' => $this->applyLocationFields($business, $value),
                     'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $value, $actorUserId),
-                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys ?? [], $this->applyServices($business, $value)),
-                    'catalog_item' => $submittedPackageKeys = array_merge($submittedPackageKeys ?? [], $this->applyPackages($business, $value)),
-                    'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys ?? [], $this->applyBackdrops($business, $value)),
+                    'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value)),
+                    'catalog_item' => $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value)),
+                    'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys, $this->applyBackdrops($business, $value)),
                     'website_form' => $this->applyForm($business, $website, $value),
                     // 'gallery', 'answers', 'custom_section': presentation-
                     // only or already-canonical-elsewhere — left in
