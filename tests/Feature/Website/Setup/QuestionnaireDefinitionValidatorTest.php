@@ -162,4 +162,117 @@ class QuestionnaireDefinitionValidatorTest extends TestCase
             $this->step(['input_type' => 'price_or_quote', 'target_module' => 'catalog_item', 'target_field' => null]),
         ]);
     }
+
+    /**
+     * Independent-review correction round 3 — a business_location step
+     * has no real application path that ever reads target_field
+     * (WebsiteSetupAnswerApplier::applyLocationFields() takes the whole
+     * submitted value regardless of it), so a non-null value is refused
+     * here rather than silently accepted-and-ignored forever.
+     */
+    public function test_business_location_with_a_non_null_target_field_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['input_type' => 'text', 'target_module' => 'business_location', 'target_field' => 'address']),
+        ]);
+    }
+
+    public function test_business_location_with_a_null_target_field_is_accepted(): void
+    {
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['input_type' => 'text', 'target_module' => 'business_location', 'target_field' => null]),
+        ]);
+        $this->addToAssertionCount(1);
+    }
+
+    /**
+     * Every non-business, non-knowledge_profile module has no real
+     * target_field application path — a representative sample proves the
+     * rule generalizes, not merely business_location.
+     */
+    public function test_every_module_without_a_target_field_path_refuses_a_non_null_one(): void
+    {
+        $validator = new QuestionnaireDefinitionValidator();
+
+        $modules = [
+            ['input_type' => 'repeatable_group', 'target_module' => 'business_service'],
+            ['input_type' => 'repeatable_group', 'target_module' => 'catalog_item'],
+            ['input_type' => 'repeatable_group', 'target_module' => 'backdrop'],
+            ['input_type' => 'multi_select', 'target_module' => 'website_form', 'options' => ['a' => 'A']],
+            ['input_type' => 'photo_upload', 'target_module' => 'gallery'],
+            ['input_type' => 'boolean', 'target_module' => 'answers'],
+            ['input_type' => 'repeatable_group', 'target_module' => 'custom_section'],
+            ['input_type' => 'repeatable_group', 'target_module' => 'faq'],
+        ];
+
+        foreach ($modules as $overrides) {
+            try {
+                $validator->validate([$this->step(array_merge($overrides, ['target_field' => 'something']))]);
+                $this->fail("Module '{$overrides['target_module']}' should have refused a non-null target_field.");
+            } catch (DomainException) {
+                // Expected.
+            }
+        }
+
+        $this->addToAssertionCount(count($modules));
+    }
+
+    public function test_an_oversized_option_label_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['input_type' => 'select', 'target_module' => 'knowledge_profile', 'target_field' => 'brand_voice', 'options' => [
+                'a' => str_repeat('x', QuestionnaireDefinitionValidator::MAX_OPTION_LABEL + 1),
+            ]]),
+        ]);
+    }
+
+    public function test_an_oversized_option_value_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['input_type' => 'select', 'target_module' => 'knowledge_profile', 'target_field' => 'brand_voice', 'options' => [
+                str_repeat('a', QuestionnaireDefinitionValidator::MAX_OPTION_VALUE + 1) => 'A label',
+            ]]),
+        ]);
+    }
+
+    public function test_an_equals_condition_with_no_comparison_value_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['key' => 'first', 'input_type' => 'boolean', 'target_module' => 'answers', 'target_field' => null]),
+            $this->step(['key' => 'second', 'conditional_visibility' => ['depends_on' => 'first', 'condition' => 'equals']]),
+        ]);
+    }
+
+    public function test_a_not_equals_condition_with_no_comparison_value_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['key' => 'first', 'input_type' => 'boolean', 'target_module' => 'answers', 'target_field' => null]),
+            $this->step(['key' => 'second', 'conditional_visibility' => ['depends_on' => 'first', 'condition' => 'not_equals']]),
+        ]);
+    }
+
+    public function test_an_equals_condition_with_a_false_comparison_value_is_accepted(): void
+    {
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['key' => 'first', 'input_type' => 'boolean', 'target_module' => 'answers', 'target_field' => null]),
+            $this->step(['key' => 'second', 'conditional_visibility' => ['depends_on' => 'first', 'condition' => 'equals', 'value' => false]]),
+        ]);
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_the_actual_seeded_photobooth_definition_publishes_cleanly(): void
+    {
+        (new QuestionnaireDefinitionValidator())->validate(\Database\Seeders\PhotoboothWebsiteSetupQuestionnaireSeeder::steps());
+        $this->addToAssertionCount(1);
+    }
 }

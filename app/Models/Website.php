@@ -34,12 +34,14 @@ class Website extends Model
         'theme',
         'template_key',
         'gallery_page_enabled',
+        'presentation_changes_pending_at',
     ];
 
     protected $casts = [
         'status' => WebsiteStatus::class,
         'theme' => 'array',
         'gallery_page_enabled' => 'boolean',
+        'presentation_changes_pending_at' => 'datetime',
     ];
 
     /**

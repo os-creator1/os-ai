@@ -11,6 +11,28 @@
     </x-alert>
 @endif
 
+@if ($website->presentation_changes_pending_at !== null)
+    {{--
+        Independent-review correction round 3 (item 11) — editing FAQ,
+        custom section, or gallery cover/order after the website already
+        has generated pages updates setup data and real Website-owned
+        assets, but never the generated page content itself (a targeted
+        re-synchronization without a new AI call is not safe for every
+        one of these surfaces). This banner is the honest, explicit
+        signal that the owner's own change has not yet reached the live
+        pages, and the one existing action (a deliberate rebuild) that
+        applies it — never silently implied as "already done."
+    --}}
+    <x-alert variant="warning" class="mb-3">
+        Some of your recent changes (FAQ, custom section, or photo order/cover) haven't reached your website's pages yet.
+        <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="d-inline">
+            @csrf
+            <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
+            <button type="submit" class="btn btn-sm btn-warning">Rebuild now</button>
+        </form>
+    </x-alert>
+@endif
+
 @if (! empty($mediaWarnings))
     <x-alert variant="warning" class="mb-3">
         <strong>Missing media checklist:</strong>

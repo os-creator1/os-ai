@@ -76,6 +76,56 @@ final class WebsitePageStrategy
     public const MAX_LOCATION_PAGES = 20;
 
     /**
+     * Independent-review correction round 3 — the deterministic ceiling
+     * on the TOTAL number of pages one plan may ever contain, regardless
+     * of how many individually-bounded categories (service_detail,
+     * location, etc.) would otherwise add up. Without this, a plan with
+     * every optional page type present plus the per-type maximums above
+     * could reach roughly 45-50 pages — far more than the
+     * `website_generation` route's 8,000-output-token envelope can ever
+     * afford to write real content for in one response
+     * (WebsiteAiEnvelopeCaptureTest proves a REPRESENTATIVE response for
+     * a full, capped plan — not merely the config — actually fits the
+     * route's 8,000-output-token limit; an earlier, higher value of 20
+     * measurably did not: a realistic ~2-section-per-page response for 20
+     * pages estimated to roughly 10,400 tokens). Fixed/always-eligible
+     * pages (home, overview pages, about, faq, gallery, contact,
+     * backdrops, custom_section) are never trimmed — only the two
+     * aggregate, per-entity categories (service_detail, then location)
+     * are reduced, in that deterministic priority order, to make room.
+     */
+    public const MAX_TOTAL_PAGES = 14;
+
+    /**
+     * Independent-review correction round 3 — an "overview" page (
+     * services_overview, packages) lists EVERY eligible entity's summary
+     * facts in its own `entity` payload, entirely separately from the
+     * per-type page-count caps above (which only bound how many
+     * DEDICATED detail pages exist) — so it was never actually bounded
+     * by MAX_SERVICE_DETAIL_PAGES at all. Capped to the same size here so
+     * the overview page's own AI-written content is never asked to
+     * summarize an unbounded list.
+     */
+    public const MAX_OVERVIEW_ENTITIES = 20;
+
+    /**
+     * A conservative ceiling on any one entity's free-text description
+     * before it is ever placed in an AI prompt — a real BusinessService/
+     * CatalogItem description column has no application-level length
+     * bound of its own, so a single very long one could dominate the
+     * whole request. Truncated deterministically (never by AI), on a
+     * whole-word boundary, with a visible ellipsis.
+     */
+    private const MAX_ENTITY_DESCRIPTION = 300;
+
+    /**
+     * A location's own service_area_cities list is customer-entered and
+     * otherwise unbounded in length — capped here for the same reason as
+     * MAX_ENTITY_DESCRIPTION.
+     */
+    private const MAX_ENTITY_CITY_LIST = 10;
+
+    /**
      * Acceptance-correction Blocker 8: a location needs at least this
      * many independent real signals (never just one) before a page is
      * justified. Each signal is a genuinely saved fact — never inferred
@@ -213,7 +263,7 @@ final class WebsitePageStrategy
                 'slug' => 'services',
                 'title' => 'Services',
                 'allowed_section_types' => $allowed('services_overview'),
-                'entity' => ['services' => $this->serviceEntities($services)],
+                'entity' => ['services' => $this->serviceEntities($services->take(self::MAX_OVERVIEW_ENTITIES))],
             ];
         }
 
@@ -225,20 +275,31 @@ final class WebsitePageStrategy
                 'slug' => 'packages',
                 'title' => 'Packages',
                 'allowed_section_types' => $allowed('packages'),
-                'entity' => ['packages' => $this->catalogEntities($catalogItems)],
+                'entity' => ['packages' => $this->catalogEntities($catalogItems->take(self::MAX_OVERVIEW_ENTITIES))],
             ];
         }
 
+        // Independent-review correction round 3 — the total plan is
+        // bounded below (MAX_TOTAL_PAGES) after every fixed/always-
+        // eligible page above is already counted, so the two aggregate,
+        // per-entity categories built next (service_detail, then
+        // location, in that deterministic priority order) are each
+        // reduced to whatever budget genuinely remains — never merely to
+        // their own individual per-type cap, which alone could still let
+        // the total blow past what the AI envelope can afford.
+        $remainingPageBudget = max(0, self::MAX_TOTAL_PAGES - count($plan) - $this->fixedPageCount($hasType, $business, $website, $customSection));
+
         if ($hasType('service_detail')) {
-            // Independent-review correction round 2 — bounds the number
+            // Independent-review correction round 2/3 — bounds the number
             // of AI-authored pages one generation request can ever be
             // asked for, regardless of how many BusinessService rows a
             // questionnaire's own (generously bounded per-step, but
             // unbounded in aggregate across steps) repeatable-group
             // answers created. Deterministic and stable: always the
-            // first MAX_SERVICE_DETAIL_PAGES by this Collection's own
-            // existing sort_order.
-            foreach ($services->take(self::MAX_SERVICE_DETAIL_PAGES) as $service) {
+            // first N by this Collection's own existing sort_order.
+            $serviceDetailLimit = min(self::MAX_SERVICE_DETAIL_PAGES, $remainingPageBudget);
+
+            foreach ($services->take($serviceDetailLimit) as $service) {
                 $plan[] = [
                     'page_key' => 'service:' . $service->uid,
                     'page_type' => 'service_detail',
@@ -249,6 +310,8 @@ final class WebsitePageStrategy
                     'entity' => $this->serviceEntity($service),
                 ];
             }
+
+            $remainingPageBudget = max(0, $remainingPageBudget - $serviceDetailLimit);
         }
 
         if ($hasType('about')) {
@@ -324,9 +387,14 @@ final class WebsitePageStrategy
         }
 
         if ($hasType('location')) {
-            // Independent-review correction round 2 — same aggregate
-            // bound as service_detail pages above, for the same reason.
-            foreach ($this->eligibleLocations($business)->take(self::MAX_LOCATION_PAGES) as $location) {
+            // Independent-review correction round 2/3 — same aggregate
+            // bound as service_detail pages above, for the same reason —
+            // now against whatever total-page budget genuinely remains
+            // after every fixed page and every service_detail page
+            // already placed, not merely its own standalone cap.
+            $locationLimit = min(self::MAX_LOCATION_PAGES, $remainingPageBudget);
+
+            foreach ($this->eligibleLocations($business)->take($locationLimit) as $location) {
                 $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
 
                 $plan[] = [
@@ -402,11 +470,60 @@ final class WebsitePageStrategy
         return array_filter([
             'service_uid' => $service->uid,
             'name' => $service->name,
-            'description' => trim((string) $service->description) !== '' ? trim($service->description) : null,
+            'description' => $this->boundedDescription($service->description),
             'price_label' => $service->starting_price !== null && $service->currency_code
                 ? 'From ' . strtoupper($service->currency_code) . ' ' . $service->starting_price
                 : null,
         ], fn ($value) => $value !== null);
+    }
+
+    /**
+     * Independent-review correction round 3 — a deterministic, whole-word
+     * truncation of a free-text entity field before it is ever placed in
+     * an AI prompt, so one unusually long saved description can never
+     * dominate the guided-generation request's own bounded input-token
+     * envelope.
+     */
+    private function boundedDescription(?string $description): ?string
+    {
+        $description = trim((string) $description);
+
+        if ($description === '') {
+            return null;
+        }
+
+        if (mb_strlen($description) <= self::MAX_ENTITY_DESCRIPTION) {
+            return $description;
+        }
+
+        $truncated = mb_substr($description, 0, self::MAX_ENTITY_DESCRIPTION);
+        $lastSpace = mb_strrpos($truncated, ' ');
+
+        if ($lastSpace !== false) {
+            $truncated = mb_substr($truncated, 0, $lastSpace);
+        }
+
+        return rtrim($truncated) . '…';
+    }
+
+    /**
+     * The fixed/always-possible pages this plan may still add AFTER the
+     * aggregate service_detail/location categories are sized — counted
+     * up front (using the exact same eligibility checks buildPlan() uses
+     * for each) so those two categories are sized against the TRUE
+     * remaining budget, never merely their own per-type cap.
+     */
+    private function fixedPageCount(\Closure $hasType, Business $business, Website $website, ?array $customSection): int
+    {
+        $count = 0;
+        $count += $hasType('about') ? 1 : 0;
+        $count += $hasType('faq') ? 1 : 0;
+        $count += $hasType('gallery') && $this->galleryEligible($website) ? 1 : 0;
+        $count += $hasType('contact') ? 1 : 0;
+        $count += $hasType('backdrops') && $this->backdropsEligible($business) ? 1 : 0;
+        $count += $hasType('custom_section') && $customSection !== null ? 1 : 0;
+
+        return $count;
     }
 
     /**
@@ -416,7 +533,7 @@ final class WebsitePageStrategy
     {
         return $catalogItems->map(fn ($item) => array_filter([
             'name' => $item->name,
-            'description' => trim((string) $item->description) !== '' ? trim($item->description) : null,
+            'description' => $this->boundedDescription($item->description),
             'price_label' => $item->price_minor !== null && $item->currency_code
                 ? \App\Library\Catalog\CatalogMoney::format($item->price_minor, $item->currency_code)
                 : null,
@@ -429,7 +546,7 @@ final class WebsitePageStrategy
             'location_id' => $location->id,
             'city' => $location->city,
             'region' => $location->region,
-            'service_area_cities' => collect($location->service_area_cities ?? [])->filter()->values()->all() ?: null,
+            'service_area_cities' => collect($location->service_area_cities ?? [])->filter()->take(self::MAX_ENTITY_CITY_LIST)->values()->all() ?: null,
             'service_radius_km' => $location->service_radius_km ?: null,
         ], fn ($value) => $value !== null && $value !== []);
     }

@@ -42,6 +42,10 @@ class QuestionnaireResponse extends Model
         'status',
         'edit_mode',
         'generation_started_at',
+        'custom_section_improve_key',
+        'custom_section_improve_status',
+        'custom_section_improve_started_revision',
+        'custom_section_improve_result',
         'current_step_key',
         'answers',
         'answers_revision',
@@ -57,7 +61,15 @@ class QuestionnaireResponse extends Model
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
         'generation_started_at' => 'datetime',
+        'custom_section_improve_started_revision' => 'integer',
+        'custom_section_improve_result' => 'array',
     ];
+
+    public const IMPROVE_STATUS_PENDING = 'pending';
+
+    public const IMPROVE_STATUS_SUCCEEDED = 'succeeded';
+
+    public const IMPROVE_STATUS_FAILED = 'failed';
 
     public function isGenerating(): bool
     {

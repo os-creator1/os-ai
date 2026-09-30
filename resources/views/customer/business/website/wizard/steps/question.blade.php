@@ -11,7 +11,14 @@
         // (WebsiteWizardController::valueFromRequest()). A richer
         // dynamic "add another" interaction is a natural follow-up, not
         // required to prove the underlying pipeline end to end.
-        $blankRowCount = max(3, count($rows) + 1);
+        // Independent-review correction round 3 — v1 supports exactly ONE
+        // custom section (the brief's own wording is singular, and
+        // generation only ever reads the first entry); rendering more
+        // than one row here would silently invite content that is never
+        // used. Every other repeatable question keeps the existing
+        // "always one blank spare row" behavior.
+        $isCustomSectionGroup = ($step['target_module'] ?? null) === 'custom_section';
+        $blankRowCount = $isCustomSectionGroup ? 1 : max(3, count($rows) + 1);
         $answerFormId = 'answer-form-' . $step['key'];
     @endphp
 

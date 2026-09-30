@@ -93,6 +93,33 @@ final class GuidedGenerationCommitService
         return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $customSection, $customerFaq);
     }
 
+    /**
+     * Independent-review correction round 3 (item 1) — this table's own
+     * seam discipline (class docblock: "no controller ever writes this
+     * table directly") is preserved by keeping the actual write here,
+     * even though the CALLER of this method is WebsiteSetupSessionManager
+     * reacting to a stale `generation_started_at` lease. A `pending`
+     * attempt whose OWN row is older than `$staleBefore` never made
+     * forward progress (the process that created it died before this
+     * same method's own commit/failure transaction ever ran) — it is
+     * marked `failed` so it can never again short-circuit a genuine
+     * retry via the material-idempotency match in run() above, and so it
+     * never blocks a fresh attempt with the identical material key
+     * forever. A `pending` row newer than `$staleBefore` is a genuinely
+     * active attempt and is never touched.
+     */
+    public function recoverStaleAttempt(int $websiteId, \DateTimeInterface $staleBefore): void
+    {
+        WebsiteGuidedGenerationAttempt::where('website_id', $websiteId)
+            ->where('status', WebsiteGuidedGenerationAttempt::STATUS_PENDING)
+            ->where('created_at', '<', $staleBefore)
+            ->update([
+                'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+                'failure_reason' => 'Recovered from a stalled generation attempt.',
+                'completed_at' => now(),
+            ]);
+    }
+
     private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection);
@@ -149,7 +176,7 @@ final class GuidedGenerationCommitService
         // AI provider calls stay OUTSIDE any database transaction
         // (Blocker 5) — the only writes below happen after this
         // returns.
-        [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims);
+        [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
 
         if ($aiPages === null) {
             $attempt->update([
@@ -197,6 +224,14 @@ final class GuidedGenerationCommitService
                 $locked->update([
                     'theme' => $template->theme,
                     'template_key' => $template->key,
+                    // Independent-review correction round 3 (item 11) —
+                    // the one place real Website page content actually
+                    // changes: any "presentation changes pending" flag a
+                    // post-generation setup edit set is cleared here,
+                    // whether this run is a first-time generation (never
+                    // set yet) or the deliberate rebuild that specific
+                    // flag exists to require.
+                    'presentation_changes_pending_at' => null,
                 ]);
 
                 // Blocker 5 — the attempt's success is marked INSIDE the
@@ -229,14 +264,17 @@ final class GuidedGenerationCommitService
      * @return array{0: ?array, 1: int} the validated page batch (or null
      *                                  on unrecoverable failure) and how many retries were spent
      */
-    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims): array
+    private function generateAndValidate(Business $business, array $aiPlan, array $prohibitedClaims, string $idempotencyKey): array
     {
         $attempts = 0;
 
         // §8.4 — exactly one bounded corrective retry against the whole
-        // batch; a second failure ends the attempt.
+        // batch; a second failure ends the attempt. Each retry gets its
+        // OWN idempotency key (the attempt's own base key plus the
+        // retry number) — a retry is a genuinely distinct provider call,
+        // never a duplicate of the first.
         while ($attempts <= 1) {
-            $pages = $this->client->generate($business, $aiPlan, null);
+            $pages = $this->client->generate($business, $aiPlan, null, $idempotencyKey . ':retry' . $attempts);
 
             if ($pages !== null) {
                 try {

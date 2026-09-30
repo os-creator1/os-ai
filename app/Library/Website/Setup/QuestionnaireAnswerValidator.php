@@ -161,6 +161,22 @@ final class QuestionnaireAnswerValidator
 
     public const MAX_TESTIMONIAL_AUTHOR = 80;
 
+    /**
+     * Independent-review correction round 3 — v1 supports exactly ONE
+     * custom section (the brief's own wording is singular, and
+     * generation only ever reads the first entry — see
+     * WebsiteWizardController::customSectionFromAnswers()). The wizard's
+     * own view now renders only one editor row; this is the backend
+     * backstop against a forged/legacy multi-entry submission, never
+     * relied on as the only defense (WebsiteWizardController::
+     * valueFromRequest() also normalizes to the first entry before this
+     * validator ever runs).
+     */
+    public const MAX_CUSTOM_SECTIONS = 1;
+
+    /** Matches WebsiteGalleryManager::MAX_CUSTOM_SECTION_ASSETS exactly — one consistent limit, never two. */
+    public const MAX_CUSTOM_SECTION_IMAGES = 6;
+
     private function validateRepeatableGroup(array $step, mixed $value): void
     {
         if (! is_array($value)) {
@@ -170,8 +186,14 @@ final class QuestionnaireAnswerValidator
         $targetModule = $step['target_module'] ?? null;
         $isFaq = $targetModule === 'faq';
         $isTestimonial = $targetModule === 'knowledge_profile' && ($step['target_field'] ?? null) === 'testimonials';
+        $isCustomSection = $targetModule === 'custom_section';
 
-        $maxItems = $isFaq ? self::MAX_FAQ_ITEMS : ($isTestimonial ? self::MAX_TESTIMONIALS : self::MAX_REPEATABLE_ITEMS);
+        $maxItems = match (true) {
+            $isFaq => self::MAX_FAQ_ITEMS,
+            $isTestimonial => self::MAX_TESTIMONIALS,
+            $isCustomSection => self::MAX_CUSTOM_SECTIONS,
+            default => self::MAX_REPEATABLE_ITEMS,
+        };
         if (count($value) > $maxItems) {
             throw new InvalidAnswerException("Too many entries — the limit is {$maxItems}.");
         }
@@ -237,8 +259,14 @@ final class QuestionnaireAnswerValidator
         }
 
         $images = $item['images'] ?? [];
-        if (! is_array($images) || count($images) > 12) {
-            throw new InvalidAnswerException('A custom section may have at most 12 images.');
+        if (! is_array($images) || count($images) > self::MAX_CUSTOM_SECTION_IMAGES) {
+            throw new InvalidAnswerException('A custom section may have at most ' . self::MAX_CUSTOM_SECTION_IMAGES . ' images.');
+        }
+
+        foreach ($images as $image) {
+            if (! is_string($image) || $image === '') {
+                throw new InvalidAnswerException('A custom section image reference is invalid.');
+            }
         }
     }
 

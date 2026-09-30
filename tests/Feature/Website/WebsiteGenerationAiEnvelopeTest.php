@@ -90,6 +90,15 @@ class WebsiteGenerationAiEnvelopeTest extends TestCase
      * itself is reduced deterministically to a bounded page count BEFORE
      * AI is ever asked for anything — never merely relying on the
      * per-step limits alone.
+     *
+     * Independent-review correction round 3 (item 4) — service_detail
+     * pages are no longer capped merely by their OWN standalone
+     * MAX_SERVICE_DETAIL_PAGES ceiling: they are sized against whatever
+     * TOTAL page budget (MAX_TOTAL_PAGES) genuinely remains once every
+     * fixed page (home, services_overview, about, faq, contact, etc.) is
+     * already counted — the real, stronger invariant this test now
+     * proves is that the WHOLE plan, not just this one category, never
+     * exceeds MAX_TOTAL_PAGES.
      */
     public function test_an_oversized_service_count_is_reduced_to_the_deterministic_page_cap_before_generation(): void
     {
@@ -111,6 +120,8 @@ class WebsiteGenerationAiEnvelopeTest extends TestCase
         $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
         $serviceDetailPages = collect($plan)->where('page_type', 'service_detail');
 
-        $this->assertSame(WebsitePageStrategy::MAX_SERVICE_DETAIL_PAGES, $serviceDetailPages->count(), 'The plan must be reduced deterministically to the configured cap, never left unbounded.');
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_SERVICE_DETAIL_PAGES, $serviceDetailPages->count(), 'service_detail pages must never exceed their own per-type cap either.');
+        $this->assertLessThan(WebsitePageStrategy::MAX_SERVICE_DETAIL_PAGES + 15, $serviceDetailPages->count(), 'The plan must be reduced deterministically, never left unbounded against the real 35 created services.');
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan), 'The plan\'s TOTAL page count must never exceed the deterministic total-page cap, regardless of how many individual categories would otherwise add up.');
     }
 }

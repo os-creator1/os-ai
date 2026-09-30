@@ -632,6 +632,192 @@ class WebsiteWizardControllerTest extends TestCase
         $this->assertSame([$imageUid], $section['data']['images']);
     }
 
+    /**
+     * Independent-review correction round 3 (item 6) — a submitted
+     * custom_section `images[]` uid is untrusted client input. A gallery-
+     * purpose asset (uploaded through a completely different endpoint,
+     * for a completely different purpose) must never be accepted into a
+     * custom section merely because its uid was replayed in the form.
+     */
+    public function test_a_custom_section_image_uid_belonging_to_the_gallery_is_rejected(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspace->uid, $business->uid]), [
+            'photos' => [$this->fakeImageUpload('gallery.png')],
+        ]);
+        $galleryUid = $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)->sole()->uid;
+
+        $response = $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'custom_section']), [
+            'items' => [['name' => 'Section', 'body' => 'Body', 'images' => [$galleryUid]]],
+            'answers_revision' => 1,
+        ]);
+        $response->assertSessionHas('status', 'error');
+
+        $stored = QuestionnaireResponse::where('business_id', $business->id)->sole()->answer('custom_section');
+        $this->assertNull($stored, 'A forged gallery-purpose uid must never be accepted into the custom_section answer.');
+    }
+
+    /**
+     * The same forged-uid family but from a completely different Website
+     * — cross-tenant, not merely cross-purpose.
+     */
+    public function test_a_custom_section_image_uid_belonging_to_a_foreign_website_is_rejected(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        [, $otherBusiness] = $this->entitledTenant();
+        $otherWebsite = Website::create(['business_id' => $otherBusiness->id, 'name' => 'Other', 'status' => 'draft']);
+        $foreignAsset = \App\Models\WebsiteAsset::create([
+            'website_id' => $otherWebsite->id, 'disk' => 'public', 'path' => 'images/websites/x/foreign.png',
+            'mime_type' => 'image/png', 'size' => 100, 'purpose' => \App\Enums\Website\WebsiteAssetPurpose::CustomSection->value,
+        ]);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $response = $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'custom_section']), [
+            'items' => [['name' => 'Section', 'body' => 'Body', 'images' => [$foreignAsset->uid]]],
+            'answers_revision' => 1,
+        ]);
+        $response->assertSessionHas('status', 'error');
+
+        $stored = QuestionnaireResponse::where('business_id', $business->id)->sole()->answer('custom_section');
+        $this->assertNull($stored, 'A foreign Website\'s asset uid must never be accepted into this Website\'s custom_section answer.');
+    }
+
+    /**
+     * Independent-review correction round 3 (item 9) — v1 supports
+     * exactly one custom section; a forged multi-entry submission is
+     * safely normalized to its first entry, never silently accepted in
+     * full.
+     */
+    public function test_a_forged_multi_entry_custom_section_submission_keeps_only_the_first_entry(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'custom_section']), [
+            'items' => [
+                ['name' => 'First Section', 'body' => 'First body'],
+                ['name' => 'Second Section', 'body' => 'Second body'],
+            ],
+            'answers_revision' => 1,
+        ])->assertSessionDoesntHaveErrors();
+
+        $stored = QuestionnaireResponse::where('business_id', $business->id)->sole()->answer('custom_section');
+        $this->assertCount(1, $stored);
+        $this->assertSame('First Section', $stored[0]['name']);
+    }
+
+    /**
+     * Independent-review correction round 3 (item 7) — the "Make cover"
+     * form submits ONLY `is_cover`; title/category/alt must survive
+     * untouched, proven via the REAL HTTP endpoint (not a direct manager
+     * call), since the bug was specifically in how the controller
+     * interpreted the request's missing fields.
+     */
+    public function test_making_a_photo_the_cover_via_http_preserves_its_existing_metadata(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspace->uid, $business->uid]), [
+            'photos' => [$this->fakeImageUpload('a.png')],
+        ]);
+        $asset = $website->assets()->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.update', [$workspace->uid, $business->uid, $asset->uid]), [
+            'title' => 'Open-air booth', 'category_tag' => 'ceremony', 'alt_text' => 'My own hand-written alt text',
+        ])->assertSessionDoesntHaveErrors();
+
+        // The real "Make cover" form: ONLY is_cover, exactly as the
+        // wizard's own gallery blade renders it.
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.update', [$workspace->uid, $business->uid, $asset->uid]), [
+            'is_cover' => '1',
+        ])->assertSessionDoesntHaveErrors();
+
+        $fresh = $asset->fresh();
+        $this->assertTrue($fresh->is_cover);
+        $this->assertSame('Open-air booth', $fresh->title, 'Title must survive a cover-only submission.');
+        $this->assertSame('ceremony', $fresh->category_tag, 'Category must survive a cover-only submission.');
+        $this->assertSame('My own hand-written alt text', $fresh->alt_text, 'Explicit alt text must survive a cover-only submission.');
+        $this->assertTrue($fresh->alt_text_is_custom);
+    }
+
+    /**
+     * The inverse: a metadata-only update (no is_cover field at all)
+     * must never flip or clear the cover flag.
+     */
+    public function test_updating_metadata_via_http_never_touches_the_cover_flag(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspace->uid, $business->uid]), [
+            'photos' => [$this->fakeImageUpload('a.png')],
+        ]);
+        $asset = $website->assets()->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.update', [$workspace->uid, $business->uid, $asset->uid]), ['is_cover' => '1']);
+        $this->assertTrue($asset->fresh()->is_cover);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.update', [$workspace->uid, $business->uid, $asset->uid]), [
+            'title' => 'A new title',
+        ])->assertSessionDoesntHaveErrors();
+
+        $this->assertTrue($asset->fresh()->is_cover, 'A metadata-only update must never clear an existing cover.');
+        $this->assertSame('A new title', $asset->fresh()->title);
+    }
+
+    /**
+     * Independent-review correction round 3 (item 7) — a wrong-purpose
+     * removal request explicitly 404s via the real HTTP endpoint, rather
+     * than silently no-opping.
+     */
+    public function test_removing_a_custom_section_asset_through_the_gallery_endpoint_404s(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.upload', [$workspace->uid, $business->uid]), [
+            'photo' => $this->fakeImageUpload('custom.png'),
+        ]);
+        $website = Website::where('business_id', $business->id)->sole();
+        $customAsset = $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::CustomSection->value)->sole();
+
+        $this->delete(route('customer.workspaces.businesses.website.setup.gallery.remove', [$workspace->uid, $business->uid, $customAsset->uid]))
+            ->assertNotFound();
+
+        $this->assertNotNull($customAsset->fresh(), 'The wrong-purpose asset must survive an endpoint scoped to a different purpose.');
+    }
+
+    public function test_removing_a_gallery_asset_through_the_custom_section_endpoint_404s(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspace->uid, $business->uid]), [
+            'photos' => [$this->fakeImageUpload('gallery.png')],
+        ]);
+        $website = Website::where('business_id', $business->id)->sole();
+        $galleryAsset = $website->assets()->sole();
+
+        $this->delete(route('customer.workspaces.businesses.website.setup.custom-section.remove', [$workspace->uid, $business->uid, $galleryAsset->uid]))
+            ->assertNotFound();
+
+        $this->assertNotNull($galleryAsset->fresh(), 'The wrong-purpose asset must survive an endpoint scoped to a different purpose.');
+    }
+
     public function test_back_from_the_first_question_shows_the_template_picker_for_a_first_time_session(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
@@ -823,13 +1009,18 @@ class WebsiteWizardControllerTest extends TestCase
         });
         $this->app->instance(WebsiteAiGenerationClient::class, $mock);
 
-        // Same response id, same exact submitted body, twice in a row —
-        // simulating a double-click.
+        // Same response id, same exact submitted body, same observed
+        // answers_revision, twice in a row — simulating a genuine
+        // double-click of the same rendered page (a real browser submits
+        // the SAME hidden answers_revision value both times, since the
+        // page has not been reloaded between clicks).
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'Same body']],
+            'answers_revision' => 1,
         ]);
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'Same body']],
+            'answers_revision' => 1,
         ]);
 
         $this->assertSame(1, $calls, 'A duplicate identical improve submission must spend AI exactly once.');

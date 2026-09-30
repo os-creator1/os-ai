@@ -65,7 +65,23 @@ class WebsiteAiGenerationClient
         );
     }
 
-    public function complete(array $messages, Business $business, ?int $actorUserId = null): ?string
+    /**
+     * Independent-review correction round 3 (item 3) — the
+     * `website_generation` route's own 8,000-output-token envelope is
+     * sized for a full multi-page site batch; a small request (the old
+     * draft generator, or one custom-section "Improve with AI" call)
+     * must never ask the provider for that much itself, even though it
+     * shares the same route/category/budget pool. `$maxOutputTokens`
+     * lets each call site state its OWN real ceiling explicitly — never
+     * exceeding the route's own configured cap either way, via `min()`
+     * below.
+     *
+     * `$idempotencyKey` lets a caller with its own durable, stable
+     * identity (e.g. WebsiteSetupSessionManager's Improve CAS attempt)
+     * pass it straight through onto the AiRequest/ledger entry, instead
+     * of always minting a fresh, meaningless-for-dedup uuid.
+     */
+    public function complete(array $messages, Business $business, ?int $actorUserId = null, ?int $maxOutputTokens = null, ?string $idempotencyKey = null): ?string
     {
         $this->lastRefusalReason = null;
         $category = AiUsageCategory::WebsiteGeneration;
@@ -79,8 +95,8 @@ class WebsiteAiGenerationClient
             lane: AiLane::Product,
             route: $route,
             messages: $messages,
-            maxOutputTokens: (int) $routeConfig['max_output_tokens'],
-            idempotencyKey: (string) Str::uuid(),
+            maxOutputTokens: min($maxOutputTokens ?? (int) $routeConfig['max_output_tokens'], (int) $routeConfig['max_output_tokens']),
+            idempotencyKey: $idempotencyKey ?? (string) Str::uuid(),
             actorUserId: $actorUserId,
             jsonMode: true,
         );

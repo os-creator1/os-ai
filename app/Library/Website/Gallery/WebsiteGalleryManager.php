@@ -51,6 +51,20 @@ final class WebsiteGalleryManager
     }
 
     /**
+     * Independent-review correction round 3 (item 10) — gallery and
+     * custom-section uploads share ONE combined 120MB byte quota
+     * (MAX_TOTAL_UPLOAD_BYTES) but used to lock only THIS call's own
+     * purpose-scoped asset rows (`lockForUpdate()` on a purpose-filtered
+     * query) — two concurrent uploads of DIFFERENT purposes locked
+     * disjoint row sets and could therefore both read the same "room
+     * remaining" snapshot and both proceed, together exceeding the
+     * shared cap. Locking the Website row itself first, before
+     * calculating or consuming EITHER the per-purpose count cap or the
+     * combined byte quota, serializes every upload for this Website
+     * regardless of purpose — the second of two concurrent calls always
+     * waits for the first to commit (or roll back) before it can even
+     * read the byte total.
+     *
      * @param  array<int, UploadedFile>  $files
      * @return array<int, WebsiteAsset>
      * @throws InvalidWebsiteAssetException on the first invalid file, or when a server-enforced cap would be exceeded —
@@ -58,36 +72,62 @@ final class WebsiteGalleryManager
      */
     public function uploadMany(Website $website, array $files, WebsiteAssetPurpose $purpose, ?string $categoryTag = null): array
     {
-        return DB::transaction(function () use ($website, $files, $purpose, $categoryTag) {
-            $existingCount = $website->assets()->where('purpose', $purpose->value)->lockForUpdate()->count();
-            $maxCount = $purpose === WebsiteAssetPurpose::CustomSection ? self::MAX_CUSTOM_SECTION_ASSETS : self::MAX_GALLERY_ASSETS;
+        /** @var array<int, WebsiteAsset> $createdAssets */
+        $createdAssets = [];
 
-            if ($existingCount + count($files) > $maxCount) {
-                throw new InvalidWebsiteAssetException("This Website can have at most {$maxCount} " . ($purpose === WebsiteAssetPurpose::CustomSection ? 'custom-section' : 'gallery') . ' photos.');
+        try {
+            return DB::transaction(function () use ($website, $files, $purpose, $categoryTag, &$createdAssets) {
+                $lockedWebsite = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+                $existingCount = $lockedWebsite->assets()->where('purpose', $purpose->value)->count();
+                $maxCount = $purpose === WebsiteAssetPurpose::CustomSection ? self::MAX_CUSTOM_SECTION_ASSETS : self::MAX_GALLERY_ASSETS;
+
+                if ($existingCount + count($files) > $maxCount) {
+                    throw new InvalidWebsiteAssetException("This Website can have at most {$maxCount} " . ($purpose === WebsiteAssetPurpose::CustomSection ? 'custom-section' : 'gallery') . ' photos.');
+                }
+
+                $existingUploadedBytes = (int) $lockedWebsite->assets()
+                    ->whereIn('purpose', [WebsiteAssetPurpose::Gallery->value, WebsiteAssetPurpose::CustomSection->value])
+                    ->sum('size');
+                $incomingBytes = array_sum(array_map(fn (UploadedFile $file) => $file->getSize() ?: 0, $files));
+
+                if ($existingUploadedBytes + $incomingBytes > self::MAX_TOTAL_UPLOAD_BYTES) {
+                    throw new InvalidWebsiteAssetException('This Website has reached its total uploaded-photo storage limit.');
+                }
+
+                $nextPosition = (int) ($lockedWebsite->assets()->where('purpose', $purpose->value)->max('sort_order') ?? -1) + 1;
+
+                foreach ($files as $file) {
+                    $asset = $this->uploads->store($lockedWebsite, $file, null, $purpose);
+                    $createdAssets[] = $asset;
+                    $asset->forceFill(['sort_order' => $nextPosition, 'category_tag' => $categoryTag])->save();
+                    $asset->forceFill(['alt_text' => $this->altText->suggest($lockedWebsite->business, $asset)])->save();
+                    $nextPosition++;
+                }
+
+                return $createdAssets;
+            });
+        } catch (\Throwable $e) {
+            // Independent-review correction round 3 (item 10) — the
+            // transaction above already rolled back every DATABASE row
+            // this call created, but WebsiteAssetUploadService::store()
+            // writes each file to disk OUTSIDE that transaction (a
+            // filesystem write cannot be rolled back by MySQL). Without
+            // this, a batch that fails partway through (e.g. the 3rd of
+            // 5 files is corrupt, or the batch as a whole trips the byte
+            // cap after some files were already stored earlier in the
+            // SAME foreach) would leave the earlier files' images
+            // orphaned on disk with no corresponding row, forever.
+            foreach ($createdAssets as $orphaned) {
+                $fullPath = public_path($orphaned->path);
+
+                if (is_file($fullPath)) {
+                    @unlink($fullPath);
+                }
             }
 
-            $existingUploadedBytes = (int) $website->assets()
-                ->whereIn('purpose', [WebsiteAssetPurpose::Gallery->value, WebsiteAssetPurpose::CustomSection->value])
-                ->sum('size');
-            $incomingBytes = array_sum(array_map(fn (UploadedFile $file) => $file->getSize() ?: 0, $files));
-
-            if ($existingUploadedBytes + $incomingBytes > self::MAX_TOTAL_UPLOAD_BYTES) {
-                throw new InvalidWebsiteAssetException('This Website has reached its total uploaded-photo storage limit.');
-            }
-
-            $nextPosition = (int) ($website->assets()->where('purpose', $purpose->value)->max('sort_order') ?? -1) + 1;
-            $created = [];
-
-            foreach ($files as $file) {
-                $asset = $this->uploads->store($website, $file, null, $purpose);
-                $asset->forceFill(['sort_order' => $nextPosition, 'category_tag' => $categoryTag])->save();
-                $asset->forceFill(['alt_text' => $this->altText->suggest($website->business, $asset)])->save();
-                $created[] = $asset;
-                $nextPosition++;
-            }
-
-            return $created;
-        });
+            throw $e;
+        }
     }
 
     /**

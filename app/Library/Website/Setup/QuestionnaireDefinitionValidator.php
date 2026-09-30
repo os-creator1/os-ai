@@ -33,6 +33,10 @@ final class QuestionnaireDefinitionValidator
 
     public const MAX_PROMPT = 300;
 
+    public const MAX_OPTION_LABEL = 160;
+
+    public const MAX_OPTION_VALUE = 64;
+
     private const VALID_TARGET_MODULES = [
         'business', 'business_location', 'knowledge_profile', 'business_service',
         'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section', 'faq',
@@ -40,7 +44,28 @@ final class QuestionnaireDefinitionValidator
 
     private const VALID_BUSINESS_FIELDS = ['name', 'phone', 'email', 'description'];
 
+    /**
+     * Independent-review correction round 3 — every target_module in
+     * this list has NO real WebsiteSetupAnswerApplier application path
+     * that reads a per-step `target_field` at all: applyLocationFields()
+     * takes the whole submitted value regardless of it, and
+     * applyServices()/applyPackages()/applyBackdrops()/applyForm() (and
+     * the wizard's own gallery/answers/custom_section handling) never
+     * read it either. A non-null target_field for one of these modules
+     * would therefore be silently ignored forever — accepted at publish
+     * time but never actually wired to anything — so it is refused here
+     * instead ("reject business[-location] targets that have no real
+     * application path", generalized to every such module).
+     */
+    private const MODULES_WITHOUT_TARGET_FIELD = [
+        'business_location', 'business_service', 'catalog_item', 'backdrop',
+        'website_form', 'gallery', 'answers', 'custom_section', 'faq',
+    ];
+
     private const VALID_CONDITIONS = ['equals', 'not_equals', 'in', 'not_empty'];
+
+    /** A condition that compares against a specific value has nothing to compare without one. */
+    private const CONDITIONS_REQUIRING_VALUE = ['equals', 'not_equals'];
 
     private const OPTION_INPUT_TYPES = [QuestionType::Select->value, QuestionType::MultiSelect->value];
 
@@ -127,8 +152,8 @@ final class QuestionnaireDefinitionValidator
                 throw new DomainException("Step '{$key}' targets 'business' with an unsupported target_field.");
             } elseif ($targetModule === 'knowledge_profile') {
                 $this->validateKnowledgeProfileCombination($key, $inputType, $targetField);
-            } elseif ($targetField !== null && (! is_string($targetField) || mb_strlen($targetField) > 64)) {
-                throw new DomainException("Step '{$key}' has an invalid target_field.");
+            } elseif (in_array($targetModule, self::MODULES_WITHOUT_TARGET_FIELD, true) && $targetField !== null) {
+                throw new DomainException("Step '{$key}' targets '{$targetModule}' with a target_field, but this codebase has no application path that reads one for that module.");
             }
 
             $helpText = $step['help_text'] ?? null;
@@ -192,8 +217,12 @@ final class QuestionnaireDefinitionValidator
                 throw new DomainException("Step '{$key}' has an invalid option value.");
             }
 
-            if (! is_string($optionLabel) || trim($optionLabel) === '') {
-                throw new DomainException("Step '{$key}' has an invalid option label.");
+            if (is_string($optionValue) && mb_strlen($optionValue) > self::MAX_OPTION_VALUE) {
+                throw new DomainException("Step '{$key}' has an option value that is too long.");
+            }
+
+            if (! is_string($optionLabel) || trim($optionLabel) === '' || mb_strlen($optionLabel) > self::MAX_OPTION_LABEL) {
+                throw new DomainException("Step '{$key}' has an invalid or too-long option label.");
             }
         }
     }
@@ -226,6 +255,18 @@ final class QuestionnaireDefinitionValidator
 
         if ($condition === 'in' && ! is_array($rule['value'] ?? null)) {
             throw new DomainException("Step '{$key}' uses condition 'in' with a non-array value.");
+        }
+
+        // Independent-review correction round 3 — 'equals'/'not_equals'
+        // compare the depended-on step's answer against a specific
+        // value; with no value in the rule at all, there is nothing to
+        // compare against and the rule can never mean anything
+        // consistent. A scalar (including `false`) is required; `null`
+        // is refused since QuestionnaireStepResolver could never
+        // distinguish "compare against null" from "no value given".
+        if (in_array($condition, self::CONDITIONS_REQUIRING_VALUE, true)
+            && (! array_key_exists('value', $rule) || ! is_scalar($rule['value']))) {
+            throw new DomainException("Step '{$key}' uses condition '{$condition}' without a comparison value.");
         }
     }
 }

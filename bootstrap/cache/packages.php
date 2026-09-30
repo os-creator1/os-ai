@@ -21,6 +21,13 @@
       0 => 'Barryvdh\\Debugbar\\ServiceProvider',
     ),
   ),
+  'blade-ui-kit/blade-icons' => 
+  array (
+    'providers' => 
+    array (
+      0 => 'BladeUI\\Icons\\BladeIconsServiceProvider',
+    ),
+  ),
   'intervention/image' => 
   array (
     'aliases' => 
@@ -73,6 +80,13 @@
     'providers' => 
     array (
       0 => 'Laravel\\Sanctum\\SanctumServiceProvider',
+    ),
+  ),
+  'laravel/sentinel' => 
+  array (
+    'providers' => 
+    array (
+      0 => 'Laravel\\Sentinel\\SentinelServiceProvider',
     ),
   ),
   'laravel/socialite' => 
@@ -188,6 +202,13 @@
     'providers' => 
     array (
       0 => 'Stevebauman\\Location\\LocationServiceProvider',
+    ),
+  ),
+  'technikermathe/blade-lucide-icons' => 
+  array (
+    'providers' => 
+    array (
+      0 => 'Technikermathe\\LucideIcons\\BladeLucideIconsServiceProvider',
     ),
   ),
   'yajra/laravel-datatables-oracle' => 

@@ -36,6 +36,18 @@ use App\Models\BusinessKnowledgeProfileFieldState;
  */
 class GuidedWebsiteGenerationClient
 {
+    /**
+     * Independent-review correction round 3 (item 3) — stated explicitly
+     * here rather than left to whatever `website_generation` route's own
+     * configured max happens to be, so a future change to that shared
+     * route's ceiling can never silently change what THIS call site asks
+     * for without a reviewed change to this constant too. Currently
+     * equal to the route's own cap (config('ai.routes.website_generation
+     * .max_output_tokens')) — the one call site that genuinely needs the
+     * route's full envelope.
+     */
+    public const MAX_OUTPUT_TOKENS = 8_000;
+
     private const SENSITIVE_FIELDS = [
         BusinessKnowledgeProfileFieldKey::Credentials,
         BusinessKnowledgeProfileFieldKey::YearsOperating,
@@ -54,13 +66,14 @@ class GuidedWebsiteGenerationClient
 
     /**
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output, already passed through WebsitePageStrategy::withoutAiUnfillableSections()
+     * @param  ?string  $idempotencyKey  a stable, durable identity for this attempt (GuidedGenerationCommitService's own material-hash idempotency key) — passed straight through onto the AiRequest/ledger entry instead of a meaningless-for-dedup fresh uuid
      * @return ?array<int, array{page_key: string, title: string, seo_title: ?string, meta_description: ?string, sections: array}> null on any refusal/failure/malformed output
      */
-    public function generate(Business $business, array $plan, ?int $actorUserId = null): ?array
+    public function generate(Business $business, array $plan, ?int $actorUserId = null, ?string $idempotencyKey = null): ?array
     {
         $messages = $this->buildMessages($business, $plan);
 
-        $raw = $this->client->complete($messages, $business, $actorUserId);
+        $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS, $idempotencyKey);
         if ($raw === null) {
             return null;
         }

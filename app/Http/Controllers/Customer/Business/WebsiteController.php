@@ -19,8 +19,11 @@ use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDesigns;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Library\Website\Setup\QuestionnaireResolver;
+use App\Library\Website\Setup\WizardPresentationAnswers;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
+use App\Models\QuestionnaireResponse;
 use App\Models\Website;
 use App\Models\WebsiteForm;
 use App\Models\WebsiteGuidedGenerationAttempt;
@@ -72,6 +75,7 @@ class WebsiteController extends CustomerBaseController
         private readonly BusinessKnowledgeProfileManager $profiles,
         private readonly WebsitePageStrategy $pageStrategy,
         private readonly GuidedGenerationCommitService $guidedGeneration,
+        private readonly QuestionnaireResolver $questionnaireResolver,
     ) {
     }
 
@@ -554,6 +558,15 @@ class WebsiteController extends CustomerBaseController
      * a freshly AI-written batch for this template's deterministic page
      * plan," differing only in which WebsiteTemplate and user-facing
      * copy apply.
+     *
+     * Independent-review correction round 3 (item 11) — this is also the
+     * "deliberate rebuild" the wizard's own post-generation presentation
+     * edits (FAQ, custom section, gallery cover/order) require before
+     * they take effect: resolving and passing through the SAME
+     * customSection/customerFaq facts the wizard itself would ensures a
+     * rebuild triggered from here genuinely picks up the current state
+     * rather than silently reverting to whatever was true at the last
+     * generation.
      */
     private function runGuidedGeneration(Request $request, string $workspaceUid, string $businessUid, Business $business, Website $website, WebsiteTemplate $template, string $mode): RedirectResponse
     {
@@ -566,9 +579,13 @@ class WebsiteController extends CustomerBaseController
         // (acceptance-correction Blocker 6).
         $idempotencyKey = (string) $request->input('idempotency_key', (string) Str::uuid());
 
+        $completedResponse = $this->latestCompletedSetupResponse($business);
+        $customSection = WizardPresentationAnswers::customSection($completedResponse);
+        $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
+
         $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-            ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey)
-            : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey);
+            ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $customSection, $customerFaq)
+            : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $customSection, $customerFaq);
 
         if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
@@ -825,6 +842,31 @@ class WebsiteController extends CustomerBaseController
         abort_unless($website !== null, 404);
 
         return $website;
+    }
+
+    /**
+     * Independent-review correction round 3 (item 11) — the same
+     * completed setup response WebsiteWizardController::editSetupAnswers()
+     * would reopen, resolved here read-only so a rebuild triggered from
+     * this controller (Studio's "Regenerate with AI"/rebuild-form
+     * actions) picks up the SAME custom-section/FAQ facts the wizard
+     * itself would. A Business with no resolvable niche questionnaire,
+     * or no completed response yet, has nothing to resolve — null is a
+     * normal, silent no-op for WizardPresentationAnswers' own callers.
+     */
+    private function latestCompletedSetupResponse(Business $business): ?QuestionnaireResponse
+    {
+        $definition = $this->questionnaireResolver->resolveForBusiness($business);
+
+        if ($definition === null) {
+            return null;
+        }
+
+        return QuestionnaireResponse::where('business_id', $business->id)
+            ->where('questionnaire_definition_id', $definition->id)
+            ->where('status', 'completed')
+            ->latest('id')
+            ->first();
     }
 
     private function resolvePage(Website $website, string $pageUid): WebsitePage

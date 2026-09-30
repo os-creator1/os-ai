@@ -30,6 +30,16 @@ final class WebsiteAiDraftGenerator
     private const MAX_PAGES = 20;
 
     /**
+     * Independent-review correction round 3 (item 3) — this generator's
+     * own schema caps it at a handful of short pages (MAX_PAGES = 20,
+     * each with a small fixed set of section types) — nowhere near what
+     * `website_generation`'s own 8,000-output-token envelope is sized
+     * for. Stated explicitly rather than inheriting that shared route's
+     * full ceiling by default.
+     */
+    private const MAX_OUTPUT_TOKENS = 800;
+
+    /**
      * §11.4 — the last generate() stopped because the included AI is used
      * up, which is a different fact from "generation failed" and needs a
      * different sentence.
@@ -109,7 +119,7 @@ final class WebsiteAiDraftGenerator
 
     private function requestAndValidate(array $messages, \App\Models\Business $business, ?int $actorUserId): ?array
     {
-        $raw = $this->client->complete($messages, $business, $actorUserId);
+        $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS);
 
         if ($this->client->lastCallWasBudgetExhausted()) {
             $this->pausedByBudget = true;
