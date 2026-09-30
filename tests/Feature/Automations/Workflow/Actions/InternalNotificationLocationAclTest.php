@@ -19,6 +19,7 @@ use App\Models\WorkspaceMembership;
 use App\Notifications\WorkflowInternalNotification;
 use App\Repositories\Contracts\WorkspaceMembershipLocationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\Feature\Automations\Concerns\CreatesAutomationFixtures;
 use Tests\Feature\Automations\Workflow\Actions\Support\BuildsActionWorkflows;
@@ -225,5 +226,87 @@ class InternalNotificationLocationAclTest extends TestCase
 
         Notification::assertSentTo($staffA, WorkflowInternalNotification::class);
         Notification::assertNotSentTo($staffB, WorkflowInternalNotification::class);
+    }
+
+    /**
+     * THE QUERY-BUDGET ONE (correction round 2). Narrowing recipients by
+     * Location must not cost one query per candidate: `LocationAccessGuard
+     * ::membershipsWithLocationAccess()` decides the whole Selected-scope
+     * candidate set in one additional query, never one per staff member.
+     * Proven the same way `DateReachedTriggerTest`'s own budget test is —
+     * by running the same shaped work against a larger candidate set and
+     * asserting the query count does not grow.
+     */
+    public function test_the_query_count_does_not_grow_with_the_staff_count(): void
+    {
+        // ONE Business/Workspace throughout, exactly like
+        // DateReachedTriggerTest's own budget test: everything else that
+        // scales with a Business (its entitlement decision, its Workspace)
+        // must stay identical between the two measurements, so only the
+        // staff count actually varies.
+        [$business, $workspace, $location] = $this->twoLocationTenant();
+
+        // Warm EntitlementManager's own decision cache before measuring,
+        // for the same reason DateReachedTriggerTest warms it: every
+        // advanced step re-checks entitlement (WorkflowCheckpoint), and
+        // that manager caches its decision after the first lookup for a
+        // given Business. Measuring from a cold cache would attribute
+        // that one-time lookup cost to the wrong thing.
+        app(\App\Library\Entitlement\EntitlementManager::class)->decide(
+            $business->workspace,
+            $business,
+            \App\Enums\Entitlement\PlatformFeature::Automations->value,
+            (int) $business->customer_id,
+        );
+
+        [$workflow] = $this->publishWorkflow($business, [$this->notificationStep('A contact arrived.'), $this->endStep()]);
+
+        foreach (range(1, 3) as $i) {
+            $this->selectedScopeStaff($workspace, $location);
+        }
+
+        Notification::fake();
+
+        $queryCount = 0;
+        DB::listen(function () use (&$queryCount): void {
+            $queryCount++;
+        });
+
+        $contactSmall = $this->contactFor($business);
+        $contactSmall->forceFill(['location_id' => $location->id])->save();
+        $enrollmentSmall = app(EnrollmentService::class)->enroll($workflow, $contactSmall, $location->id, (string) $contactSmall->id);
+
+        $queryCount = 0;
+        app(WorkflowAdvancer::class)->advance($enrollmentSmall);
+        $withThreeStaff = $queryCount;
+
+        // Nine MORE Selected-scope staff, all granted this same Location —
+        // a 4x jump in candidate count.
+        foreach (range(1, 9) as $i) {
+            $this->selectedScopeStaff($workspace, $location);
+        }
+
+        $contactLarge = $this->contactFor($business);
+        $contactLarge->forceFill(['location_id' => $location->id])->save();
+        $enrollmentLarge = app(EnrollmentService::class)->enroll($workflow, $contactLarge, $location->id, (string) $contactLarge->id);
+
+        $queryCount = 0;
+        app(WorkflowAdvancer::class)->advance($enrollmentLarge);
+        $withTwelveStaff = $queryCount;
+
+        $this->assertGreaterThan(0, $withThreeStaff);
+        // Not exact equality: unrelated per-run variance (e.g. a relation
+        // lazy-load's cache warmth) can shift the total by a query or two
+        // between any two runs, staff count aside. What this proves is the
+        // ABSENCE of per-staff growth — a naive per-candidate ACL call
+        // would have added roughly one query (or more) per EXTRA staff
+        // member, i.e. +9 or more here; this asserts nothing close to
+        // that scale ever shows up.
+        $this->assertLessThanOrEqual(
+            $withThreeStaff + 3,
+            $withTwelveStaff,
+            'Location-narrowing the recipient list must cost a bounded number of queries, not one per staff member: '
+                . "{$withThreeStaff} queries for 3 staff vs {$withTwelveStaff} for 12.",
+        );
     }
 }

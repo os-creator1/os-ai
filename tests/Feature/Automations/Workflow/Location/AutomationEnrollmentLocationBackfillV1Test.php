@@ -10,6 +10,7 @@ use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\ChatBox;
 use App\Models\Contacts;
+use App\Models\Reports;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -79,6 +80,29 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
         return $value === null ? null : (int) $value;
     }
 
+    /**
+     * A real, immutable legacy inbound `reports` row — the durable evidence
+     * `report:{id}` occurrence keys resolve from. `to` is the sender's phone
+     * AT THE MOMENT the message arrived, exactly as `DLRController
+     * ::inboundDLR()` writes it for an incoming report.
+     */
+    private function historicalReport(Business $business, string $to, string $from = '14155550199'): Reports
+    {
+        return Reports::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => $from,
+            'to' => $to,
+            'message' => 'Historical inbound message.',
+            'sms_type' => 'plain',
+            'status' => 'Delivered',
+            'customer_status' => 'Delivered',
+            'direction' => Reports::DIRECTION_INCOMING,
+            'cost' => 1,
+            'sms_count' => 1,
+        ]);
+    }
+
     // =================================================================
     // contact_created / contact_date_reached / manual_enrollment: NEVER
     // resolved, even when the Contact has a Location today (§7 correction).
@@ -126,9 +150,9 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
     }
 
     // =================================================================
-    // message_received: the ChatBox's own Location, which may DIFFER from
-    // the Contact's own — proving the conversation, not the Contact, is
-    // the evidence used.
+    // message_received: the ORIGINAL inbound report's own phone, which may
+    // DIFFER from the Contact's phone TODAY — proving the historical
+    // message's own immutable evidence, never the Contact, is used.
     // =================================================================
 
     public function test_message_received_resolves_from_the_conversation_even_when_the_contact_disagrees(): void
@@ -140,7 +164,9 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
         $contact = $this->contactFor($business);
         $contact->forceFill(['location_id' => $contactLocation->id])->save();
 
-        $box = ChatBox::create([
+        $report = $this->historicalReport($business, $contact->phone);
+
+        ChatBox::create([
             'user_id' => $business->customer_id,
             'business_id' => $business->id,
             'uid' => (string) Str::uuid(),
@@ -151,7 +177,7 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
 
         [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
         $enrollmentId = $this->historicalEnrollment(
-            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:999001',
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $report->id,
             (int) $workflow->id, (int) $version->id,
         );
 
@@ -162,10 +188,76 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
         $this->assertSame(1, $result['message_received']);
     }
 
+    /**
+     * THE CENTRAL ONE (correction round 2). A Contact whose phone changed
+     * since the historical run must never borrow a NEWER conversation's
+     * Location just because that newer conversation happens to match the
+     * Contact's CURRENT phone. The original report's own `to` — phone A —
+     * is the only evidence that may ever resolve this row, never phone B.
+     */
+    public function test_a_transferred_phone_never_borrows_a_newer_conversations_location(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $locationA = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+        $locationB = $this->businessLocation($business);
+
+        $phoneA = '12025550101';
+        $phoneB = '12025550102';
+
+        $contact = $this->contactFor($business);
+        $contact->forceFill(['phone' => $phoneA, 'location_id' => $locationA->id])->save();
+
+        // The ORIGINAL inbound message, and the conversation it opened, both
+        // for phone A at Location A.
+        $report = $this->historicalReport($business, $phoneA);
+        ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550199',
+            'to' => $phoneA,
+            'location_id' => $locationA->id,
+        ]);
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $report->id,
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        // The Contact's phone changes AFTER the run — the exact scenario a
+        // Contact-phone-keyed lookup would get wrong.
+        $contact->forceFill(['phone' => $phoneB, 'location_id' => $locationB->id])->save();
+
+        // A brand-new, perfectly UNAMBIGUOUS conversation opens for phone B,
+        // at a DIFFERENT Location — present specifically so a bug that
+        // "just matches the Contact's current phone" would silently find
+        // exactly one thread and confidently assign the wrong Location.
+        ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550199',
+            'to' => $phoneB,
+            'location_id' => $locationB->id,
+        ]);
+
+        $result = $this->backfill();
+
+        $this->assertSame(
+            (int) $locationA->id,
+            $this->locationIdOf($enrollmentId),
+            'The historical run must resolve from its OWN report\'s phone (A), never the Contact\'s current phone (B).',
+        );
+        $this->assertNotSame((int) $locationB->id, $this->locationIdOf($enrollmentId));
+        $this->assertSame(1, $result['message_received']);
+    }
+
     public function test_message_received_with_an_ambiguous_conversation_stays_null(): void
     {
         [, $business] = $this->entitledTenant();
         $contact = $this->contactFor($business);
+        $report = $this->historicalReport($business, $contact->phone);
 
         // Two threads for the same (business, phone) pair — cannot disambiguate.
         foreach ([$this->businessLocation($business), $this->businessLocation($business)] as $i => $location) {
@@ -181,13 +273,47 @@ class AutomationEnrollmentLocationBackfillV1Test extends TestCase
 
         [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
         $enrollmentId = $this->historicalEnrollment(
-            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:999002',
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'report:' . $report->id,
             (int) $workflow->id, (int) $version->id,
         );
 
         $this->backfill();
 
         $this->assertNull($this->locationIdOf($enrollmentId), 'An ambiguous conversation must never be guessed between.');
+    }
+
+    /**
+     * `operation:{id}` — the managed inbound path — has NO durable
+     * per-message phone evidence anywhere (§ the method's own docblock).
+     * Even a perfectly matching, unambiguous conversation for the
+     * Contact's phone must never be used, because nothing proves it is
+     * the conversation this run's own occurrence actually belongs to.
+     */
+    public function test_a_managed_operation_occurrence_is_never_backfilled(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $location = $this->businessLocation($business);
+        $contact = $this->contactFor($business);
+
+        ChatBox::create([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'uid' => (string) Str::uuid(),
+            'from' => '14155550199',
+            'to' => $contact->phone,
+            'location_id' => $location->id,
+        ]);
+
+        [$workflow, $version] = $this->publishWorkflow($business, [$this->endStep()], WorkflowTriggerType::MessageReceived);
+        $enrollmentId = $this->historicalEnrollment(
+            $business, $contact, WorkflowTriggerType::MessageReceived, 'operation:123456',
+            (int) $workflow->id, (int) $version->id,
+        );
+
+        $result = $this->backfill();
+
+        $this->assertNull($this->locationIdOf($enrollmentId), 'A managed-operation occurrence has no durable phone evidence and must never be backfilled.');
+        $this->assertSame(0, $result['message_received']);
     }
 
     // =================================================================
