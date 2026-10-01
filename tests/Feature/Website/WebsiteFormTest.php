@@ -10,6 +10,7 @@ use App\Library\Website\WebsiteFormPresets;
 use App\Library\Website\WebsiteFormSubmissionService;
 use App\Library\Website\WebsitePublisher;
 use App\Models\Blacklists;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\Website;
@@ -46,11 +47,16 @@ class WebsiteFormTest extends TestCase
 
     private function createQuoteForm(Website $website): WebsiteForm
     {
+        // Forms V1: a form carries its Location, and one with none accepts nothing.
+        $location = BusinessLocation::query()->where('business_id', $website->business_id)->first()
+            ?? BusinessLocation::create(['business_id' => $website->business_id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
+
         return $website->forms()->create([
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Photo Booth Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
             'submit_label' => 'Request a quote',
+            'location_id' => $location->id,
         ]);
     }
 
@@ -81,6 +87,7 @@ class WebsiteFormTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $website = $this->createWebsite($business);
+        BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->authenticateAsCustomer($customer);
 
         $this->get(route('customer.workspaces.businesses.website.forms.index', [$workspace->uid, $business->uid]))
@@ -482,14 +489,14 @@ class WebsiteFormTest extends TestCase
         $this->assertSame($existingContact->id, Contacts::where('business_id', $business->id)->sole()->id);
     }
 
-    public function test_an_exact_resubmission_within_the_window_is_not_duplicated(): void
+    public function test_a_retry_carrying_the_same_submission_token_is_not_duplicated(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $this->createQuoteForm($website);
         $page = $this->publishFormPage($website, $form);
 
-        $payload = ['name' => 'Double Click', 'phone' => '5552223333', 'email' => 'double@example.test'];
+        $payload = ['name' => 'Double Click', 'phone' => '5552223333', 'email' => 'double@example.test', WebsiteFormSubmissionService::TOKEN_FIELD => (string) \Illuminate\Support\Str::uuid()];
 
         $this->post($this->submitRoute($website, $form, $page), $payload)->assertRedirect();
         $this->post($this->submitRoute($website, $form, $page), $payload)->assertRedirect();

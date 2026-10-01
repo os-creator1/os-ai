@@ -532,6 +532,8 @@ class WebsiteStarterDraftTest extends TestCase
     public function test_about_faq_and_contact_pages_are_reachable_via_navigation_and_the_contact_pages_form_works(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
+        // Forms V1: a form carries its Location, and a form with none accepts nothing.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $business->update(['phone' => '+15550001234']);
         app(BusinessKnowledgeProfileManager::class)->updateFields($business, [
             'years_operating' => 5,

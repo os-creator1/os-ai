@@ -405,6 +405,8 @@
                 // implementing TimelineSource and being tagged here. The
                 // Conversations screen itself does not change.
                 \App\Library\Timeline\Sources\DocumentActivitySource::class,
+                // Forms V1 (§16) — a Contact's form submissions.
+                \App\Library\Timeline\Sources\FormSubmissionActivitySource::class,
             ], \App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG);
 
             $this->app->bind(\App\Library\Timeline\ContactActivityTimeline::class, fn ($app) => new \App\Library\Timeline\ContactActivityTimeline(

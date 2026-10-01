@@ -45,6 +45,8 @@ class WebsiteBoundaryTest extends TestCase
         $expected = [
             'customer.workspaces.businesses.website.forms.index',
             'customer.workspaces.businesses.website.forms.store',
+            'customer.workspaces.businesses.website.forms.edit',
+            'customer.workspaces.businesses.website.forms.update',
             'customer.workspaces.businesses.website.forms.submissions',
             'public.website.form.submit',
         ];
@@ -55,8 +57,9 @@ class WebsiteBoundaryTest extends TestCase
 
         $stillForbidden = [
             'customer.workspaces.businesses.website.forms.create',
-            'customer.workspaces.businesses.website.forms.edit',
-            'customer.workspaces.businesses.website.forms.update',
+            // forms.edit / forms.update (Forms V1) configure a form's name, button,
+            // Location and opportunity behaviour — never its fields — so they are
+            // settings routes, not a form builder, and are asserted present above.
             'customer.workspaces.businesses.website.form-builder',
             'customer.workspaces.businesses.website.leads.index',
             'public.website.forms.submit',

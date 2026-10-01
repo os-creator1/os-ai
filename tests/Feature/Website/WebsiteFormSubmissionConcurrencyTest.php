@@ -55,8 +55,17 @@ class WebsiteFormSubmissionConcurrencyTest extends TestCase
             ContactGroups::where('business_id', $this->business->id)->delete();
         }
 
+        if ($this->business !== null) {
+            \Illuminate\Support\Facades\DB::table('booking_contact_identity_locks')
+                ->whereIn('business_location_id', \App\Models\BusinessLocation::where('business_id', $this->business->id)->pluck('id'))
+                ->delete();
+        }
+
         // Cascades to website_forms -> website_form_submissions.
         $this->website?->delete();
+        if ($this->business !== null) {
+            \App\Models\BusinessLocation::where('business_id', $this->business->id)->delete();
+        }
         $this->business?->delete();
         $this->workspace?->delete();
         $this->user?->delete();
@@ -96,11 +105,14 @@ class WebsiteFormSubmissionConcurrencyTest extends TestCase
             'business_id' => $this->business->id,
             'name' => 'Lock Probe Site',
         ]);
+        // Forms V1: a form carries its Location (a form with none accepts nothing).
+        $location = \App\Models\BusinessLocation::create(['business_id' => $this->business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->form = $this->website->forms()->create([
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
             'submit_label' => 'Send',
+            'location_id' => $location->id,
         ]);
 
         $probe = $this->setUpProbeConnection();

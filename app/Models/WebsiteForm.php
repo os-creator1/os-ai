@@ -30,10 +30,16 @@ class WebsiteForm extends Model
         'name',
         'fields',
         'submit_label',
+        'location_id',
+        'is_active',
+        'create_opportunity',
+        'crm_pipeline_id',
     ];
 
     protected $casts = [
         'fields' => 'array',
+        'is_active' => 'boolean',
+        'create_opportunity' => 'boolean',
     ];
 
     public function generateUid(): void
@@ -44,6 +50,12 @@ class WebsiteForm extends Model
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);
+    }
+
+    /** The Location every submission through this form is bound to (null until the owner configures one). */
+    public function location(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'location_id');
     }
 
     public function submissions(): HasMany

@@ -13,6 +13,7 @@ use App\Events\Crm\CrmOpportunityStageChanged;
 use App\Events\Crm\CrmOpportunityWon;
 use App\Library\Crm\Exceptions\CrmRuleException;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\CrmOpportunityHistory;
@@ -48,6 +49,7 @@ class CrmOpportunityService
         ?CrmPipelineStage $stage = null,
         ?int $actorUserId = null,
         string $source = CrmOpportunity::SOURCE_MANUAL,
+        ?BusinessLocation $location = null,
     ): CrmOpportunity {
         $title = $this->title($title);
 
@@ -59,6 +61,21 @@ class CrmOpportunityService
             throw new CrmRuleException('That pipeline is archived.');
         }
 
+        // An explicit Location is a caller that has already PROVEN one (a
+        // form submission). It must belong to this Business and, when the
+        // Contact already has a Location, be that same Location — a deal is
+        // never attributed to a Location other than its Contact's. Without
+        // one the single-Active-Location rule below applies, as before.
+        if ($location !== null) {
+            if ((int) $location->business_id !== (int) $business->id) {
+                throw new CrmRuleException('That location is not part of this Business.');
+            }
+
+            if ($contact->location_id !== null && (int) $contact->location_id !== (int) $location->id) {
+                throw new CrmRuleException('That contact belongs to a different location.');
+            }
+        }
+
         $stage ??= $this->startingStage($pipeline);
         $this->assertUsableStage($pipeline, $stage);
 
@@ -66,12 +83,12 @@ class CrmOpportunityService
             throw new CrmRuleException('The value cannot be negative.');
         }
 
-        return DB::transaction(function () use ($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source): CrmOpportunity {
+        return DB::transaction(function () use ($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, $location): CrmOpportunity {
             $now = now();
 
             $opportunity = CrmOpportunity::create([
                 'business_id' => $business->id,
-                'location_id' => CrmOpportunity::singleActiveLocationIdFor($business->id),
+                'location_id' => $location?->id ?? CrmOpportunity::singleActiveLocationIdFor($business->id),
                 'pipeline_id' => $pipeline->id,
                 'stage_id' => $stage->id,
                 'contact_id' => $contact->id,

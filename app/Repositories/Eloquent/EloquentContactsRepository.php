@@ -94,32 +94,66 @@
         }
 
         /**
-         * A public Website form's own find-or-create seam — same identity
-         * rule as findOrCreateForBooking() (Business-scoped by phone,
-         * blacklist-checked, default field values written through the
-         * existing updateFields() custom-field seam), without a Location
-         * lock: a form submission is not competing for a scarce calendar
-         * slot, so there is nothing to serialize against.
+         * A public Website form's own find-or-create seam. Identity is
+         * LOCATION-LOCAL (Blueprint §10): the Contact is looked up by the
+         * Business, the already-resolved Location and the phone — the same
+         * person at another Location of the same Business is a separate
+         * Contact (no cross-Location merge in V1), and another Business's
+         * Contact is unreachable because the Business is part of the key.
          *
-         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'LAST_NAME' => ...]
+         * Serialised with the booking seam on the same Location+phone lock
+         * (`booking_contact_identity_locks`) so a form submission and a
+         * booking racing for one new person cannot create two Contacts.
+         *
+         * AMBIGUOUS IDENTITY IS NEVER RESOLVED BY GUESSING: when more than
+         * one Contact already shares this Location+phone (legacy duplicates)
+         * no row is picked or created — the caller records the submission
+         * with the Contact link empty so a person can decide.
+         *
+         * An existing Contact is linked, never modified: an anonymous public
+         * submission must not overwrite a Business's own Contact data.
+         *
+         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'LAST_NAME' => ...] — written only to a Contact this call creates
+         * @return array{0: ?Contacts, 1: string}  the Contact (null when ambiguous) and how it was reached: created | matched | ambiguous
          */
-        public function findOrCreateForWebsiteForm(Business $business, string $rawPhone, array $fields): Contacts
+        public function findOrCreateForWebsiteForm(BusinessLocation $location, string $rawPhone, array $fields): array
         {
             $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+            $businessId = (int) $location->business_id;
 
-            $contact = Contacts::query()->where('business_id', $business->id)->where('phone', $phone)->first();
+            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
+            if (! DB::table('booking_contact_identity_locks')->where($key)->exists()) {
+                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            $this->lockBookingIdentity($location, $phone);
+
+            $matches = Contacts::query()
+                ->where('business_id', $businessId)
+                ->where('location_id', $location->id)
+                ->where('phone', $phone)
+                ->orderBy('id')
+                ->limit(2)
+                ->get();
+
+            if ($matches->count() > 1) {
+                return [null, 'ambiguous'];
+            }
 
             // Blacklisting is re-checked on every call, not only when a new
             // row is about to be created — a phone blacklisted AFTER an
             // earlier, legitimate inquiry must still refuse this one.
-            if ($contact !== null) {
+            if ($matches->count() === 1) {
+                $contact = $matches->first();
+
                 if ($contact->isListedInBlacklist()) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'phone' => __('locale.blacklist.phone_was_blacklisted'),
                     ]);
                 }
 
-                return $contact;
+                return [$contact, 'matched'];
             }
 
             $contact = new Contacts(['phone' => $phone]);
@@ -129,17 +163,17 @@
                 ]);
             }
 
-            $group = ContactGroups::query()->where('business_id', $business->id)->orderBy('id')->first();
+            $group = ContactGroups::query()->where('business_id', $businessId)->orderBy('id')->first();
             if ($group === null) {
                 $group = $this->store([
-                    'name' => 'Contacts', 'business_id' => $business->id, 'user_id' => $business->customer_id,
+                    'name' => 'Contacts', 'business_id' => $businessId, 'user_id' => Business::query()->whereKey($businessId)->value('customer_id'),
                 ]);
             }
 
             $contact->group_id = $group->id;
             $contact->customer_id = $group->customer_id;
-            $contact->business_id = $business->id;
-            $contact->location_id = Contacts::singleActiveLocationIdFor($business->id);
+            $contact->business_id = $businessId;
+            $contact->location_id = $location->id;
             // NOT STATUS_SUBSCRIBE, and no contact-created automation
             // dispatch below: submitting a quote-request form is an
             // inquiry, never messaging consent. The Contact and its CRM
@@ -151,7 +185,7 @@
             $contact->save();
             $contact->updateFields($fields + ['PHONE' => $phone]);
 
-            return $contact;
+            return [$contact, 'created'];
         }
 
         /**
