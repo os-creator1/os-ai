@@ -3,12 +3,12 @@
 namespace App\Library\Website\Setup;
 
 use App\Enums\Questionnaire\QuestionnaireResponseStatus;
-use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
 use App\Library\Website\Setup\Exceptions\AnswerRevisionConflictException;
 use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Models\Business;
 use App\Models\QuestionnaireDefinition;
 use App\Models\QuestionnaireResponse;
+use App\Models\Website;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -42,45 +42,42 @@ final class WebsiteSetupSessionManager
      */
     private const MAX_ANSWERS_JSON_BYTES = 200_000;
 
-    /**
-     * Independent-review correction round 3 — `generation_started_at` is
-     * a LEASE, not a permanent flag: a process that set it and then died
-     * (crashed, timed out, or was killed) before ever clearing it must
-     * not lock the customer out of retrying forever. A generous ceiling
-     * — comfortably longer than one bounded AI call plus its one
-     * corrective retry, validation, media binding, and the atomic commit
-     * could ever legitimately take — so a lease is only ever reclaimed
-     * once it is genuinely, unambiguously stale.
-     */
-    private const GENERATION_LEASE_SECONDS = 300;
-
     public function __construct(
         private readonly QuestionnaireStepResolver $stepResolver,
-        private readonly GuidedGenerationCommitService $guidedGeneration,
     ) {
     }
 
     /**
      * The one seam every setup-mutation entry point (gallery/custom-
      * section uploads, template swap, back-navigation, answer edits)
-     * shares: locks the response row, refuses while a generation is
-     * genuinely in flight, and otherwise runs `$callback` with that SAME
-     * lock still held — so a concurrent beginGeneration() call (which
-     * locks this identical row) can never interleave with this
-     * mutation's own writes. Never stores an uploaded file or writes
-     * anything before this check passes (independent-review correction
-     * round 3, item 1).
+     * shares. Independent-review correction round 4 (item 1) — locks the
+     * WEBSITE row FIRST (same row WebsiteGenerationCoordinator leases),
+     * refuses while that lease is genuinely active, THEN locks the
+     * response row and runs `$callback` with BOTH locks still held — so a
+     * concurrent generate() call, whether wizard- or Studio-originated
+     * (both acquire the identical Website lease), can never interleave
+     * with this mutation's own writes, and this mutation can never
+     * silently race a lease that is acquired a moment later (the website
+     * row lock is held for the whole transaction, not merely checked
+     * once up front). Never stores an uploaded file or writes anything
+     * before this check passes. Lock order (Website, then
+     * QuestionnaireResponse) is fixed everywhere this is called, so two
+     * callers can never deadlock against each other.
      *
      * @throws GenerationInProgressException
      */
     public function runIfNotGenerating(QuestionnaireResponse $response, \Closure $callback): mixed
     {
         return DB::transaction(function () use ($response, $callback) {
-            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
+            if ($response->website_id !== null) {
+                $website = Website::whereKey($response->website_id)->lockForUpdate()->first();
 
-            if ($locked->isGenerating()) {
-                throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
+                if ($website !== null && $website->generation_lease_token !== null) {
+                    throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
+                }
             }
+
+            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
             return $callback($locked);
         });
@@ -158,13 +155,7 @@ final class WebsiteSetupSessionManager
      */
     public function saveAnswer(QuestionnaireResponse $response, string $stepKey, mixed $value, int $expectedRevision): QuestionnaireResponse
     {
-        return DB::transaction(function () use ($response, $stepKey, $value, $expectedRevision) {
-            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
-
-            if ($locked->isGenerating()) {
-                throw new GenerationInProgressException('Your website is currently being generated — answers cannot change until it finishes.');
-            }
-
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $value, $expectedRevision) {
             if ((int) $locked->answers_revision !== $expectedRevision) {
                 throw new AnswerRevisionConflictException((int) $locked->answers_revision);
             }
@@ -200,13 +191,7 @@ final class WebsiteSetupSessionManager
      */
     public function updateAnswerInPlace(QuestionnaireResponse $response, string $stepKey, mixed $value): QuestionnaireResponse
     {
-        return DB::transaction(function () use ($response, $stepKey, $value) {
-            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
-
-            if ($locked->isGenerating()) {
-                throw new GenerationInProgressException('Your website is currently being generated — answers cannot change until it finishes.');
-            }
-
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $value) {
             $answers = $locked->answers ?? [];
             $answers[$stepKey] = $value;
 
@@ -244,18 +229,18 @@ final class WebsiteSetupSessionManager
     }
 
     /**
-     * Independent-review correction round 2 — the durable "generating"
-     * freeze: re-verifies ownership, status, completeness, and the
-     * caller's last-observed answers_revision ALL AT ONCE, under lock,
-     * immediately after the per-response generation lock is acquired —
-     * never trusting whatever the caller resolved before that lock. A
-     * response that is not genuinely `in_progress`/complete/at the
-     * expected revision right now refuses to enter generation at all
-     * (DomainException), rather than silently reconciling/spending AI
-     * against a response a concurrent request already completed or
-     * changed. Success sets `generation_started_at`, which
-     * saveAnswer()/updateAnswerInPlace() both refuse to write through
-     * while set.
+     * Re-verifies ownership, status, completeness, and the caller's
+     * last-observed answers_revision, under lock. Independent-review
+     * correction round 4 (item 1) — the generation LEASE itself (and its
+     * own stale-lease recovery) is now entirely
+     * WebsiteGenerationCoordinator's responsibility, acquired on the
+     * Website BEFORE this is ever called; this method no longer checks
+     * or sets any freeze of its own — it purely validates the RESPONSE's
+     * own preconditions now that the caller already holds the Website
+     * lease (so nothing else can be mutating this response concurrently).
+     * `generation_started_at` is still set, as an audit/UI-facing mirror
+     * of "a generation is in flight for this response" — it is never the
+     * authority for concurrency control.
      *
      * @throws DomainException
      */
@@ -270,24 +255,6 @@ final class WebsiteSetupSessionManager
 
             if ($locked->status !== QuestionnaireResponseStatus::InProgress) {
                 throw new DomainException('This setup session is no longer in progress.');
-            }
-
-            if ($locked->isGenerating()) {
-                if (! $this->generationLeaseExpired($locked)) {
-                    throw new DomainException('This website is already being generated.');
-                }
-
-                // Independent-review correction round 3 — the lease has
-                // genuinely expired: whatever process set this freeze
-                // never cleared it (crash, timeout, a killed request).
-                // Recover the underlying stalled attempt too (never
-                // merely the response's own flag alone) so it never
-                // permanently blocks GuidedGenerationCommitService's own
-                // idempotency match on a `pending` row that will never
-                // move again, then fall through to re-verify everything
-                // else fresh and re-freeze below — a genuinely active
-                // attempt (lease not yet expired) is never touched.
-                $this->guidedGeneration->recoverStaleAttempt((int) $locked->website_id, now()->subSeconds(self::GENERATION_LEASE_SECONDS));
             }
 
             if ((int) $locked->answers_revision !== $expectedRevision) {
@@ -361,6 +328,19 @@ final class WebsiteSetupSessionManager
         }
 
         return DB::transaction(function () use ($completed) {
+            // Independent-review correction round 4 (item 1) — edit-
+            // session OPENING coordinates through the same Website lock:
+            // a generation (wizard- or Studio-originated) already in
+            // flight must never have its own facts yanked out from under
+            // it by a freshly reopened edit session.
+            if ($completed->website_id !== null) {
+                $website = Website::whereKey($completed->website_id)->lockForUpdate()->first();
+
+                if ($website !== null && $website->generation_lease_token !== null) {
+                    throw new GenerationInProgressException('Your website is currently being generated — try again once it finishes.');
+                }
+            }
+
             $locked = QuestionnaireResponse::whereKey($completed->id)->lockForUpdate()->firstOrFail();
 
             $firstStepKey = $this->stepResolver->firstStepKey($locked->version->steps(), $locked->answers ?? []);
@@ -394,77 +374,126 @@ final class WebsiteSetupSessionManager
         return $response->refresh();
     }
 
-    private function generationLeaseExpired(QuestionnaireResponse $locked): bool
-    {
-        return $locked->generation_started_at !== null
-            && $locked->generation_started_at->lt(now()->subSeconds(self::GENERATION_LEASE_SECONDS));
-    }
+    /**
+     * Independent-review correction round 4 (item 2) — an abandoned
+     * pending attempt (the process calling the provider crashed or was
+     * killed before completeCustomSectionImprove() ever ran) must not
+     * block a genuine retry forever. Deliberately short: an Improve call
+     * is far smaller than a full-site generation (OpenAiCompletionClient
+     * ::PROVIDER_TIMEOUT_SECONDS bounds the provider call itself well
+     * under this).
+     */
+    private const IMPROVE_PENDING_LEASE_SECONDS = 90;
 
     /**
-     * Independent-review correction round 3 — durable Improve
-     * idempotency (item 2), replacing a Cache lock plus a 60-second
-     * Cache "done" marker with real, response-row-locked state that
-     * survives a cache eviction and is identical across every
-     * application server. Persists the submitted (pre-improvement) text
-     * exactly like an ordinary autosave — but only when this is
-     * genuinely a NEW logical submission — and opens exactly one
-     * `pending` attempt for it, all inside the same lock that also
-     * refuses while a generation is in flight.
+     * Independent-review correction round 4 (item 2) — durable Improve
+     * idempotency, corrected: `$expectedRevision` is now REQUIRED and
+     * compared against the locked row BEFORE anything is persisted — a
+     * stale form (one that observed an older revision than what is
+     * actually current) is refused outright with
+     * AnswerRevisionConflictException, never allowed to acquire the lock
+     * and overwrite a newer edit with its own stale text.
      *
-     * `$idempotencyKey` is the caller's durable identity for this EXACT
-     * logical submission (response + the answers_revision the owner's
-     * form last observed + title/body/layout) — a changed title or body,
-     * or a submission against a since-changed revision, always produces
-     * a different key and is always treated as new.
+     * `$logicalKey` identifies the LOGICAL submission (response +
+     * observed revision + exact title/body/layout) and stays stable
+     * across a legitimate retry of that same submission. The PROVIDER-
+     * FACING ledger key returned here is a SEPARATE, always-fresh-per-
+     * attempt value (`$logicalKey` plus a durable attempt ordinal) — a
+     * failed attempt's retry therefore never reuses the same AiGateway
+     * ledger idempotency key, which AiGateway's own documentation warns
+     * can otherwise throw UniqueConstraintViolationException.
+     *
+     * A PENDING attempt for the identical logical key converges to
+     * 'duplicate_pending' UNLESS its own pending lease has expired
+     * (IMPROVE_PENDING_LEASE_SECONDS) — an abandoned attempt is instead
+     * recovered here and a fresh attempt (next ordinal) begins.
      *
      * @param  array{key: string, name: string, description: ?string, body: ?string, layout: string, images: array<int, string>}  $entry
-     * @return array{outcome: 'start'|'duplicate_pending'|'duplicate_succeeded', response: QuestionnaireResponse, result: ?array}
+     * @return array{outcome: 'start'|'duplicate_pending'|'duplicate_succeeded', response: QuestionnaireResponse, result: ?array, ledgerKey: ?string}
      * @throws GenerationInProgressException
+     * @throws AnswerRevisionConflictException
      */
-    public function beginCustomSectionImprove(QuestionnaireResponse $response, string $idempotencyKey, array $entry): array
+    public function beginCustomSectionImprove(QuestionnaireResponse $response, string $answerKey, string $logicalKey, array $entry, int $expectedRevision): array
     {
-        return DB::transaction(function () use ($response, $idempotencyKey, $entry) {
-            $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($answerKey, $logicalKey, $entry, $expectedRevision) {
+            // Independent-review correction round 4 (item 2) — whether
+            // this is a recognized resubmission of the EXACT SAME logical
+            // content is decided before the raw revision match is ever
+            // enforced. A literal retry of the identical {observed
+            // revision, title, body, layout} tuple already matches
+            // something this response has already accepted and validated
+            // once — it is never "stale" merely because this response's
+            // revision counter has since moved on to reflect that very
+            // submission (begin() below persists the submitted text and
+            // bumps the revision immediately, before AI ever runs). Only
+            // a submission that is NOT a recognized duplicate — genuinely
+            // different content, or a different originally-observed
+            // revision — must match the CURRENT revision exactly.
+            $sameLogicalKey = $locked->custom_section_improve_key === $logicalKey;
 
-            if ($locked->isGenerating()) {
-                throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
-            }
-
-            // A pending or already-succeeded attempt for this EXACT
-            // logical submission already exists — converge to it rather
-            // than spending AI (or re-persisting the pre-improvement
-            // text) a second time. A previously FAILED attempt for the
-            // same key is never short-circuited: a genuine retry of
-            // identical content must be able to try again.
-            if ($locked->custom_section_improve_key === $idempotencyKey
-                && $locked->custom_section_improve_status !== QuestionnaireResponse::IMPROVE_STATUS_FAILED) {
+            if ($sameLogicalKey && $locked->custom_section_improve_status === QuestionnaireResponse::IMPROVE_STATUS_SUCCEEDED) {
                 return [
-                    'outcome' => $locked->custom_section_improve_status === QuestionnaireResponse::IMPROVE_STATUS_PENDING
-                        ? 'duplicate_pending' : 'duplicate_succeeded',
+                    'outcome' => 'duplicate_succeeded',
                     'response' => $locked,
                     'result' => $locked->custom_section_improve_result,
+                    'ledgerKey' => null,
                 ];
             }
 
+            if ($sameLogicalKey && $locked->custom_section_improve_status === QuestionnaireResponse::IMPROVE_STATUS_PENDING) {
+                $pendingExpired = $locked->custom_section_improve_pending_started_at === null
+                    || $locked->custom_section_improve_pending_started_at->lt(now()->subSeconds(self::IMPROVE_PENDING_LEASE_SECONDS));
+
+                if (! $pendingExpired) {
+                    return [
+                        'outcome' => 'duplicate_pending',
+                        'response' => $locked,
+                        'result' => null,
+                        'ledgerKey' => null,
+                    ];
+                }
+                // Independent-review correction round 4 (item 2) —
+                // abandoned pending attempt: fall through to start a
+                // fresh, incremented-ordinal attempt for the SAME
+                // logical key. The submitted text is identical (it is
+                // the same logical key), so there is nothing new to
+                // persist, only a new attempt to open.
+            }
+
+            // A genuinely new/different submission (sameLogicalKey is
+            // false — different text, title, or originally-observed
+            // revision) must still match this response's current
+            // revision exactly, same as any other mutation.
+            if (! $sameLogicalKey && (int) $locked->answers_revision !== $expectedRevision) {
+                throw new AnswerRevisionConflictException((int) $locked->answers_revision);
+            }
+
+            $ordinal = $sameLogicalKey ? (int) ($locked->custom_section_improve_attempt_ordinal ?? 0) + 1 : 1;
+            $ledgerKey = hash('sha256', $logicalKey . ':attempt:' . $ordinal);
+
             $answers = $locked->answers ?? [];
-            $answers['custom_section'] = [$entry];
+            $answers[$answerKey] = [$entry];
 
             if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
                 throw new DomainException('This answer is too large to save.');
             }
 
-            $startedRevision = $locked->answers_revision + 1;
+            $startedRevision = $sameLogicalKey ? (int) $locked->answers_revision : $locked->answers_revision + 1;
 
-            $locked->forceFill([
-                'answers' => $answers,
-                'answers_revision' => $startedRevision,
-                'custom_section_improve_key' => $idempotencyKey,
+            $locked->forceFill(array_merge([
+                'custom_section_improve_key' => $logicalKey,
+                'custom_section_improve_ledger_key' => $ledgerKey,
+                'custom_section_improve_attempt_ordinal' => $ordinal,
                 'custom_section_improve_status' => QuestionnaireResponse::IMPROVE_STATUS_PENDING,
                 'custom_section_improve_started_revision' => $startedRevision,
+                'custom_section_improve_pending_started_at' => now(),
                 'custom_section_improve_result' => null,
-            ])->save();
+            ], $sameLogicalKey ? [] : [
+                'answers' => $answers,
+                'answers_revision' => $startedRevision,
+            ]))->save();
 
-            return ['outcome' => 'start', 'response' => $locked->refresh(), 'result' => null];
+            return ['outcome' => 'start', 'response' => $locked->refresh(), 'result' => null, 'ledgerKey' => $ledgerKey];
         });
     }
 
@@ -472,21 +501,23 @@ final class WebsiteSetupSessionManager
      * Settles the attempt `beginCustomSectionImprove()` opened. Runs
      * AFTER the AI call, which stays outside any database transaction
      * (matching GuidedGenerationCommitService's own documented
-     * discipline). Compare-and-swap: if the owner saved a further edit
-     * (bumping `answers_revision`) while this call was in flight, or a
-     * newer logical submission already opened its OWN attempt (a
-     * different `custom_section_improve_key`), the AI result here is
-     * discarded rather than silently overwriting whatever is current now
-     * — never a stale response beating a newer edit.
+     * discipline). Compare-and-swap on BOTH the logical key and the
+     * specific attempt's ledger key (independent-review correction round
+     * 4, item 2 — an abandoned attempt that is recovered and retried
+     * gets a NEW ledger key; a late completion from the original,
+     * abandoned attempt must never be mistaken for the new one even
+     * though they share the same logical key), and on `answers_revision`
+     * (a further edit saved while this call was in flight discards the
+     * result rather than overwriting it).
      *
      * @return array{outcome: 'succeeded'|'failed'|'stale'|'stale_edit', response: ?QuestionnaireResponse}
      */
-    public function completeCustomSectionImprove(QuestionnaireResponse $response, string $idempotencyKey, ?string $improvedBody): array
+    public function completeCustomSectionImprove(QuestionnaireResponse $response, string $answerKey, string $logicalKey, string $ledgerKey, ?string $improvedBody): array
     {
-        return DB::transaction(function () use ($response, $idempotencyKey, $improvedBody) {
+        return DB::transaction(function () use ($answerKey, $response, $logicalKey, $ledgerKey, $improvedBody) {
             $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
-            if ($locked->custom_section_improve_key !== $idempotencyKey) {
+            if ($locked->custom_section_improve_key !== $logicalKey || $locked->custom_section_improve_ledger_key !== $ledgerKey) {
                 return ['outcome' => 'stale', 'response' => null];
             }
 
@@ -502,12 +533,12 @@ final class WebsiteSetupSessionManager
                 return ['outcome' => 'failed', 'response' => $locked->refresh()];
             }
 
-            $entries = $locked->answer('custom_section');
+            $entries = $locked->answer($answerKey);
             $entry = is_array($entries) && isset($entries[0]) && is_array($entries[0]) ? $entries[0] : [];
             $entry['body'] = $improvedBody;
 
             $answers = $locked->answers ?? [];
-            $answers['custom_section'] = [$entry];
+            $answers[$answerKey] = [$entry];
 
             $locked->forceFill([
                 'answers' => $answers,

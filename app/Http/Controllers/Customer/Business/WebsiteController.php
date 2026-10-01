@@ -76,6 +76,7 @@ class WebsiteController extends CustomerBaseController
         private readonly WebsitePageStrategy $pageStrategy,
         private readonly GuidedGenerationCommitService $guidedGeneration,
         private readonly QuestionnaireResolver $questionnaireResolver,
+        private readonly \App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator $generationCoordinator,
     ) {
     }
 
@@ -567,39 +568,75 @@ class WebsiteController extends CustomerBaseController
      * rebuild triggered from here genuinely picks up the current state
      * rather than silently reverting to whatever was true at the last
      * generation.
+     *
+     * Independent-review correction round 4 (item 1) — now coordinates
+     * through the SAME Website-level generation lease wizard generation
+     * uses (WebsiteGenerationCoordinator), instead of bypassing it
+     * entirely: a wizard generation already in flight refuses a Studio-
+     * originated one and vice versa. Also refuses outright while a setup
+     * edit session is genuinely in progress (not merely completed) for
+     * this Business — generating now would read the LATEST COMPLETED
+     * response's facts, silently ignoring whatever FAQ/custom-section/
+     * other answers the owner is mid-way through changing in that
+     * still-open session.
      */
     private function runGuidedGeneration(Request $request, string $workspaceUid, string $businessUid, Business $business, Website $website, WebsiteTemplate $template, string $mode): RedirectResponse
     {
-        // A fresh idempotency nonce per page render (the hidden form
-        // field both the "Generate"/"Regenerate" button and the rebuild
-        // confirmation form carry) — a genuine double submit of the SAME
-        // rendered form carries the SAME nonce and converges to one
-        // attempt; a later, deliberate resubmission after seeing a
-        // failure gets a fresh nonce and is never permanently stuck
-        // (acceptance-correction Blocker 6).
-        $idempotencyKey = (string) $request->input('idempotency_key', (string) Str::uuid());
+        $definition = $this->questionnaireResolver->resolveForBusiness($business);
 
-        $completedResponse = $this->latestCompletedSetupResponse($business);
-        $customSection = WizardPresentationAnswers::customSection($completedResponse);
-        $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
-
-        $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-            ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $customSection, $customerFaq)
-            : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $customSection, $customerFaq);
-
-        if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+        if ($definition !== null && QuestionnaireResponse::where('business_id', $business->id)
+            ->where('questionnaire_definition_id', $definition->id)
+            ->where('status', 'in_progress')
+            ->exists()) {
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
-                'status' => 'success',
-                'message' => $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD && $website->published_revision_id !== null
-                    ? 'Draft rebuilt with AI. Your currently published site is unaffected until you review and publish this draft.'
-                    : 'Draft content generated. Review and edit before publishing.',
+                'status' => 'error',
+                'message' => 'Finish or cancel your in-progress setup edit before generating — generating now would not include the answers you are currently editing.',
             ]);
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
-            'status' => 'error',
-            'message' => $attempt->failure_reason ?: 'AI generation is currently unavailable. Please try again later or add pages manually.',
-        ]);
+        try {
+            $leaseToken = $this->generationCoordinator->beginLease($website);
+        } catch (\App\Library\Website\Setup\Exceptions\GenerationInProgressException $e) {
+            return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            // A fresh idempotency nonce per page render (the hidden form
+            // field both the "Generate"/"Regenerate" button and the rebuild
+            // confirmation form carry) — a genuine double submit of the SAME
+            // rendered form carries the SAME nonce and converges to one
+            // attempt; a later, deliberate resubmission after seeing a
+            // failure gets a fresh nonce and is never permanently stuck
+            // (acceptance-correction Blocker 6).
+            $idempotencyKey = (string) $request->input('idempotency_key', (string) Str::uuid());
+
+            $completedResponse = $this->latestCompletedSetupResponse($business);
+            $customSection = WizardPresentationAnswers::customSection($completedResponse);
+            $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
+
+            $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
+                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq)
+                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq);
+
+            if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
+                return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                    'status' => 'success',
+                    'message' => $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD && $website->published_revision_id !== null
+                        ? 'Draft rebuilt with AI. Your currently published site is unaffected until you review and publish this draft.'
+                        : 'Draft content generated. Review and edit before publishing.',
+                ]);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                'status' => 'error',
+                'message' => $attempt->failure_reason ?: 'AI generation is currently unavailable. Please try again later or add pages manually.',
+            ]);
+        } finally {
+            $this->generationCoordinator->release($website, $leaseToken);
+        }
     }
 
     public function storeAsset(StoreWebsiteAssetRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -610,6 +647,10 @@ class WebsiteController extends CustomerBaseController
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
+        }
+
+        if ($leased = $this->leaseGuard($website)) {
+            return $leased;
         }
 
         $this->assetUploads->store($website, $request->file('image'), $request->input('alt_text'));
@@ -631,6 +672,10 @@ class WebsiteController extends CustomerBaseController
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
+        }
+
+        if ($leased = $this->leaseGuard($website)) {
+            return $leased;
         }
 
         $this->assetUploads->delete($website, $asset);
@@ -741,6 +786,10 @@ class WebsiteController extends CustomerBaseController
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
+        }
+
+        if ($leased = $this->leaseGuard($website)) {
+            return $leased;
         }
 
         $validated = validator($request->all(), [
@@ -896,6 +945,23 @@ class WebsiteController extends CustomerBaseController
             'meta_description' => $request->input('meta_description'),
             'noindex' => $request->boolean('noindex'),
         ];
+    }
+
+    /**
+     * Independent-review correction round 4 (item 1) — Studio's general
+     * asset endpoints (never a QuestionnaireResponse-scoped mutation, so
+     * WebsiteSetupSessionManager::runIfNotGenerating() cannot cover
+     * them) coordinate through the SAME Website-level lease.
+     */
+    private function leaseGuard(Website $website): ?RedirectResponse
+    {
+        try {
+            $this->generationCoordinator->assertNotLeased($website);
+
+            return null;
+        } catch (\App\Library\Website\Setup\Exceptions\GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
     }
 
     private function demoGuard(string $workspaceUid, string $businessUid): ?RedirectResponse

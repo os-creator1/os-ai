@@ -89,7 +89,7 @@ class QuestionnaireVersioningTest extends TestCase
         // The platform publishes a new version while the session is mid-flight.
         $v2Steps = [
             ['key' => 'business_name', 'prompt' => 'Changed prompt', 'help_text' => null, 'input_type' => 'text', 'required' => true, 'options' => null, 'conditional_visibility' => null, 'target_module' => 'business', 'target_field' => 'name', 'ai_instructions' => null],
-            ['key' => 'extra_question', 'prompt' => 'A brand new question', 'help_text' => null, 'input_type' => 'text', 'required' => false, 'options' => null, 'conditional_visibility' => null, 'target_module' => 'business', 'target_field' => null, 'ai_instructions' => null],
+            ['key' => 'extra_question', 'prompt' => 'A brand new question', 'help_text' => null, 'input_type' => 'email', 'required' => false, 'options' => null, 'conditional_visibility' => null, 'target_module' => 'business', 'target_field' => 'email', 'ai_instructions' => null],
         ];
         $v2 = $publisher->publish($publisher->createDraft($definition, $v2Steps));
 

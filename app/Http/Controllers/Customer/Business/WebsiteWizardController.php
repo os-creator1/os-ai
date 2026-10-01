@@ -11,6 +11,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Website\Gallery\WebsiteAssetAltTextGenerator;
 use App\Library\Website\Gallery\WebsiteGalleryManager;
 use App\Library\Website\GuidedGeneration\GuidedGenerationCommitService;
+use App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator;
 use App\Library\Website\Setup\Exceptions\AnswerRevisionConflictException;
 use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Library\Website\Setup\Exceptions\InvalidAnswerException;
@@ -35,7 +36,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -82,6 +82,7 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly WebsiteGalleryManager $gallery,
         private readonly WebsiteAssetAltTextGenerator $altTextGenerator,
         private readonly WebsiteAiGenerationClient $aiClient,
+        private readonly WebsiteGenerationCoordinator $generationCoordinator,
     ) {
     }
 
@@ -428,12 +429,18 @@ class WebsiteWizardController extends CustomerBaseController
         $website = $response->website ?? abort(404);
         $actorUserId = (int) Auth::id();
 
-        $lock = Cache::lock('website-setup-generate:' . $response->id, 60);
-
-        if (! $lock->get()) {
+        // Independent-review correction round 4 (item 1) — the Website-
+        // level lease, not a per-response Cache lock, is what now
+        // coordinates with Studio's own "Regenerate"/"Rebuild" actions
+        // (WebsiteController) and every setup mutation (WebsiteSetup
+        // SessionManager::runIfNotGenerating()) — all three share this
+        // SAME lease on the SAME row.
+        try {
+            $leaseToken = $this->generationCoordinator->beginLease($website);
+        } catch (GenerationInProgressException $e) {
             return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => 'Your website is already being generated. Please wait a moment and check back.',
+                'message' => $e->getMessage(),
             ]);
         }
 
@@ -476,7 +483,7 @@ class WebsiteWizardController extends CustomerBaseController
                 $customerFaq = WizardPresentationAnswers::customerFaq($response);
                 $idempotencyKey = $this->stableIdempotencyKey($response, $website);
 
-                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $customSection, $customerFaq);
+                $attempt = $this->guidedGeneration->generateFull($business, $website->fresh(), $template, $actorUserId, $idempotencyKey, $leaseToken, $customSection, $customerFaq);
 
                 if ($attempt->status !== WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                     $this->sessionManager->recordGenerationFailure($response);
@@ -514,7 +521,7 @@ class WebsiteWizardController extends CustomerBaseController
                 ]);
             }
         } finally {
-            $lock->release();
+            $this->generationCoordinator->release($website, $leaseToken);
         }
     }
 
@@ -570,31 +577,54 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
+        $stepKey = $this->stepKeyForModule($response, 'gallery');
 
         $request->validate([
             'photos' => 'required|array|max:20',
             'photos.*' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192',
         ]);
 
+        // Independent-review correction round 4 (item 6) — the same
+        // orphaned-file-cleanup discipline uploadCustomSectionImage() uses:
+        // runIfNotGenerating() is the OUTERMOST transaction for this
+        // mutation (not merely uploadMany()'s own inner one), so tracking
+        // every asset this call creates means ANY later failure inside
+        // that same transaction — today or after a future change adds
+        // more work to this closure — rolls back the DB AND deletes the
+        // file(s) this request itself just wrote, never leaving an orphan
+        // on disk pointing at a row that no longer exists.
+        $createdAssetPaths = [];
+
         try {
-            // Independent-review correction round 3 (item 1) — the
-            // generation-freeze check happens under the response row's
-            // own lock BEFORE anything is written, including a file to
-            // disk: uploadMany() is only ever invoked from INSIDE this
-            // callback, never before it.
-            $this->sessionManager->runIfNotGenerating($response, function () use ($website, $request) {
-                $this->gallery->uploadMany($website, $request->file('photos', []), WebsiteAssetPurpose::Gallery, $request->input('category_tag'));
+            // Independent-review correction round 4 (items 1, 6) — the
+            // gallery step's own visibility is RE-verified under the
+            // SAME lock as the generation-freeze check, immediately
+            // before anything is written, including a file to disk —
+            // never merely checked once, earlier, against a read that
+            // could already be stale by the time the mutation runs.
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($website, $request, &$createdAssetPaths) {
+                $this->stepKeyForModule($locked, 'gallery');
+                $assets = $this->gallery->uploadMany($website, $request->file('photos', []), WebsiteAssetPurpose::Gallery, $request->input('category_tag'));
+                foreach ($assets as $asset) {
+                    $createdAssetPaths[] = $asset->path;
+                }
             });
         } catch (InvalidWebsiteAssetException|GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery'])->with([
+            $this->deleteOrphanedAssetFiles($createdAssetPaths);
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
+        } catch (Throwable $e) {
+            $this->deleteOrphanedAssetFiles($createdAssetPaths);
+
+            throw $e;
         }
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
 
     /**
@@ -615,6 +645,7 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
+        $stepKey = $this->stepKeyForModule($response, 'gallery');
         // Independent-review correction round 3 (item 7) — abort(404), not
         // firstOrFail(): this codebase's own exception handler
         // (app/Exceptions/Handler.php) deliberately renders a
@@ -628,7 +659,9 @@ class WebsiteWizardController extends CustomerBaseController
         $request->validate(['title' => 'nullable|string|max:160', 'category_tag' => 'nullable|string|max:80', 'alt_text' => 'nullable|string|max:160']);
 
         try {
-            $this->sessionManager->runIfNotGenerating($response, function () use ($request, $website, $asset) {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($request, $website, $asset) {
+                $this->stepKeyForModule($locked, 'gallery');
+
                 if ($request->hasAny(['title', 'category_tag', 'alt_text'])) {
                     $this->gallery->setTitleAndCategory($website, $asset, WebsiteAssetPurpose::Gallery, $request->input('title'), $request->input('category_tag'), $request->input('alt_text'));
                 }
@@ -638,7 +671,7 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
@@ -646,7 +679,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
 
     /**
@@ -664,11 +697,13 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
+        $stepKey = $this->stepKeyForModule($response, 'gallery');
 
         $request->validate(['direction' => 'required|in:up,down']);
 
         try {
-            $this->sessionManager->runIfNotGenerating($response, function () use ($website, $request, $assetUid) {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($website, $request, $assetUid) {
+                $this->stepKeyForModule($locked, 'gallery');
                 $orderedUids = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->pluck('uid')->all();
                 $position = array_search($assetUid, $orderedUids, true);
 
@@ -684,7 +719,7 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
@@ -692,7 +727,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
 
     /**
@@ -707,15 +742,17 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
+        $stepKey = $this->stepKeyForModule($response, 'gallery');
         $asset = WebsiteAsset::where('website_id', $website->id)->where('uid', $assetUid)->where('purpose', WebsiteAssetPurpose::Gallery->value)->first();
         abort_unless($asset !== null, 404);
 
         try {
-            $this->sessionManager->runIfNotGenerating($response, function () use ($website, $asset) {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($website, $asset) {
+                $this->stepKeyForModule($locked, 'gallery');
                 app(WebsiteAssetUploadService::class)->delete($website, $asset);
             });
         } catch (ValidationException|GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
@@ -723,7 +760,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'gallery']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
 
     /**
@@ -742,30 +779,67 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $this->assertCustomSectionStepVisible($response);
+        $stepKey = $this->stepKeyForModule($response, 'custom_section');
 
         $request->validate(['photo' => 'required|image|mimes:jpeg,jpg,png,webp|max:8192']);
 
-        try {
-            $this->sessionManager->runIfNotGenerating($response, function () use ($website, $request, $response) {
-                $assets = $this->gallery->uploadMany($website, [$request->file('photo')], WebsiteAssetPurpose::CustomSection);
+        // Independent-review correction round 4 (item 6) — a stored file
+        // must never survive a later failure elsewhere in this same
+        // mutation. runIfNotGenerating() already wraps this entire
+        // callback in ONE transaction (the OUTERMOST one for this
+        // mutation, not merely uploadMany()'s own inner one) — tracking
+        // every asset this call creates means a failure in
+        // updateAnswerInPlace() (e.g. the answers JSON size guard) rolls
+        // back that whole transaction AND deletes the file this request
+        // itself just wrote, never leaving an orphan on disk pointing at
+        // a row that no longer exists.
+        $createdAssetPaths = [];
 
-                $entry = $this->currentCustomSectionEntry($response);
+        try {
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $website, $request, &$createdAssetPaths) {
+                $this->stepKeyForModule($locked, 'custom_section');
+
+                $assets = $this->gallery->uploadMany($website, [$request->file('photo')], WebsiteAssetPurpose::CustomSection);
+                foreach ($assets as $asset) {
+                    $createdAssetPaths[] = $asset->path;
+                }
+
+                $entry = $this->currentCustomSectionEntry($locked, $stepKey);
                 $entry['images'][] = $assets[0]->uid;
                 $entry['images'] = array_values(array_slice($entry['images'], 0, QuestionnaireAnswerValidator::MAX_CUSTOM_SECTION_IMAGES));
 
-                $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
+                $this->sessionManager->updateAnswerInPlace($locked, $stepKey, [$entry]);
             });
         } catch (InvalidWebsiteAssetException|GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            $this->deleteOrphanedAssetFiles($createdAssetPaths);
+
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
+        } catch (Throwable $e) {
+            $this->deleteOrphanedAssetFiles($createdAssetPaths);
+
+            throw $e;
         }
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
+    }
+
+    /**
+     * @param  array<int, string>  $paths  disk-relative paths of files written during a mutation this request is unwinding
+     */
+    private function deleteOrphanedAssetFiles(array $paths): void
+    {
+        foreach ($paths as $path) {
+            $fullPath = public_path($path);
+
+            if (is_file($fullPath)) {
+                @unlink($fullPath);
+            }
+        }
     }
 
     public function removeCustomSectionImage(string $workspaceUid, string $businessUid, string $assetUid): RedirectResponse
@@ -774,7 +848,7 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $this->assertCustomSectionStepVisible($response);
+        $stepKey = $this->stepKeyForModule($response, 'custom_section');
 
         // Independent-review correction round 2/3 — scoped to the
         // custom-section purpose alone: a gallery/package/foreign-Website
@@ -786,10 +860,11 @@ class WebsiteWizardController extends CustomerBaseController
         abort_unless($asset !== null, 404);
 
         try {
-            $this->sessionManager->runIfNotGenerating($response, function () use ($website, $asset, $assetUid, $response) {
-                $entry = $this->currentCustomSectionEntry($response);
+            $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $website, $asset, $assetUid) {
+                $this->stepKeyForModule($locked, 'custom_section');
+                $entry = $this->currentCustomSectionEntry($locked, $stepKey);
                 $entry['images'] = array_values(array_diff($entry['images'], [$assetUid]));
-                $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]);
+                $this->sessionManager->updateAnswerInPlace($locked, $stepKey, [$entry]);
 
                 try {
                     app(WebsiteAssetUploadService::class)->delete($website, $asset);
@@ -799,7 +874,7 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             });
         } catch (GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
@@ -807,7 +882,7 @@ class WebsiteWizardController extends CustomerBaseController
 
         $this->markPresentationChangePending($website);
 
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section']);
+        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey]);
     }
 
     /**
@@ -852,7 +927,13 @@ class WebsiteWizardController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $response = $this->currentResponseOrFail($business);
         $website = $response->website ?? abort(404);
-        $this->assertCustomSectionStepVisible($response);
+        $stepKey = $this->stepKeyForModule($response, 'custom_section');
+
+        // Independent-review correction round 4 (item 2) — required, not
+        // defaulted: a form that never observed a real revision has no
+        // business asserting the identity of "the revision it last saw."
+        $request->validate(['answers_revision' => 'required|integer']);
+        $expectedRevision = (int) $request->input('answers_revision');
 
         $submittedItems = array_filter((array) $request->input('items', []), fn ($item) => is_array($item));
         $submitted = array_values($submittedItems)[0] ?? [];
@@ -861,22 +942,26 @@ class WebsiteWizardController extends CustomerBaseController
             $entry = $this->normalizeRepeatableItem(is_array($submitted) ? $submitted : [], ['target_module' => 'custom_section'], $website);
             $this->answerValidator->validate(['input_type' => 'repeatable_group', 'required' => false, 'target_module' => 'custom_section'], [$entry]);
         } catch (InvalidAnswerException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $e->getMessage(),
             ]);
         }
 
-        $expectedRevision = (int) $request->input('answers_revision', $response->answers_revision);
-
         if (trim((string) $entry['body']) === '') {
             try {
-                $this->sessionManager->runIfNotGenerating($response, fn () => $this->sessionManager->updateAnswerInPlace($response, 'custom_section', [$entry]));
-            } catch (GenerationInProgressException $e) {
-                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with(['status' => 'error', 'message' => $e->getMessage()]);
+                $this->sessionManager->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $entry, $expectedRevision) {
+                    if ((int) $locked->answers_revision !== $expectedRevision) {
+                        throw new AnswerRevisionConflictException((int) $locked->answers_revision);
+                    }
+
+                    $this->sessionManager->updateAnswerInPlace($locked, $stepKey, [$entry]);
+                });
+            } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
             }
 
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => 'Write something in the body field before asking AI to improve it.',
             ]);
@@ -886,30 +971,35 @@ class WebsiteWizardController extends CustomerBaseController
         // response, the revision the owner's own form last observed, and
         // the complete submitted material (title/body/layout). A changed
         // title with the same body, or a submission against a
-        // since-changed revision, always produces a different key.
-        $idempotencyKey = hash('sha256', implode('|', [$response->uid, $expectedRevision, $entry['name'], $entry['body'], $entry['layout']]));
+        // since-changed revision, always produces a different key. This
+        // is NEVER the key handed to the AI gateway directly — see
+        // beginCustomSectionImprove()'s own returned, always-fresh-per-
+        // attempt ledger key below.
+        $logicalKey = hash('sha256', implode('|', [$response->uid, $expectedRevision, $entry['name'], $entry['body'], $entry['layout']]));
 
         try {
-            $begin = $this->sessionManager->beginCustomSectionImprove($response, $idempotencyKey, $entry);
-        } catch (GenerationInProgressException $e) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with(['status' => 'error', 'message' => $e->getMessage()]);
+            $begin = $this->sessionManager->beginCustomSectionImprove($response, $stepKey, $logicalKey, $entry, $expectedRevision);
+        } catch (AnswerRevisionConflictException|GenerationInProgressException $e) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         $this->markPresentationChangePending($website);
 
         if ($begin['outcome'] === 'duplicate_pending') {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'success',
                 'message' => 'This section is already being improved — check back in a moment.',
             ]);
         }
 
         if ($begin['outcome'] === 'duplicate_succeeded') {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'success',
                 'message' => 'Your custom section copy was improved.',
             ]);
         }
+
+        $ledgerKey = $begin['ledgerKey'];
 
         // AI provider call stays outside any database transaction
         // (matching GuidedGenerationCommitService's own documented
@@ -924,9 +1014,23 @@ class WebsiteWizardController extends CustomerBaseController
             ])],
         ];
 
-        $raw = $this->aiClient->complete($messages, $business, (int) Auth::id(), self::IMPROVE_MAX_OUTPUT_TOKENS, $idempotencyKey);
-        $decoded = $raw !== null ? json_decode($raw, true) : null;
-        $improved = is_array($decoded) ? ($decoded['body'] ?? null) : null;
+        $budgetExhausted = false;
+
+        try {
+            $raw = $this->aiClient->complete($messages, $business, (int) Auth::id(), self::IMPROVE_MAX_OUTPUT_TOKENS, $ledgerKey);
+            $decoded = $raw !== null ? json_decode($raw, true) : null;
+            $improved = is_array($decoded) ? ($decoded['body'] ?? null) : null;
+            $budgetExhausted = $this->aiClient->lastCallWasBudgetExhausted();
+        } catch (\Illuminate\Database\UniqueConstraintViolationException|\Illuminate\Database\QueryException) {
+            // Independent-review correction round 4 (item 2) — AiGateway's
+            // own documentation warns a reused ledger idempotency_key can
+            // throw this. beginCustomSectionImprove()'s per-attempt
+            // ordinal is specifically designed to make this vanishingly
+            // unlikely, but a genuine collision converts to the SAME
+            // friendly "could not improve" outcome a provider failure
+            // already produces, never a raw 500.
+            $improved = null;
+        }
 
         // Independent-review correction round 2 — the output bound is
         // enforced HERE, after decoding, regardless of whether the
@@ -936,20 +1040,18 @@ class WebsiteWizardController extends CustomerBaseController
             ? trim($improved)
             : null;
 
-        $budgetExhausted = $this->aiClient->lastCallWasBudgetExhausted();
-
-        $complete = $this->sessionManager->completeCustomSectionImprove($response, $idempotencyKey, $validImprovement);
+        $complete = $this->sessionManager->completeCustomSectionImprove($response, $stepKey, $logicalKey, $ledgerKey, $validImprovement);
 
         return match ($complete['outcome']) {
-            'succeeded' => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            'succeeded' => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'success',
                 'message' => 'Your custom section copy was improved.',
             ]),
-            'stale', 'stale_edit' => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            'stale', 'stale_edit' => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => 'Your text changed since this request started, so the improvement was discarded. Your current text is unchanged.',
             ]),
-            default => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, 'custom_section'])->with([
+            default => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $stepKey])->with([
                 'status' => 'error',
                 'message' => $budgetExhausted
                     ? 'The included AI generation budget is used up for this period.'
@@ -1049,9 +1151,9 @@ class WebsiteWizardController extends CustomerBaseController
     /**
      * @return array{key: string, name: string, description: ?string, body: ?string, layout: string, images: array<int, string>}
      */
-    private function currentCustomSectionEntry(QuestionnaireResponse $response): array
+    private function currentCustomSectionEntry(QuestionnaireResponse $response, string $answerKey): array
     {
-        $entries = $response->answer('custom_section');
+        $entries = $response->answer($answerKey);
         $entry = is_array($entries) && isset($entries[0]) && is_array($entries[0]) ? $entries[0] : [];
 
         return [
@@ -1228,25 +1330,25 @@ class WebsiteWizardController extends CustomerBaseController
     }
 
     /**
-     * Independent-review correction round 3 (item 6) — verified before
-     * any of the three custom-section mutation endpoints (upload/remove/
-     * improve) act at all: a niche whose CURRENT definition has no
-     * custom_section step, or one this response's own answers currently
-     * hide, must never let a client mutate an answer key with nothing
-     * behind it. Matched by target_module rather than a hardcoded step
-     * key, since a future niche's custom-section step need not be named
-     * literally 'custom_section'.
+     * Independent-review correction round 4 (item 4) — resolves the
+     * REAL, currently-visible step for a given target_module from the
+     * response's own pinned version, rather than assuming any niche's
+     * custom-section/gallery/FAQ step is literally keyed
+     * 'custom_section'/'gallery'/'faq_items'. Used both as a 404 guard
+     * (a niche whose CURRENT definition has no such step, or one this
+     * response's own answers currently hide, must never let a client
+     * mutate an answer key with nothing behind it) and as the single
+     * source of the real answer-storage/redirect key every caller below
+     * uses instead of a hardcoded literal.
      */
-    private function assertCustomSectionStepVisible(QuestionnaireResponse $response): array
+    private function stepKeyForModule(QuestionnaireResponse $response, string $targetModule): string
     {
         $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
-        $step = collect($visible)->firstWhere('target_module', 'custom_section');
+        $step = collect($visible)->firstWhere('target_module', $targetModule);
 
-        if ($step === null) {
-            abort(404);
-        }
+        abort_unless($step !== null, 404);
 
-        return $step;
+        return $step['key'];
     }
 
     /**

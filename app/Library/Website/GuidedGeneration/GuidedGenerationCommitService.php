@@ -67,12 +67,19 @@ final class GuidedGenerationCommitService
     }
 
     /**
+     * @param  ?string  $fenceToken  independent-review correction round 4 (item 1) — the caller's current
+     *         WebsiteGenerationCoordinator lease token. When given, the attempt created below is CAS-linked
+     *         to the Website's lease, and the final page-commit transaction re-verifies the Website's lease
+     *         still carries this EXACT token before writing anything — a worker whose lease was already
+     *         reclaimed as stale can never commit pages. Null skips fencing entirely (a direct/internal
+     *         caller that never went through the coordinator, e.g. existing focused tests of this service
+     *         in isolation) — never used by either real HTTP controller.
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section questionnaire answer (Website Builder redesign) — see WebsitePageStrategy::buildPlan()
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers, appended verbatim to the FAQ page's section — never sent to AI to rewrite (independent-review correction round 2)
      */
-    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq);
     }
 
     /**
@@ -88,31 +95,27 @@ final class GuidedGenerationCommitService
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection
      */
-    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq);
     }
 
     /**
-     * Independent-review correction round 3 (item 1) — this table's own
-     * seam discipline (class docblock: "no controller ever writes this
-     * table directly") is preserved by keeping the actual write here,
-     * even though the CALLER of this method is WebsiteSetupSessionManager
-     * reacting to a stale `generation_started_at` lease. A `pending`
-     * attempt whose OWN row is older than `$staleBefore` never made
-     * forward progress (the process that created it died before this
-     * same method's own commit/failure transaction ever ran) — it is
-     * marked `failed` so it can never again short-circuit a genuine
-     * retry via the material-idempotency match in run() above, and so it
-     * never blocks a fresh attempt with the identical material key
-     * forever. A `pending` row newer than `$staleBefore` is a genuinely
-     * active attempt and is never touched.
+     * Independent-review correction round 4 (item 1) — replaces round 3's
+     * `recoverStaleAttempt()`, which marked EVERY pending attempt for the
+     * Website failed. That was wrong: only the ONE attempt a specific
+     * expired lease actually owns (`website.generation_lease_attempt_uid`)
+     * may ever be recovered — a different, genuinely active attempt that
+     * merely happens to also be `pending` for the same Website must never
+     * be touched. This table's own seam discipline (class docblock: "no
+     * controller ever writes this table directly") is preserved: the
+     * caller is WebsiteGenerationCoordinator, reacting to its own expired
+     * lease, but the actual write stays here.
      */
-    public function recoverStaleAttempt(int $websiteId, \DateTimeInterface $staleBefore): void
+    public function recoverAttemptByUid(string $attemptUid): void
     {
-        WebsiteGuidedGenerationAttempt::where('website_id', $websiteId)
+        WebsiteGuidedGenerationAttempt::where('uid', $attemptUid)
             ->where('status', WebsiteGuidedGenerationAttempt::STATUS_PENDING)
-            ->where('created_at', '<', $staleBefore)
             ->update([
                 'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
                 'failure_reason' => 'Recovered from a stalled generation attempt.',
@@ -120,7 +123,7 @@ final class GuidedGenerationCommitService
             ]);
     }
 
-    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection);
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
@@ -130,8 +133,13 @@ final class GuidedGenerationCommitService
         // §8.4/Blocker 6 — serializes every attempt for this ONE website
         // so two genuinely concurrent identical submissions never both
         // reach the create-and-spend-AI step; the second waits, then
-        // converges to the first attempt's row below.
-        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $customSection, $customerFaq) {
+        // converges to the first attempt's row below. Independent-review
+        // correction round 4 — in practice this is now redundant with
+        // WebsiteGenerationCoordinator's own non-blocking Website-level
+        // lease (a second real HTTP request never reaches this method at
+        // all while a lease is held), but is kept as defense in depth for
+        // any direct caller that bypasses the coordinator.
+        return Cache::lock('website-guided-generation:' . $website->id, 60)->block(15, function () use ($business, $website, $template, $actorUserId, $mode, $plan, $aiPlan, $materialBase, $fenceToken, $customSection, $customerFaq) {
             $existing = WebsiteGuidedGenerationAttempt::where('website_id', $website->id)
                 ->where('idempotency_key', 'like', $materialBase . ':%')
                 ->whereIn('status', [WebsiteGuidedGenerationAttempt::STATUS_PENDING, WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED])
@@ -165,11 +173,33 @@ final class GuidedGenerationCommitService
                     ->firstOrFail();
             }
 
-            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $customSection, $customerFaq);
+            // Independent-review correction round 4 (item 1) — CAS-link
+            // this attempt to the Website's CURRENT lease. If the update
+            // affects zero rows, this exact token no longer owns the
+            // lease (it was already reclaimed as stale by a recovering
+            // worker) — fail the attempt immediately rather than ever
+            // calling AI or touching pages for a fenced-out caller.
+            if ($fenceToken !== null) {
+                $attached = Website::where('id', $website->id)
+                    ->where('generation_lease_token', $fenceToken)
+                    ->update(['generation_lease_attempt_uid' => $attempt->uid]);
+
+                if ($attached === 0) {
+                    $attempt->update([
+                        'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+                        'failure_reason' => 'This generation was superseded before it could start.',
+                        'completed_at' => now(),
+                    ]);
+
+                    return $attempt->fresh();
+                }
+            }
+
+            return $this->generateValidateAndCommit($business, $website, $template, $plan, $aiPlan, $attempt, $fenceToken, $customSection, $customerFaq);
         });
     }
 
-    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    private function generateValidateAndCommit(Business $business, Website $website, WebsiteTemplate $template, array $plan, array $aiPlan, WebsiteGuidedGenerationAttempt $attempt, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
     {
         $prohibitedClaims = BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
 
@@ -177,6 +207,22 @@ final class GuidedGenerationCommitService
         // (Blocker 5) — the only writes below happen after this
         // returns.
         [$aiPages, $retryCount] = $this->generateAndValidate($business, $aiPlan, $prohibitedClaims, $attempt->idempotency_key);
+
+        if ($fenceToken !== null && ! Website::where('id', $website->id)->where('generation_lease_token', $fenceToken)->exists()) {
+            // Independent-review correction round 4 (item 1) — the AI
+            // call took long enough that this lease was reclaimed as
+            // stale while it was running. The work is simply discarded;
+            // the recovering worker's own attempt (or the owner's next
+            // retry) is the one that gets to commit.
+            $attempt->update([
+                'status' => WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+                'retry_count' => $retryCount,
+                'failure_reason' => 'This generation was superseded while it was running.',
+                'completed_at' => now(),
+            ]);
+
+            return $attempt->fresh();
+        }
 
         if ($aiPages === null) {
             $attempt->update([
@@ -200,13 +246,25 @@ final class GuidedGenerationCommitService
             $merged = $this->mergePlanWithContent($plan, $aiPages);
             $bound = $this->mediaBinding->bind($website, $merged, $customSection, $customerFaq);
 
-            DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount) {
+            DB::transaction(function () use ($website, $template, $bound, $attempt, $retryCount, $fenceToken) {
                 // Blocker 4 — real rebuild semantics: lock the Website
                 // row, then replace the ENTIRE draft page set atomically.
                 // If any createPage() call below throws, the whole
                 // transaction (including the delete) rolls back, so the
                 // OLD draft is exactly as it was before this call.
                 $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+                // Independent-review correction round 4 (item 1) — the
+                // FINAL fencing check, inside the very transaction that
+                // writes pages, under the SAME row lock: a worker whose
+                // lease was reclaimed between the check above and this
+                // transaction's own lock acquisition can still never
+                // replace pages. This is what actually makes the
+                // guarantee atomic, not merely "checked somewhere first."
+                if ($fenceToken !== null && $locked->generation_lease_token !== $fenceToken) {
+                    throw new \RuntimeException('This generation was superseded before it could commit.');
+                }
+
                 $locked->pages()->delete();
 
                 foreach ($bound['pages'] as $page) {

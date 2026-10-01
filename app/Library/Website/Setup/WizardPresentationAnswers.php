@@ -25,7 +25,7 @@ final class WizardPresentationAnswers
             return null;
         }
 
-        $entries = $response->answer('custom_section');
+        $entries = self::answerForModule($response, 'custom_section');
 
         if (! is_array($entries) || $entries === []) {
             return null;
@@ -54,7 +54,7 @@ final class WizardPresentationAnswers
             return null;
         }
 
-        $entries = $response->answer('faq_items');
+        $entries = self::answerForModule($response, 'faq');
 
         if (! is_array($entries) || $entries === []) {
             return null;
@@ -72,5 +72,24 @@ final class WizardPresentationAnswers
         }, $entries)));
 
         return $pairs === [] ? null : $pairs;
+    }
+
+    /**
+     * Independent-review correction round 4 (item 4) — resolves the
+     * REAL step key for the given target_module from the response's own
+     * pinned version, rather than assuming any niche's custom-section/
+     * FAQ step is literally keyed 'custom_section'/'faq_items'. A niche
+     * with no such step at all (or one never answered) simply has
+     * nothing to resolve — null is a normal result, not an error.
+     */
+    private static function answerForModule(QuestionnaireResponse $response, string $targetModule): mixed
+    {
+        $step = collect($response->version->steps())->firstWhere('target_module', $targetModule);
+
+        if ($step === null) {
+            return null;
+        }
+
+        return $response->answer($step['key']);
     }
 }

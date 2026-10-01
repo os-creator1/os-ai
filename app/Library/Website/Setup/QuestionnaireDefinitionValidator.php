@@ -2,7 +2,6 @@
 
 namespace App\Library\Website\Setup;
 
-use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
 use App\Enums\Questionnaire\QuestionType;
 use DomainException;
 
@@ -42,7 +41,76 @@ final class QuestionnaireDefinitionValidator
         'catalog_item', 'backdrop', 'website_form', 'gallery', 'answers', 'custom_section', 'faq',
     ];
 
-    private const VALID_BUSINESS_FIELDS = ['name', 'phone', 'email', 'description'];
+    /**
+     * Independent-review correction round 4 (item 3) — the exact accepted
+     * input_type(s) for every Business column a questionnaire step may
+     * target. Previously ANY of text/tel/email/textarea could target ANY
+     * of these 4 columns (e.g. a `tel` step writing into `description`),
+     * which would reach WebsiteSetupAnswerApplier::applyBusinessField()
+     * and silently store a value of the wrong shape for that column.
+     */
+    private const BUSINESS_FIELD_TYPES = [
+        'name' => ['text'],
+        'phone' => ['tel'],
+        'email' => ['email'],
+        'description' => ['text', 'textarea'],
+    ];
+
+    /**
+     * Independent-review correction round 4 (item 3) — the exact accepted
+     * input_type(s) for every BusinessKnowledgeProfileFieldKey, derived
+     * directly from BusinessKnowledgeProfileManager::normalizeField()'s
+     * own real per-field normalization:
+     *  - boolean-normalized (`financing_available`) -> `boolean` only;
+     *  - enum-normalized (`vertical_key`, `pricing_method`,
+     *    `primary_conversion_goal`) -> `select` only (options are a
+     *    platform-owner-defined bounded list the wizard already renders
+     *    as a dropdown; a `text` step could never match a real enum
+     *    value reliably);
+     *  - bounded string-list (`differentiators`, `customer_problems`,
+     *    `prohibited_claims`) -> `multi_select` only, whose own value
+     *    shape (`array_values($request->input('value', []))`) is exactly
+     *    the flat `array<string>` these fields normalize — never
+     *    `repeatable_group`, whose generic shape is an array of
+     *    name/description OBJECTS, not bare strings;
+     *  - free string (`ideal_customers`, `warranties_guarantees`,
+     *    `brand_voice`) -> `text`/`textarea` (`brand_voice` also accepts
+     *    `select`, matching the seeded Photobooth definition's own
+     *    bounded "brand personality" dropdown — the manager itself never
+     *    restricts it to an enum, so a platform owner may choose either
+     *    shape);
+     *  - `conversion_target` (a validated tel:/mailto:/https: string) ->
+     *    `text`;
+     *  - `testimonials` -> `repeatable_group` only — the ONE field this
+     *    codebase's normalizeRepeatableItem() gives its own real object
+     *    shape (quote/author_name/author_title) matching
+     *    normalizeTestimonials()'s expectation exactly.
+     *
+     * Deliberately ABSENT (never valid for any input_type today, so any
+     * step targeting them is refused at publish time): `offers`,
+     * `credentials` (each normalizes an array of OBJECTS with fields this
+     * generic wizard form has no way to collect), `years_operating` (an
+     * integer — no numeric QuestionType exists), `growth_priority_
+     * service_ids`/`growth_priority_location_ids` (arrays of this
+     * Business's OWN real record ids — no generic wizard input offers a
+     * dynamic choice from the Business's own services/locations). `hours`
+     * is never valid for any module (its only write path is
+     * updateLocationHours(), never updateFields()).
+     */
+    private const KNOWLEDGE_PROFILE_FIELD_TYPES = [
+        'vertical_key' => ['select'],
+        'pricing_method' => ['select'],
+        'financing_available' => ['boolean'],
+        'differentiators' => ['multi_select'],
+        'ideal_customers' => ['text', 'textarea'],
+        'customer_problems' => ['multi_select'],
+        'warranties_guarantees' => ['text', 'textarea'],
+        'primary_conversion_goal' => ['select'],
+        'conversion_target' => ['text'],
+        'brand_voice' => ['select', 'text', 'textarea'],
+        'prohibited_claims' => ['multi_select'],
+        'testimonials' => ['repeatable_group'],
+    ];
 
     /**
      * Independent-review correction round 3 — every target_module in
@@ -143,15 +211,29 @@ final class QuestionnaireDefinitionValidator
                 throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with a target_module '{$targetModule}' this codebase has no real renderer/parser/validator/application path for.");
             }
 
-            // A null target_field is tolerated even for 'business' — it is
-            // a graceful no-op there too (WebsiteSetupAnswerApplier::
-            // applyBusinessField() already returns early on one); only a
-            // NON-null 'business' target_field must be a real column.
+            // Independent-review correction round 4 (item 3) — a null
+            // target_field for 'business' is no longer tolerated: it
+            // reaches WebsiteSetupAnswerApplier::applyBusinessField(),
+            // which silently no-ops on a null field — a step that writes
+            // nowhere at all is refused here rather than published as a
+            // dead question.
             $targetField = $step['target_field'] ?? null;
-            if ($targetModule === 'business' && $targetField !== null && ! in_array($targetField, self::VALID_BUSINESS_FIELDS, true)) {
-                throw new DomainException("Step '{$key}' targets 'business' with an unsupported target_field.");
+            if ($targetModule === 'business') {
+                if (! is_string($targetField) || ! isset(self::BUSINESS_FIELD_TYPES[$targetField])) {
+                    throw new DomainException("Step '{$key}' targets 'business' with an unsupported or missing target_field.");
+                }
+
+                if (! in_array($inputType, self::BUSINESS_FIELD_TYPES[$targetField], true)) {
+                    throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with business field '{$targetField}', which has no real application path for that type.");
+                }
             } elseif ($targetModule === 'knowledge_profile') {
-                $this->validateKnowledgeProfileCombination($key, $inputType, $targetField);
+                if (! is_string($targetField) || ! isset(self::KNOWLEDGE_PROFILE_FIELD_TYPES[$targetField])) {
+                    throw new DomainException("Step '{$key}' targets 'knowledge_profile' with an unsupported or missing target_field.");
+                }
+
+                if (! in_array($inputType, self::KNOWLEDGE_PROFILE_FIELD_TYPES[$targetField], true)) {
+                    throw new DomainException("Step '{$key}' combines input_type '{$inputType}' with knowledge_profile field '{$targetField}', which has no real application path for that type.");
+                }
             } elseif (in_array($targetModule, self::MODULES_WITHOUT_TARGET_FIELD, true) && $targetField !== null) {
                 throw new DomainException("Step '{$key}' targets '{$targetModule}' with a target_field, but this codebase has no application path that reads one for that module.");
             }
@@ -168,35 +250,6 @@ final class QuestionnaireDefinitionValidator
 
             $this->validateOptions($key, $step, $inputType);
             $this->validateConditionalVisibility($key, $step, $seenKeys);
-        }
-    }
-
-    /**
-     * `target_field` for `knowledge_profile` must be a real
-     * BusinessKnowledgeProfileFieldKey column — `hours` is deliberately
-     * excluded (never a valid BusinessKnowledgeProfileManager::
-     * updateFields() key; its own write path is updateLocationHours()
-     * alone). A `repeatable_group` targeting `knowledge_profile` is only
-     * ever wired for `testimonials` — WebsiteSetupAnswerApplier has no
-     * other repeatable knowledge_profile application path.
-     */
-    private function validateKnowledgeProfileCombination(string $key, string $inputType, mixed $targetField): void
-    {
-        if (! is_string($targetField)) {
-            throw new DomainException("Step '{$key}' targets 'knowledge_profile' without a target_field.");
-        }
-
-        $validFields = array_filter(
-            array_map(fn (BusinessKnowledgeProfileFieldKey $case) => $case->value, BusinessKnowledgeProfileFieldKey::cases()),
-            fn (string $value) => $value !== BusinessKnowledgeProfileFieldKey::Hours->value,
-        );
-
-        if (! in_array($targetField, $validFields, true)) {
-            throw new DomainException("Step '{$key}' targets 'knowledge_profile' with an unsupported target_field.");
-        }
-
-        if ($inputType === QuestionType::RepeatableGroup->value && $targetField !== BusinessKnowledgeProfileFieldKey::Testimonials->value) {
-            throw new DomainException("Step '{$key}' is a repeatable_group targeting 'knowledge_profile' with no application path for target_field '{$targetField}'.");
         }
     }
 
@@ -219,6 +272,15 @@ final class QuestionnaireDefinitionValidator
 
             if (is_string($optionValue) && mb_strlen($optionValue) > self::MAX_OPTION_VALUE) {
                 throw new DomainException("Step '{$key}' has an option value that is too long.");
+            }
+
+            // Independent-review correction round 4 (item 3) — a numeric
+            // option key is stored as a PHP array key, which is PHP's own
+            // actual on-disk/in-memory shape for this JSON object; it
+            // deserves the same bound a string key already has, not an
+            // unexamined pass purely because it happens to be an int.
+            if (is_int($optionValue) && ($optionValue < 0 || mb_strlen((string) $optionValue) > self::MAX_OPTION_VALUE)) {
+                throw new DomainException("Step '{$key}' has an option value that is out of bounds.");
             }
 
             if (! is_string($optionLabel) || trim($optionLabel) === '' || mb_strlen($optionLabel) > self::MAX_OPTION_LABEL) {

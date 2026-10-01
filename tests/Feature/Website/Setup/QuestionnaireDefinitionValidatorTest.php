@@ -275,4 +275,112 @@ class QuestionnaireDefinitionValidatorTest extends TestCase
         (new QuestionnaireDefinitionValidator())->validate(\Database\Seeders\PhotoboothWebsiteSetupQuestionnaireSeeder::steps());
         $this->addToAssertionCount(1);
     }
+
+    /**
+     * Independent-review correction round 4 (item 3) — the exact, real
+     * `BusinessKnowledgeProfileFieldKey`/Business-column field-level
+     * compatibility matrix, derived from BusinessKnowledgeProfileManager
+     * ::normalizeField()'s own per-field normalization. Every field with
+     * at least one genuinely compatible input_type is proven to accept
+     * it; every OTHER input type family it does NOT list is proven
+     * refused, catching exactly the bad combinations the review named:
+     * boolean->brand_voice, text->financing_available, multi_select-
+     * >brand_voice (a scalar field), and a non-repeatable input-> testimonials.
+     */
+    public function test_the_exact_field_level_compatibility_matrix(): void
+    {
+        $validator = new QuestionnaireDefinitionValidator();
+
+        // field => [module, accepted input_types, one valid options/null, one accepted targetField-specific extra]
+        $matrix = [
+            'business.name' => ['business', 'name', ['text']],
+            'business.phone' => ['business', 'phone', ['tel']],
+            'business.email' => ['business', 'email', ['email']],
+            'business.description' => ['business', 'description', ['text', 'textarea']],
+            'kp.vertical_key' => ['knowledge_profile', 'vertical_key', ['select']],
+            'kp.pricing_method' => ['knowledge_profile', 'pricing_method', ['select']],
+            'kp.financing_available' => ['knowledge_profile', 'financing_available', ['boolean']],
+            'kp.differentiators' => ['knowledge_profile', 'differentiators', ['multi_select']],
+            'kp.ideal_customers' => ['knowledge_profile', 'ideal_customers', ['text', 'textarea']],
+            'kp.customer_problems' => ['knowledge_profile', 'customer_problems', ['multi_select']],
+            'kp.warranties_guarantees' => ['knowledge_profile', 'warranties_guarantees', ['text', 'textarea']],
+            'kp.primary_conversion_goal' => ['knowledge_profile', 'primary_conversion_goal', ['select']],
+            'kp.conversion_target' => ['knowledge_profile', 'conversion_target', ['text']],
+            'kp.brand_voice' => ['knowledge_profile', 'brand_voice', ['select', 'text', 'textarea']],
+            'kp.prohibited_claims' => ['knowledge_profile', 'prohibited_claims', ['multi_select']],
+            'kp.testimonials' => ['knowledge_profile', 'testimonials', ['repeatable_group']],
+        ];
+
+        $everyInputType = ['text', 'tel', 'email', 'textarea', 'select', 'multi_select', 'boolean', 'repeatable_group', 'photo_upload'];
+        $optionBearing = ['select', 'multi_select'];
+        $assertions = 0;
+
+        foreach ($matrix as $label => [$module, $field, $acceptedTypes]) {
+            foreach ($everyInputType as $inputType) {
+                $overrides = [
+                    'input_type' => $inputType,
+                    'target_module' => $module,
+                    'target_field' => $field,
+                ];
+
+                if (in_array($inputType, $optionBearing, true)) {
+                    $overrides['options'] = ['a' => 'A'];
+                }
+
+                if (in_array($inputType, $acceptedTypes, true)) {
+                    $validator->validate([$this->step($overrides)]);
+                    $assertions++;
+
+                    continue;
+                }
+
+                try {
+                    $validator->validate([$this->step($overrides)]);
+                    $this->fail("{$label} must refuse input_type '{$inputType}' ({$module}.{$field}).");
+                } catch (DomainException) {
+                    $assertions++;
+                }
+            }
+        }
+
+        $this->addToAssertionCount($assertions);
+    }
+
+    public function test_a_null_target_field_for_business_is_refused(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new QuestionnaireDefinitionValidator())->validate([
+            $this->step(['target_module' => 'business', 'target_field' => null]),
+        ]);
+    }
+
+    /**
+     * Fields this codebase has no generic wizard input path for at all
+     * today — every one of them is refused regardless of input_type,
+     * never silently accepted as a no-op.
+     */
+    public function test_fields_with_no_compatible_input_type_are_always_refused(): void
+    {
+        $validator = new QuestionnaireDefinitionValidator();
+        $uncompatibleFields = ['offers', 'credentials', 'years_operating', 'growth_priority_service_ids', 'growth_priority_location_ids'];
+
+        foreach ($uncompatibleFields as $field) {
+            foreach (['text', 'textarea', 'select', 'multi_select', 'boolean', 'repeatable_group'] as $inputType) {
+                try {
+                    $validator->validate([$this->step([
+                        'input_type' => $inputType,
+                        'target_module' => 'knowledge_profile',
+                        'target_field' => $field,
+                        'options' => in_array($inputType, ['select', 'multi_select'], true) ? ['a' => 'A'] : null,
+                    ])]);
+                    $this->fail("knowledge_profile.{$field} must never be accepted (input_type '{$inputType}').");
+                } catch (DomainException) {
+                    // Expected.
+                }
+            }
+        }
+
+        $this->addToAssertionCount(count($uncompatibleFields) * 6);
+    }
 }

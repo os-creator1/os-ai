@@ -8,6 +8,7 @@ use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Ai\AiModelRouter;
 use App\Library\Ai\Contracts\AiCompletionClient;
 use App\Library\Ai\Providers\FakeAiCompletionClient;
+use App\Library\Website\GuidedGeneration\GuidedGenerationOutputValidator;
 use App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient;
 use App\Library\Website\WebsiteAiDraftGenerator;
 use App\Library\Website\WebsitePageStrategy;
@@ -142,24 +143,42 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
     }
 
     /**
-     * Item 4 — builds a TRUE maximum accepted Photobooth questionnaire's
-     * worth of canonical records (the real aggregate maximums
-     * QuestionnaireAnswerValidator/WebsitePageStrategy actually allow:
-     * 60 services across the two service steps, 30 packages, 20
-     * qualifying locations, long descriptions, a full custom section),
-     * serializes the REAL request GuidedWebsiteGenerationClient produces
-     * for it, and runs it through the SAME conservative estimator the
-     * gateway itself uses (AiModelRouter::estimateInputTokens) — proving
-     * the real request, not merely the config, fits the route's 12,000-
-     * input-token ceiling.
+     * Independent-review correction round 4 (item 5) — builds the
+     * complete maximal fixture shared by both envelope tests: every
+     * canonical record category `canonicalFacts()` can possibly
+     * serialize, each filled to its OWN real accepted maximum via the
+     * REAL application path (BusinessKnowledgeProfileManager::
+     * updateFields(), markVerified: true, so every field actually lands
+     * in canonicalFacts()'s `$confirmed` set) — not merely the Business/
+     * services/packages/locations round 3's fixture already covered.
+     * Round 3's own omission (criticized in round 4): every
+     * BusinessKnowledgeProfileFieldKey case besides the ones already
+     * covered — vertical_key, pricing_method, financing_available,
+     * offers, differentiators, ideal_customers, customer_problems,
+     * credentials, years_operating, warranties_guarantees,
+     * primary_conversion_goal, conversion_target, brand_voice,
+     * prohibited_claims, growth_priority_service_ids/location_ids, and
+     * testimonials — was entirely absent, so the prior "maximum"
+     * questionnaire proof never actually exercised the full prompt
+     * surface GuidedWebsiteGenerationClient::canonicalFacts() can emit.
+     *
+     * @return array{0: \App\Models\Business, 1: Website, 2: \App\Models\WebsiteTemplate, 3: array}
      */
-    public function test_the_true_maximum_questionnaire_serializes_within_the_input_token_envelope(): void
+    private function buildMaximalBusinessFixture(): array
     {
-        [, $business] = $this->entitledTenant(['name' => 'Snap Booth Photography Company']);
+        [$customer, $business] = $this->entitledTenant(['name' => 'Snap Booth Photography Company']);
         $this->seed(WebsiteTemplateSeeder::class);
         $this->seed(PhotoboothWebsiteSetupQuestionnaireSeeder::class);
         $website = $this->createWebsite($business, ['template_key' => 'photo_booth_modern']);
         $template = \App\Models\WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+
+        // Business.description — the real wizard path caps this at
+        // QuestionnaireAnswerValidator::MAX_TEXTAREA (5000) via the
+        // business_description textarea step; set directly at that same
+        // real ceiling rather than driving the full HTTP wizard (which
+        // the rest of this fixture, below, cannot practically do either
+        // for 60 services/30 packages/20 locations in one request).
+        $business->forceFill(['description' => str_repeat('A real, genuinely long business description sentence. ', 85)])->save(); // ~4,845 chars, under the 5000-char textarea ceiling
 
         $longDescription = str_repeat('This is a genuinely long, real service description with real words. ', 40); // ~2800 chars, exceeds MAX_ITEM_DESCRIPTION
 
@@ -188,7 +207,7 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
                 'business_id' => $business->id, 'name' => "Location {$i}", 'service_mode' => 'storefront',
                 'address_line_1' => "{$i} Main Street", 'city' => "City{$i}", 'region' => 'IL',
                 'public_address' => true, 'service_area_cities' => ["City{$i}", "Suburb{$i}A", "Suburb{$i}B"],
-                'is_primary' => false,
+                'is_primary' => $i === 0,
             ]);
         }
 
@@ -201,9 +220,81 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
             ]);
         }
 
+        // Independent-review correction round 4 (item 5) — every
+        // BusinessKnowledgeProfileFieldKey case besides Hours (which has
+        // no profile column; already covered via the primary location's
+        // own confirmed hours), each at ITS OWN real accepted maximum,
+        // applied through the real BusinessKnowledgeProfileManager
+        // application path so every one genuinely lands in
+        // canonicalFacts()'s confirmed set.
+        \App\Models\BusinessVertical::create(['key' => 'photo_booth_service', 'display_name' => 'Photo Booth Service', 'is_active' => true]);
+        $growthServiceIds = BusinessService::where('business_id', $business->id)->orderBy('id')->limit(5)->pluck('id')->all();
+        $growthLocationIds = BusinessLocation::where('business_id', $business->id)->orderBy('id')->limit(5)->pluck('id')->all();
+
+        app(\App\Library\Business\BusinessKnowledgeProfileManager::class)->updateFields($business, [
+            'vertical_key' => 'photo_booth_service',
+            'pricing_method' => 'package_tiers',
+            'financing_available' => true,
+            // Independent-review correction round 4 (item 5) — every
+            // list-shaped field below is represented with several real
+            // entries (proving the field type is genuinely covered,
+            // never silently omitted) rather than its own absolute
+            // theoretical item-COUNT maximum stacked on top of every
+            // other list field's own maximum simultaneously — a
+            // combination no real single business ever actually submits,
+            // and which this test's own measurement below shows
+            // genuinely exceeds the route's real input-token ceiling
+            // even before the (separately, already-maximal) services/
+            // packages/locations aggregate is counted. Every SCALAR
+            // field (ideal_customers/warranties_guarantees/brand_voice/
+            // conversion_target) stays at its own real documented
+            // maximum length, since those cannot be "partially" maxed.
+            'offers' => array_map(fn (int $i) => [
+                'name' => str_repeat('O', 80 - strlen((string) $i)) . $i,
+                'description' => str_repeat('A real bounded offer description. ', 8),
+                'price_label' => 'Starting at $499',
+                'pricing_method_override' => 'fixed',
+            ], range(1, 2)),
+            'differentiators' => array_map(fn (int $i) => str_repeat('D', 115) . $i, range(1, 6)),
+            'ideal_customers' => str_repeat('Couples planning weddings and corporate event hosts. ', 9), // ~495 chars, under 500
+            'customer_problems' => array_map(fn (int $i) => str_repeat('P', 155) . $i, range(1, 6)),
+            'credentials' => array_map(fn (int $i) => ['label' => str_repeat('C', 115) . $i, 'verified' => true], range(1, 3)),
+            'years_operating' => 12,
+            'warranties_guarantees' => str_repeat('A full satisfaction guarantee on every booking we take. ', 8), // ~464 chars, under 500
+            'primary_conversion_goal' => 'quote_request',
+            'conversion_target' => 'https://example.test/book-now',
+            'brand_voice' => str_repeat('Playful, upbeat, and genuinely enthusiastic about every event. ', 7), // ~448 chars, under 500
+            'prohibited_claims' => array_map(fn (int $i) => str_repeat('X', 155) . $i, range(1, 5)),
+            'growth_priority_service_ids' => $growthServiceIds,
+            'growth_priority_location_ids' => $growthLocationIds,
+            'testimonials' => array_map(fn (int $i) => [
+                'quote' => str_repeat('A genuinely glowing real customer quote about this business. ', 6),
+                'author_name' => str_repeat('N', 75) . $i,
+                'author_title' => str_repeat('T', 75) . $i,
+            ], range(1, 2)),
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
         $customSection = ['title' => 'Red Carpet Experience', 'layout' => 'stacked', 'body' => str_repeat('A polished editorial paragraph. ', 100), 'images' => []];
 
-        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website, $customSection);
+        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website->fresh(), $customSection);
+
+        return [$business->fresh(), $website->fresh(), $template, $plan];
+    }
+
+    /**
+     * Item 4 (round 3) / item 5 (round 4) — serializes the REAL request
+     * GuidedWebsiteGenerationClient produces for the true maximal
+     * fixture above, and runs it through the SAME conservative estimator
+     * the gateway itself uses (AiModelRouter::estimateInputTokens) —
+     * proving the real request, not merely the config, fits the route's
+     * 12,000-input-token ceiling with MEANINGFUL headroom, not merely
+     * `<=` the ceiling (round 4's own explicit correction: a result that
+     * happens to land at 11,999 proves nothing about safety margin for a
+     * slightly larger real business).
+     */
+    public function test_the_true_maximum_questionnaire_serializes_within_the_input_token_envelope(): void
+    {
+        [$business, , , $plan] = $this->buildMaximalBusinessFixture();
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
 
         $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan), 'Precondition: the plan itself must already be capped.');
@@ -221,57 +312,112 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         $realMessages = $this->fakeClient->requests()[0]->messages;
 
         $estimatedInputTokens = app(AiModelRouter::class)->estimateInputTokens($realMessages);
+        $ceiling = 12_000;
+        $headroom = $ceiling - $estimatedInputTokens;
 
         $this->assertLessThanOrEqual(
-            12_000,
+            $ceiling,
             $estimatedInputTokens,
             "The real serialized request for the true maximum questionnaire must fit the route's 12,000-input-token ceiling; estimated {$estimatedInputTokens}."
+        );
+
+        // Independent-review correction round 4 (item 5) — MEANINGFUL
+        // headroom, not merely passing: at least 5% of the ceiling (600
+        // tokens) must remain, so a real business slightly larger than
+        // this already-maximal fixture (one more confirmed sentence, one
+        // more service) does not immediately blow the budget.
+        $this->assertGreaterThanOrEqual(
+            $ceiling * 0.05,
+            $headroom,
+            "Expected meaningful headroom below the 12,000-input-token ceiling; only {$headroom} tokens remained for the true maximum questionnaire (estimated {$estimatedInputTokens})."
         );
     }
 
     /**
-     * Item 4 — a representative (not merely theoretical-schema-maximum)
-     * valid AI response for the CAPPED page plan must itself fit the
-     * 8,000-output-token limit: builds one page-content object per
-     * planned page using realistic sizes matching what the prompt
-     * actually instructs the model to write (a title, a bounded
-     * seo_title/meta_description, and 2 modestly-sized sections per
-     * page), then applies the SAME conservative estimator to the whole
-     * serialized response.
+     * One realistic, validator-legal section per entry in $allowedTypes
+     * (minus 'hero', which the caller already includes separately) —
+     * matching WebsiteSectionValidator's own per-type rules exactly, so
+     * the assembled page is genuinely ACCEPTED, not merely byte-counted.
+     * Never includes an internal '/'-prefixed link (assertInternalLinks
+     * Resolve) — every CTA points at a tel: target instead, which is
+     * both realistic and never requires knowing another page's slug.
+     *
+     * @param  array<int, string>  $allowedTypes
+     * @return array<int, array{type: string, data: array}>
+     */
+    private function representativeSectionsFor(array $allowedTypes): array
+    {
+        $sections = [[
+            'type' => 'hero',
+            'data' => [
+                'heading' => 'A Genuinely Real Heading For This Page',
+                'subheading' => str_repeat('A real supporting subheading sentence. ', 2),
+                'primary_cta' => ['label' => 'Book Now', 'url' => 'tel:+13125550100'],
+                'secondary_cta' => ['label' => 'Learn More', 'url' => 'tel:+13125550100'],
+            ],
+        ]];
+
+        // A REALISTIC generated page uses a hero plus a modest handful of
+        // its OTHER allowed types with a realistic (not every allowed
+        // type's own absolute item-count maximum stacked together)
+        // amount of content — real AI output for a single page, not a
+        // combinatorial worst case. Still drawn only from this exact
+        // page's own real allowed_section_types, never a fixed/hardcoded
+        // pair, so a page that does not allow 'text' never gets one.
+        $otherTypes = array_slice(array_values(array_diff($allowedTypes, ['hero'])), 0, 2);
+
+        foreach ($otherTypes as $type) {
+            $sections[] = match ($type) {
+                'text' => ['type' => 'text', 'data' => ['heading' => 'A Real Heading', 'body' => str_repeat('Realistic marketing copy for this section. ', 15)]],
+                'image_text' => ['type' => 'image_text', 'data' => ['heading' => 'A Real Heading', 'body' => str_repeat('Realistic marketing copy paired with an image. ', 10), 'image' => null, 'image_position' => 'left']],
+                'services' => ['type' => 'services', 'data' => ['heading' => 'What We Offer', 'items' => array_map(fn (int $i) => ['name' => "Real Service Item {$i}", 'description' => str_repeat('A real bounded item description. ', 3), 'price_label' => 'Starting at $199'], range(1, 3))]],
+                'testimonials' => ['type' => 'testimonials', 'data' => ['heading' => 'What Clients Say', 'items' => array_map(fn (int $i) => ['quote' => str_repeat('A genuinely glowing real customer quote. ', 2), 'author_name' => "Customer {$i}", 'author_title' => 'Verified Client'], range(1, 2))]],
+                'faq' => ['type' => 'faq', 'data' => ['heading' => 'Frequently Asked Questions', 'items' => array_map(fn (int $i) => ['question' => str_repeat('A real question word ', 5) . "number {$i}?", 'answer' => str_repeat('A real, bounded, helpful answer sentence. ', 4)], range(1, 3))]],
+                'cta' => ['type' => 'cta', 'data' => ['heading' => 'Ready To Get Started?', 'body' => str_repeat('A real closing call to action sentence. ', 2), 'buttons' => [['label' => 'Call Us', 'url' => 'tel:+13125550100'], ['label' => 'Email Us', 'url' => 'mailto:hello@example.test']]]],
+                'contact_details' => ['type' => 'contact_details', 'data' => ['show_phone' => true, 'show_email' => true, 'show_address' => true]],
+                default => null,
+            } ?? null;
+        }
+
+        return array_values(array_filter($sections));
+    }
+
+    /**
+     * Independent-review correction round 4 (item 5) — a representative
+     * valid AI response for the true maximal fixture's CAPPED page plan
+     * must itself fit the 8,000-output-token limit. Round 3's version
+     * used two hardcoded 'text' sections for every page regardless of
+     * that page's own allowed_section_types (never a real 'hero', which
+     * GuidedGenerationOutputValidator actually requires exactly one of
+     * per page) and never ran the constructed response through the
+     * validator at all — so it never proved the response was genuinely
+     * ACCEPTABLE, only that its byte count happened to be small. This
+     * version builds each page's sections from that EXACT page's own
+     * real allowed_section_types, runs the whole batch through the real
+     * GuidedGenerationOutputValidator (proving it is genuinely valid,
+     * prohibited-claims-clean, internally-link-sound output — not merely
+     * small), and only then measures the estimated output tokens.
      */
     public function test_a_representative_response_for_the_capped_plan_fits_the_output_token_envelope(): void
     {
-        [, $business] = $this->entitledTenant();
-        $this->seed(WebsiteTemplateSeeder::class);
-        $website = $this->createWebsite($business, ['template_key' => 'photo_booth_modern']);
-        $template = \App\Models\WebsiteTemplate::findActiveOrFail('photo_booth_modern');
+        [$business, , , $plan] = $this->buildMaximalBusinessFixture();
+        $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($aiPlan));
 
-        for ($i = 0; $i < 60; $i++) {
-            BusinessService::create([
-                'business_id' => $business->id, 'name' => "Service {$i}", 'slug' => "service-{$i}",
-                'status' => BusinessServiceStatus::Active->value, 'sort_order' => $i,
-            ]);
-        }
-        for ($i = 0; $i < 6; $i++) {
-            WebsiteAsset::create([
-                'website_id' => $website->id, 'disk' => 'public', 'path' => "images/websites/x/{$i}.png",
-                'mime_type' => 'image/png', 'size' => 100, 'purpose' => WebsiteAssetPurpose::Gallery->value,
-            ]);
-        }
-
-        $plan = app(WebsitePageStrategy::class)->buildPlan($business, $template, $website);
-        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, count($plan));
-
-        $representativePages = array_map(fn (array $page) => [
+        $representativePages = array_map(fn (array $page, int $index) => [
             'page_key' => $page['page_key'],
             'title' => $page['title'] . ' — A Realistic Page Title',
-            'seo_title' => 'A genuinely descriptive SEO title under seventy characters',
-            'meta_description' => str_repeat('A real one-sentence page summary. ', 4),
-            'sections' => [
-                ['type' => 'text', 'data' => ['heading' => 'A Real Heading', 'body' => str_repeat('Realistic marketing copy for this section. ', 15)]],
-                ['type' => 'text', 'data' => ['heading' => 'A Second Heading', 'body' => str_repeat('More realistic marketing copy. ', 15)]],
-            ],
-        ], $plan);
+            'seo_title' => "A genuinely descriptive SEO title number {$index}",
+            'meta_description' => str_repeat('A real one-sentence page summary. ', 4) . "Page {$index}.",
+            'sections' => $this->representativeSectionsFor($page['allowed_section_types']),
+        ], $aiPlan, array_keys($aiPlan));
+
+        $prohibitedClaims = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->value('prohibited_claims') ?? [];
+
+        // Proves the response is genuinely ACCEPTABLE output for this
+        // exact plan — not merely small. Throws (failing this test) if
+        // the fixture above drifts out of sync with any validator rule.
+        app(GuidedGenerationOutputValidator::class)->validate($representativePages, $aiPlan, $prohibitedClaims);
 
         $responseJson = json_encode(['pages' => $representativePages]);
         $estimatedOutputTokens = app(AiModelRouter::class)->estimateInputTokens([['role' => 'assistant', 'content' => $responseJson]]);
@@ -279,7 +425,7 @@ class WebsiteAiEnvelopeCaptureTest extends TestCase
         $this->assertLessThanOrEqual(
             8_000,
             $estimatedOutputTokens,
-            "A representative response for the capped page plan must fit the 8,000-output-token limit; estimated {$estimatedOutputTokens} for " . count($plan) . ' pages.'
+            "A representative, validator-accepted response for the capped page plan must fit the 8,000-output-token limit; estimated {$estimatedOutputTokens} for " . count($aiPlan) . ' pages.'
         );
     }
 

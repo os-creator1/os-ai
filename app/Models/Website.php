@@ -35,6 +35,9 @@ class Website extends Model
         'template_key',
         'gallery_page_enabled',
         'presentation_changes_pending_at',
+        'generation_lease_token',
+        'generation_lease_started_at',
+        'generation_lease_attempt_uid',
     ];
 
     protected $casts = [
@@ -42,7 +45,13 @@ class Website extends Model
         'theme' => 'array',
         'gallery_page_enabled' => 'boolean',
         'presentation_changes_pending_at' => 'datetime',
+        'generation_lease_started_at' => 'datetime',
     ];
+
+    public function isGenerationLeased(): bool
+    {
+        return $this->generation_lease_token !== null;
+    }
 
     /**
      * websites.uid is a database UUID column; HasUid's default

@@ -917,6 +917,7 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'Brand new unsaved body']],
+            'answers_revision' => 2,
         ])->assertSessionHas('status', 'success');
 
         $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
@@ -934,6 +935,7 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
         ])->assertSessionHas('status', 'error');
 
         $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
@@ -954,6 +956,7 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
         ])->assertSessionHas('status', 'error');
 
         $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
@@ -969,6 +972,7 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
         ])->assertSessionHas('status', 'error');
 
         $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
@@ -989,6 +993,7 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
             'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
         ])->assertSessionHas('message', 'The included AI generation budget is used up for this period.');
     }
 
@@ -1027,6 +1032,219 @@ class WebsiteWizardControllerTest extends TestCase
     }
 
     /**
+     * Independent-review correction round 4 (item 2) — the stale-
+     * submission revision check must happen BEFORE any AI call, not
+     * merely before persisting its result: a form that observed an
+     * older revision must never spend AI at all.
+     */
+    public function test_improve_with_ai_refuses_a_stale_revision_before_ever_calling_ai(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldNotReceive('complete');
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 999,
+        ])->assertSessionHas('status', 'error');
+    }
+
+    /**
+     * Independent-review correction round 4 (item 2) — a stale AI
+     * response: the submitted text changes (via a genuine autosave, not
+     * merely a different unsaved draft) WHILE an Improve call for an
+     * OLDER revision is still in flight. The late-arriving improvement
+     * must be discarded, never silently overwrite the newer edit.
+     */
+    public function test_improve_with_ai_discards_a_stale_ai_response_when_the_text_changed_while_it_was_in_flight(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturnUsing(function () use ($response) {
+            // Simulates a genuinely newer autosave landing while this
+            // Improve call's own (mocked) AI round-trip is in flight.
+            app(\App\Library\Website\Setup\WebsiteSetupSessionManager::class)
+                ->updateAnswerInPlace($response->fresh(), 'custom_section', [[
+                    'key' => 'section', 'name' => 'Section', 'description' => null,
+                    'body' => 'Edited while AI was thinking', 'layout' => 'stacked', 'images' => [],
+                ]]);
+
+            return json_encode(['body' => 'Improved: should never land']);
+        });
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
+        ])->assertSessionHas('status', 'error');
+
+        $final = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('Edited while AI was thinking', $final->answer('custom_section')[0]['body'], 'The newer edit made while AI was in flight must survive untouched.');
+    }
+
+    /**
+     * Independent-review correction round 4 (item 2) — after a failed
+     * (malformed-output) attempt, a genuine retry with the identical
+     * submission must still spend AI again (never permanently blocked)
+     * and must use a FRESH per-attempt ledger key, never reusing the
+     * first attempt's.
+     */
+    public function test_improve_with_ai_allows_a_genuine_retry_after_a_failed_attempt_with_a_fresh_ledger_key(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $ledgerKeys = [];
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturnUsing(function ($messages, $business, $userId, $maxTokens, $ledgerKey) use (&$ledgerKeys) {
+            $ledgerKeys[] = $ledgerKey;
+
+            return count($ledgerKeys) === 1 ? 'not valid json {{{' : json_encode(['body' => 'Improved on retry']);
+        });
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $payload = [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
+        ];
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), $payload)
+            ->assertSessionHas('status', 'error');
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), $payload)
+            ->assertSessionHas('status', 'success');
+
+        $this->assertCount(2, $ledgerKeys, 'A retry after a failed attempt must spend AI again.');
+        $this->assertNotSame($ledgerKeys[0], $ledgerKeys[1], 'Each attempt must use its own fresh ledger key, never reusing a failed attempt\'s.');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('Improved on retry', $response->answer('custom_section')[0]['body']);
+    }
+
+    /**
+     * Independent-review correction round 4 (item 2) — a PENDING attempt
+     * whose own lease has expired (the worker presumably crashed before
+     * ever calling completeCustomSectionImprove()) must be treated as
+     * abandoned: a resubmission must start a fresh attempt and genuinely
+     * spend AI, never block forever behind "this is already being
+     * improved."
+     */
+    public function test_improve_with_ai_recovers_an_abandoned_pending_attempt_rather_than_blocking_forever(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $logicalKey = hash('sha256', implode('|', [$response->uid, 1, 'Section', 'My body', 'stacked']));
+
+        // A pending attempt that was opened and then abandoned — the
+        // crashed worker's own call to beginCustomSectionImprove()
+        // without a matching completeCustomSectionImprove().
+        app(\App\Library\Website\Setup\WebsiteSetupSessionManager::class)->beginCustomSectionImprove(
+            $response, 'custom_section', $logicalKey,
+            ['key' => 'section', 'name' => 'Section', 'description' => null, 'body' => 'My body', 'layout' => 'stacked', 'images' => []],
+            1,
+        );
+
+        // Age the pending lease well past IMPROVE_PENDING_LEASE_SECONDS (90s).
+        QuestionnaireResponse::whereKey($response->id)->update([
+            'custom_section_improve_pending_started_at' => now()->subSeconds(200),
+        ]);
+
+        $this->mockAiClient(json_encode(['body' => 'Recovered and improved']));
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
+        ])->assertSessionHas('status', 'success');
+
+        $final = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('Recovered and improved', $final->answer('custom_section')[0]['body']);
+        $this->assertSame(2, (int) $final->custom_section_improve_attempt_ordinal, 'The recovered attempt must be a new ordinal, not the abandoned one.');
+    }
+
+    /**
+     * Independent-review correction round 4 (item 2) — the logical key
+     * incorporates the title, not only the body: a changed title with
+     * the identical body is a genuinely new submission, never mistaken
+     * for a duplicate of the prior one.
+     */
+    public function test_improve_with_ai_treats_the_same_body_with_a_changed_title_as_a_new_submission(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $calls = 0;
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andReturnUsing(function () use (&$calls) {
+            $calls++;
+
+            return json_encode(['body' => 'Improved #' . $calls]);
+        });
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section One', 'body' => 'Shared body']],
+            'answers_revision' => 1,
+        ])->assertSessionHas('status', 'success');
+
+        $midway = QuestionnaireResponse::where('business_id', $business->id)->sole();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section Two', 'body' => 'Shared body']],
+            'answers_revision' => $midway->answers_revision,
+        ])->assertSessionHas('status', 'success');
+
+        $this->assertSame(2, $calls, 'A changed title with the same body must be treated as a distinct submission, spending AI again.');
+    }
+
+    /**
+     * Independent-review correction round 4 (item 2) — a genuine
+     * AiGateway ledger-key collision (UniqueConstraintViolationException)
+     * must convert to the same friendly "could not improve" outcome a
+     * provider failure already produces, never a raw 500/uncaught
+     * exception, and must never be mistaken for a success.
+     */
+    public function test_improve_with_ai_converts_a_gateway_idempotency_collision_into_a_friendly_response(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+
+        $mock = \Mockery::mock(WebsiteAiGenerationClient::class);
+        $mock->shouldReceive('lastCallWasBudgetExhausted')->andReturn(false);
+        $mock->shouldReceive('lastRefusalReason')->andReturn(null);
+        $mock->shouldReceive('complete')->andThrow(new \Illuminate\Database\UniqueConstraintViolationException('testing', 'insert', [], new \Exception('Duplicate entry')));
+        $this->app->instance(WebsiteAiGenerationClient::class, $mock);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.improve', [$workspace->uid, $business->uid]), [
+            'items' => [['name' => 'Section', 'body' => 'My body']],
+            'answers_revision' => 1,
+        ])->assertSessionHas('status', 'error');
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('My body', $response->answer('custom_section')[0]['body'], 'A gateway collision must never overwrite the submitted text, and must never surface as an uncaught exception.');
+    }
+
+    /**
      * Independent-review correction round 2 — a non-empty testimonial
      * used to reach the canonical knowledge profile in the WRONG shape
      * (generic name/description instead of quote/author_name/
@@ -1036,6 +1254,66 @@ class WebsiteWizardControllerTest extends TestCase
      * BusinessKnowledgeProfile in its required shape, and the exact
      * customer FAQ question/answer appear in the generated draft.
      */
+    /**
+     * Independent-review correction round 4 (item 8) — the post-
+     * generation "presentation changes pending" lifecycle (round 3, item
+     * 11) was never actually covered by a focused test despite being
+     * described as such. Proves the full cycle: an edit-mode change to
+     * the custom section sets the pending flag; exiting edit mode alone
+     * (without an explicit rebuild) never clears it or silently
+     * regenerates; a deliberate rebuild both clears the flag AND carries
+     * the edited content through to the real generated page.
+     */
+    public function test_a_post_generation_edit_sets_the_pending_flag_and_only_a_deliberate_rebuild_clears_it(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+
+        $this->completeAllRequiredSteps($workspace, $business, [
+            'custom_section' => ['items' => [['name' => 'Original Section', 'description' => null, 'body' => 'Original body.', 'layout' => 'stacked']]],
+        ]);
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]));
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertNull($website->presentation_changes_pending_at, 'A fresh generation must never start with a pending flag already set.');
+
+        $this->get(route('customer.workspaces.businesses.website.edit-setup', [$workspace->uid, $business->uid]));
+        $reopened = QuestionnaireResponse::where('business_id', $business->id)->where('status', 'in_progress')->sole();
+        $this->assertTrue($reopened->edit_mode);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'custom_section']), [
+            'items' => [['name' => 'Edited Section', 'description' => null, 'body' => 'Edited body.', 'layout' => 'stacked']],
+            'answers_revision' => $reopened->answers_revision,
+        ]);
+
+        $this->assertNotNull($website->fresh()->presentation_changes_pending_at, 'Editing a presentation-only answer after generation must flag that a rebuild is still needed.');
+
+        // Exiting edit mode (the wizard's own "finish editing" submission,
+        // never an explicit rebuild) must NEVER itself clear the pending
+        // flag or silently regenerate pages.
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.studio.show', [$workspace->uid, $business->uid]));
+
+        $this->assertNotNull($website->fresh()->presentation_changes_pending_at, 'Merely exiting edit mode must never clear the pending flag.');
+        $pageBeforeRebuild = $website->fresh()->pages()->first();
+        $this->assertNotNull($pageBeforeRebuild);
+
+        // The deliberate rebuild action.
+        $this->post(route('customer.workspaces.businesses.website.rebuild', [$workspace->uid, $business->uid]), [
+            'template_key' => 'photo_booth_modern',
+            'confirm_rebuild' => '1',
+        ]);
+
+        $rebuilt = $website->fresh();
+        $this->assertNull($rebuilt->presentation_changes_pending_at, 'A deliberate rebuild must clear the pending flag.');
+
+        $customSectionPage = $rebuilt->pages()->get()->first(fn ($page) => collect($page->sections)->contains(fn ($section) => ($section['type'] ?? null) === 'custom_section'));
+        $this->assertNotNull($customSectionPage, 'The rebuild must still include the custom section page.');
+        $section = collect($customSectionPage->sections)->firstWhere('type', 'custom_section');
+        $this->assertSame('Edited body.', $section['data']['body'], 'The rebuild must carry the EDITED presentation content through, not the original.');
+    }
+
     public function test_non_empty_testimonials_and_faq_reach_canonical_and_generated_output_without_error(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

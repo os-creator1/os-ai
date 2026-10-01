@@ -43,8 +43,11 @@ class QuestionnaireResponse extends Model
         'edit_mode',
         'generation_started_at',
         'custom_section_improve_key',
+        'custom_section_improve_ledger_key',
+        'custom_section_improve_attempt_ordinal',
         'custom_section_improve_status',
         'custom_section_improve_started_revision',
+        'custom_section_improve_pending_started_at',
         'custom_section_improve_result',
         'current_step_key',
         'answers',
@@ -62,6 +65,8 @@ class QuestionnaireResponse extends Model
         'completed_at' => 'datetime',
         'generation_started_at' => 'datetime',
         'custom_section_improve_started_revision' => 'integer',
+        'custom_section_improve_attempt_ordinal' => 'integer',
+        'custom_section_improve_pending_started_at' => 'datetime',
         'custom_section_improve_result' => 'array',
     ];
 
@@ -71,9 +76,19 @@ class QuestionnaireResponse extends Model
 
     public const IMPROVE_STATUS_FAILED = 'failed';
 
+    /**
+     * Independent-review correction round 4 (item 1) — a Website-level
+     * concern now (WebsiteGenerationCoordinator's own lease), never this
+     * response's own flag. `generation_started_at` remains a written, but
+     * purely informational, mirror.
+     */
     public function isGenerating(): bool
     {
-        return $this->generation_started_at !== null;
+        if ($this->website_id === null) {
+            return false;
+        }
+
+        return Website::where('id', $this->website_id)->whereNotNull('generation_lease_token')->exists();
     }
 
     public function generateUid(): void
