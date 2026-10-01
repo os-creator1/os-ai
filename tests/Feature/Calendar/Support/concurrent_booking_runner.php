@@ -32,6 +32,9 @@
  *   php concurrent_booking_runner.php roundrobin  <startAtEpochMicros> <bookingTypeId> <contactId> <slotIso>
  *   php concurrent_booking_runner.php reschedule  <startAtEpochMicros> <appointmentId> <newSlotIso> [newStaffUserId]
  *   php concurrent_booking_runner.php cancel      <startAtEpochMicros> <appointmentId>
+ *   php concurrent_booking_runner.php book-stale  <startAtEpochMicros> <bookingTypeId> <staffUserId> <contactId> <slotIso> <staleDurationMinutes>
+ *   php concurrent_booking_runner.php bt-deactivate <startAtEpochMicros> <bookingTypeId>
+ *   php concurrent_booking_runner.php bt-update-inactive <startAtEpochMicros> <bookingTypeId>
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -86,6 +89,19 @@ $waitForStart = static function (int $target): void {
 
 $engine = $app->make(App\Library\Calendar\AppointmentBookingService::class);
 
+// Test-only window: once this process has taken the Booking Type row in SHARED
+// mode (tier 0) it idles for RUNNER_PAUSE_AFTER_BOOKING_TYPE_LOCK_MS while still
+// inside its transaction, so a test can start a competing deactivation while
+// the booking genuinely owns the row. Absent the variable this is a no-op.
+$pauseMs = (int) (getenv('RUNNER_PAUSE_AFTER_BOOKING_TYPE_LOCK_MS') ?: 0);
+if ($pauseMs > 0) {
+    Illuminate\Support\Facades\DB::listen(static function ($query) use ($pauseMs): void {
+        if (str_contains($query->sql, 'from `booking_types`') && str_contains($query->sql, 'lock in share mode')) {
+            usleep($pauseMs * 1000);
+        }
+    });
+}
+
 try {
     $run = match ($operation) {
         'book' => static function () use ($engine, $argv): string {
@@ -131,6 +147,41 @@ try {
                 }
             );
             return 'contact_id=' . $contactId . ' appointment_id=' . $appointment->id;
+        },
+        // A caller holding a STALE model: active and a wrong duration in memory,
+        // whatever the row says now. The engine must never trust either.
+        'book-stale' => static function () use ($engine, $argv): string {
+            $bookingType = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $bookingType->setRawAttributes(array_merge($bookingType->getAttributes(), [
+                'is_active' => 1,
+                'duration_minutes' => (int) $argv[7],
+            ]), true);
+            $appointment = $engine->book(
+                $bookingType,
+                (int) $argv[4],
+                (int) $argv[5],
+                Illuminate\Support\Carbon::parse($argv[6])
+            );
+
+            return 'appointment_id=' . $appointment->id;
+        },
+        'bt-deactivate' => static function () use ($app, $argv): string {
+            $manager = $app->make(App\Library\Calendar\BookingTypeManager::class);
+            $stale = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $manager->setActive($stale, false);
+
+            return 'booking_type_id=' . $stale->id . ' is_active=0';
+        },
+        'bt-update-inactive' => static function () use ($app, $argv): string {
+            $manager = $app->make(App\Library\Calendar\BookingTypeManager::class);
+            $stale = App\Models\BookingType::query()->findOrFail((int) $argv[3]);
+            $manager->update($stale, [
+                'name' => 'Renamed by update',
+                'duration_minutes' => (int) $stale->duration_minutes,
+                'is_active' => false,
+            ]);
+
+            return 'booking_type_id=' . $stale->id . ' is_active=0';
         },
         'reschedule' => static function () use ($engine, $argv): string {
             $appointment = App\Models\Appointment::query()->findOrFail((int) $argv[3]);

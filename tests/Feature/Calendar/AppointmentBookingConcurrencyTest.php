@@ -436,6 +436,223 @@ class AppointmentBookingConcurrencyTest extends TestCase
         );
     }
 
+    // -----------------------------------------------------------------
+    // Tier 0 — the Booking Type row is the one synchronization point for
+    // "may a NEW booking be created for this type" (correction round 1).
+    // Bookings hold it SHARED to commit; BookingTypeManager takes it
+    // EXCLUSIVELY. Every test below uses real second processes.
+    // -----------------------------------------------------------------
+
+    public function test_deactivation_committing_first_makes_the_waiting_explicit_booking_refuse(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+
+        $child = $this->raceAgainstHeldLock(
+            ['book', (string) $bookingTypeId, (string) $staffUserId, (string) $contact, $this->slot('10:00:00')],
+            fn () => DB::table('booking_types')->where('id', $bookingTypeId)->lockForUpdate()->first(),
+            fn () => DB::table('booking_types')->where('id', $bookingTypeId)->update(['is_active' => false])
+        );
+
+        $this->assertSame(4, $child['exitCode'], $child['stdout']);
+        $this->assertStringContainsString('BookingTypeNotBookableException', $child['stdout']);
+        $this->assertSame(0, DB::table('appointments')->where('booking_type_id', $bookingTypeId)->count());
+    }
+
+    public function test_deactivation_committing_first_makes_the_waiting_round_robin_booking_refuse(): void
+    {
+        [$bookingTypeId, , $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+        // Pre-created so the child reaches tier 0 instead of queueing on the state row's FK.
+        DB::table('booking_type_round_robin_state')->insert([
+            'booking_type_id' => $bookingTypeId, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $child = $this->raceAgainstHeldLock(
+            ['roundrobin', (string) $bookingTypeId, (string) $contact, $this->slot('10:00:00')],
+            fn () => DB::table('booking_types')->where('id', $bookingTypeId)->lockForUpdate()->first(),
+            fn () => DB::table('booking_types')->where('id', $bookingTypeId)->update(['is_active' => false])
+        );
+
+        $this->assertSame(4, $child['exitCode'], $child['stdout']);
+        $this->assertStringContainsString('BookingTypeNotBookableException', $child['stdout']);
+        $this->assertSame(0, DB::table('appointments')->where('booking_type_id', $bookingTypeId)->count());
+        $this->assertNull(
+            DB::table('booking_type_round_robin_state')->where('booking_type_id', $bookingTypeId)->value('last_assigned_staff_user_id'),
+            'A refused round-robin booking must not advance the cursor.'
+        );
+    }
+
+    public function test_a_booking_that_owns_the_type_first_commits_before_set_active_proceeds(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+
+        $this->assertBookingFirstThenDeactivation(
+            ['book', (string) $bookingTypeId, (string) $staffUserId, (string) $contact, $this->slot('10:00:00')],
+            ['bt-deactivate', (string) $bookingTypeId],
+            $bookingTypeId
+        );
+    }
+
+    public function test_a_round_robin_booking_that_owns_the_type_first_commits_before_set_active_proceeds(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+
+        $this->assertBookingFirstThenDeactivation(
+            ['roundrobin', (string) $bookingTypeId, (string) $contact, $this->slot('10:00:00')],
+            ['bt-deactivate', (string) $bookingTypeId],
+            $bookingTypeId
+        );
+        $this->assertSame(
+            $staffUserId,
+            (int) DB::table('booking_type_round_robin_state')->where('booking_type_id', $bookingTypeId)->value('last_assigned_staff_user_id')
+        );
+    }
+
+    public function test_update_with_is_active_false_cannot_bypass_the_serialization_set_active_uses(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+
+        // (a) update() blocks on the exclusive row lock like setActive() does.
+        $blocked = $this->raceAgainstHeldLock(
+            ['bt-update-inactive', (string) $bookingTypeId],
+            fn () => DB::table('booking_types')->where('id', $bookingTypeId)->lockForUpdate()->first(),
+            fn () => null
+        );
+        $this->assertSame(0, $blocked['exitCode'], $blocked['stdout'] . $blocked['stderr']);
+        $this->assertSame(0, (int) DB::table('booking_types')->where('id', $bookingTypeId)->value('is_active'));
+        $this->assertSame('Renamed by update', DB::table('booking_types')->where('id', $bookingTypeId)->value('name'));
+
+        // (b) a booking that owns the row first finishes before update() proceeds.
+        DB::table('booking_types')->where('id', $bookingTypeId)->update(['is_active' => true]);
+        $this->assertBookingFirstThenDeactivation(
+            ['book', (string) $bookingTypeId, (string) $staffUserId, (string) $contact, $this->slot('10:00:00')],
+            ['bt-update-inactive', (string) $bookingTypeId],
+            $bookingTypeId
+        );
+    }
+
+    public function test_a_stale_active_model_cannot_book_after_persisted_deactivation(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $contact = $this->insertContact($locationId);
+        DB::table('booking_types')->where('id', $bookingTypeId)->update(['is_active' => false]);
+
+        $results = $this->race([
+            ['book-stale', (string) $bookingTypeId, (string) $staffUserId, (string) $contact, $this->slot('10:00:00'), '60'],
+        ]);
+
+        $this->assertSame(4, $results[0]['exitCode'], $results[0]['stdout']);
+        $this->assertStringContainsString('BookingTypeNotBookableException', $results[0]['stdout']);
+        $this->assertSame(0, DB::table('appointments')->where('booking_type_id', $bookingTypeId)->count());
+    }
+
+    public function test_a_stale_duration_in_the_callers_model_is_never_used_to_size_the_appointment(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario(); // persisted: 60 minutes
+        $contact = $this->insertContact($locationId);
+
+        $results = $this->race([
+            ['book-stale', (string) $bookingTypeId, (string) $staffUserId, (string) $contact, $this->slot('10:00:00'), '5'],
+        ]);
+
+        $this->assertSame(0, $results[0]['exitCode'], $results[0]['stdout']);
+        $row = DB::table('appointments')->where('booking_type_id', $bookingTypeId)->first();
+        $this->assertEquals(60, Carbon::parse($row->start_at)->diffInMinutes(Carbon::parse($row->end_at)));
+    }
+
+    /**
+     * Booking child A takes the Booking Type row (shared) and then idles inside
+     * its transaction (runner pause), so it genuinely owns tier 0 while
+     * incomplete. Deactivation child B must then wait on A — proven by B still
+     * running while A is merely idling — and only complete after A has
+     * committed its single appointment.
+     *
+     * @param  array<int, string>  $bookOperation
+     * @param  array<int, string>  $deactivateOperation
+     */
+    private function assertBookingFirstThenDeactivation(
+        array $bookOperation,
+        array $deactivateOperation,
+        int $bookingTypeId
+    ): void {
+        $booking = $this->startChild($bookOperation, ['RUNNER_PAUSE_AFTER_BOOKING_TYPE_LOCK_MS' => '7000']);
+        $deactivation = null;
+
+        try {
+            $this->waitForEntered($booking);
+            usleep(1_500_000); // A now holds the type row (shared) and idles inside its transaction.
+
+            $deactivation = $this->startChild($deactivateOperation);
+            $this->waitForEntered($deactivation);
+            usleep(2_000_000);
+
+            $this->assertTrue($booking->isRunning(), 'The booking must still be inside its transaction: ' . $booking->getOutput());
+            $this->assertTrue(
+                $deactivation->isRunning(),
+                'Deactivation finished while a booking owned the Booking Type row, so it did not wait on it: '
+                . $deactivation->getOutput() . $deactivation->getErrorOutput()
+            );
+            $this->assertSame(1, (int) DB::table('booking_types')->where('id', $bookingTypeId)->value('is_active'));
+        } catch (\Throwable $e) {
+            $booking->stop(0);
+            $deactivation?->stop(0);
+
+            throw $e;
+        }
+
+        $booking->wait();
+        $deactivation->wait();
+
+        $this->assertSame(0, $booking->getExitCode(), $booking->getOutput() . $booking->getErrorOutput());
+        $this->assertSame(0, $deactivation->getExitCode(), $deactivation->getOutput() . $deactivation->getErrorOutput());
+        $this->assertSame(1, DB::table('appointments')->where('booking_type_id', $bookingTypeId)->count());
+        $this->assertSame(0, (int) DB::table('booking_types')->where('id', $bookingTypeId)->value('is_active'));
+        $this->assertGreaterThanOrEqual(
+            $this->committedMicrosecond($booking->getOutput()),
+            $this->committedMicrosecond($deactivation->getOutput()),
+            'Deactivation must complete after the booking that owned the row first.'
+        );
+    }
+
+    /** @param  array<int, string>  $operation */
+    private function startChild(array $operation, array $extraEnvironment = []): Process
+    {
+        $php = (new PhpExecutableFinder())->find() ?: 'php';
+        $runner = __DIR__ . '/Support/concurrent_booking_runner.php';
+        $child = new Process(
+            array_merge([$php, $runner, array_shift($operation), '0'], $operation),
+            null,
+            array_merge($this->childEnvironment(), $extraEnvironment),
+            null,
+            90.0
+        );
+        $child->start();
+
+        return $child;
+    }
+
+    private function waitForEntered(Process $child): void
+    {
+        $deadline = microtime(true) + 30;
+
+        while (! str_contains($child->getOutput(), 'ENTERED') && $child->isRunning() && microtime(true) < $deadline) {
+            usleep(20_000);
+        }
+
+        $this->assertStringContainsString('ENTERED', $child->getOutput(), 'Child never entered: ' . $child->getErrorOutput());
+    }
+
+    private function committedMicrosecond(string $stdout): int
+    {
+        $this->assertSame(1, preg_match('/COMMITTED .*entered_us=(\d+) elapsed_us=(\d+)/', $stdout, $m), $stdout);
+
+        return (int) $m[1] + (int) $m[2];
+    }
+
     /**
      * V1 completion — the webhook-during-booking race. A provider sync takes the
      * same tier-2 lock as a booking and commits a busy block while the booking

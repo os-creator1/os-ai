@@ -1391,10 +1391,11 @@ table (profile edits, auth, etc.); mirroring `OpportunityManager`'s
 because `businesses` has no comparable unrelated write pressure inside a
 booking transaction).
 
-### 7.1 The three serialization points
+### 7.1 The serialization points
 
 | Tier | Row | Locked by | Purpose |
 |---|---|---|---|
+| 0 | `booking_types` for the Booking Type | **every new booking, SHARED**; `BookingTypeManager` lifecycle writes (`is_active`, `duration_minutes`), **EXCLUSIVE** | the one authoritative point for "may a NEW booking be created for this type, and how long is it" — see below |
 | 1 | `booking_type_round_robin_state` for the Booking Type | any operation that performs round-robin assignment | serializes the rotation cursor (§5.1.1) |
 | 2 | `staff_booking_locks` for **every** staff member the operation could bind | every scheduling and lifecycle mutation, and external busy-cache writes (§7.5) | serializes one staff member's whole timeline across **all** Locations — what makes cross-Location conflict prevention structural rather than a per-Location check (Blueprint §12) |
 | 3 | the `appointments` row(s) the operation mutates | reschedule, cancel, complete, no-show | serializes the lifecycle state machine of one appointment |
@@ -1530,7 +1531,7 @@ from the first's committed result.
 ### 7.4 One canonical lock order for every scheduling and lifecycle mutation
 
 Every mutation below acquires a **prefix of the same total order**:
-**tier 1 → tier 2 (ascending `staff_user_id`) → tier 3 (ascending
+**tier 0 → tier 1 → tier 2 (ascending `staff_user_id`) → tier 3 (ascending
 `appointments.id`)**, skipping tiers it does not need but never reordering
 them. A lock is never acquired after a lower-numbered tier has been
 skipped and then needed later, so no cycle can form between appointment
@@ -1538,14 +1539,34 @@ rows, staff locks and the rotation cursor.
 
 | Mutation | Tier 1 | Tier 2 | Tier 3 | Required source state |
 |---|---|---|---|---|
-| Create, explicit staff | — | that staff member | — | n/a |
-| Create, round-robin | the Booking Type's state row | every candidate in `E`, ascending | — | n/a |
+| Booking Type lifecycle write (`setActive`, `update`) | — (tier 0 **exclusive** only; takes nothing else) | — | — | n/a |
+| Create, explicit staff | — (tier 0 **shared** first) | that staff member | — | n/a |
+| Create, round-robin | (tier 0 **shared** first) the Booking Type's state row | every candidate in `E`, ascending | — | n/a |
 | Reschedule (same staff) | — | that staff member | the appointment | `scheduled` |
 | Reschedule (moving staff) | — | old **and** new staff, ascending | the appointment | `scheduled` |
 | Cancel | — | the appointment's staff member | the appointment | `scheduled` |
 | Complete | — | the appointment's staff member | the appointment | `scheduled` |
 | No-show | — | the appointment's staff member | the appointment | `scheduled` |
 | External busy-cache write (§7.5) | — | the connection's User | — | n/a |
+
+**Tier 0 — the Booking Type row (V1 completion, correction round 1).** A staff
+lock does not serialize a write to `booking_types`, so before this tier existed
+a booking could read `is_active = true`, a deactivation could commit, and the
+booking could still insert. Now every NEW booking, explicit-staff and
+round-robin alike, takes the `booking_types` row `FOR SHARE` as the **first
+statement of its transaction** (before tier 1 and tier 2) and holds it to
+commit. It reads `is_active`, `duration_minutes` and `business_location_id`
+from that locked row — the caller's model is never trusted for any of them.
+`BookingTypeManager::setActive()` and `update()` (the only writers of those
+columns) take the same row `FOR UPDATE`, and apply the change to the freshly
+locked row. Consequences: a deactivation that commits first is seen by a waiting
+booking (a locking read is a current read), which refuses with
+`BookingTypeNotBookableException` and writes nothing; a booking that owns the
+row first finishes, and the deactivation waits and commits after it. Many
+bookings of one type still run concurrently (shared mode). Tier 0 is lowest in
+the order and the mutator holds nothing but this one row, so it cannot close a
+cycle with tiers 1–3. Reschedule, cancel, complete and no-show do not take it:
+an existing appointment of a deactivated type stays manageable.
 
 Inside the transaction, after the locks are held, every lifecycle mutation
 follows the identical shape:

@@ -31,6 +31,8 @@ use Illuminate\Support\Facades\DB;
  * mutation in this class acquires a PREFIX OF ONE TOTAL ORDER and never
  * reorders it (§7.4):
  *
+ *     tier 0  booking_types row (SHARED by every NEW booking; EXCLUSIVE for a
+ *             lifecycle change of is_active/duration — BookingTypeManager)
  *     tier 1  booking_type_round_robin_state (round-robin assignment only)
  *     tier 2  staff_booking_locks, ascending staff_user_id
  *     tier 3  the appointments row(s), ascending id
@@ -90,17 +92,18 @@ class AppointmentBookingService
         ?int $crmOpportunityId = null
     ): Appointment {
         $location = $this->locationFor($bookingType);
-        $endAt = $this->endFor($bookingType, $startAt);
 
         // §7.2 step 1 — ensure OUTSIDE the transaction, before any lock.
         $this->locks->ensure([$staffUserId]);
 
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $staffUserId, $contactId, $startAt, $endAt, $createdByUserId, $crmOpportunityId
+            $bookingType, $location, $staffUserId, $contactId, $startAt, $createdByUserId, $crmOpportunityId
         ): Appointment {
+            // Tier 0, FIRST: the Booking Type row, never the caller's model.
+            $endAt = $this->endFor($this->lockBookingTypeForBooking($bookingType, $location), $startAt);
+
             $this->locks->lockAscending([$staffUserId]);
 
-            $this->assertBookingTypeAcceptsBookings($bookingType);
             $this->assertBookable($bookingType, $location, $staffUserId, $startAt, $endAt);
 
             return $this->insert(
@@ -185,15 +188,16 @@ class AppointmentBookingService
         $this->ensureRoundRobinState($bookingType);
 
         $appointment = DB::transaction(function () use (
-            $bookingType, $location, $pool, $resolveContactId, $startAt, $endAt, $createdByUserId, $crmOpportunityId
+            $bookingType, $location, $pool, $resolveContactId, $startAt, $createdByUserId, $crmOpportunityId
         ): Appointment {
-            // Tier 1 first, and held for the whole assignment.
+            // Tier 0 first (the Booking Type row, re-derived under a shared
+            // lock), then tier 1, held for the whole assignment.
+            $endAt = $this->endFor($this->lockBookingTypeForBooking($bookingType, $location), $startAt);
+
             $state = $this->lockRoundRobinState($bookingType);
 
             // Tier 2 for every candidate, ascending.
             $this->locks->lockAscending($pool);
-
-            $this->assertBookingTypeAcceptsBookings($bookingType);
 
             $contactId = $resolveContactId();
 
@@ -476,21 +480,37 @@ class AppointmentBookingService
     }
 
     /**
-     * A new booking needs a Booking Type that is active NOW, re-read from
-     * persistence with the staff lock(s) held rather than trusted from the
-     * caller's model. The first plain read here pins the transaction's
-     * snapshot, which is why it runs only after the locks (see
-     * ensureRoundRobinState()).
+     * TIER 0 — the Booking Type row is the one authoritative synchronization
+     * point for "may a NEW booking be created for this type, and for how long".
+     *
+     * It is taken FIRST in the transaction (before tier 1 and tier 2), in SHARED
+     * mode, and held to commit: any number of bookings of one type still run
+     * concurrently, but BookingTypeManager takes the same row EXCLUSIVELY to
+     * change is_active or duration_minutes. So a deactivation that commits first
+     * is seen by the waiting booking (a locking read is a current read) which
+     * refuses; a booking that got the row first finishes before the
+     * deactivation proceeds. The mutator holds nothing else, so tier 0 cannot
+     * close a cycle with tiers 1-3.
+     *
+     * Everything the booking relies on is read from the locked row; the
+     * caller's model is never trusted for is_active, duration or Location. As a
+     * locking read it is also a current read, so it does not pin the
+     * transaction's snapshot before the later locks (see ensureRoundRobinState()).
      *
      * @throws BookingTypeNotBookableException
      */
-    private function assertBookingTypeAcceptsBookings(BookingType $bookingType): void
+    private function lockBookingTypeForBooking(BookingType $bookingType, BusinessLocation $location): object
     {
-        $active = DB::table('booking_types')->where('id', $bookingType->id)->value('is_active');
+        $row = DB::table('booking_types')
+            ->where('id', $bookingType->id)
+            ->sharedLock()
+            ->first(['id', 'is_active', 'duration_minutes', 'business_location_id']);
 
-        if (! (bool) $active) {
+        if ($row === null || ! (bool) $row->is_active || (int) $row->business_location_id !== (int) $location->id) {
             throw BookingTypeNotBookableException::forBookingType((int) $bookingType->id);
         }
+
+        return $row;
     }
 
     /**
@@ -619,7 +639,8 @@ class AppointmentBookingService
         return $bookingType->location ?? BusinessLocation::query()->findOrFail($bookingType->business_location_id);
     }
 
-    private function endFor(BookingType $bookingType, CarbonInterface $startAt): CarbonInterface
+    /** @param BookingType|object $bookingType a model, or the locked tier-0 row */
+    private function endFor(object $bookingType, CarbonInterface $startAt): CarbonInterface
     {
         return Carbon::instance($startAt->toDateTime())->addMinutes((int) $bookingType->duration_minutes);
     }
