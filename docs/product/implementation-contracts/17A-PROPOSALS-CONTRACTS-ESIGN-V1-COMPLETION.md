@@ -103,9 +103,16 @@ New in this pass:
   `signed_at`, original evidence untouched, **one `DocumentSigned`** — and the
   public endpoint renders the same confirmation. A *different* act against a
   signed document is refused.
-* After signature nothing can change: edit, line add/remove/reorder, schedule,
-  revise, send and re-send are all refused; tests pin the whole matrix and that
-  the stored hash still equals the hash of the stored rows.
+* After signature the document's CONTENT and lifecycle can no longer be
+  mutated: edit, line add/remove/reorder, schedule change, revise and
+  send / new issue are all refused; tests pin the whole matrix and that the
+  stored hash still equals the hash of the stored rows.
+* Secure-link RE-DELIVERY is not a content mutation and stays allowed while the
+  signed document is still payable and unexpired: `resendLink()` (§2) rotates
+  the token and re-emails the frozen recipient so the signer can return to the
+  payment surface. It changes no document content, version, hash or lifecycle
+  state, leaves the signature untouched, and emits no `DocumentSent`. Draft,
+  paid, expired and void documents still have no link to re-send.
 
 ## 5. Events
 
@@ -152,5 +159,5 @@ unchanged. The list shows location, total and sent/signed/paid dates.
 `DocumentJourneyAndTenancyHttpTest`, and `DocumentConcurrencyTest` (separate OS
 processes racing for one document row held by a probe connection; runner in
 `Support/concurrent_document_runner.php`). Existing tests that asserted the old
-refusal-on-resend / refusal-on-second-sign behaviour were updated to the
+refusal-on-second-send / refusal-on-second-sign behaviour were updated to the
 idempotent semantics above.

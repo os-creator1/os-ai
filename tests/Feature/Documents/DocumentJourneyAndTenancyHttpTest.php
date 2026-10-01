@@ -141,7 +141,8 @@ class DocumentJourneyAndTenancyHttpTest extends TestCase
             ->assertSee('Re-send payment link');
         $this->get($this->docRoute('index', $ws, $biz))->assertOk()->assertSee('Journey proposal v2')->assertSee('signed');
 
-        // ... and nothing about it can be changed.
+        // ... and its content and lifecycle can no longer be changed (re-delivering
+        // the link, asserted above, is not a content change).
         $this->patch($this->docRoute('update', $ws, $biz, [$document->uid]), ['content' => ['body' => 'Rewritten']])->assertSessionHasErrors();
         $this->post($this->docRoute('revise', $ws, $biz, [$document->uid]))->assertSessionHasErrors();
         $this->assertSame(1, BusinessDocumentSignature::query()->count());
