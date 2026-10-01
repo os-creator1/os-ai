@@ -52,9 +52,12 @@ use Illuminate\Support\Facades\DB;
  * final at the provider and never move. `failed` is NOT final at the provider:
  * `payment_intent.payment_failed` leaves the PaymentIntent alive in
  * `requires_payment_method`, and the Payment Element lets the same customer
- * retry the same intent and succeed. A provider-confirmed `succeeded` on a
- * `failed` row is therefore applied — the only transition out of `failed`.
- * Every other observation of a `failed` row is a no-op.
+ * retry the same intent and succeed. A `failed` row is therefore still the
+ * LIVE attempt for its schedule item (it keeps the one-live-attempt slot, in
+ * the application AND in the database — see PaymentManager::liveStatuses()), and
+ * exactly two provider-confirmed observations move it: `succeeded` (the retry
+ * worked) and `canceled` (the intent is dead, which releases the slot for a new
+ * attempt). Every other observation of a `failed` row is a no-op.
  *
  * NO NETWORK HERE. This class only applies an outcome someone else already
  * obtained, so it can safely hold locks.
@@ -114,7 +117,7 @@ final class PaymentFinalizer
 
             $succeeded = $snapshot->status === BusinessDocumentPaymentStatus::Succeeded;
 
-            if ($this->isSettled($locked->status, $succeeded)) {
+            if ($this->isSettled($locked->status, $snapshot->status)) {
                 // §8.3 — a replay of an already-settled payment changes
                 // nothing, and is not an error.
                 return $locked->status === $snapshot->status
@@ -254,14 +257,17 @@ final class PaymentFinalizer
     /**
      * Whether this observation may NOT move the row. `succeeded` and
      * `canceled` are final at the provider; `failed` yields only to a
-     * provider-confirmed `succeeded` (see the class comment).
+     * provider-confirmed `succeeded` or `canceled` (see the class comment).
      */
-    private function isSettled(BusinessDocumentPaymentStatus $status, bool $observationSucceeded): bool
+    private function isSettled(BusinessDocumentPaymentStatus $status, BusinessDocumentPaymentStatus $observed): bool
     {
         return match ($status) {
             BusinessDocumentPaymentStatus::Succeeded,
             BusinessDocumentPaymentStatus::Canceled => true,
-            BusinessDocumentPaymentStatus::Failed => ! $observationSucceeded,
+            BusinessDocumentPaymentStatus::Failed => ! in_array($observed, [
+                BusinessDocumentPaymentStatus::Succeeded,
+                BusinessDocumentPaymentStatus::Canceled,
+            ], true),
             default => false,
         };
     }

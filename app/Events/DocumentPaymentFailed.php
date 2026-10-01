@@ -16,8 +16,13 @@ use Illuminate\Queue\SerializesModels;
  * it yet.
  *
  * Identity only — no amount, no failure detail, no provider reference, no
- * PII. A failure the customer can retry is still a failure of THIS attempt:
- * the retry is a new attempt with its own row, and its own events.
+ * PII. A `failed` row is NOT the end of the attempt: Stripe keeps the
+ * PaymentIntent alive, so the customer's retry re-drives THIS SAME row and THIS
+ * SAME intent (the row keeps the schedule item's one live-attempt slot). If the
+ * retry succeeds, that same row becomes `succeeded` and emits
+ * `DocumentPaymentSucceeded`; if it is declined again nothing further is
+ * emitted for the row. A new row exists only after the provider cancels the
+ * intent.
  */
 final class DocumentPaymentFailed
 {

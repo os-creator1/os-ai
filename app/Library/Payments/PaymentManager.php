@@ -26,13 +26,24 @@ use Throwable;
  * numbered algorithm rather than a simpler flow that happens to work most of
  * the time.
  *
- * THE INVARIANT THAT MATTERS: one active attempt per schedule item. An
+ * THE INVARIANT THAT MATTERS: one LIVE attempt per schedule item. An
  * ordinal-suffixed key cannot stop two concurrent first clicks from each
  * choosing an ordinal and each making a real charge, so the guarantee is
  * `unique(active_schedule_item_id)` in the database — a stored generated
- * column that holds the schedule item id only while a payment is in a
- * non-terminal status. Two racing inserts mean one of them violates that key
- * and re-reads the winner instead.
+ * column that holds the schedule item id only while a payment is LIVE. Two
+ * racing inserts mean one of them violates that key and re-reads the winner
+ * instead.
+ *
+ * "LIVE" HAS ONE DEFINITION, liveStatuses(), used by the selection below, the
+ * reconciliation sweep AND the generated column (migration
+ * 2026_10_13_100001): created / requires_action / processing / FAILED. A
+ * `failed` row is live because `payment_intent.payment_failed` does not end a
+ * PaymentIntent — the customer can retry the same intent and succeed — so
+ * pressing Pay after a decline re-drives that SAME row and intent rather than
+ * creating a second charge opportunity. The slot is released only by
+ * `succeeded` (settled) or `canceled` (the provider says the intent is dead);
+ * when a re-driven row turns out to be canceled, start() begins exactly one
+ * new attempt.
  *
  * NO NETWORK UNDER A LOCK (§7). The transaction below creates or finds the
  * durable row and commits; only then does the provider call happen; the
@@ -67,7 +78,7 @@ final class PaymentManager
      *
      * @throws PaymentStartException
      */
-    public function start(PublicDocumentAccess $access): PaymentStartResult
+    public function start(PublicDocumentAccess $access, bool $retryAfterCancel = true): PaymentStartResult
     {
         // ---- steps 1-13: local intent, committed, no network ------------
         [$payment, $connectionAccountId] = DB::transaction(function () use ($access) {
@@ -125,10 +136,11 @@ final class PaymentManager
                 throw PaymentStartException::because(PaymentStartException::NOT_PAYMENT_READY);
             }
 
-            // (9/10) an existing ACTIVE attempt is re-driven, never replaced.
+            // (9/10) an existing LIVE attempt — including a retryable `failed`
+            // one — is re-driven, never replaced.
             $active = BusinessDocumentPayment::query()
                 ->where('schedule_item_id', $item->id)
-                ->whereIn('status', self::activeStatuses())
+                ->whereIn('status', self::liveStatuses())
                 ->lockForUpdate()
                 ->first();
 
@@ -186,6 +198,26 @@ final class PaymentManager
 
         // ---- (15) shared idempotent finalizer ---------------------------
         $this->finalizer->apply($payment, $snapshot);
+
+        // A re-driven attempt can turn out to be over: the provider may have
+        // settled it (the customer paid after all) or cancelled it. Neither
+        // is payable, and neither may hand the browser a client secret.
+        $status = $payment->refresh()->status;
+
+        if ($status === BusinessDocumentPaymentStatus::Succeeded) {
+            throw PaymentStartException::because(PaymentStartException::NOTHING_PAYABLE);
+        }
+
+        if ($status === BusinessDocumentPaymentStatus::Canceled) {
+            // The dead intent released the slot; the ONE new attempt it
+            // permits is created here. $retryAfterCancel is false on the
+            // recursive call, so this can never loop.
+            if (! $retryAfterCancel) {
+                throw PaymentStartException::because(PaymentStartException::NOT_PAYMENT_READY);
+            }
+
+            return $this->start($access, retryAfterCancel: false);
+        }
 
         return new PaymentStartResult(
             paymentUid: (string) $payment->uid,
@@ -445,7 +477,7 @@ final class PaymentManager
         $threshold = now()->subMinutes(max(1, (int) config('documents.stale_payment_minutes', 30)));
 
         $candidates = BusinessDocumentPayment::query()
-            ->whereIn('status', self::activeStatuses())
+            ->whereIn('status', self::liveStatuses())
             ->where('updated_at', '<=', $threshold)
             ->orderBy('updated_at')
             ->orderBy('id')
@@ -486,7 +518,7 @@ final class PaymentManager
 
                 $this->finalizer->apply($payment, $snapshot);
 
-                if (! in_array($payment->refresh()->status->value, self::activeStatuses(), true)) {
+                if (! in_array($payment->refresh()->status->value, self::liveStatuses(), true)) {
                     $reconciled++;
                 } else {
                     // Still in flight at the provider. Re-observed, never
@@ -614,16 +646,20 @@ final class PaymentManager
     /**
      * Exactly the statuses the DB's `active_schedule_item_id` generated
      * column treats as live, so the application and the unique key can never
-     * disagree about what "one active attempt" means.
+     * disagree about what "one live attempt" means. `failed` is included
+     * because a provider `payment_failed` leaves the intent retryable (see the
+     * class comment); `succeeded` and `canceled` are the only releases.
+     * A test reads the column's expression and compares it to this list.
      *
      * @return array<int, string>
      */
-    private static function activeStatuses(): array
+    public static function liveStatuses(): array
     {
         return [
             BusinessDocumentPaymentStatus::Created->value,
             BusinessDocumentPaymentStatus::RequiresAction->value,
             BusinessDocumentPaymentStatus::Processing->value,
+            BusinessDocumentPaymentStatus::Failed->value,
         ];
     }
 }

@@ -169,7 +169,7 @@ class InvoicePaymentCompletionTest extends TestCase
 
         $payment = $started['payment']->refresh();
         $this->assertSame(BusinessDocumentPaymentStatus::Failed, $payment->status);
-        $this->assertNull($payment->active_schedule_item_id, 'A genuine failure frees the item for exactly one new attempt.');
+        $this->assertNotNull($payment->active_schedule_item_id, 'A decline leaves the intent retryable, so the row keeps the item (FailedPaymentRetryTest).');
 
         Event::assertDispatchedTimes(DocumentPaymentFailed::class, 1);
         Event::assertDispatched(DocumentPaymentFailed::class, function (DocumentPaymentFailed $event) use ($started, $payment) {
@@ -221,16 +221,23 @@ class InvoicePaymentCompletionTest extends TestCase
         $this->assertSame(0, BusinessPaymentEvent::query()->where('state', BusinessPaymentEventState::Failed->value)->count());
     }
 
-    public function test_a_late_success_on_an_older_failed_attempt_never_double_pays_the_item(): void
+    public function test_a_second_capture_for_an_already_paid_item_is_recorded_and_pays_the_invoice_once(): void
     {
+        // The product flow can no longer start a second intent beside a live or
+        // failed one (FailedPaymentRetryTest). This pins what the ledger does
+        // if a second intent for the item was ever captured anyway — e.g. an
+        // intent created before this rule existed: both captures are real
+        // money, so both are recorded and refundable, and the invoice is paid
+        // ONCE.
         Event::fake([DocumentPaymentSucceeded::class, DocumentFullyPaid::class]);
         $started = $this->startedPayment();
         $first = $started['payment'];
         $document = $started['fixture']['document'];
-        $paidAtDeclare = null;
 
-        // Attempt A fails; the customer starts a fresh attempt B and pays.
-        $this->event($first, 'payment_intent.payment_failed')->assertOk();
+        // Simulate the legacy shape: the first attempt was released
+        // (cancelled), a second was started and paid, then the first's intent
+        // turned out to have been captured too.
+        DB::table('business_document_payments')->where('id', $first->id)->update(['status' => 'canceled']);
         app(PaymentManager::class)->start($this->accessFor($document->refresh(), $started['fixture']['token']));
         $second = BusinessDocumentPayment::query()->orderByDesc('id')->first();
         $this->assertNotSame((int) $first->id, (int) $second->id);
@@ -238,16 +245,14 @@ class InvoicePaymentCompletionTest extends TestCase
 
         $document->refresh();
         $this->assertSame(DocumentStatus::Paid, $document->status);
-        $paidAtDeclare = $document->paid_at;
+        $paidAt = $document->paid_at;
 
-        // Attempt A's still-open intent is then (mistakenly) completed too.
+        DB::table('business_document_payments')->where('id', $first->id)->update(['status' => 'failed']);
         $this->succeed($first)->assertOk();
 
-        // Both captures are recorded — both are real money, so the Business can
-        // refund the surplus — but the invoice is paid exactly ONCE.
         $this->assertSame(BusinessDocumentPaymentStatus::Succeeded, $first->refresh()->status);
         $this->assertSame(BusinessDocumentPaymentStatus::Succeeded, $second->refresh()->status);
-        $this->assertEquals($paidAtDeclare, $document->refresh()->paid_at);
+        $this->assertEquals($paidAt, $document->refresh()->paid_at);
         $this->assertSame(1, BusinessDocumentPaymentScheduleItem::query()->where('status', 'paid')->count());
         Event::assertDispatchedTimes(DocumentFullyPaid::class, 1);
         Event::assertDispatchedTimes(DocumentPaymentSucceeded::class, 2);

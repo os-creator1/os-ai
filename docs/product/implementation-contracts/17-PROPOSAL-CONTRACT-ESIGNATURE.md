@@ -27,7 +27,10 @@ may be reused**.
 > §8.3 now records (rather than ignores) a provider-confirmed capture that lands
 > on a void/expired/paid document, and lets `failed` yield to a provider-confirmed
 > `succeeded` on the same intent; §10 gains `DocumentPaymentFailed` and carries
-> Business/Location/Contact identity on the payment events. See
+> Business/Location/Contact identity on the payment events; and §7.2/§5.9's
+> one-live-attempt rule now counts a `failed` attempt as live (a retry re-drives
+> the same row and intent; only `succeeded` or a provider `canceled` releases the
+> item). See
 > [`PAYMENTS-INVOICES-V1-COMPLETION-CONTRACT.md`](../../automation/PAYMENTS-INVOICES-V1-COMPLETION-CONTRACT.md).
 
 ## 1. Objective

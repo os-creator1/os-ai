@@ -7,9 +7,12 @@ namespace App\Enums\Documents;
  * Provider statuses are mapped onto these six in exactly one gateway seam;
  * no provider status string belongs in domain code.
  *
- * created / requires_action / processing are the LIVE statuses that hold
- * business_document_payments.active_schedule_item_id (the one-active-attempt
- * guard); succeeded / failed / canceled are terminal and free it.
+ * created / requires_action / processing / failed are the LIVE statuses that hold
+ * business_document_payments.active_schedule_item_id (the one-live-attempt
+ * guard). `failed` is live because a provider payment_failed leaves the
+ * PaymentIntent retryable: the customer's retry re-drives the same row and
+ * intent. Only succeeded (settled) and canceled (the provider says the intent
+ * is dead) are final and free the slot.
  */
 enum BusinessDocumentPaymentStatus: string
 {

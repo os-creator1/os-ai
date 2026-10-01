@@ -35,9 +35,11 @@ and is never used here.)
 | Payment ledger | `business_document_payments` (one row per attempt) with `business_id`, `business_document_id`, `schedule_item_id`, `business_stripe_connection_id`, provider intent / charge ids, `amount_minor`, `currency_code`, `status`, `succeeded_at`, `local_idempotency_key`; Location and Contact are the **document's** (a payment is reachable only through its document, and a document's Location and Contact are immutable after creation) |
 | Refunds | `business_document_refunds` (already present, preserved; no partial-payment or new refund workflow was added) |
 
-**No migration was added by this lane.** Denormalising Location/Contact onto the
-payment row would create a second copy that could drift from the immutable
-document; the join is authoritative.
+**The completion pass added no migration.** Denormalising Location/Contact onto
+the payment row would create a second copy that could drift from the immutable
+document; the join is authoritative. (Correction round 1 added ONE narrowly
+scoped migration — §11 — to make the database's definition of the live attempt
+agree with the application's.)
 
 ### Authoring (unchanged — proven)
 
@@ -79,16 +81,24 @@ draft ──send──▶ sent ──sign──▶ signed ──final payment─
 ### Payment attempt (`BusinessDocumentPaymentStatus`)
 
 ```
-created ─▶ requires_action ─▶ processing ─▶ succeeded            (final at the provider)
+created ─▶ requires_action ─▶ processing ─▶ succeeded            (final: the item is settled)
    │              │                │
-   └──────────────┴────────────────┴──▶ failed ──(provider-confirmed success on the SAME intent)──▶ succeeded
-                                      └─▶ canceled                (final at the provider)
+   └──────────────┴────────────────┴──▶ failed ──(customer retries the SAME intent)──▶ succeeded
+   │              │                │      └──(provider cancels the intent)──────────▶ canceled
+   └──────────────┴────────────────┴──▶ canceled                (final: the intent is dead)
 ```
 
 `failed` is **not** final at the provider: `payment_intent.payment_failed`
 leaves the PaymentIntent alive and the Payment Element lets the customer retry
-it. A `succeeded` observation on a `failed` row is therefore applied. Nothing
-else ever moves a settled row.
+it. **There is ONE rule for "the live attempt"** (`PaymentManager::liveStatuses()`
+and the `active_schedule_item_id` generated column, kept equal by a test):
+`created`, `requires_action`, `processing` **and `failed`**. A `failed` row keeps
+the schedule item's slot; the customer's retry re-drives that **same row, same
+intent, same connected account and same idempotency identity**; only
+`succeeded` (settled) or `canceled` (the provider says the intent is dead)
+releases the slot. From `failed`, exactly two provider-confirmed observations
+move a row — `succeeded` and `canceled` — and nothing else ever moves a settled
+row.
 
 ### Schedule item
 
@@ -98,7 +108,8 @@ else ever moves a settled row.
 
 * One live attempt per schedule item is a **database** guarantee:
   `unique(active_schedule_item_id)`, a stored generated column that holds the
-  item id only while the payment is `created | requires_action | processing`.
+  item id only while the payment is live: `created | requires_action |
+  processing | failed` (§2, §11).
 * The Stripe idempotency key is `document-payment:{payment_uid}`, derived from
   the **durable local row**, never a guessed ordinal. The same string, persisted
   as `local_idempotency_key`, is sent as `metadata.app_operation_id` and
@@ -118,9 +129,10 @@ else ever moves a settled row.
   are a pure function of the durable rows, built in one place, so a re-drive
   sends byte-identical parameters. **They are informational and never
   authoritative** — see §4.
-* Retries are bounded: a genuine failure frees the item for **exactly one** new
-  attempt (one new row, one new key); the pay route is throttled; reconciliation
-  is bounded and decides nothing on its own.
+* Retries are bounded: a decline is retried on the **same** intent (no new row,
+  no new intent); a new attempt exists only after the provider cancels the
+  intent, and then exactly one (one new row, one new key); the pay route is
+  throttled; reconciliation is bounded and decides nothing on its own.
 
 ## 4. Webhook truth model
 
@@ -155,8 +167,8 @@ else ever moves a settled row.
 * **The document and its schedule move only while the document is live.** A late
   capture against a terminal document never reopens, pays or alters it and never
   emits `DocumentFullyPaid`. A second capture against an already-paid invoice
-  (e.g. an old attempt's still-open intent) is recorded, refundable, and pays
-  the invoice exactly **once**.
+  (possible only for an intent created before §11's rule) is recorded,
+  refundable, and pays the invoice exactly **once**.
 
 Idempotence: a replayed event, a duplicate delivery, two concurrent workers and
 two different success events for one intent all produce **one** `succeeded`
@@ -224,7 +236,7 @@ two-argument caller keeps working.
 |---|---|---|
 | `DocumentPaymentSucceeded` | "payment received" — the one transition into `succeeded` for a payment row | `documentId, paymentId, businessId, businessLocationId, contactId` |
 | `DocumentFullyPaid` | "invoice paid" — the one transition into `paid` | `documentId, businessId, businessLocationId, contactId` |
-| `DocumentPaymentFailed` *(new)* | "payment failed" — the one transition into `failed`, for a payment against a still-live document | `documentId, paymentId, businessId, businessLocationId, contactId` |
+| `DocumentPaymentFailed` *(new)* | "payment failed" — the one transition into `failed` for a payment row against a still-live document. A `failed` row is the live, retryable attempt: its retry is the same row, so a later success is that row's `DocumentPaymentSucceeded`, and a second decline of the same row emits nothing further | `documentId, paymentId, businessId, businessLocationId, contactId` |
 | `DocumentSent`, `DocumentSigned`, `DocumentVoided`, `DocumentExpired`, `DocumentRefunded` | unchanged | unchanged |
 
 `DocumentPaymentFailed` has no listener yet. A rolled-back finalization emits
@@ -234,12 +246,11 @@ nothing (proven).
 
 * **No partial-payment or refund workflow was invented.** Deposit + balance and
   per-payment refunds are the existing Contract 17 behavior and are preserved.
-* **A duplicate capture is recorded and refundable, not prevented.** If attempt
-  A fails, the customer starts attempt B and pays, and A's still-open intent is
-  then also completed, both captures are real money: both are recorded, the
-  invoice is paid once, and the Business refunds the surplus. Cancelling A's
-  intent at the provider when B starts would narrow the window further but needs
-  a new provider call and is out of this lane's scope.
+* **Two simultaneous charge opportunities for one item are prevented, not just
+  tolerated** (§11): a decline keeps the attempt live, so no second intent is
+  created beside it. Should two captures ever exist anyway (e.g. an intent
+  created before §11), both are recorded and refundable and the invoice is paid
+  once.
 * **A void does not cancel the in-flight intent at the provider.** A customer
   who completes it after the void is charged; that capture is now recorded and
   refundable (§4). Cancelling the intent on void would need a provider call from
@@ -271,3 +282,51 @@ New: `tests/Feature/Payments/InvoicePaymentCompletionTest`,
 asserted the stranding behavior fixed in §4
 (`PaymentWebhookAndRaceTest::test_a_terminal_document_accepts_no_inbound_transition`,
 `::test_payment_success_versus_document_void`).
+
+## 11. Correction round 1 — one canonical retryable-attempt rule
+
+**Inconsistency fixed.** The finalizer already treated `failed` as retryable
+(`failed → succeeded`), but `PaymentManager` and the generated column treated
+`failed` as releasing the slot. So: intent A `payment_failed` → row A `failed` →
+slot released → customer presses Pay → row B / intent B created → A can still
+succeed → B can also succeed: two live charge opportunities for one item.
+
+**Rule.** `failed` is a LIVE status, in one list used by everything:
+`PaymentManager::liveStatuses()` (selection in `start()`, the reconciliation
+sweep) and the `active_schedule_item_id` expression. A test reads the column for
+every status and fails if the two ever disagree.
+
+**Behavior.**
+
+* `start()` after a decline re-drives the failed row: it retrieves **that**
+  intent on **that** row's recorded connection and returns its client secret —
+  no new row, no new intent, same `document-payment:{uid}` identity.
+* A later provider-confirmed success on the intent moves the **same** row
+  `failed → succeeded` exactly once (one schedule settlement, one
+  `DocumentPaymentSucceeded`, one `DocumentFullyPaid`).
+* If the re-driven intent is `canceled` at the provider, the finalizer applies
+  it (`failed → canceled`, which releases the slot) and `start()` begins exactly
+  one new attempt. If it turns out `succeeded`, the row is settled and `start()`
+  reports nothing left to pay (no client secret is returned for a settled or
+  dead intent).
+* The sweep now covers `failed` rows too: a retry that succeeded is recovered
+  even if its webhook never arrived, and a cancelled intent is released. Time
+  passing alone decides nothing.
+* A second decline of the same row emits no second `DocumentPaymentFailed`.
+
+**Not blocked forever.** A failed row is never a dead end: the customer can
+always retry its intent, and a cancelled intent releases the item. The only
+thing prevented is a second simultaneous attempt.
+
+**Schema.** Migration `2026_10_13_100001_include_failed_in_live_payment_attempt_slot`
+drops and re-adds `active_schedule_item_id` with the widened expression and the
+same unique key `bdp_active_item_unique` (the expression cannot be altered in
+place portably). `down()` restores the narrower one. If a database already holds
+a `failed` row beside a newer live row for one item (the old behavior), `up()`
+refuses to run and names the items — which of two possibly-completable intents is
+real is a provider question, not a migration's.
+
+**Tests.** `FailedPaymentRetryTest` (11), the two new real-concurrency tests in
+`PaymentConcurrencyTest` (concurrent retries after the failed event converge on
+one row and one intent with zero `createPaymentIntent` calls; a success racing
+retries settles the one row once), and the schema tests in `DocumentsSchemaTest`.

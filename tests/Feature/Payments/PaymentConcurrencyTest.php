@@ -134,6 +134,69 @@ class PaymentConcurrencyTest extends TestCase
         $this->assertSame(50000, (int) $payment->amount_minor, 'The amount is the persisted schedule item, not a request value.');
     }
 
+    public function test_concurrent_retries_after_payment_failed_converge_on_the_same_row_and_intent(): void
+    {
+        [$payment, $document, $token] = $this->inFlightPaymentWithLink();
+        $this->declineInParent($payment);
+        $this->assertSame('failed', $payment->refresh()->status->value);
+        $this->truncateCalls();
+        $intent = (string) $payment->provider_payment_intent_id;
+
+        $results = $this->race([
+            ['start', (string) $document->uid, $token],
+            ['start', (string) $document->uid, $token],
+            ['start', (string) $document->uid, $token],
+        ]);
+
+        $this->assertGenuinelyRaced($results);
+        $this->assertSame([0, 0, 0], array_column($results, 'exitCode'), 'A retry after a decline is re-driven, never refused or errored.');
+        $this->assertSame(
+            [(string) $payment->uid],
+            array_values(array_unique(array_map(fn ($r) => $this->field($r['stdout'], 'payment_uid'), $results))),
+            'Every browser got the SAME attempt back.'
+        );
+
+        $this->assertSame(1, BusinessDocumentPayment::query()->where('business_document_id', $document->id)->count(), 'No second payment row, however the retries interleave.');
+        $this->assertSame([], $this->providerCreateKeys(), 'No PaymentIntent was created for a retry.');
+        $retrieved = array_filter($this->callLines(), fn ($line) => str_starts_with($line, 'provider|retrieve|'));
+        $this->assertNotEmpty($retrieved);
+        foreach ($retrieved as $line) {
+            $this->assertSame('provider|retrieve|' . $intent, $line, 'Only the original intent was ever touched.');
+        }
+
+        $payment->refresh();
+        $this->assertSame('failed', $payment->status->value);
+        $this->assertSame($intent, (string) $payment->provider_payment_intent_id);
+    }
+
+    public function test_a_success_racing_retries_on_a_failed_attempt_settles_the_one_row_once(): void
+    {
+        foreach (range(1, 2) as $round) {
+            [$payment, $document, $token] = $this->inFlightPaymentWithLink();
+            $this->declineInParent($payment);
+            $this->truncateCalls();
+
+            $results = $this->race([
+                ['finalize', (string) $payment->id, 'succeeded'],
+                ['start', (string) $document->uid, $token],
+                ['start', (string) $document->uid, $token],
+            ]);
+
+            $this->assertGenuinelyRaced($results);
+            $this->assertSame(0, $results[0]['exitCode']);
+            foreach ([1, 2] as $i) {
+                $this->assertContains($results[$i]['exitCode'], [0, 4], 'A start either re-drives the row or finds nothing left to pay.');
+            }
+
+            $this->assertSame(1, BusinessDocumentPayment::query()->where('business_document_id', $document->id)->count(), "Round {$round}: still one row.");
+            $this->assertSame('succeeded', $payment->refresh()->status->value);
+            $this->assertSame('paid', $document->refresh()->status->value);
+            $this->assertSame(1, $this->eventCount('DocumentPaymentSucceeded'));
+            $this->assertSame(1, $this->eventCount('DocumentFullyPaid'));
+            $this->assertSame([], $this->providerCreateKeys());
+        }
+    }
+
     // =================================================================
     // Payment versus void
     // =================================================================
@@ -345,6 +408,12 @@ class PaymentConcurrencyTest extends TestCase
     /** A real, started (provider intent persisted, status `created`) attempt on a fresh payable invoice. */
     private function inFlightPayment(): BusinessDocumentPayment
     {
+        return $this->inFlightPaymentWithLink()[0];
+    }
+
+    /** @return array{0: BusinessDocumentPayment, 1: BusinessDocument, 2: string} the attempt, its document and the customer's link token */
+    private function inFlightPaymentWithLink(): array
+    {
         $tenant = $this->sendableTenant();
         $this->chargeReadyConnection($tenant['business'], 'acct_' . Str::random(14));
         $draft = $this->draftDocument($tenant, ['kind' => 'invoice']);
@@ -352,7 +421,23 @@ class PaymentConcurrencyTest extends TestCase
 
         app(PaymentManager::class)->start($this->accessFor($document, $token));
 
-        return BusinessDocumentPayment::query()->orderByDesc('id')->firstOrFail();
+        return [BusinessDocumentPayment::query()->orderByDesc('id')->firstOrFail(), $document, $token];
+    }
+
+    /** Records a provider-confirmed `failed` on the row, exactly as the webhook path would. */
+    private function declineInParent(BusinessDocumentPayment $payment): void
+    {
+        $connection = BusinessStripeConnection::query()->findOrFail($payment->business_stripe_connection_id);
+
+        app(\App\Library\Payments\PaymentFinalizer::class)->apply($payment, new \App\Library\Payments\PaymentIntentSnapshot(
+            providerPaymentIntentId: (string) $payment->provider_payment_intent_id,
+            status: \App\Enums\Documents\BusinessDocumentPaymentStatus::Failed,
+            amountMinor: (int) $payment->amount_minor,
+            currencyCode: (string) $payment->currency_code,
+            connectedAccountId: (string) $connection->stripe_account_id,
+            operationId: (string) $payment->local_idempotency_key,
+            failureCode: 'card_declined',
+        ));
     }
 
     private function body(BusinessDocumentPayment $payment, string $type, string $eventId): string
