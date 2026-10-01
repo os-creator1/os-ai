@@ -169,6 +169,44 @@ class DocumentManagerTest extends TestCase
         $this->manager()->addCatalogLine($document, $item, 1, $actor);
     }
 
+    public function test_document_catalog_lines_go_through_the_business_scoped_snapshot_seam(): void
+    {
+        $source = file_get_contents(base_path('app/Library/Documents/DocumentManager.php'));
+
+        $this->assertStringContainsString('->snapshotForBusiness(', $source);
+        $this->assertDoesNotMatchRegularExpression('/->snapshots->snapshot\(/', $source);
+    }
+
+    public function test_foreign_and_forged_catalog_items_write_no_snapshot_or_line(): void
+    {
+        [$bundle, $document, $actor] = $this->draft();
+        $foreign = $this->documentsBundle();
+        $theirs = app(CatalogItemManager::class)->create($foreign['business'], ['type' => 'package', 'name' => 'Foreign', 'price_minor' => 1000, 'currency_code' => 'USD']);
+
+        // A forged caller-supplied model that claims to be this Business's item.
+        $forged = $theirs->replicate();
+        $forged->id = $theirs->id;
+        $forged->business_id = $bundle['business']->id;
+
+        foreach ([$theirs, $forged] as $item) {
+            try {
+                $this->manager()->addCatalogLine($document, $item, 1, $actor);
+                $this->fail('A foreign catalog item must be refused.');
+            } catch (ValidationException) {
+                // expected
+            }
+        }
+
+        $this->assertSame(0, PackageSnapshot::count());
+        $this->assertSame(0, $document->versions()->first()->lineItems()->count());
+
+        // Same-Business catalog lines still succeed.
+        $mine = app(CatalogItemManager::class)->create($bundle['business'], ['type' => 'package', 'name' => 'Mine', 'price_minor' => 2000, 'currency_code' => 'USD']);
+        $line = $this->manager()->addCatalogLine($document, $mine, 1, $actor);
+        $this->assertSame(1, PackageSnapshot::count());
+        $this->assertSame(2000, (int) $line->unit_price_minor);
+    }
+
     public function test_every_opportunity_identity_mismatch_is_refused(): void
     {
         $bundle = $this->documentsBundle();

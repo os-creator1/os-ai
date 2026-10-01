@@ -94,10 +94,21 @@ class CatalogV1CompletionTest extends TestCase
         [, $other] = $this->catalogTenant(WorkspacePlanTier::Core, 'Other Studio');
         $foreignLocation = $this->catalogLocation($other, 'Elsewhere');
         $this->catalogItem($business);
+        $queries = [];
 
-        $this->expectException(CatalogRuleException::class);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
 
-        app(CatalogLocationOfferReader::class)->rowsFor($business, $foreignLocation);
+        try {
+            app(CatalogLocationOfferReader::class)->rowsFor($business, $foreignLocation);
+            $this->fail('A foreign Location must be refused.');
+        } catch (CatalogRuleException) {
+            $queries = collect(DB::getQueryLog())->pluck('query')->all();
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $this->assertSame([], $queries, 'The refusal comes before any catalog or override read: ' . implode(' | ', $queries));
     }
 
     // -------------------------------------------------- resolver, in-memory path
