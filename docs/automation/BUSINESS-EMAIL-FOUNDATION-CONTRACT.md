@@ -244,8 +244,12 @@ user are never compared. A repeated call with the same, matching key:
 * works after the account was disconnected (replay is answered from the row);
 * keys are scoped per Business (two Businesses may reuse a string).
 
-A racing insert is absorbed (the unique-violation loser behaves like a replay of
-the winner's row). Graph sends are draft-then-send so ids exist; an ambiguous
+A racing insert is absorbed: the unique-violation loser receives the winner's
+row and is held to the **same** `assertSameLogicalRequest()` contract as an
+ordinary replay before anything can reach a provider (a concurrent request with a
+different payload gets `idempotency_conflict`), then is handled like any
+recorded row — it is never blindly re-claimed, so a winner that is already
+`sending`, `accepted`, `unconfirmed` or permanently `failed` is not re-sent. Graph sends are draft-then-send so ids exist; an ambiguous
 failure on the send step is `unconfirmed`, never a second draft+send.
 
 ### 5.4 Failure taxonomy (provider-neutral)

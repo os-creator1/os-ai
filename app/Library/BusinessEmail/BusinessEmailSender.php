@@ -107,7 +107,21 @@ final class BusinessEmailSender
 
         $message = $this->createQueued($request, $contact, $operationKey, $account, $location, $to, $subject, $body);
 
-        return $this->attempt($message, $request);
+        // ONE invariant for both paths to a recorded row. createQueued() returns
+        // either the row THIS request inserted or, when it lost a concurrent
+        // UNIQUE(business_id, operation_key) race, the WINNER's row. A winner
+        // is only a replay if it describes the same logical request, so the
+        // same check as the ordinary replay path runs before anything can
+        // reach a provider. For the request that inserted the row it is
+        // trivially true.
+        $this->assertSameLogicalRequest($message, $request, $contact, $subject, $body);
+
+        // A row this request inserted is claimed and sent. A race WINNER's row
+        // is handled exactly like any recorded row: it may already be sending,
+        // accepted or failed, and must never be blindly re-claimed.
+        return $message->wasRecentlyCreated
+            ? $this->attempt($message, $request)
+            : $this->continueExisting($message, $request);
     }
 
     /**
