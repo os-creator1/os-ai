@@ -17,7 +17,9 @@
  * Prints one JSON line: {"submission_id", "replayed", "events", "progress"} where
  * `events` counts FormSubmissionRecorded events THIS process delivered, and
  * `submission_id` is null (with `progress` = the next page) for a non-final
- * questionnaire step.
+ * questionnaire step. A validation REFUSAL (for example the idempotency conflict a
+ * losing, different-answers caller receives) is a normal outcome, not a crash: it
+ * prints `refused` = the error keys and exits 0. Anything else exits 1.
  */
 
 require __DIR__.'/../../../../vendor/autoload.php';
@@ -66,6 +68,15 @@ try {
         'replayed' => $result->replayed,
         'events' => $events,
         'progress' => $result->nextPage,
+    ])."\n");
+    exit(0);
+} catch (Illuminate\Validation\ValidationException $e) {
+    fwrite(STDOUT, json_encode([
+        'submission_id' => null,
+        'replayed' => false,
+        'events' => $events,
+        'progress' => null,
+        'refused' => array_keys($e->errors()),
     ])."\n");
     exit(0);
 } catch (Throwable $e) {

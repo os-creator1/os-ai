@@ -130,12 +130,77 @@ class FormsSubmissionConcurrencyTest extends TestCase
         ]);
     }
 
-    private function stepRunner(string $token, string $page): Process
+    /** @param  array<string, mixed>  $override  answers laid over the standard ones for that page */
+    private function stepRunner(string $token, string $page, array $override = []): Process
     {
         $php = (new PhpExecutableFinder())->find() ?: 'php';
-        $answers = json_encode(array_merge($this->questionnaireAnswers()[$page], ['page' => $page]));
+        $answers = json_encode(array_merge($this->questionnaireAnswers()[$page], $override, ['page' => $page]));
 
         return new Process([$php, __DIR__.'/Support/concurrent_form_submit_runner.php', $this->deployment->uid, $token, '-', $answers], null, $this->childEnvironment());
+    }
+
+    /** Holds the questionnaire session row FOR UPDATE on the probe connection. */
+    private function holdSessionLock(Connection $probe): void
+    {
+        $probe->table('form_sessions')->where('form_deployment_id', $this->deployment->id)->lockForUpdate()->first();
+    }
+
+    /** A committed questionnaire whose pages 1 and 2 are complete; returns the token. */
+    private function questionnaireAtTheFinalPage(): string
+    {
+        $this->questionnaireFixture();
+        $token = FormOperationToken::issue($this->deployment);
+        $service = app(\App\Library\Forms\FormSubmissionService::class);
+
+        foreach (['page_1', 'page_2'] as $page) {
+            $service->submit($this->deployment->uid, $this->stepInput($token, $page));
+        }
+        $this->assertSame(0, FormSubmission::count());
+
+        return $token;
+    }
+
+    /**
+     * Opens a transaction in THIS process (the real application code runs inside
+     * it, so its locks are held), starts every runner, proves they are all blocked
+     * behind it, then commits. Deterministic lock ORDER: the parent owns the
+     * session first, by construction.
+     *
+     * @param  callable(): void  $holdInTransaction
+     * @param  list<Process>  $processes
+     */
+    private function raceBehindParentTransaction(callable $holdInTransaction, array $processes): void
+    {
+        DB::beginTransaction();
+
+        try {
+            $holdInTransaction();
+
+            foreach ($processes as $process) {
+                $process->start();
+            }
+
+            usleep(3_000_000);
+
+            foreach ($processes as $i => $process) {
+                $this->assertTrue($process->isRunning(), 'runner '.$i.' finished while the parent held the session — it never waited: '.$process->getErrorOutput().$process->getOutput());
+            }
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            foreach ($processes as $process) {
+                if ($process->isRunning()) {
+                    $process->stop();
+                }
+            }
+
+            throw $e;
+        }
+
+        DB::commit();
+
+        foreach ($processes as $process) {
+            $process->wait();
+        }
     }
 
     private function childEnvironment(): array
@@ -325,6 +390,117 @@ class FormsSubmissionConcurrencyTest extends TestCase
         $session = FormSession::firstOrFail();
         $this->assertSame((int) $ra['submission_id'], (int) $session->form_submission_id, 'the one session is stamped with the one submission');
         $this->assertNotNull($session->finalized_at);
+    }
+
+    public function test_concurrent_final_submits_with_different_final_answers_one_wins_and_the_other_conflicts(): void
+    {
+        $token = $this->questionnaireAtTheFinalPage();
+        $x = $this->stepRunner($token, 'page_3', ['message' => 'Answer X']);
+        $y = $this->stepRunner($token, 'page_3', ['message' => 'Answer Y']);
+
+        // Both queue on the session row. Whichever the server grants first wins;
+        // the invariant below must hold either way.
+        $this->raceBehind(fn (Connection $probe) => $this->holdSessionLock($probe), [$x, $y]);
+
+        $results = [['Answer X', $this->outcome($x)], ['Answer Y', $this->outcome($y)]];
+        $winners = array_values(array_filter($results, fn (array $r) => $r[1]['submission_id'] !== null));
+        $losers = array_values(array_filter($results, fn (array $r) => $r[1]['submission_id'] === null));
+
+        $this->assertCount(1, $winners, 'exactly one caller wins');
+        $this->assertCount(1, $losers, 'the other is refused, not silently converged');
+        $this->assertFalse($winners[0][1]['replayed']);
+        $this->assertContains('form', $losers[0][1]['refused'], 'the loser receives the existing idempotency conflict');
+
+        $this->assertSame(1, FormSubmission::count());
+        $this->assertSame(1, Contacts::where('business_id', $this->business->id)->count());
+        $this->assertSame(1, CrmOpportunity::where('business_id', $this->business->id)->count());
+        $this->assertSame(1, $winners[0][1]['events'] + $losers[0][1]['events'], 'exactly one event');
+
+        $submission = FormSubmission::firstOrFail();
+        $session = FormSession::firstOrFail();
+
+        $this->assertSame($winners[0][0], $submission->values['message'], 'the submission holds the winner\'s answers');
+        $this->assertSame((int) $submission->id, (int) $session->form_submission_id);
+        $this->assertNotNull($session->finalized_at);
+        $this->assertEquals($submission->values, $session->answers, 'the finalized session holds EXACTLY the answers of the winning submission');
+        $this->assertSame($winners[0][0], $session->answers['message']);
+    }
+
+    public function test_an_earlier_page_edit_that_owns_the_session_first_is_what_the_final_submit_uses(): void
+    {
+        $token = $this->questionnaireAtTheFinalPage();
+        $final = $this->stepRunner($token, 'page_3');
+        $context = app(\App\Library\Forms\FormDeploymentResolver::class)->resolve($this->deployment->uid);
+
+        // The edit (the real FormSessionStore::savePage) owns the session lock
+        // FIRST; the final submit queues behind it, and must see the committed edit.
+        $this->raceBehindParentTransaction(
+            fn () => app(\App\Library\Forms\FormSessionStore::class)->savePage(
+                $context, explode('.', $token)[0], 'page_1', ['your_name' => 'Edited Before Final', 'phone' => '14155551234']
+            ),
+            [$final]
+        );
+
+        $result = $this->outcome($final);
+        $submission = FormSubmission::firstOrFail();
+        $session = FormSession::firstOrFail();
+
+        $this->assertNotNull($result['submission_id']);
+        $this->assertSame('Edited Before Final', $submission->values['your_name'], 'the final submit used the committed edit');
+        $this->assertEquals($submission->values, $session->answers);
+        $this->assertSame((int) $submission->id, (int) $session->form_submission_id);
+        $this->assertNotNull($session->finalized_at);
+        $this->assertSame(1, $result['events']);
+        $this->assertSame(1, Contacts::where('business_id', $this->business->id)->count());
+    }
+
+    public function test_a_final_submit_that_owns_the_session_first_cannot_be_changed_by_a_later_edit(): void
+    {
+        $token = $this->questionnaireAtTheFinalPage();
+        $edit = $this->stepRunner($token, 'page_1', ['your_name' => 'Late Edit']);
+        $service = app(\App\Library\Forms\FormSubmissionService::class);
+
+        // The FINAL submit (the real service) owns the session lock FIRST — it holds
+        // the claim, the Contact and the stamped session uncommitted — and the edit
+        // queues behind it.
+        $this->raceBehindParentTransaction(
+            fn () => $service->submit($this->deployment->uid, $this->stepInput($token, 'page_3')),
+            [$edit]
+        );
+
+        $result = $this->outcome($edit);
+        $submission = FormSubmission::firstOrFail();
+        $session = FormSession::firstOrFail();
+
+        $this->assertNull($result['submission_id'], 'a late edit is not a submission');
+        $this->assertArrayNotHasKey('refused', array_filter($result, fn ($v) => $v !== null), 'it simply finds a finalized session it may not change');
+        $this->assertSame(1, FormSubmission::count());
+        $this->assertSame('Ada Lovelace', $submission->values['your_name'], 'the submission is the answers the final submit chose');
+        $this->assertSame('Ada Lovelace', $session->answers['your_name'], 'the late edit did not land in the finalized session');
+        $this->assertEquals($submission->values, $session->answers);
+        $this->assertSame((int) $submission->id, (int) $session->form_submission_id);
+        $this->assertSame(1, Contacts::where('business_id', $this->business->id)->count());
+        $this->assertSame(1, CrmOpportunity::where('business_id', $this->business->id)->count());
+    }
+
+    public function test_identical_concurrent_final_submits_over_the_session_lock_still_converge_on_one_of_everything(): void
+    {
+        $token = $this->questionnaireAtTheFinalPage();
+        $a = $this->stepRunner($token, 'page_3');
+        $b = $this->stepRunner($token, 'page_3');
+
+        $this->raceBehind(fn (Connection $probe) => $this->holdSessionLock($probe), [$a, $b]);
+
+        [$ra, $rb] = [$this->outcome($a), $this->outcome($b)];
+
+        $this->assertNotNull($ra['submission_id']);
+        $this->assertSame($ra['submission_id'], $rb['submission_id']);
+        $this->assertSame(1, (int) ! $ra['replayed'] + (int) ! $rb['replayed'], 'one created it, the loser replayed');
+        $this->assertSame(1, $ra['events'] + $rb['events']);
+        $this->assertSame(1, FormSubmission::count());
+        $this->assertSame(1, Contacts::where('business_id', $this->business->id)->count());
+        $this->assertSame(1, CrmOpportunity::where('business_id', $this->business->id)->count());
+        $this->assertEquals(FormSubmission::firstOrFail()->values, FormSession::firstOrFail()->answers);
     }
 
     public function test_two_simultaneous_first_page_saves_create_one_session_and_no_final_state(): void

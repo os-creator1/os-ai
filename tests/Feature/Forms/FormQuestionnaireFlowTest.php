@@ -446,6 +446,64 @@ class FormQuestionnaireFlowTest extends TestCase
         $this->assertSame(FormContactResolution::Matched, $b->submission->fresh()->contact_resolution);
     }
 
+    public function test_the_finalized_session_holds_exactly_the_answers_of_its_submission(): void
+    {
+        $token = FormOperationToken::issue($this->deployment);
+        $submission = $this->walk($token)->submission->fresh();
+        $session = FormSession::firstOrFail();
+
+        $this->assertSame((int) $submission->id, (int) $session->form_submission_id);
+        $this->assertNotNull($session->finalized_at);
+        $this->assertEquals($submission->values, $session->answers, 'the session is a faithful copy of the submission it produced');
+        $this->assertSame(['page_1', 'page_2', 'page_3'], $session->completed_pages);
+    }
+
+    public function test_a_finalized_session_cannot_be_changed_through_the_model_or_the_store(): void
+    {
+        $token = FormOperationToken::issue($this->deployment);
+        $this->walk($token);
+        $session = FormSession::firstOrFail();
+        $before = (array) DB::table('form_sessions')->where('id', $session->id)->first();
+
+        foreach ([
+            fn () => $session->forceFill(['answers' => ['your_name' => 'Tampered']])->save(),
+            fn () => $session->update(['expires_at' => now()->addYear()]),
+        ] as $attempt) {
+            try {
+                $attempt();
+                $this->fail('a finalized session must refuse every Eloquent update');
+            } catch (\LogicException) {
+                $this->assertTrue(true);
+            }
+        }
+
+        // The store's page save and a replayed final step leave it byte-identical.
+        $this->step($token, 'page_1', ['your_name' => 'Late Edit', 'phone' => '+1 (415) 555-1234']);
+        $this->step($token, 'page_2', ['event_date' => '2030-01-01', 'event_type' => 'Corporate']);
+        $this->assertTrue($this->step($token, 'page_3')->replayed);
+
+        $this->assertEquals($before, (array) DB::table('form_sessions')->where('id', $session->id)->first());
+        $this->assertSame('Ada Lovelace', FormSubmission::firstOrFail()->values['your_name']);
+    }
+
+    public function test_a_final_step_with_different_answers_after_the_session_is_final_is_the_existing_conflict(): void
+    {
+        $token = FormOperationToken::issue($this->deployment);
+        $first = $this->walk($token)->submission;
+        $before = $this->counts();
+
+        try {
+            $this->step($token, 'page_3', ['message' => 'A different final answer', 'i_agree' => '1']);
+            $this->fail('different final answers on a finalized session must conflict');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('form', $exception->errors());
+        }
+
+        $this->assertSame($before, $this->counts());
+        $this->assertSame('Quote please', $first->fresh()->values['message']);
+        $this->assertSame('Quote please', FormSession::firstOrFail()->answers['message']);
+    }
+
     public function test_the_event_carries_the_final_submission_once_and_no_event_precedes_it(): void
     {
         $token = FormOperationToken::issue($this->deployment);

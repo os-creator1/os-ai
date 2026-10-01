@@ -45,6 +45,18 @@ class FormSession extends Model
         'finalized_at' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        // A FINALIZED session is history: once stamped, no Eloquent save may change
+        // it. (The one writer that stamps it uses the query builder, inside the
+        // transaction that also committed its submission.)
+        static::updating(function (FormSession $session): void {
+            if ($session->getOriginal('finalized_at') !== null) {
+                throw new \LogicException('A finalized form session cannot change.');
+            }
+        });
+    }
+
     public function prunable(): Builder
     {
         return static::query()->where('expires_at', '<', now()->subDays(7));

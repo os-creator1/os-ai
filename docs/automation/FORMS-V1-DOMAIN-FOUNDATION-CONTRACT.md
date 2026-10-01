@@ -11,7 +11,7 @@ Business-wide, submissions Location-bound), §10 (Contacts are Location-local) a
 
 Revision history: the foundation shipped at `a9463d5d`; **correction/completion round 1**
 added (a) version pinning of every public flow (§6) and (b) multi-page questionnaires
-(§4, §7).
+(§4, §7); **round 2** made the final questionnaire step converge at one atomic boundary (§7).
 
 ## 1. Decisions this slice implements (authoritative, not re-derived)
 
@@ -161,12 +161,36 @@ operations decision), and takes no answers after it is finalized.
 completed; a questionnaire can only *start* on page 1; a stale, skipped, invented or
 wrongly-signed page address is a **404** (GET) or a validation refusal (POST).
 
-**In progress ≠ history.** A non-final step validates that page, records it in the session and
-returns the next page. It creates **no** Contact, Opportunity, `FormSubmissionRecorded` event or
-`form_submissions` row. Only the **final** step does: it validates the **complete pinned
-definition** from the server-held answers, then goes through the same one-transaction idempotency
-claim as a one-page form (§8). In that same commit the session is stamped
-(`form_submission_id`, `finalized_at`) and never mutated again.
+**In progress ≠ history.** A non-final step validates that page and records it in the session in
+its own short transaction (`FormSessionStore::savePage`), then returns the next page. It creates
+**no** Contact, Opportunity, `FormSubmissionRecorded` event or `form_submissions` row.
+
+**The final step is ONE atomic boundary** (`FormSubmissionService::finishQuestionnaire`). The last
+page never goes through `savePage`. Its transaction **begins by locking the session row**
+(`FormSessionStore::lockForFinal`, `FOR UPDATE`, before any plain read so the transaction's
+snapshot postdates any committed twin), and every decision that must agree is made while that lock
+is held:
+
+1. re-read the session authoritatively by `(deployment, nonce)`; re-prove its pinned version, its
+   expiry and — for a first finish — that every earlier page is completed;
+2. choose the final answer set: the **locked** session's answers with this last page laid over
+   them, validated as the **complete** pinned definition;
+3. if the session is **already finalized** this is a replay — identical answers converge on the
+   winning submission, different answers are the existing idempotency conflict; nothing is written;
+4. otherwise claim the submission (`form_submissions` unique index), resolve the Contact, create the
+   Opportunity, link them, and stamp **the same locked session** with the submission **and with
+   exactly the values the submission was built from**;
+5. dispatch `FormSubmissionRecorded` after commit.
+
+Consequently a concurrent page save either committed first (and is part of the answers chosen in
+step 2) or arrives after finalization and finds a session it may not change: no page can land
+between "final answers chosen" and "session finalized". The old split (session saved and released,
+then a separate transaction claiming from a detached copy) allowed a submission built from answers
+X beside a finalized session holding Y; that interleaving is impossible now. A finalized session is
+a faithful copy of its submission (`answers == submission.values`) and is immutable — the model
+refuses every Eloquent update once `finalized_at` is set and the store's page save returns it
+untouched. Nothing external happens inside this transaction. Lock order is always session → Contact
+identity, and nothing takes them in the other order.
 
 **Authority at every boundary.** Every page view and every POST re-runs the resolver (§5), so a
 switched-off form, disabled deployment, archived Location or lost entitlement mid-flow refuses the
@@ -186,8 +210,9 @@ finalize the session; dispatch `FormSubmissionRecorded` **after commit**.
 retry and concurrent requests carry the same token and converge on the one row whose unique
 `(deployment, nonce)` they claim; a replay creates and emits nothing; the same token with
 **different** answers is refused. Two starts with identical text stay separate. The database
-unique index is the real backstop. For a questionnaire, a replay of the final step is judged on
-what it posted laid over what was recorded, so a tampered replay is refused.
+unique index is the real backstop. For a questionnaire, a replay of the final step is judged — under
+the session lock — on what it posted laid over what was recorded, so a replay with different final
+answers is refused with the same conflict and an identical one converges.
 
 Anything that throws inside the transaction rolls the claim back with it: no submission, Contact,
 Opportunity or event, and the token stays usable. A Contact created here is not subscribed and

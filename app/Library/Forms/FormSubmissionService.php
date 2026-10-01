@@ -139,7 +139,7 @@ final class FormSubmissionService
 
         // An ordinary form is one page: validated and finished in one request.
         if (! $context->version->isMultiPage()) {
-            return $this->finish($context, $nonce, $this->validated($context->version->fields, $input), null);
+            return $this->finish($context, $nonce, $this->validated($context->version->fields, $input));
         }
 
         return $this->submitStep($context, $nonce, $input);
@@ -147,11 +147,13 @@ final class FormSubmissionService
 
     /**
      * One page of a questionnaire. Validates THIS page against the pinned
-     * version, records it in the server-side session and — unless it is the last
-     * page — answers with the next page to show, having created no Contact,
-     * Opportunity, event or submission. The last page validates the COMPLETE
-     * pinned definition from the server-held answers and finishes through the
-     * same idempotent claim as a one-page form.
+     * version. A page that is not the last is recorded in the server-side session
+     * in its own short transaction and answered with the next page to show,
+     * having created no Contact, Opportunity, event or submission.
+     *
+     * The LAST page does not go through the session store's page save at all: it
+     * is finished at ONE atomic boundary (finishQuestionnaire) that owns the
+     * session lock from choosing the final answers to stamping the session.
      *
      * @param  array<string, mixed>  $input
      */
@@ -164,26 +166,98 @@ final class FormSubmissionService
 
         $pageValues = $this->validated($version->fieldsOnPage($pageKey), $input);
 
-        $session = $this->sessions->savePage($context, $nonce, $pageKey, $pageValues);
-
         if ($index < count($version->pages()) - 1) {
+            $this->sessions->savePage($context, $nonce, $pageKey, $pageValues);
+
             return FormSubmissionResult::progress($version->pageKeys()[$index + 1]);
         }
 
-        // Final page. A finalized session is never mutated, so a replay of this
-        // step is judged on what it posted laid over what was recorded: an
-        // identical replay reproduces the stored hash, a tampered one does not.
-        $answers = $session->isFinalized() ? array_merge($session->answers, $pageValues) : $session->answers;
-
-        return $this->finish($context, $nonce, $this->validated($version->fields, $answers), $session);
+        return $this->finishQuestionnaire($context, $nonce, $index, $pageValues);
     }
 
     /**
-     * Replay check, then the claiming transaction.
+     * The FINAL step of a questionnaire, at ONE atomic boundary.
+     *
+     * The previous shape split this: the session was locked, written and released
+     * by a page save, and only afterwards did a separate transaction claim the
+     * submission from a detached copy of it. A concurrent edit could land in that
+     * gap, leaving a submission built from answers X and a finalized session that
+     * holds Y. Here the transaction BEGINS by locking the session row, and every
+     * decision that must agree happens while that lock is held:
+     *
+     *   1. re-read the session authoritatively by (deployment, nonce) and re-prove
+     *      its version, expiry and — for a first finish — that every earlier page
+     *      was completed;
+     *   2. choose the final answer set: the locked session's answers with this
+     *      last page laid over them, validated as the COMPLETE pinned definition;
+     *   3. if the session is ALREADY finalized this is a replay: identical answers
+     *      converge on the winning submission, different answers are the existing
+     *      idempotency conflict — either way nothing is written;
+     *   4. otherwise claim the submission, resolve the Contact, create the
+     *      Opportunity, link them, and stamp THE SAME locked session with the
+     *      submission AND with exactly the values the submission was built from;
+     *   5. dispatch the after-commit event.
+     *
+     * A concurrent page save queues on the same lock: it either committed first
+     * (and is therefore part of the answers chosen in step 2) or arrives after
+     * finalization and finds a session it may not change. No page can land between
+     * "final answers chosen" and "session finalized".
+     *
+     * Nothing external happens inside this transaction.
+     *
+     * @param  array<string, mixed>  $pageValues  the validated answers of the last page
+     */
+    private function finishQuestionnaire(FormDeploymentContext $context, string $nonce, int $index, array $pageValues): FormSubmissionResult
+    {
+        $version = $context->version;
+        $payloadHash = null;
+
+        try {
+            return DB::transaction(function () use ($context, $nonce, $index, $pageValues, $version, &$payloadHash): FormSubmissionResult {
+                // FIRST statement: the locking read. No plain SELECT may precede it,
+                // or the transaction's snapshot would predate a committed twin.
+                $session = $this->sessions->lockForFinal($context, $nonce);
+
+                if (! $session->isFinalized()) {
+                    $this->sessions->assertEarlierPagesCompleted($context, $session, $index);
+                }
+
+                $values = $this->validated($version->fields, array_merge($session->answers, $pageValues));
+                $payloadHash = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+                if ($session->isFinalized()) {
+                    $winner = $session->form_submission_id === null ? null : FormSubmission::query()->find($session->form_submission_id);
+
+                    if ($winner === null) {
+                        throw $this->expired();
+                    }
+
+                    return $this->replay($winner, $payloadHash);
+                }
+
+                return new FormSubmissionResult($this->record($context, $nonce, $values, $payloadHash, $session), false);
+            }, self::DEADLOCK_ATTEMPTS);
+        } catch (UniqueConstraintViolationException $exception) {
+            // Only reachable if a claim for this (deployment, nonce) exists that the
+            // session does not know about. Read it with a CURRENT read; anything
+            // else is not ours to swallow.
+            $existing = $this->claimedBy($context, $nonce, true);
+
+            if ($existing === null || $payloadHash === null) {
+                throw $exception;
+            }
+
+            return $this->replay($existing, $payloadHash);
+        }
+    }
+
+    /**
+     * Replay check, then the claiming transaction — an ordinary ONE-PAGE form
+     * (a questionnaire's final step is finishQuestionnaire()).
      *
      * @param  array<string, mixed>  $values  normalized answers for the COMPLETE pinned definition
      */
-    private function finish(FormDeploymentContext $context, string $nonce, array $values, ?FormSession $session): FormSubmissionResult
+    private function finish(FormDeploymentContext $context, string $nonce, array $values): FormSubmissionResult
     {
         $payloadHash = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
@@ -194,7 +268,7 @@ final class FormSubmissionService
 
         try {
             $submission = DB::transaction(
-                fn (): FormSubmission => $this->record($context, $nonce, $values, $payloadHash, $session),
+                fn (): FormSubmission => $this->record($context, $nonce, $values, $payloadHash, null),
                 self::DEADLOCK_ATTEMPTS
             );
         } catch (UniqueConstraintViolationException $exception) {
@@ -247,7 +321,7 @@ final class FormSubmissionService
     /**
      * @param  array<string, mixed>  $values
      */
-    private function record(FormDeploymentContext $context, string $nonce, array $values, string $payloadHash, ?FormSession $session): FormSubmission
+    private function record(FormDeploymentContext $context, string $nonce, array $values, string $payloadHash, ?FormSession $locked): FormSubmission
     {
         $uid = (string) Str::uuid();
 
@@ -276,9 +350,11 @@ final class FormSubmissionService
 
         $this->link($submission, $contact, $resolution, $opportunity);
 
-        // The questionnaire session (if any) becomes history in the SAME commit.
-        if ($session !== null) {
-            $this->sessions->finalize($session, $submission);
+        // The questionnaire session (if any) — locked by this very transaction —
+        // becomes history in the SAME commit, holding exactly the answers this
+        // submission was built from.
+        if ($locked !== null) {
+            $this->sessions->finalize($locked, $submission, $values, $context->version->pageKeys());
         }
 
         FormSubmissionRecorded::dispatch(

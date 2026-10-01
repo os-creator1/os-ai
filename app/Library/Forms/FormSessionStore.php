@@ -72,10 +72,13 @@ final class FormSessionStore
     }
 
     /**
-     * Records the validated answers of ONE page and marks it completed.
+     * Records the validated answers of ONE NON-FINAL page and marks it completed,
+     * in its own short transaction. The LAST page never comes through here: the
+     * final step is finished at one atomic boundary by FormSubmissionService
+     * (see lockForFinal()/finalize()).
      *
-     * A finalized session is returned untouched (a replay of the final step must
-     * not mutate it); the caller compares the posted answers to what was recorded.
+     * A finalized session is returned untouched — a late save, including an
+     * earlier-page edit that raced the final submit and lost, cannot change it.
      *
      * @param  array<string, mixed>  $pageValues  normalized values for the fields of $pageKey only
      *
@@ -94,13 +97,68 @@ final class FormSessionStore
     }
 
     /**
-     * Stamps the session as final. Called INSIDE the transaction that commits the
-     * submission, so an in-progress session can never read as finalized without
-     * its submission.
+     * The FIRST step of the final submit's transaction: re-reads the session
+     * AUTHORITATIVELY by (deployment, nonce) under `FOR UPDATE` and re-proves its
+     * identity. Must be the first statement of the caller's transaction — before
+     * any plain SELECT — so everything the caller then reads is read AFTER the lock
+     * is held and therefore sees whatever a competing page save committed.
+     *
+     * A session that does not exist cannot be finished (a questionnaire starts on
+     * its first page). A FINALIZED session is returned as-is for the caller to
+     * treat as a replay; any other must be pinned to this version and unexpired.
+     *
+     * @throws ValidationException
      */
-    public function finalize(FormSession $session, FormSubmission $submission): void
+    public function lockForFinal(FormDeploymentContext $context, string $nonce): FormSession
+    {
+        $session = FormSession::query()
+            ->where('form_deployment_id', $context->deployment->id)
+            ->where('operation_nonce', $nonce)
+            ->lockForUpdate()
+            ->first() ?? throw $this->refused('page', 'Start the form from its first page.');
+
+        if ((int) $session->form_version_id !== (int) $context->version->id) {
+            throw $this->refused('form', 'This form has expired. Reload the page and send it again.');
+        }
+
+        if (! $session->isFinalized() && $session->isExpired()) {
+            throw $this->refused('form', 'This form has expired. Reload the page and send it again.');
+        }
+
+        return $session;
+    }
+
+    /**
+     * Every page BEFORE $index must be completed. Called under the lock taken by
+     * lockForFinal(), so it judges the authoritative session, not a stale copy.
+     *
+     * @throws ValidationException
+     */
+    public function assertEarlierPagesCompleted(FormDeploymentContext $context, FormSession $session, int $index): void
+    {
+        if (! $this->earlierPagesCompleted($context, $session, $index)) {
+            throw $this->refused('page', 'Please complete the earlier pages first.');
+        }
+    }
+
+    /**
+     * Stamps the session as final. Called INSIDE the transaction that commits the
+     * submission, on the row that transaction LOCKED with lockForFinal(), so an
+     * in-progress session can never read as finalized without its submission and
+     * the two can never disagree.
+     *
+     * It also writes the session's answers as EXACTLY the values the submission
+     * was built from — the one authoritative answer set the lock selected — so a
+     * finalized session is a faithful copy of its submission.
+     *
+     * @param  array<string, mixed>  $values  the complete validated answers the submission was created from
+     * @param  list<string>  $pageKeys  every page of the pinned version (a finished questionnaire has completed them all)
+     */
+    public function finalize(FormSession $session, FormSubmission $submission, array $values, array $pageKeys): void
     {
         DB::table('form_sessions')->where('id', $session->id)->update([
+            'answers' => json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'completed_pages' => json_encode(array_values($pageKeys)),
             'form_submission_id' => $submission->id,
             'finalized_at' => now(),
             'updated_at' => now(),
