@@ -228,6 +228,9 @@
                 WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
                 // Implementation Contract 02 (Location ACL Foundation) §12.
                 WorkspaceMembershipLocationRepository::class => EloquentWorkspaceMembershipLocationRepository::class,
+                // Contact Tags foundation §3.
+                \App\Repositories\Contracts\TagRepository::class => \App\Repositories\Eloquent\EloquentTagRepository::class,
+                \App\Repositories\Contracts\ContactTagRepository::class => \App\Repositories\Eloquent\EloquentContactTagRepository::class,
                 WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
                 \App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository::class => \App\Repositories\Eloquent\EloquentAgencyClientWorkspaceRelationshipRepository::class,
                 // Implementation Contract 07 (Client Workspace Provisioning) §12.

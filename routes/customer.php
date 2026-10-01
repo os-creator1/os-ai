@@ -1487,6 +1487,25 @@
 
         /*
         |----------------------------------------------------------------
+        | Contact Tags foundation — the canonical tag entity's minimum CRM
+        | surface (manage the Business's available tags; attach/detach on
+        | a Contact). Reuses the existing `view_contact`/`update_contact`
+        | permissions — no new permission strings. Static `/tags` segment
+        | registered before the Contact-scoped group, mirroring the CRM
+        | group's own static-before-dynamic ordering.
+        |----------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/tags')->name('businesses.tags.')->group(function () {
+            Route::get('/', 'Business\ContactTagsController@list')->name('index');
+            Route::post('/', 'Business\ContactTagsController@store')->name('store');
+            Route::post('/{tagUid}/rename', 'Business\ContactTagsController@rename')->name('rename');
+            Route::post('/{tagUid}/archive', 'Business\ContactTagsController@archive')->name('archive');
+            Route::post('/{tagUid}/attach', 'Business\ContactTagsController@attach')->name('attach');
+            Route::delete('/{tagUid}/contacts/{contactUid}', 'Business\ContactTagsController@detach')->name('detach');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | Calendar — configuration and authenticated schedule (Contract 15, 15B/15D)
         |----------------------------------------------------------------
         |
