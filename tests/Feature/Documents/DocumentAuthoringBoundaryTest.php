@@ -22,7 +22,7 @@ final class DocumentAuthoringBoundaryTest extends TestCase
     {
         $source = file_get_contents((new \ReflectionClass(DocumentManager::class))->getFileName());
         $this->assertIsString($source);
-        $this->assertStringContainsString('$this->snapshots->snapshot($item, $location, $actor, $explicitPriceMinor)', $source);
+        $this->assertStringContainsString('$this->snapshots->snapshotForBusiness($documentBusiness, $item, $location, $actor, $explicitPriceMinor)', $source);
         $this->assertStringNotContainsString("DB::table('package_snapshots')", $source);
         $this->assertStringNotContainsString('CatalogItemPricingResolver', $source);
         $this->assertStringContainsString('DB::afterCommit(fn () => DocumentVoided::dispatch($result->id))', $source);

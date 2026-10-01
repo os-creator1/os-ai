@@ -376,7 +376,10 @@ final class DocumentManager
             $this->require((int) $location->business_id === (int) $document->business_id && $location->isActive(), 'Invalid document Location.');
             $item = CatalogItem::findOrFail($item->id);
             $this->require((int) $item->business_id === (int) $document->business_id, 'Foreign catalog item.');
-            $snapshot = $this->snapshots->snapshot($item, $location, $actor, $explicitPriceMinor);
+            // Defense in depth: the checks above are the document's own; the
+            // snapshot service re-checks the item against the locked row.
+            $documentBusiness = Business::findOrFail($document->business_id);
+            $snapshot = $this->snapshots->snapshotForBusiness($documentBusiness, $item, $location, $actor, $explicitPriceMinor);
             $this->require($snapshot->currency_code_at_snapshot === $document->currency_code, 'Catalog currency differs from document currency.');
             $line = $this->insertLine($version, 'catalog', $snapshot->uid, $snapshot->name_at_snapshot, $snapshot->description_at_snapshot, $quantity, (int) $snapshot->price_minor_at_snapshot, $document->currency_code);
             $this->recalculate($version);

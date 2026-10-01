@@ -68,28 +68,56 @@ final class CatalogItemPricingResolver
             throw new CatalogRuleException('That Location does not belong to this Business.');
         }
 
-        if ($freshItem->isArchived()) {
-            throw new CatalogRuleException('That catalog item is archived.');
-        }
-
         $override = CatalogItemLocationOverride::query()
             ->where('catalog_item_id', $freshItem->id)
             ->where('business_location_id', $freshLocation->id)
             ->first();
 
+        return $this->resolveLoaded($freshItem, $freshLocation, $override);
+    }
+
+    /**
+     * The same refusals and the same price order as resolve(), over rows the
+     * caller has ALREADY read — so a list page can resolve every item of a
+     * Location from two bulk reads instead of several queries per item. This
+     * is the one place the rule lives: resolve() delegates here, so the two
+     * can never drift apart.
+     *
+     * Read-only. The item and Location must belong to the same Business and
+     * the override row (when given) must be for exactly this item and
+     * Location, or it refuses. It does NOT re-check which Business the caller
+     * is acting for: a caller that loaded `$item` through a Business-scoped
+     * query (CatalogLocationOfferReader) has already made that decision; one
+     * that has not must use resolve().
+     */
+    public function resolveLoaded(CatalogItem $item, BusinessLocation $location, ?CatalogItemLocationOverride $override): CatalogItemEffectivePrice
+    {
+        if ((int) $location->business_id !== (int) $item->business_id) {
+            throw new CatalogRuleException('That Location does not belong to this Business.');
+        }
+
+        if ($override !== null
+            && ((int) $override->catalog_item_id !== (int) $item->id || (int) $override->business_location_id !== (int) $location->id)) {
+            throw new CatalogRuleException('That override does not belong to this catalog item and Location.');
+        }
+
+        if ($item->isArchived()) {
+            throw new CatalogRuleException('That catalog item is archived.');
+        }
+
         if ($override !== null && ! $override->is_enabled) {
             throw new CatalogRuleException('That catalog item is not offered at this Location.');
         }
 
-        $priceMinor = $override?->price_minor_override ?? $freshItem->price_minor;
+        $priceMinor = $override?->price_minor_override ?? $item->price_minor;
 
-        if ($priceMinor !== null && $freshItem->currency_code === null) {
+        if ($priceMinor !== null && $item->currency_code === null) {
             throw new CatalogRuleException('That catalog item has a price with no currency — refusing to resolve a corrupt price.');
         }
 
         return new CatalogItemEffectivePrice(
             priceMinor: $priceMinor,
-            currencyCode: $priceMinor !== null ? $freshItem->currency_code : null,
+            currencyCode: $priceMinor !== null ? $item->currency_code : null,
             isQuoteOnly: $priceMinor === null,
         );
     }

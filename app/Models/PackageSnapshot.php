@@ -6,6 +6,7 @@ use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
+use LogicException;
 
 /**
  * Implementation Contract 16 §5.3 — an immutable, write-once transactional
@@ -41,6 +42,26 @@ class PackageSnapshot extends Model
         'price_minor_at_snapshot' => 'integer',
         'schema_version' => 'integer',
     ];
+
+    /**
+     * Write-once at the model layer as well as by the source-boundary test: an
+     * Eloquent update or delete of an existing snapshot throws, so a future
+     * caller cannot rewrite what a past document was priced at by accident.
+     * This guards the Eloquent path only — it is not a database-level lock,
+     * and a raw query-builder statement would not hit it. That limit is the
+     * same one `WebsiteRevision` has and is why `PackageSnapshotBoundaryTest`
+     * also scans production code for any such statement.
+     */
+    protected static function booted(): void
+    {
+        static::updating(static function (self $snapshot): never {
+            throw new LogicException('A package snapshot is immutable and can never be changed after it is created.');
+        });
+
+        static::deleting(static function (self $snapshot): never {
+            throw new LogicException('A package snapshot is immutable and can never be deleted.');
+        });
+    }
 
     public function generateUid(): void
     {

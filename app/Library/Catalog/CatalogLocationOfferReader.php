@@ -53,6 +53,13 @@ class CatalogLocationOfferReader
      */
     public function rowsFor(Business $business, BusinessLocation $location): Collection
     {
+        // First, before ANY query: the Location must be this Business's own.
+        // Items are read by `business_id` and overrides by Location, so a
+        // foreign Location must never reach either read.
+        if ((int) $location->business_id !== (int) $business->id) {
+            throw new CatalogRuleException('That Location does not belong to this Business.');
+        }
+
         $items = CatalogItem::query()
             ->where('business_id', $business->id)
             ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
@@ -66,11 +73,15 @@ class CatalogLocationOfferReader
             ->get()
             ->keyBy('catalog_item_id');
 
-        return $items->map(function (CatalogItem $item) use ($business, $location, $overrides): array {
+        return $items->map(function (CatalogItem $item) use ($location, $overrides): array {
             $override = $overrides->get($item->id);
 
             try {
-                $price = $this->resolver->resolve($business, $item, $location);
+                // The items above came from a Business-scoped query and the
+                // overrides from one bulk read, so the resolver's own rules
+                // run in memory: two queries for the whole page, never
+                // three per item.
+                $price = $this->resolver->resolveLoaded($item, $location, $override);
                 $offered = true;
                 $reason = null;
             } catch (CatalogRuleException $e) {
