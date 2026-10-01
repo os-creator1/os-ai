@@ -484,16 +484,26 @@ class TagManagerTest extends TestCase
      * `tags_business_normalized_unique` index would raise. Proves the
      * translation itself, which the sequential tests above cannot reach
      * (their pre-check always already sees the conflict).
+     *
+     * CORRECTED (correction round 2) — the catch's re-query is now a SECOND
+     * `findByNormalizedName()` call, standing in for the DB finding the row
+     * the race's winner just committed; the mock returns it, proving the
+     * translation is driven by PROOF of a name collision, not merely by the
+     * exception's type.
      */
     public function test_a_genuine_create_race_window_violation_is_translated_not_leaked(): void
     {
         [, $business] = $this->crmTenant();
+
+        $winner = Tag::make(['business_id' => $business->id, 'name' => 'VIP', 'normalized_name' => 'vip']);
+        $winner->id = 999;
 
         $tagRepository = Mockery::mock(TagRepository::class);
         $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
         $tagRepository->shouldReceive('create')->once()->andThrow(
             new UniqueConstraintViolationException('mysql', 'insert into `tags` ...', [], new Exception('Duplicate entry for key tags_business_normalized_unique')),
         );
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturn($winner);
 
         $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
 
@@ -511,11 +521,15 @@ class TagManagerTest extends TestCase
         [, $business] = $this->crmTenant();
         $realTag = $this->manager()->createTag($business, 'Lead');
 
+        $winner = Tag::make(['business_id' => $business->id, 'name' => 'VIP', 'normalized_name' => 'vip']);
+        $winner->id = 999;
+
         $tagRepository = Mockery::mock(TagRepository::class);
         $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
         $tagRepository->shouldReceive('rename')->once()->andThrow(
             new UniqueConstraintViolationException('mysql', 'update `tags` ...', [], new Exception('Duplicate entry for key tags_business_normalized_unique')),
         );
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturn($winner);
 
         $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
 
@@ -525,5 +539,77 @@ class TagManagerTest extends TestCase
         } catch (CrmRuleException $exception) {
             $this->assertSame('A tag named "VIP" already exists.', $exception->getMessage());
         }
+    }
+
+    /**
+     * CORRECTION ROUND 2 — `tags` carries a `uid` unique constraint too
+     * (and may carry others in the future this class does not know about).
+     * A `UniqueConstraintViolationException` whose cause is NOT the
+     * normalized-name invariant — proven by the re-query finding no
+     * collision at all — must never be disguised as "a tag named X already
+     * exists." It is rethrown exactly as the database reported it.
+     */
+    public function test_an_unrelated_unique_violation_on_create_is_rethrown_not_misclassified(): void
+    {
+        [, $business] = $this->crmTenant();
+
+        $tagRepository = Mockery::mock(TagRepository::class);
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+        $tagRepository->shouldReceive('create')->once()->andThrow(
+            new UniqueConstraintViolationException('mysql', 'insert into `tags` ...', [], new Exception('Duplicate entry for key tags_uid_unique')),
+        );
+        // The catch's re-query finds NOTHING — proving this was NOT a
+        // normalized-name collision.
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+
+        $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
+
+        $this->expectException(UniqueConstraintViolationException::class);
+        $manager->createTag($business, 'VIP');
+    }
+
+    /** The rename-side sibling of the unrelated-violation test above. */
+    public function test_an_unrelated_unique_violation_on_rename_is_rethrown_not_misclassified(): void
+    {
+        [, $business] = $this->crmTenant();
+        $realTag = $this->manager()->createTag($business, 'Lead');
+
+        $tagRepository = Mockery::mock(TagRepository::class);
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+        $tagRepository->shouldReceive('rename')->once()->andThrow(
+            new UniqueConstraintViolationException('mysql', 'update `tags` ...', [], new Exception('Duplicate entry for key tags_uid_unique')),
+        );
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+
+        $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
+
+        $this->expectException(UniqueConstraintViolationException::class);
+        $manager->renameTag($business, $realTag, 'VIP');
+    }
+
+    /**
+     * The re-query must also refuse to credit the collision to the tag
+     * being renamed ITSELF — defence in depth matching the ordinary
+     * pre-check's own `id !== authoritative id` comparison a few lines
+     * above it.
+     */
+    public function test_a_rename_unique_violation_colliding_only_with_itself_is_rethrown_not_misclassified(): void
+    {
+        [, $business] = $this->crmTenant();
+        $realTag = $this->manager()->createTag($business, 'VIP');
+
+        $tagRepository = Mockery::mock(TagRepository::class);
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+        $tagRepository->shouldReceive('rename')->once()->andThrow(
+            new UniqueConstraintViolationException('mysql', 'update `tags` ...', [], new Exception('Duplicate entry for key tags_uid_unique')),
+        );
+        // The re-query finds the SAME tag being renamed — never a real
+        // collision with another tag.
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturn($realTag);
+
+        $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
+
+        $this->expectException(UniqueConstraintViolationException::class);
+        $manager->renameTag($business, $realTag, 'VIP');
     }
 }
