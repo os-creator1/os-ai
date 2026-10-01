@@ -93,6 +93,37 @@ final class AgencyClientSubscriptionManager
             ->first();
     }
 
+    /**
+     * A BULK read for the Agency Clients list: this Agency's subscription
+     * status and plan name for each of the given client Workspaces, in one
+     * statement, keyed by client Workspace id. Scoped to THIS Agency's own
+     * rows, so another Agency's subscription for the same Workspace could never
+     * appear. Presentation only — no authority is derived from it.
+     *
+     * @param  array<int, int>  $clientWorkspaceIds
+     * @return array<int, array{status: AgencyClientSubscriptionStatus, plan: string}>
+     */
+    public function summariesForClients(int $agencyWorkspaceId, array $clientWorkspaceIds): array
+    {
+        if ($clientWorkspaceIds === []) {
+            return [];
+        }
+
+        $summaries = [];
+
+        $rows = AgencyClientSubscription::query()
+            ->join('agency_saas_plans', 'agency_saas_plans.id', '=', 'agency_client_subscriptions.agency_saas_plan_id')
+            ->where('agency_client_subscriptions.agency_workspace_id', $agencyWorkspaceId)
+            ->whereIn('agency_client_subscriptions.client_workspace_id', $clientWorkspaceIds)
+            ->get(['agency_client_subscriptions.*', 'agency_saas_plans.name as plan_name']);
+
+        foreach ($rows as $row) {
+            $summaries[(int) $row->client_workspace_id] = ['status' => $row->status, 'plan' => (string) $row->plan_name];
+        }
+
+        return $summaries;
+    }
+
     /** @return \Illuminate\Support\Collection<int, AgencyClientSubscription> */
     public function forAgency(Workspace $agencyWorkspace)
     {

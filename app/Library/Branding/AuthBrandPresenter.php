@@ -85,6 +85,19 @@ class AuthBrandPresenter
         return $this->platform->footerCopyrightLine();
     }
 
+    /**
+     * Agency V1 completion — normalizes an already-authorized Agency brand
+     * with the SAME rules the host-resolved path uses (plain text, bounded
+     * length, validated hex, an existing file under images/branding/), so the
+     * signed-in client chrome can never be more permissive than the login
+     * screen. Authorization is the caller's: ClientWorkspaceBrandResolver
+     * re-derives it from the persisted relationship before this is reached.
+     */
+    public function forAgencyBrand(AgencyBrand $agency): AuthBrand
+    {
+        return $this->fromAgency($agency);
+    }
+
     public function neutral(): AuthBrand
     {
         return new AuthBrand(

@@ -921,6 +921,25 @@
 
         /*
         |----------------------------------------------------------------------
+        | Agency V1 completion — the AGENCY's own White Label settings: the
+        | name, logo, accent colour and support contact its clients see in
+        | place of the platform's, in the signed-in client chrome.
+        |
+        | Reading is Agency-team work; writing is the Agency Workspace OWNER's
+        | alone, asserted inside AgencyWhiteLabelManager from the locked
+        | Workspace row. The controller answers 404 first for anyone without
+        | Agency authority over this exact Workspace. Prohibited under View As
+        | (ViewAsProhibitedActions): branding is the Agency's own identity,
+        | never something done "as" a client.
+        |----------------------------------------------------------------------
+        */
+        Route::get('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@show')
+            ->name('agency.white-label.show');
+        Route::post('{workspaceUid}/agency/white-label', 'Agency\AgencyWhiteLabelController@update')
+            ->middleware('throttle:30,1')->name('agency.white-label.update');
+
+        /*
+        |----------------------------------------------------------------------
         | Lane C §C6/§C8 — the CLIENT's own agency-billing surface.
         |
         | THE CONSENT BOUNDARY. `agency-plan.checkout` is the only route in lane

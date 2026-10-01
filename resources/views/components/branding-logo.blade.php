@@ -13,8 +13,21 @@
 --}}
 @php
     $branding = app(\App\Library\Branding\BrandingPresenter::class)->logo($variant, $background);
+    // Agency V1 completion — a signed-in client of an Agency with an enabled,
+    // authorized white-label brand sees the AGENCY's mark in place of the
+    // platform's (ClientChromeBrand: persisted relationship + entitlement,
+    // re-derived per request). Null for everyone else, and on every guest
+    // or error page, so those render exactly as before.
+    $agencyChrome = app(\App\Library\Branding\ClientChromeBrand::class)->current(request());
 @endphp
-@if($branding['src'])
+@if($agencyChrome !== null && $agencyChrome['logo'] !== null)
+    <img src="{{ asset($agencyChrome['logo']) }}" alt="{{ $agencyChrome['name'] }}" {{ $attributes }} />
+@elseif($agencyChrome !== null)
+    <span {{ $attributes->merge(['class' => 'd-inline-flex align-items-center justify-content-center rounded-circle fw-bold ' . ($agencyChrome['accent'] === null ? 'bg-primary text-white' : '')]) }} style="width:2rem;height:2rem;@if($agencyChrome['accent'] !== null)background-color:{{ $agencyChrome['accent'] }};color:{{ $agencyChrome['accentContrast'] }};@endif" data-role="agency-brand-mark">
+        <span aria-hidden="true">{{ $agencyChrome['mark'] }}</span>
+        <span class="sr-only">{{ $agencyChrome['name'] }}</span>
+    </span>
+@elseif($branding['src'])
     <img src="{{ asset($branding['src']) }}" alt="{{ $branding['alt'] }}" {{ $attributes }} />
 @else
     {{--

@@ -17,6 +17,7 @@ final class AgencyBrand
         public readonly ?string $logoPath = null,
         public readonly ?string $tagline = null,
         public readonly ?string $accentColor = null,
+        public readonly ?string $supportEmail = null,
     ) {
     }
 }

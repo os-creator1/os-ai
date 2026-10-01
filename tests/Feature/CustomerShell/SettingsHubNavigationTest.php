@@ -275,7 +275,12 @@ class SettingsHubNavigationTest extends TestCase
         $html = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent();
         $modules = $this->settingsHubModules($html);
 
-        $this->assertSame(['account-details', 'plan', 'team'], $modules['account'] ?? null);
+        // The Agency's own surfaces sit beside the account's: Lane C's Stripe account, resale plans
+        // and revenue, and (Agency V1 completion) White label.
+        $this->assertSame(
+            ['account-details', 'plan', 'team', 'agency-stripe', 'agency-saas-plans', 'agency-saas-revenue', 'agency-white-label'],
+            $modules['account'] ?? null,
+        );
         $this->assertSame(['blocked-numbers'], $modules['outreach'] ?? null, 'The legacy blocked numbers stay with the Agency, unchanged.');
         $this->assertContains('messaging-provider', $modules['advanced'] ?? [], 'Advanced provider settings for the owner.');
         $this->assertStringContainsString('Agency account settings', $html);

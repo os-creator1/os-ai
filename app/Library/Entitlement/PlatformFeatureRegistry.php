@@ -116,7 +116,22 @@ final class PlatformFeatureRegistry
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
-        PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Planned,
+        // Agency V1 completion — Planned -> Available, meeting the evidentiary
+        // bar every flip here is held to: a real, executable, Workspace-scoped
+        // surface now exists (AgencyWhiteLabelController over
+        // AgencyWhiteLabelManager and its agency_white_label_settings storage,
+        // rendered into the signed-in client chrome by
+        // ClientWorkspaceBrandResolver/ClientChromeBrand). It is Workspace-
+        // scoped like ProspectOutreach — branding belongs to the Agency
+        // Workspace, not to any one Business — so it is decided through
+        // EntitlementManager::decideForWorkspace(), the existing entitlement
+        // architecture, and never appears in a Business's feature list. Plan
+        // packaging already existed (Agency only,
+        // 2026_08_13_120007_seed_workspace_plan_catalog_and_features.php) and
+        // is unchanged. What is NOT part of this flip: a custom branded
+        // domain and the host-resolved login brand (AgencyBrandSource stays
+        // unbound — see docs/product/implementation-contracts/22-AGENCY-WHITE-LABEL.md).
+        PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Available,
         PlatformFeature::AgencyPackageCapabilities->value => PlatformFeatureAvailability::Planned,
         // Implementation Contract 16, Sub-slice E — the FINAL flip,
         // Planned -> Available, meeting the exact evidentiary bar every flip
@@ -159,13 +174,15 @@ final class PlatformFeatureRegistry
     /**
      * Correction 1 — the single source of feature-scope truth. Every key
      * absent here defaults to Business scope (the overwhelming majority
-     * and every case that predates this correction); ProspectOutreach is
-     * the sole Workspace-scoped exception. Never consulted for identity
+     * and every case that predates this correction); ProspectOutreach and
+     * WhiteLabel (branding is the Agency Workspace's own) are the
+     * Workspace-scoped exceptions. Never consulted for identity
      * (PlatformFeature) or implementation-availability (AVAILABILITY
      * above) — a third, independent, orthogonal concern.
      */
     private const SCOPE = [
         PlatformFeature::ProspectOutreach->value => PlatformFeatureScope::Workspace,
+        PlatformFeature::WhiteLabel->value => PlatformFeatureScope::Workspace,
     ];
 
     public static function isKnown(string $featureKey): bool
