@@ -28,6 +28,10 @@ enum BusinessEmailFailureCategory: string
     case ContactUnavailable = 'contact_unavailable';
     /** Subject/body/operation key failed validation. */
     case MessageInvalid = 'message_invalid';
+    /** No Location could be proven; the caller must choose one. */
+    case LocationRequired = 'location_required';
+    /** The operation key was already used for a materially different request. */
+    case IdempotencyConflict = 'idempotency_conflict';
 
     public function isRetryable(): bool
     {
@@ -48,6 +52,8 @@ enum BusinessEmailFailureCategory: string
             self::SendLimitExceeded => 'Too many emails were sent recently. Try again later.',
             self::ContactUnavailable => 'That contact could not be found.',
             self::MessageInvalid => 'The email needs a subject and a message within the allowed length.',
+            self::LocationRequired => 'Choose which location this email is sent from.',
+            self::IdempotencyConflict => 'This email was already requested with different content.',
         };
     }
 }

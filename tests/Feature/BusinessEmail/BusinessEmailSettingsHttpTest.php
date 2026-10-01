@@ -178,8 +178,9 @@ class BusinessEmailSettingsHttpTest extends TestCase
         $foreign = $this->contactWithEmails($other, ['victim@example.com']);
         $this->authenticateAs($customer);
 
-        $this->post($this->sendUrl($workspace, $business), $this->form($foreign))->assertSessionHas('status', 'error');
-        $this->post($this->sendUrl($workspace, $business), array_merge($this->form($foreign), ['contact_uid' => 'nope-nope']))->assertSessionHas('status', 'error');
+        // Another Business's Contact and an unknown uid are the same 404 (the CRM shape).
+        $this->post($this->sendUrl($workspace, $business), $this->form($foreign))->assertNotFound();
+        $this->post($this->sendUrl($workspace, $business), array_merge($this->form($foreign), ['contact_uid' => 'nope-nope']))->assertNotFound();
 
         $this->assertSame(0, BusinessEmailMessage::query()->count());
         $this->assertSame(0, $this->fakeGoogle->callCount('send'));
@@ -340,16 +341,19 @@ class BusinessEmailSettingsHttpTest extends TestCase
         [, $other] = $this->emailTenant('Other Business');
         $this->authenticateAs($customer);
 
+        $primary = \App\Models\BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+
         for ($i = 1; $i <= 14; $i++) {
             DB::table('business_email_messages')->insert([
                 'uid' => (string) Str::uuid(), 'business_id' => $business->id, 'contact_id' => $contact->id,
-                'operation_key' => "seed-{$i}", 'provider' => 'google', 'from_email' => 'a@b.test', 'to_email' => 'pat@example.com',
+                'location_id' => $primary->id, 'operation_key' => "seed-{$i}", 'provider' => 'google', 'from_email' => 'a@b.test', 'to_email' => 'pat@example.com',
                 'subject' => "Subject {$i}", 'body_text' => 'b', 'status' => 'accepted', 'created_at' => now(), 'updated_at' => now(),
             ]);
         }
 
         DB::table('business_email_messages')->insert([
-            'uid' => (string) Str::uuid(), 'business_id' => $other->id, 'operation_key' => 'foreign', 'provider' => 'google',
+            'uid' => (string) Str::uuid(), 'business_id' => $other->id, 'location_id' => \App\Models\BusinessLocation::query()->where('business_id', $other->id)->value('id'),
+            'operation_key' => 'foreign', 'provider' => 'google',
             'from_email' => 'x@y.test', 'to_email' => 'z@w.test', 'subject' => 'FOREIGN-SUBJECT', 'body_text' => 'b',
             'status' => 'accepted', 'created_at' => now(), 'updated_at' => now(),
         ]);

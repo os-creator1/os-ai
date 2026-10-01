@@ -15,6 +15,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\BusinessEmail\SendBusinessEmailRequest;
 use App\Library\BusinessEmail\BusinessEmailAccountManager;
 use App\Library\BusinessEmail\BusinessEmailContactResolver;
+use App\Library\BusinessEmail\BusinessEmailLocationScope;
 use App\Library\BusinessEmail\BusinessEmailOAuthConfig;
 use App\Library\BusinessEmail\BusinessEmailOAuthStateSigner;
 use App\Library\BusinessEmail\BusinessEmailSender;
@@ -62,6 +63,7 @@ class BusinessEmailController extends CustomerBaseController
         private readonly BusinessEmailOAuthConfig $oauthConfig,
         private readonly BusinessEmailSender $sender,
         private readonly BusinessEmailContactResolver $contacts,
+        private readonly BusinessEmailLocationScope $locations,
     ) {
     }
 
@@ -80,11 +82,19 @@ class BusinessEmailController extends CustomerBaseController
         $canManage = Gate::allows('manage_business_email');
         $canSend = Gate::allows('chat_box') && Gate::allows('view_contact') && $account?->isActive() === true;
 
+        // Location ACL (LocationAccessGuard, taken ONCE): the actor's reach
+        // scopes the recent-email list and the Contact picker in SQL, so
+        // neither leaks another Location's records and neither is N+1.
+        $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
+
         $messages = BusinessEmailMessage::query()
             ->where('business_id', $business->id)
+            ->whereIn('location_id', $accessible)
             ->orderByDesc('id')
             ->limit(self::RECENT_MESSAGES)
             ->get(['uid', 'to_email', 'subject', 'status', 'failure_category', 'created_at']);
+
+        $locationChoices = $this->locations->activeLocations($business, $accessible);
 
         return view('customer.business.email.show', [
             'workspaceUid' => $workspaceUid,
@@ -95,7 +105,9 @@ class BusinessEmailController extends CustomerBaseController
             'providers' => collect(BusinessEmailProviderType::cases())
                 ->filter(fn (BusinessEmailProviderType $provider) => $this->oauthConfig->isUsable($provider))
                 ->values(),
-            'contacts' => $canSend ? $this->contacts->emailableContacts($business) : [],
+            'contacts' => $canSend ? $this->contacts->emailableContacts($business, 50, $accessible) : [],
+            // Asked for only when there is a real choice to make.
+            'locationChoices' => $locationChoices['activeTotal'] > 1 ? $locationChoices['selectable'] : collect(),
             'messages' => $messages,
             'sendToken' => (string) Str::uuid(),
         ]);
@@ -241,15 +253,27 @@ class BusinessEmailController extends CustomerBaseController
         $this->authorize('view_contact');
         [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, true);
 
-        // Resolved THROUGH the Business: another Business's Contact uid is
-        // indistinguishable from an unknown one.
+        // Resolved THROUGH the Business, then through the Location ACL: another
+        // Business's Contact, an unknown uid and a Contact in a Location this
+        // actor cannot reach are one and the same 404 (the CRM shape), with no
+        // message row and no provider call.
         $contact = Contacts::query()
             ->where('business_id', $business->id)
             ->where('uid', (string) $request->validated('contact_uid'))
             ->first();
 
-        if ($contact === null) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'That contact could not be found.');
+        abort_if($contact === null || ! $this->locations->contactAccessible((int) Auth::id(), $contact), 404);
+
+        // An explicit Location must be one of this Business's ACTIVE Locations
+        // that the actor may work in; anything else is the same 404.
+        $location = null;
+        $locationUid = (string) $request->validated('location_uid', '');
+
+        if ($locationUid !== '') {
+            $accessible = $this->locations->accessibleLocationIds((int) Auth::id(), $business);
+            $location = $this->locations->activeLocations($business, $accessible)['selectable']->firstWhere('uid', $locationUid);
+
+            abort_if($location === null, 404);
         }
 
         try {
@@ -260,6 +284,7 @@ class BusinessEmailController extends CustomerBaseController
                 bodyText: (string) $request->validated('body'),
                 operationKey: 'manual:' . $request->validated('send_token'),
                 source: BusinessEmailSource::Manual,
+                location: $location,
                 sentByUserId: (int) Auth::id(),
             ));
         } catch (BusinessEmailSendRefusedException $exception) {

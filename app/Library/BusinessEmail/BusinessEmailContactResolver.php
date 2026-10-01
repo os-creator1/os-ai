@@ -59,15 +59,25 @@ final class BusinessEmailContactResolver
      * exactly one valid address, for the manual-send picker. Two queries,
      * constant in the number of Contacts.
      *
+     * $accessibleLocationIds, when given, is the actor's Location reach
+     * (LocationAccessGuard, taken once by the caller): a Contact with a
+     * persisted Location outside it is excluded IN SQL, while a Contact whose
+     * Location was never proven (NULL) stays listed — the CRM precedent. No
+     * per-row guard call exists, so the query count does not grow with rows.
+     *
+     * @param list<int>|null $accessibleLocationIds
      * @return list<array{uid: string, label: string, email: string}>
      */
-    public function emailableContacts(Business $business, int $limit = 50): array
+    public function emailableContacts(Business $business, int $limit = 50, ?array $accessibleLocationIds = null): array
     {
         $rows = DB::table('contacts as c')
             ->join('contacts_custom_field as v', 'v.contact_id', '=', 'c.id')
             ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
             ->where('c.business_id', $business->id)
             ->where('f.tag', self::EMAIL_TAG)
+            ->when($accessibleLocationIds !== null, fn ($query) => $query->where(function ($scope) use ($accessibleLocationIds): void {
+                $scope->whereNull('c.location_id')->orWhereIn('c.location_id', $accessibleLocationIds);
+            }))
             ->orderByDesc('c.id')
             ->limit($limit * 4)
             ->get(['c.id', 'c.uid', 'v.value']);

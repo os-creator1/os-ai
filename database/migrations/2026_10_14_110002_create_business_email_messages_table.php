@@ -17,9 +17,13 @@ use Illuminate\Support\Facades\Schema;
  * ledger instead of inventing a second history; only `outbound` is written
  * by this slice.
  *
- * LOCATION is a durable snapshot taken at send time (nullable — attributed
- * only where provable, exactly like chat_boxes/contacts). It is never
- * re-derived from the Contact later. RESTRICT on delete: audit-relevant.
+ * LOCATION is a durable snapshot taken at send time and is NOT NULL: V1 says
+ * every operational record resolves to exactly one Location (Blueprint §5 — "the
+ * operational records they produce are Location-bound"; every Business has a
+ * Primary Location). BusinessEmailSender refuses a send whose Location cannot be
+ * proven instead of persisting an unscoped row, and this constraint makes that
+ * invariant mechanical. It is never re-derived from the Contact later. RESTRICT
+ * on delete: audit-relevant.
  *
  * `from_email` / `to_email` are snapshots too: a reconnect to a different
  * mailbox must not rewrite who an old message was sent from.
@@ -40,7 +44,7 @@ return new class extends Migration
             $table->id();
             $table->uuid('uid')->unique();
             $table->foreignId('business_id')->constrained('businesses')->onDelete('cascade');
-            $table->unsignedBigInteger('location_id')->nullable();
+            $table->unsignedBigInteger('location_id');
             $table->unsignedBigInteger('business_email_account_id')->nullable();
             $table->unsignedBigInteger('contact_id')->nullable();
             $table->string('direction', 16)->default('outbound');

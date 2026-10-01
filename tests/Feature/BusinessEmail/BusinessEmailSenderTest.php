@@ -8,12 +8,14 @@ use App\Enums\BusinessEmail\BusinessEmailAccountState;
 use App\Enums\BusinessEmail\BusinessEmailFailureCategory as Category;
 use App\Enums\BusinessEmail\BusinessEmailMessageStatus as Status;
 use App\Enums\BusinessEmail\BusinessEmailProviderType;
+use App\Enums\BusinessEmail\BusinessEmailSource;
 use App\Exceptions\BusinessEmail\BusinessEmailProviderException;
 use App\Exceptions\BusinessEmail\BusinessEmailSendRefusedException;
 use App\Library\BusinessEmail\BusinessEmailSender;
 use App\Models\BusinessEmailAccount;
 use App\Models\BusinessEmailMessage;
 use App\Models\BusinessLocation;
+use App\Models\Contacts;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -245,13 +247,171 @@ class BusinessEmailSenderTest extends TestCase
 
         $first = $this->sender()->send($this->request($business, $contact, 'automation:step:42'));
         $second = $this->sender()->send($this->request($business, $contact, 'automation:step:42'));
-        $third = $this->sender()->send($this->request($business, $contact, 'automation:step:42', 'Different subject', 'Different body'));
+        // Incidental whitespace/control-character differences normalize to the
+        // same logical request, so they converge too.
+        $third = $this->sender()->send($this->request($business, $contact, 'automation:step:42', "  Hello\r\n", "\n Hi there  "));
 
         $this->assertSame(1, $this->fakeGoogle->callCount('send'));
         $this->assertSame(1, BusinessEmailMessage::query()->count());
         $this->assertSame($first->id, $second->id);
         $this->assertSame($first->id, $third->id);
         $this->assertSame('Hello', $third->subject);
+    }
+
+    // ---- replay is bound to the original logical payload -----------------
+
+    private function assertConflictWithZeroExtraCalls(callable $replay, int $expectedProviderCalls = 1): void
+    {
+        try {
+            $replay();
+            $this->fail('Expected an idempotency conflict.');
+        } catch (BusinessEmailSendRefusedException $exception) {
+            $this->assertSame(Category::IdempotencyConflict, $exception->category);
+        }
+
+        $this->assertSame($expectedProviderCalls, $this->fakeGoogle->callCount('send'), 'A mismatched replay must never reach a provider.');
+        $this->assertSame(1, BusinessEmailMessage::query()->count());
+    }
+
+    public function test_the_same_key_with_a_changed_subject_is_refused(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $this->sender()->send($this->request($business, $contact, 'op-bind'));
+
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send($this->request($business, $contact, 'op-bind', 'A different subject')));
+    }
+
+    public function test_the_same_key_with_a_changed_body_is_refused(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $this->sender()->send($this->request($business, $contact, 'op-bind'));
+
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send($this->request($business, $contact, 'op-bind', 'Hello', 'A different body')));
+    }
+
+    public function test_the_same_key_for_a_different_contact_is_refused_not_replayed(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $other = $this->contactWithEmails($business, ['other@example.com']);
+        $this->sender()->send($this->request($business, $contact, 'op-shared'));
+
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send($this->request($business, $other, 'op-shared')));
+    }
+
+    public function test_the_same_key_with_a_different_source_or_automation_step_is_refused(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $first = $this->sender()->send(new BusinessEmailSendRequest($business, $contact, 'Hello', 'Hi there', 'op-src', BusinessEmailSource::Automation, automationStepRunId: 7));
+
+        $this->assertSame(7, (int) $first->automation_step_run_id);
+        $this->assertSame(BusinessEmailSource::Automation, $first->source);
+
+        // Exact replay converges.
+        $again = $this->sender()->send(new BusinessEmailSendRequest($business, $contact, 'Hello', 'Hi there', 'op-src', BusinessEmailSource::Automation, automationStepRunId: 7));
+        $this->assertSame($first->id, $again->id);
+
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send(new BusinessEmailSendRequest($business, $contact, 'Hello', 'Hi there', 'op-src', BusinessEmailSource::Manual, automationStepRunId: 7)));
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send(new BusinessEmailSendRequest($business, $contact, 'Hello', 'Hi there', 'op-src', BusinessEmailSource::Automation, automationStepRunId: 8)));
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send(new BusinessEmailSendRequest($business, $contact, 'Hello', 'Hi there', 'op-src', BusinessEmailSource::Automation)));
+    }
+
+    public function test_the_same_key_with_a_different_explicit_location_is_refused_but_a_derived_one_converges(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $primary = BusinessLocation::query()->where('business_id', $business->id)->firstOrFail();
+        $other = $this->makeLocation($business, 'Second');
+
+        $first = $this->sender()->send($this->request($business, $contact, 'op-loc', location: $primary));
+
+        $again = $this->sender()->send($this->request($business, $contact, 'op-loc', location: $primary));
+        $this->assertSame($first->id, $again->id);
+
+        $this->assertConflictWithZeroExtraCalls(fn () => $this->sender()->send($this->request($business, $contact, 'op-loc', location: $other)));
+
+        // A caller that leaves the Location to be derived still converges on
+        // the durable snapshot, even though the Business now has two Locations.
+        $derived = $this->sender()->send($this->request($business, $contact, 'op-loc'));
+        $this->assertSame($first->id, $derived->id);
+        $this->assertSame($primary->id, (int) $derived->location_id);
+    }
+
+    public function test_a_replay_after_the_contact_moved_still_converges_on_the_original_row(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $first = $this->sender()->send($this->request($business, $contact, 'op-moved'));
+        $second = $this->makeLocation($business, 'Second');
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $second->id]);
+
+        $again = $this->sender()->send($this->request($business, $contact, 'op-moved'));
+
+        $this->assertSame($first->id, $again->id);
+        $this->assertSame($first->location_id, $again->location_id);
+        $this->assertSame(1, $this->fakeGoogle->callCount('send'));
+    }
+
+    // ---- the Contact is re-derived from persistence ----------------------
+
+    public function test_a_contact_forged_in_memory_into_this_business_is_refused(): void
+    {
+        [$businessA] = $this->readyTenant();
+        [, $businessB] = $this->emailTenant('Business B');
+        $victim = $this->contactWithEmails($businessB, ['victim@example.com']);
+
+        // The row belongs to Business B; only the in-memory model claims A.
+        $forged = Contacts::query()->findOrFail($victim->id);
+        $forged->business_id = $businessA->id;
+        $this->assertSame($businessA->id, (int) $forged->business_id);
+
+        try {
+            $this->sender()->send($this->request($businessA, $forged, 'op-forged'));
+            $this->fail('Expected a refusal.');
+        } catch (BusinessEmailSendRefusedException $exception) {
+            $this->assertSame(Category::ContactUnavailable, $exception->category);
+        }
+
+        $this->assertSame(0, BusinessEmailMessage::query()->count());
+        $this->assertSame(0, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_a_stale_contact_uses_the_authoritative_current_location(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $stale = Contacts::query()->findOrFail($contact->id);
+        $this->assertNull($stale->location_id);
+
+        // Two active Locations now exist and the Contact moved to the second.
+        $second = $this->makeLocation($business, 'Second');
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $second->id]);
+
+        // The stale model says "no Location" (which would be ambiguous with two
+        // Locations); the authoritative row says Second.
+        $message = $this->sender()->send($this->request($business, $stale, 'op-stale-loc'));
+
+        $this->assertSame($second->id, (int) $message->location_id);
+    }
+
+    public function test_a_stale_contact_sends_only_to_the_authoritative_current_email(): void
+    {
+        [$business, $contact] = $this->readyTenant('old@example.com');
+        $stale = Contacts::query()->findOrFail($contact->id);
+
+        DB::table('contacts_custom_field')->where('contact_id', $contact->id)->update(['value' => 'new@example.com']);
+
+        $message = $this->sender()->send($this->request($business, $stale, 'op-stale-email'));
+
+        $this->assertSame('new@example.com', $message->to_email);
+        $this->assertSame('new@example.com', $this->fakeGoogle->sent[0]->toEmail);
+        $this->assertSame(1, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_a_contact_deleted_since_is_refused(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $stale = Contacts::query()->findOrFail($contact->id);
+        DB::table('contacts')->where('id', $contact->id)->delete();
+
+        $this->expectException(BusinessEmailSendRefusedException::class);
+        $this->sender()->send($this->request($business, $stale, 'op-deleted'));
     }
 
     public function test_a_replay_still_works_after_the_account_was_disconnected(): void
@@ -269,17 +429,6 @@ class BusinessEmailSenderTest extends TestCase
         $this->assertSame($first->id, $again->id);
         $this->assertSame(Status::Accepted, $again->status);
         $this->assertSame(1, $this->fakeGoogle->callCount('send'));
-    }
-
-    public function test_the_same_key_for_a_different_contact_is_refused_not_replayed(): void
-    {
-        [$business, $contact] = $this->readyTenant();
-        $other = $this->contactWithEmails($business, ['other@example.com']);
-
-        $this->sender()->send($this->request($business, $contact, 'op-shared'));
-
-        $this->expectException(BusinessEmailSendRefusedException::class);
-        $this->sender()->send($this->request($business, $other, 'op-shared'));
     }
 
     public function test_operation_keys_are_scoped_per_business(): void
@@ -326,6 +475,7 @@ class BusinessEmailSenderTest extends TestCase
 
         BusinessEmailMessage::create([
             'business_id' => $business->id,
+            'location_id' => BusinessLocation::query()->where('business_id', $business->id)->value('id'),
             'operation_key' => 'op-unique',
             'provider' => 'google',
             'from_email' => 'a@b.test',
@@ -545,68 +695,128 @@ class BusinessEmailSenderTest extends TestCase
         $this->sender()->send($this->request($business, $third, 'k3'));
     }
 
-    // ---- Location --------------------------------------------------------
+    // ---- Location attribution (V1: every operational record has one) -----
 
-    private function location(object $business, bool $archived = false): BusinessLocation
+    private function primary(object $business): BusinessLocation
     {
-        $id = DB::table('business_locations')->insertGetId(array_merge([
-            'uid' => (string) \Illuminate\Support\Str::uuid(),
-            'business_id' => $business->id,
-            'name' => 'Loc ' . uniqid(),
-            'lifecycle_state' => $archived ? BusinessLocationLifecycleState::Archived->value : BusinessLocationLifecycleState::Active->value,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ], []));
-
-        return BusinessLocation::query()->findOrFail($id);
+        return BusinessLocation::query()->where('business_id', $business->id)->orderBy('id')->firstOrFail();
     }
 
-    public function test_location_is_the_callers_then_the_contacts_then_the_single_active_one(): void
+    private function refusedWith(callable $send, Category $expected): void
     {
-        [, $business] = $this->emailTenant();
+        try {
+            $send();
+            $this->fail('Expected a refusal.');
+        } catch (BusinessEmailSendRefusedException $exception) {
+            $this->assertSame($expected, $exception->category);
+        }
+    }
+
+    public function test_an_explicit_valid_location_wins(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $other = $this->makeLocation($business, 'Second');
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $this->primary($business)->id]);
+
+        $message = $this->sender()->send($this->request($business, $contact, 'loc-explicit', location: $other));
+
+        $this->assertSame($other->id, (int) $message->location_id);
+    }
+
+    public function test_the_authoritative_contact_location_is_used_when_none_is_supplied(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $second = $this->makeLocation($business, 'Second');
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $second->id]);
+
+        $message = $this->sender()->send($this->request($business, $contact, 'loc-contact'));
+
+        $this->assertSame($second->id, (int) $message->location_id);
+    }
+
+    public function test_the_single_active_location_is_the_fallback_for_a_contact_without_one(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $this->assertNull($contact->location_id);
+
+        $message = $this->sender()->send($this->request($business, $contact, 'loc-single'));
+
+        $this->assertSame($this->primary($business)->id, (int) $message->location_id);
+    }
+
+    public function test_an_archived_contact_location_falls_back_to_the_single_active_one(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $archived = $this->makeLocation($business, 'Closed', archived: true);
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $archived->id]);
+
+        $message = $this->sender()->send($this->request($business, $contact, 'loc-archived-contact'));
+
+        $this->assertSame($this->primary($business)->id, (int) $message->location_id);
+    }
+
+    public function test_several_active_locations_and_none_provable_requires_a_choice_and_persists_nothing(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $this->makeLocation($business, 'Second');
+
+        $this->refusedWith(fn () => $this->sender()->send($this->request($business, $contact, 'loc-ambiguous')), Category::LocationRequired);
+
+        $this->assertSame(0, BusinessEmailMessage::query()->count(), 'Never an unscoped operational row.');
+        $this->assertSame(0, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_a_business_with_no_active_location_cannot_send(): void
+    {
+        [, $business] = $this->tenant();
         $this->activeAccount($business);
         $contact = $this->contactWithEmails($business, ['pat@example.com']);
 
-        // Exactly one active Location: it is the provable attribution.
-        $only = $this->location($business);
-        $this->assertSame($only->id, (int) $this->sender()->send($this->request($business, $contact, 'loc-single'))->location_id);
-
-        // Two active Locations: no single-location fallback and none on the
-        // contact, so the attribution stays NULL rather than being guessed.
-        $extra = $this->location($business);
-        $this->assertNull($this->sender()->send($this->request($business, $contact, 'loc-none'))->location_id);
-
-        $explicit = $this->sender()->send($this->request($business, $contact, 'loc-explicit', location: $extra));
-        $this->assertSame($extra->id, (int) $explicit->location_id);
-
-        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $extra->id]);
-        $fromContact = $this->sender()->send($this->request($business, $contact->fresh(), 'loc-contact'));
-        $this->assertSame($extra->id, (int) $fromContact->location_id);
-
-        // The Contact later moves: the historical message keeps its Location.
-        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $only->id]);
-        $this->assertSame($extra->id, (int) $fromContact->fresh()->location_id);
-    }
-
-    public function test_a_foreign_or_archived_location_is_refused(): void
-    {
-        [$business, $contact] = $this->readyTenant();
-        [, $other] = $this->emailTenant('Other Business');
-        $foreign = $this->location($other);
-        $archived = $this->location($business, archived: true);
-
-        foreach ([$foreign, $archived] as $i => $bad) {
-            try {
-                $this->sender()->send($this->request($business, $contact, "bad-loc-{$i}", location: $bad));
-                $this->fail('Expected a refusal.');
-            } catch (BusinessEmailSendRefusedException $exception) {
-                $this->assertSame(Category::MessageInvalid, $exception->category);
-            }
-        }
+        $this->refusedWith(fn () => $this->sender()->send($this->request($business, $contact, 'loc-none')), Category::LocationRequired);
 
         $this->assertSame(0, BusinessEmailMessage::query()->count());
     }
 
+    public function test_a_foreign_or_archived_explicit_location_is_refused(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        [, $other] = $this->emailTenant('Other Business');
+        $foreign = $this->primary($other);
+        $archived = $this->makeLocation($business, 'Closed', archived: true);
+
+        foreach ([$foreign, $archived] as $i => $bad) {
+            $this->refusedWith(fn () => $this->sender()->send($this->request($business, $contact, "bad-loc-{$i}", location: $bad)), Category::MessageInvalid);
+        }
+
+        $this->assertSame(0, BusinessEmailMessage::query()->count());
+        $this->assertSame(0, $this->fakeGoogle->callCount('send'));
+    }
+
+    public function test_the_historical_location_never_changes_when_the_contact_later_moves(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $second = $this->makeLocation($business, 'Second');
+        $first = $this->sender()->send($this->request($business, $contact, 'loc-hist', location: $second));
+
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $this->primary($business)->id]);
+
+        $this->assertSame($second->id, (int) $first->fresh()->location_id);
+        $this->assertSame($second->id, (int) $this->sender()->send($this->request($business, $contact, 'loc-hist'))->location_id);
+    }
+
+    public function test_the_database_itself_refuses_an_unscoped_message_row(): void
+    {
+        [$business, $contact] = $this->readyTenant();
+        $row = [
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $business->id, 'contact_id' => $contact->id,
+            'operation_key' => 'raw-null', 'provider' => 'google', 'from_email' => 'a@b.test', 'to_email' => 'c@d.test',
+            'subject' => 's', 'body_text' => 'b', 'created_at' => now(), 'updated_at' => now(),
+        ];
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        DB::table('business_email_messages')->insert($row + ['location_id' => null]);
+    }
     public function test_no_secret_is_ever_persisted_on_the_message_or_serialized_from_the_account(): void
     {
         [$business, $contact] = $this->readyTenant();

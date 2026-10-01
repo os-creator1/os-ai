@@ -90,6 +90,18 @@
                                 @endforeach
                             </select>
                         </div>
+                        @if ($locationChoices->isNotEmpty())
+                            <div class="mb-1">
+                                <label class="form-label" for="email-location">Send from location</label>
+                                <select class="form-select" id="email-location" name="location_uid">
+                                    <option value="">The contact's own location</option>
+                                    @foreach ($locationChoices as $choice)
+                                        <option value="{{ $choice->uid }}">{{ $choice->name }}</option>
+                                    @endforeach
+                                </select>
+                                <div class="form-text">Needed when the contact has no location of its own and your business has more than one.</div>
+                            </div>
+                        @endif
                         <div class="mb-1">
                             <label class="form-label" for="email-subject">Subject</label>
                             <input class="form-control" id="email-subject" type="text" name="subject" maxlength="200" required>

@@ -9,6 +9,7 @@ use App\Library\BusinessEmail\GoogleBusinessEmailProvider;
 use App\Library\BusinessEmail\MicrosoftBusinessEmailProvider;
 use App\Models\Business;
 use App\Models\BusinessEmailAccount;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\BusinessEmail\Support\FakeBusinessEmailProvider;
@@ -45,10 +46,37 @@ trait CreatesBusinessEmailFixtures
         }
     }
 
-    /** @return array{0: \App\Models\Customer, 1: Business, 2: \App\Models\Workspace} */
+    /**
+     * A tenant whose Business already has its Primary Location, as every V1
+     * Business does (the tenant fixture itself creates none).
+     *
+     * @return array{0: \App\Models\Customer, 1: Business, 2: \App\Models\Workspace}
+     */
     protected function emailTenant(string $name = 'Harbor Lane Studios'): array
     {
-        return $this->tenant(businessName: $name, workspaceName: $name . ' Workspace');
+        $tenant = $this->tenant(businessName: $name, workspaceName: $name . ' Workspace');
+        $this->makeLocation($tenant[1], 'Primary Location');
+
+        return $tenant;
+    }
+
+    protected function makeLocation(Business $business, string $name = 'Location', bool $archived = false): BusinessLocation
+    {
+        $location = BusinessLocation::create([
+            'business_id' => $business->id,
+            'name' => $name,
+            'service_mode' => 'storefront',
+            'country_code' => 'US',
+        ]);
+
+        if ($archived) {
+            DB::table('business_locations')->where('id', $location->id)->update([
+                'lifecycle_state' => \App\Enums\Business\BusinessLocationLifecycleState::Archived->value,
+                'archived_at' => now(),
+            ]);
+        }
+
+        return $location->fresh();
     }
 
     protected function activeAccount(

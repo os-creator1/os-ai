@@ -24,6 +24,8 @@ class SendBusinessEmailRequest extends FormRequest
     {
         return [
             'contact_uid' => ['required', 'string', 'max:64'],
+            // Optional: only asked for when the Business has several active Locations.
+            'location_uid' => ['nullable', 'string', 'max:64'],
             'subject' => ['required', 'string', 'max:' . (int) config('business_email.send.max_subject_length', 200)],
             'body' => ['required', 'string', 'max:' . (int) config('business_email.send.max_body_length', 20000)],
             // A per-render token: the same form submitted twice is one send.

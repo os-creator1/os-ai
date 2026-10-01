@@ -58,33 +58,38 @@ final class BusinessEmailSender
     public function send(BusinessEmailSendRequest $request): BusinessEmailMessage
     {
         $business = $request->business;
-        $contact = $request->contact;
         $operationKey = trim($request->operationKey);
 
         if ($operationKey === '' || strlen($operationKey) > 191) {
             throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::MessageInvalid);
         }
 
-        // A replay is answered from the recorded row, before any other
-        // check, so it still works after the account was disconnected.
+        // The Contact is RE-DERIVED from persistence, scoped to this Business.
+        // The caller's model is only a pointer (its id): its business_id,
+        // location_id and any cached email are never trusted, so a forged or
+        // stale model can neither reach another Business's Contact nor send to
+        // an outdated address or Location. A foreign, deleted or unknown
+        // Contact is indistinguishable.
+        $contact = $this->authoritativeContact($request);
+
+        [$subject, $body] = $this->validatedContent($request);
+
+        // A replay is answered from the recorded row, so it still works after
+        // the account was disconnected. It must describe the SAME logical
+        // request that created the row: a key is never reusable with
+        // materially different input, and a mismatch never reaches a provider.
         $existing = BusinessEmailMessage::query()
             ->where('business_id', $business->id)
             ->where('operation_key', $operationKey)
             ->first();
 
         if ($existing !== null) {
+            $this->assertSameLogicalRequest($existing, $request, $contact, $subject, $body);
+
             return $this->continueExisting($existing, $request);
         }
 
-        [$subject, $body] = $this->validatedContent($request);
-
-        // The Contact must belong to THIS Business; a foreign or unknown
-        // Contact is indistinguishable from a missing one.
-        if ($contact->business_id === null || (int) $contact->business_id !== (int) $business->id) {
-            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::ContactUnavailable);
-        }
-
-        $location = $this->resolveLocation($request);
+        $location = $this->resolveLocation($request, $contact);
 
         $account = $this->senders->defaultFor($business, $location);
 
@@ -100,11 +105,58 @@ final class BusinessEmailSender
 
         $this->assertWithinSendLimits($business, $contact);
 
-        $message = $this->createQueued($request, $operationKey, $account, $location, $to, $subject, $body);
+        $message = $this->createQueued($request, $contact, $operationKey, $account, $location, $to, $subject, $body);
 
         return $this->attempt($message, $request);
     }
 
+    /**
+     * The authoritative Contact: read by id, constrained to the request
+     * Business, fresh from the database every time.
+     */
+    private function authoritativeContact(BusinessEmailSendRequest $request): Contacts
+    {
+        $contact = Contacts::query()
+            ->where('id', $request->contact->id)
+            ->where('business_id', $request->business->id)
+            ->first();
+
+        if ($contact === null) {
+            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::ContactUnavailable);
+        }
+
+        return $contact;
+    }
+
+    /**
+     * Binds a replay to the persisted logical identity of the message: the
+     * authoritative Contact, the normalized subject and body, the source, the
+     * Automation step identity, and the Location when the caller names one.
+     *
+     * Deliberately NOT compared: provider state, tokens, attempt counters, the
+     * sending user, and a Location the caller left to be derived (the stored
+     * Location is the durable snapshot; a Contact who moved since must not turn
+     * an honest retry into a conflict).
+     */
+    private function assertSameLogicalRequest(
+        BusinessEmailMessage $message,
+        BusinessEmailSendRequest $request,
+        Contacts $contact,
+        string $subject,
+        string $body,
+    ): void {
+        $same = (int) $message->contact_id === (int) $contact->id
+            && (string) $message->subject === $subject
+            && (string) $message->body_text === $body
+            && $message->source === $request->source
+            && ($message->automation_step_run_id === null ? null : (int) $message->automation_step_run_id)
+                === ($request->automationStepRunId === null ? null : (int) $request->automationStepRunId)
+            && ($request->location === null || (int) $message->location_id === (int) $request->location->id);
+
+        if (! $same) {
+            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::IdempotencyConflict);
+        }
+    }
     /** @return array{0: string, 1: string} */
     private function validatedContent(BusinessEmailSendRequest $request): array
     {
@@ -122,13 +174,23 @@ final class BusinessEmailSender
     }
 
     /**
-     * The durable Location attribution for this send, snapshotted now: the
-     * caller's own Location when it supplies one (it must be this Business's
-     * ACTIVE Location), else the Contact's Location when valid, else the
-     * Business's single active Location, else null. Never guessed beyond
-     * that, and never re-derived from the Contact afterwards.
+     * The durable Location attribution for this send, snapshotted now. V1:
+     * every operational record resolves to exactly ONE Location, so there is
+     * no unscoped outcome. In order:
+     *
+     *  1. the caller's explicit Location (must be this Business's ACTIVE one,
+     *     else the send is refused);
+     *  2. the authoritative Contact's own Location, when it is a valid active
+     *     Location of this Business;
+     *  3. the Business's single active Location (the one fallback already
+     *     canonical for Contacts and Conversations);
+     *  4. otherwise the send is REFUSED (`location_required`): several active
+     *     Locations and none provable, or none at all. It is never guessed and
+     *     never persisted as NULL.
+     *
+     * Never re-derived from the Contact afterwards.
      */
-    private function resolveLocation(BusinessEmailSendRequest $request): ?BusinessLocation
+    private function resolveLocation(BusinessEmailSendRequest $request, Contacts $contact): BusinessLocation
     {
         $business = $request->business;
 
@@ -144,8 +206,8 @@ final class BusinessEmailSender
             return $location;
         }
 
-        if ($request->contact->location_id !== null) {
-            $location = BusinessLocation::query()->find($request->contact->location_id);
+        if ($contact->location_id !== null) {
+            $location = BusinessLocation::query()->find($contact->location_id);
 
             if ($location !== null
                 && (int) $location->business_id === (int) $business->id
@@ -155,10 +217,14 @@ final class BusinessEmailSender
         }
 
         $singleId = Contacts::singleActiveLocationIdFor((int) $business->id);
+        $single = $singleId !== null ? BusinessLocation::query()->find($singleId) : null;
 
-        return $singleId !== null ? BusinessLocation::query()->find($singleId) : null;
+        if ($single === null) {
+            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::LocationRequired);
+        }
+
+        return $single;
     }
-
     private function lifecycleValue(BusinessLocation $location): string
     {
         $state = $location->lifecycle_state;
@@ -194,9 +260,10 @@ final class BusinessEmailSender
 
     private function createQueued(
         BusinessEmailSendRequest $request,
+        Contacts $contact,
         string $operationKey,
         BusinessEmailAccount $account,
-        ?BusinessLocation $location,
+        BusinessLocation $location,
         string $to,
         string $subject,
         string $body,
@@ -204,9 +271,9 @@ final class BusinessEmailSender
         try {
             return BusinessEmailMessage::create([
                 'business_id' => $request->business->id,
-                'location_id' => $location?->id,
+                'location_id' => $location->id,
                 'business_email_account_id' => $account->id,
-                'contact_id' => $request->contact->id,
+                'contact_id' => $contact->id,
                 'direction' => 'outbound',
                 'source' => $request->source->value,
                 'automation_step_run_id' => $request->automationStepRunId,
@@ -236,14 +303,13 @@ final class BusinessEmailSender
         }
     }
 
-    /** What a repeated call with an already-recorded operation key does. */
+    /**
+     * What a repeated call with an already-recorded operation key does. The
+     * request has already been proven to be the same logical request
+     * (assertSameLogicalRequest), so this only decides whether to retry.
+     */
     private function continueExisting(BusinessEmailMessage $message, BusinessEmailSendRequest $request): BusinessEmailMessage
     {
-        // The same key for a different recipient is a caller bug, not a replay.
-        if ((int) $message->contact_id !== (int) $request->contact->id) {
-            throw new BusinessEmailSendRefusedException(BusinessEmailFailureCategory::MessageInvalid);
-        }
-
         return match ($message->status) {
             BusinessEmailMessageStatus::Accepted,
             BusinessEmailMessageStatus::Unconfirmed => $message,
