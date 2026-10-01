@@ -50,8 +50,12 @@ class DocumentsController extends CustomerBaseController
         $data = $request->validate(['location_uid' => 'required|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200']);
         $location = BusinessLocation::where('business_id', $business->id)->where('uid', $data['location_uid'])->first() ?? abort(404);
         $this->location($location);
-        $contact = Contacts::where('uid', $data['contact_uid'])->first() ?? abort(404);
-        $opportunity = isset($data['opportunity_uid']) ? (CrmOpportunity::where('uid', $data['opportunity_uid'])->first() ?? abort(404)) : null;
+        // Both are looked up INSIDE this Business: a uid belonging to another
+        // Business is indistinguishable from one that does not exist (404),
+        // never a validation message that confirms it. The manager then
+        // re-derives Location/Contact/Opportunity integrity itself (§6.6).
+        $contact = Contacts::where('business_id', $business->id)->where('uid', $data['contact_uid'])->first() ?? abort(404);
+        $opportunity = isset($data['opportunity_uid']) ? (CrmOpportunity::where('business_id', $business->id)->where('uid', $data['opportunity_uid'])->first() ?? abort(404)) : null;
         $document = $this->manager->create($business, $location, $contact, $opportunity, $data['kind'], $data['title'], Auth::user());
         return redirect()->route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]);
     }
@@ -71,6 +75,9 @@ class DocumentsController extends CustomerBaseController
             'refundable' => $payments->mapWithKeys(fn (BusinessDocumentPayment $payment) => [$payment->id => $this->payments->refundableAmount($payment)]),
             'contact' => Contacts::find($document->contact_id),
             'location' => BusinessLocation::find($document->business_location_id),
+            // Proposals/e-sign: the signature evidence and the version history.
+            'signature' => $document->signature()->first(),
+            'versions' => $document->versions()->orderBy('version_number')->get(['uid', 'version_number', 'state', 'issued_at', 'superseded_at']),
             'catalogItems' => CatalogItem::where('business_id', $document->business_id)->where('lifecycle_state', 'active')->orderBy('position')->get(),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
         ]);
@@ -99,7 +106,7 @@ class DocumentsController extends CustomerBaseController
     public function send(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
     {
         $this->manager->send($this->document($workspaceUid, $businessUid, $documentUid));
-        return back();
+        return back()->with(['status' => 'success', 'message' => 'Document sent.']);
     }
 
     /**

@@ -368,6 +368,7 @@ class PaymentExecutionTest extends TestCase
         app(DocumentManager::class)->revise($document, $fixture['tenant']['customer']->user);
         [$document, $token] = $this->sendAndCaptureToken($document->refresh());
         app(DocumentManager::class)->sign($document, [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat', 'signer_email' => 'p@example.test', 'typed_name' => 'Pat',
             'ip_address' => '127.0.0.1', 'user_agent' => null,
         ]);
@@ -503,6 +504,7 @@ class PaymentExecutionTest extends TestCase
         foreach ([1, 2] as $ignored) {
             [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
             app(DocumentManager::class)->sign($document, [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
                 'signer_name' => 'Pat Rivera',
                 'signer_email' => 'pat@example.test',
                 'typed_name' => 'Pat Rivera',

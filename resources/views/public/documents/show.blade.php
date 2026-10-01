@@ -41,7 +41,9 @@
 </head>
 <body>
 <main>
-    <p class="muted">{{ $business->name }}</p>
+    {{-- Party names come from the FROZEN issued version, never the live
+         Business row: a later rename must not rewrite what was sent or signed. --}}
+    <p class="muted" data-role="issuer">{{ $parties['business_name'] }}@if($parties['business_location_name']) &middot; {{ $parties['business_location_name'] }}@endif</p>
     <h1>{{ $document->title }}</h1>
 
     @if($document->status === \App\Enums\Documents\DocumentStatus::Signed)
@@ -55,6 +57,12 @@
         <p data-role="paid-confirmation"><strong>Payment received — thank you.</strong> This was paid in full on {{ $document->paid_at?->format('j F Y') }}.</p>
     @elseif($paymentProcessing)
         <p data-role="payment-processing">Your payment is being confirmed. This page shows it as paid as soon as your bank confirms it — you do not need to pay again.</p>
+    @endif
+
+    {{-- The frozen body and terms the signer is agreeing to. Escaped, with line
+         breaks preserved by CSS; never raw HTML. --}}
+    @if($body !== null && trim($body) !== '')
+        <div data-role="terms" style="white-space:pre-wrap">{{ $body }}</div>
     @endif
 
     <table data-role="lines">
@@ -203,6 +211,9 @@
 
             <form method="POST" action="{{ route('public.documents.sign', ['uid' => $document->uid, 'token' => request()->route('token')]) }}">
                 @csrf
+                {{-- Which version this page was rendered from; the server refuses
+                     the signature if the current version is a different one. --}}
+                <input type="hidden" name="displayed_version_uid" value="{{ $version->uid }}">
                 <label for="signer_name">Your full name</label>
                 <input id="signer_name" type="text" name="signer_name" maxlength="160" value="{{ old('signer_name') }}" required>
 

@@ -62,7 +62,16 @@ class PublicDocumentController extends Controller
     {
         try {
             $access = $this->guard->resolve($uid, $token);
-            $this->guard->assertSignable($access);
+
+            // A document that already carries its signature skips the
+            // "awaiting signature" gate: a repeat of the SAME signing act is an
+            // idempotent replay that DocumentManager::sign() answers with the
+            // existing record, and anything else it refuses.
+            $alreadySigned = $access->document->signature()->exists();
+
+            if (! $alreadySigned) {
+                $this->guard->assertSignable($access);
+            }
         } catch (DocumentLinkException) {
             return $this->refusal();
         }
@@ -76,9 +85,23 @@ class PublicDocumentController extends Controller
                 'signer_name' => 'required|string|max:160',
                 'signer_email' => 'required|string|email|max:255',
                 'typed_name' => 'required|string|max:160',
+                // The version the signer's page was rendered from. It is an
+                // assertion of what was SHOWN, verified against the stored
+                // issued version — never an authority over what is signed.
+                'displayed_version_uid' => 'required|string|max:64',
             ]);
         } catch (ValidationException $e) {
             return response()->view('public.documents.show', $this->viewData($access, $e->errors()), 422);
+        }
+
+        // The owner revised and re-sent after this page was opened: re-show the
+        // CURRENT version rather than record a signature on terms the signer
+        // never saw. (A replay on an already-signed document is compared by the
+        // manager instead.)
+        if (! $alreadySigned && ! hash_equals((string) $access->version->uid, $evidence['displayed_version_uid'])) {
+            return response()->view('public.documents.show', $this->viewData($access, [
+                'document' => ['This document was updated after you opened it. Please review the current version below before signing.'],
+            ]), 422);
         }
 
         try {
@@ -86,6 +109,7 @@ class PublicDocumentController extends Controller
                 'signer_name' => $evidence['signer_name'],
                 'signer_email' => $evidence['signer_email'],
                 'typed_name' => $evidence['typed_name'],
+                'displayed_version_uid' => $evidence['displayed_version_uid'],
                 'ip_address' => (string) $request->ip(),
                 'user_agent' => $request->userAgent(),
             ]);
@@ -98,7 +122,7 @@ class PublicDocumentController extends Controller
 
         return response()->view('public.documents.signed', [
             'document' => $access->document->refresh(),
-            'business' => $access->business,
+            'parties' => $this->parties($access),
         ]);
     }
 
@@ -181,6 +205,26 @@ class PublicDocumentController extends Controller
     }
 
     /**
+     * The names printed on the document, read from the FROZEN issued version
+     * (DocumentManager::withPartiesSnapshot) so a later rename of the Business
+     * or Location never rewrites what was sent or signed. Only a version
+     * issued before that snapshot existed falls back to the live Business
+     * name. Nothing else about the tenant — no id, uid, Workspace or plan —
+     * ever reaches the page.
+     *
+     * @return array{business_name: string, business_location_name: ?string}
+     */
+    private function parties(PublicDocumentAccess $access): array
+    {
+        $frozen = is_array($access->version->content['parties'] ?? null) ? $access->version->content['parties'] : [];
+
+        return [
+            'business_name' => is_string($frozen['business_name'] ?? null) ? $frozen['business_name'] : (string) $access->business->name,
+            'business_location_name' => is_string($frozen['business_location_name'] ?? null) ? $frozen['business_location_name'] : null,
+        ];
+    }
+
+    /**
      * @param  array<string, array<int, string>>  $errors
      * @return array<string, mixed>
      */
@@ -190,7 +234,8 @@ class PublicDocumentController extends Controller
 
         return [
             'document' => $access->document,
-            'business' => $access->business,
+            'parties' => $this->parties($access),
+            'body' => is_string($version->content['body'] ?? null) ? $version->content['body'] : null,
             'version' => $version,
             'lines' => $version->lineItems()->orderBy('position')->orderBy('id')->get(),
             'schedule' => $version->paymentScheduleItems()->orderBy('sequence')->get(),

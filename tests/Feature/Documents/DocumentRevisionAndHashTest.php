@@ -175,6 +175,7 @@ class DocumentRevisionAndHashTest extends TestCase
         $tenant = $this->sendableTenant();
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant));
         app(DocumentManager::class)->sign($document, [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat', 'signer_email' => 'p@example.test', 'typed_name' => 'Pat',
             'ip_address' => '127.0.0.1', 'user_agent' => null,
         ]);
@@ -229,6 +230,7 @@ class DocumentRevisionAndHashTest extends TestCase
         $tenant = $this->sendableTenant();
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant));
         $signature = app(DocumentManager::class)->sign($document, [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat', 'signer_email' => 'p@example.test', 'typed_name' => 'Pat',
             'ip_address' => '127.0.0.1', 'user_agent' => null,
         ]);

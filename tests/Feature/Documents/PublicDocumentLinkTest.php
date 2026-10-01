@@ -239,6 +239,7 @@ class PublicDocumentLinkTest extends TestCase
         DB::table('workspaces')->where('id', $tenant['workspace']->id)->update(['is_active' => false]);
 
         $response = $this->post($this->signUrl($document, $token), [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat Rivera', 'signer_email' => 'pat@example.test', 'typed_name' => 'Pat Rivera',
         ]);
 
@@ -346,7 +347,7 @@ class PublicDocumentLinkTest extends TestCase
         $tenant = $this->sendableTenant();
         [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
 
-        $payload = ['signer_name' => 'Pat Rivera', 'signer_email' => 'pat@example.test', 'typed_name' => 'Pat Rivera'];
+        $payload = ['displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document), 'signer_name' => 'Pat Rivera', 'signer_email' => 'pat@example.test', 'typed_name' => 'Pat Rivera'];
 
         $this->post($this->signUrl($document, $token), $payload)->assertOk()->assertSee('Signature recorded');
 
@@ -359,9 +360,15 @@ class PublicDocumentLinkTest extends TestCase
         $this->assertNotSame('', $signature->ip_address);
         $this->assertSame('Pat Rivera', $signature->typed_name);
 
-        // The second attempt is a clean refusal, not a second row.
-        $this->post($this->signUrl($document, $token), $payload)->assertNotFound();
+        // The SAME act repeated (a double-click, a browser retry) replays the
+        // recorded result: same page, still exactly one row.
+        $this->post($this->signUrl($document, $token), $payload)->assertOk()->assertSee('Signature recorded');
         $this->assertSame(1, BusinessDocumentSignature::query()->count());
+
+        // A DIFFERENT act against the signed document is a clean refusal.
+        $this->post($this->signUrl($document, $token), array_merge($payload, ['typed_name' => 'Someone Else']))->assertNotFound();
+        $this->assertSame(1, BusinessDocumentSignature::query()->count());
+        $this->assertSame('Pat Rivera', BusinessDocumentSignature::query()->sole()->typed_name);
     }
 
     public function test_the_sign_endpoint_accepts_no_card_data_and_no_consent_text(): void
@@ -371,6 +378,7 @@ class PublicDocumentLinkTest extends TestCase
         [$document, $token] = $this->sendAndCaptureToken($this->draftDocument($tenant));
 
         $this->post($this->signUrl($document, $token), [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat Rivera',
             'signer_email' => 'pat@example.test',
             'typed_name' => 'Pat Rivera',

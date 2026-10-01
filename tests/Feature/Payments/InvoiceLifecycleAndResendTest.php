@@ -198,11 +198,12 @@ class InvoiceLifecycleAndResendTest extends TestCase
 
         $sent = app(DocumentManager::class)->send($draft);
 
-        try {
-            app(DocumentManager::class)->send($draft);
-            $this->fail('The second submit has no open draft left to issue.');
-        } catch (ValidationException) {
-        }
+        // The second submit has no open draft left to issue, so it is a REPLAY
+        // (Proposals lane, Contract 17A): it returns the already-sent document
+        // without a new token, a new version or a second email.
+        $replay = app(DocumentManager::class)->send($draft);
+        $this->assertSame($sent->access_token_hash, $replay->access_token_hash);
+        $this->assertSame($sent->current_version_id, $replay->current_version_id);
 
         $this->assertSame(1, $sent->versions()->where('state', 'issued')->count());
         $this->assertSame(1, $sent->versions()->count());

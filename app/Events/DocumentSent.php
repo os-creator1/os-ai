@@ -14,6 +14,13 @@ use Illuminate\Queue\SerializesModels;
  * the plaintext token, never document content. A consumer that needs more
  * reads it through the owning module (Blueprint §31).
  *
+ * IDENTITY. Every event the manager emits carries the document's own Business,
+ * Location and Contact ids, taken from the locked row and never inferred, plus
+ * a deterministic `occurrenceKey()` built from the persisted issued version —
+ * one send of one version composes one key however many times the event is
+ * replayed, which is what lets a consumer refuse a duplicate. A re-send of the
+ * link (rotating the token) is NOT a lifecycle transition and emits nothing.
+ *
  * This is a transient integration event, not an audit log (§10).
  */
 final class DocumentSent
@@ -24,6 +31,15 @@ final class DocumentSent
         public readonly int $documentId,
         public readonly int $versionId,
         public readonly int $versionNumber,
+        public readonly ?int $businessId = null,
+        public readonly ?int $businessLocationId = null,
+        public readonly ?int $contactId = null,
     ) {
+    }
+
+    /** `document_version_sent:{versionId}` — one issued version, one occurrence. */
+    public function occurrenceKey(): string
+    {
+        return 'document_version_sent:' . $this->versionId;
     }
 }

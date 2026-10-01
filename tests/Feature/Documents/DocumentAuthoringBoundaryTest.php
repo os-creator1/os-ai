@@ -25,6 +25,6 @@ final class DocumentAuthoringBoundaryTest extends TestCase
         $this->assertStringContainsString('$this->snapshots->snapshotForBusiness($documentBusiness, $item, $location, $actor, $explicitPriceMinor)', $source);
         $this->assertStringNotContainsString("DB::table('package_snapshots')", $source);
         $this->assertStringNotContainsString('CatalogItemPricingResolver', $source);
-        $this->assertStringContainsString('DB::afterCommit(fn () => DocumentVoided::dispatch($result->id))', $source);
+        $this->assertStringContainsString('DB::afterCommit(fn () => DocumentVoided::dispatch(', $source);
     }
 }
