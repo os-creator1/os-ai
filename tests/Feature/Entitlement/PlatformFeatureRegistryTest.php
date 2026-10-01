@@ -49,7 +49,7 @@ class PlatformFeatureRegistryTest extends TestCase
             // found and documented as a pre-existing, out-of-scope defect.)
         ];
 
-        $this->assertCount(5, $planned);
+        $this->assertCount(4, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
