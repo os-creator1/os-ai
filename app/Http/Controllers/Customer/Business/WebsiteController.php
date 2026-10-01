@@ -19,6 +19,7 @@ use App\Library\Website\WebsitePageStrategy;
 use App\Library\Website\WebsitePublisher;
 use App\Library\Website\WebsiteStarterDesigns;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Library\Website\Setup\QuestionnaireResolver;
 use App\Library\Website\Setup\WizardPresentationAnswers;
 use App\Library\Workspace\WorkspaceManager;
@@ -279,8 +280,20 @@ class WebsiteController extends CustomerBaseController
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+        $attributes = $this->pageAttributesFromRequest($request);
 
-        $page = $this->draftPages->createPage($website, $this->pageAttributesFromRequest($request));
+        // Independent-review correction round 5 (item 1) — this advanced,
+        // direct draft-page editor had NO lease guard at all, despite
+        // writing straight into the exact page rows a generation/rebuild
+        // deletes and recreates wholesale.
+        try {
+            $page = $this->generationCoordinator->runExclusive(
+                $website,
+                fn () => $this->draftPages->createPage($website, $attributes),
+            );
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
             'status' => 'success',
@@ -311,8 +324,21 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
+        $attributes = $this->pageAttributesFromRequest($request);
 
-        $this->draftPages->updatePage($website, $page, $this->pageAttributesFromRequest($request));
+        // Independent-review correction round 5 (item 1) — re-resolves
+        // the page UNDER the Website lock (never the pre-lock read above)
+        // and performs the write inside the SAME transaction, so a
+        // generation/rebuild that deletes-and-recreates every page can
+        // never interleave with this update.
+        try {
+            $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $attributes) {
+                $locked = $this->resolvePage($website, $pageUid);
+                $this->draftPages->updatePage($website, $locked, $attributes);
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
             'status' => 'success',
@@ -326,8 +352,16 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
         $page = $this->resolvePage($website, $pageUid);
+        $promoteUid = $request->input('promote_uid');
 
-        $this->draftPages->deletePage($website, $page, $request->input('promote_uid'));
+        try {
+            $this->generationCoordinator->runExclusive($website, function () use ($website, $pageUid, $promoteUid) {
+                $locked = $this->resolvePage($website, $pageUid);
+                $this->draftPages->deletePage($website, $locked, $promoteUid);
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
 
         return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -649,11 +683,27 @@ class WebsiteController extends CustomerBaseController
             return $demo;
         }
 
-        if ($leased = $this->leaseGuard($website)) {
-            return $leased;
-        }
+        // Independent-review correction round 5 (item 1) — the check and
+        // the mutation now share ONE Website row lock across ONE
+        // transaction (WebsiteGenerationCoordinator::runExclusive()),
+        // never a check that is released before this upload runs. A
+        // generation that acquires the lease cannot do so inside this
+        // call's own critical section; a lease already held means this
+        // call never reaches uploadService::store() at all.
+        $createdPath = null;
 
-        $this->assetUploads->store($website, $request->file('image'), $request->input('alt_text'));
+        try {
+            $this->generationCoordinator->runExclusive($website, function () use ($website, $request, &$createdPath) {
+                $asset = $this->assetUploads->store($website, $request->file('image'), $request->input('alt_text'));
+                $createdPath = $asset->path;
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            $this->deleteOrphanedAssetFiles([$createdPath]);
+
+            throw $e;
+        }
 
         return redirect()->back()->with([
             'status' => 'success',
@@ -674,16 +724,43 @@ class WebsiteController extends CustomerBaseController
             return $demo;
         }
 
-        if ($leased = $this->leaseGuard($website)) {
-            return $leased;
+        try {
+            $this->generationCoordinator->runExclusive($website, function () use ($website, $asset) {
+                $this->assetUploads->delete($website, $asset);
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
-
-        $this->assetUploads->delete($website, $asset);
 
         return redirect()->back()->with([
             'status' => 'success',
             'message' => 'Asset deleted.',
         ]);
+    }
+
+    /**
+     * Independent-review correction round 5 (item 1) — mirrors
+     * WebsiteWizardController's own helper of the same name exactly: a
+     * stored file must never survive a later failure elsewhere in the
+     * SAME outer transaction (WebsiteGenerationCoordinator::
+     * runExclusive() is the outermost transaction for storeAsset(), not
+     * merely WebsiteAssetUploadService::store()'s own unwrapped write).
+     *
+     * @param  array<int, ?string>  $paths
+     */
+    private function deleteOrphanedAssetFiles(array $paths): void
+    {
+        foreach ($paths as $path) {
+            if ($path === null) {
+                continue;
+            }
+
+            $fullPath = public_path($path);
+
+            if (is_file($fullPath)) {
+                @unlink($fullPath);
+            }
+        }
     }
 
     /**
@@ -733,37 +810,57 @@ class WebsiteController extends CustomerBaseController
             return $demo;
         }
 
-        $galleryPage = $website->pages()->where('slug', 'gallery')->first();
-        $gallerySection = $galleryPage !== null
-            ? collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')
-            : null;
-        $items = $gallerySection['data']['items'] ?? [];
+        // Independent-review correction round 5 (item 1) — this endpoint
+        // previously had NO lease guard at all, despite directly
+        // mutating draft page content (exactly the state a generation/
+        // rebuild replaces wholesale). Re-reads the gallery page/section
+        // under the SAME Website lock the write happens under, since a
+        // stale pre-lock read could otherwise describe a gallery that a
+        // concurrent mutation has since changed.
+        try {
+            $hadPhotos = $this->generationCoordinator->runExclusive($website, function () use ($website, $page) {
+                $galleryPage = $website->pages()->where('slug', 'gallery')->first();
+                $gallerySection = $galleryPage !== null
+                    ? collect($galleryPage->sections ?? [])->firstWhere('type', 'gallery')
+                    : null;
+                $items = $gallerySection['data']['items'] ?? [];
 
-        if (empty($items)) {
+                if (empty($items)) {
+                    return false;
+                }
+
+                $newSection = ['type' => 'gallery', 'data' => [
+                    'heading' => $gallerySection['data']['heading'] ?? 'Photos',
+                    'items' => $items,
+                ]];
+
+                $locked = $this->resolvePage($website, $page->uid);
+                $sections = collect($locked->sections ?? []);
+                $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
+                $index === false ? $sections->push($newSection) : $sections->put($index, $newSection);
+
+                $this->draftPages->updatePage($website, $locked, [
+                    'title' => $locked->title,
+                    'slug' => $locked->slug,
+                    'is_home' => $locked->is_home,
+                    'sections' => $sections->values()->all(),
+                    'seo_title' => $locked->seo_title,
+                    'meta_description' => $locked->meta_description,
+                    'noindex' => $locked->noindex,
+                ]);
+
+                return true;
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        if (! $hadPhotos) {
             return redirect()->back()->with([
                 'status' => 'error',
                 'message' => 'Select photos for your Gallery page first, then reuse them here.',
             ]);
         }
-
-        $newSection = ['type' => 'gallery', 'data' => [
-            'heading' => $gallerySection['data']['heading'] ?? 'Photos',
-            'items' => $items,
-        ]];
-
-        $sections = collect($page->sections ?? []);
-        $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
-        $index === false ? $sections->push($newSection) : $sections->put($index, $newSection);
-
-        $this->draftPages->updatePage($website, $page, [
-            'title' => $page->title,
-            'slug' => $page->slug,
-            'is_home' => $page->is_home,
-            'sections' => $sections->values()->all(),
-            'seo_title' => $page->seo_title,
-            'meta_description' => $page->meta_description,
-            'noindex' => $page->noindex,
-        ]);
 
         return redirect()->route('customer.workspaces.businesses.website.pages.edit', [$workspaceUid, $businessUid, $page->uid])->with([
             'status' => 'success',
@@ -788,55 +885,63 @@ class WebsiteController extends CustomerBaseController
             return $demo;
         }
 
-        if ($leased = $this->leaseGuard($website)) {
-            return $leased;
-        }
-
         $validated = validator($request->all(), [
             'asset_uids' => 'required|array|min:1|max:24',
             'asset_uids.*' => 'string',
         ])->validate();
 
-        $selectedUids = collect($validated['asset_uids'])->unique()->values();
-        $ownedCount = $website->assets()->whereIn('uid', $selectedUids)->count();
+        // Independent-review correction round 5 (item 1) — the ownership
+        // re-check and the page write both happen under the SAME Website
+        // lock, inside the SAME transaction, via runExclusive(): never a
+        // released pre-check followed by an unguarded mutation.
+        try {
+            $message = $this->generationCoordinator->runExclusive($website, function () use ($website, $validated) {
+                $selectedUids = collect($validated['asset_uids'])->unique()->values();
+                $ownedCount = $website->assets()->whereIn('uid', $selectedUids)->count();
 
-        if ($ownedCount !== $selectedUids->count()) {
-            throw ValidationException::withMessages([
-                'asset_uids' => ['One or more selected photos could not be found.'],
-            ]);
-        }
+                if ($ownedCount !== $selectedUids->count()) {
+                    throw ValidationException::withMessages([
+                        'asset_uids' => ['One or more selected photos could not be found.'],
+                    ]);
+                }
 
-        $gallerySection = ['type' => 'gallery', 'data' => [
-            'heading' => 'Gallery',
-            'items' => $selectedUids->map(fn ($uid) => ['image' => $uid])->all(),
-        ]];
+                $gallerySection = ['type' => 'gallery', 'data' => [
+                    'heading' => 'Gallery',
+                    'items' => $selectedUids->map(fn ($uid) => ['image' => $uid])->all(),
+                ]];
 
-        $existing = $website->pages()->where('slug', 'gallery')->first();
+                $existing = $website->pages()->where('slug', 'gallery')->first();
 
-        if ($existing === null) {
-            $this->draftPages->createPage($website, [
-                'title' => 'Gallery',
-                'slug' => 'gallery',
-                'is_home' => false,
-                'sections' => [$gallerySection],
-                'noindex' => true,
-            ]);
-            $message = 'Gallery page created with your selected photos.';
-        } else {
-            $sections = collect($existing->sections ?? []);
-            $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
-            $index === false ? $sections->push($gallerySection) : $sections->put($index, $gallerySection);
+                if ($existing === null) {
+                    $this->draftPages->createPage($website, [
+                        'title' => 'Gallery',
+                        'slug' => 'gallery',
+                        'is_home' => false,
+                        'sections' => [$gallerySection],
+                        'noindex' => true,
+                    ]);
 
-            $this->draftPages->updatePage($website, $existing, [
-                'title' => $existing->title,
-                'slug' => $existing->slug,
-                'is_home' => $existing->is_home,
-                'sections' => $sections->values()->all(),
-                'seo_title' => $existing->seo_title,
-                'meta_description' => $existing->meta_description,
-                'noindex' => $existing->noindex,
-            ]);
-            $message = 'Gallery page updated with your selected photos.';
+                    return 'Gallery page created with your selected photos.';
+                }
+
+                $sections = collect($existing->sections ?? []);
+                $index = $sections->search(fn ($section) => ($section['type'] ?? null) === 'gallery');
+                $index === false ? $sections->push($gallerySection) : $sections->put($index, $gallerySection);
+
+                $this->draftPages->updatePage($website, $existing, [
+                    'title' => $existing->title,
+                    'slug' => $existing->slug,
+                    'is_home' => $existing->is_home,
+                    'sections' => $sections->values()->all(),
+                    'seo_title' => $existing->seo_title,
+                    'meta_description' => $existing->meta_description,
+                    'noindex' => $existing->noindex,
+                ]);
+
+                return 'Gallery page updated with your selected photos.';
+            });
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
         }
 
         return redirect()->route('customer.workspaces.businesses.website.photos.index', [$workspaceUid, $businessUid])->with([
@@ -945,23 +1050,6 @@ class WebsiteController extends CustomerBaseController
             'meta_description' => $request->input('meta_description'),
             'noindex' => $request->boolean('noindex'),
         ];
-    }
-
-    /**
-     * Independent-review correction round 4 (item 1) — Studio's general
-     * asset endpoints (never a QuestionnaireResponse-scoped mutation, so
-     * WebsiteSetupSessionManager::runIfNotGenerating() cannot cover
-     * them) coordinate through the SAME Website-level lease.
-     */
-    private function leaseGuard(Website $website): ?RedirectResponse
-    {
-        try {
-            $this->generationCoordinator->assertNotLeased($website);
-
-            return null;
-        } catch (\App\Library\Website\Setup\Exceptions\GenerationInProgressException $e) {
-            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
-        }
     }
 
     private function demoGuard(string $workspaceUid, string $businessUid): ?RedirectResponse

@@ -29,6 +29,15 @@ use Illuminate\Support\Str;
  * then to release() — every clear is compare-and-swap, so an obsolete
  * worker (one whose lease already expired and was reclaimed) can never
  * clear a lease that is not its own.
+ *
+ * Independent-review correction round 5 — round 4's `assertNotLeased()`
+ * (a non-locking precondition check, released before the caller's own
+ * mutation ran) is REMOVED: it left a genuine check-then-mutate race
+ * where a generation could acquire the lease in the gap between the
+ * check and the write. Every caller that mutates generation inputs or
+ * draft page/media state now goes through `runExclusive()` instead,
+ * which holds the Website row lock across the ENTIRE mutation, not
+ * merely the check.
  */
 final class WebsiteGenerationCoordinator
 {
@@ -51,22 +60,7 @@ final class WebsiteGenerationCoordinator
      */
     public function beginLease(Website $website): string
     {
-        return DB::transaction(function () use ($website) {
-            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
-
-            if ($locked->generation_lease_token !== null) {
-                if (! $this->leaseExpired($locked)) {
-                    throw new GenerationInProgressException('Your website is already being generated. Please wait a moment and check back.');
-                }
-
-                // Independent-review correction round 4 — recovers ONLY
-                // the attempt THIS expired lease owns, never every
-                // pending attempt for the Website.
-                if ($locked->generation_lease_attempt_uid !== null) {
-                    $this->guidedGeneration->recoverAttemptByUid($locked->generation_lease_attempt_uid);
-                }
-            }
-
+        return $this->runExclusive($website, function (Website $locked) {
             $token = (string) Str::uuid();
 
             $locked->forceFill([
@@ -77,6 +71,103 @@ final class WebsiteGenerationCoordinator
 
             return $token;
         });
+    }
+
+    /**
+     * Independent-review correction round 5 (item 1) — THE canonical
+     * mutation boundary for anything that must never interleave with a
+     * generation/rebuild on this Website. Round 4's `assertNotLeased()`
+     * took and released the Website row lock BEFORE the caller performed
+     * its own mutation, leaving a genuine gap: a generation could acquire
+     * the lease in between the check and the write. This replaces that
+     * pattern entirely — the check and the mutation now share ONE lock,
+     * held across ONE transaction:
+     *
+     *   - locks the Website row;
+     *   - resolves lease state (refuses for a genuinely active lease;
+     *     recovers and clears an EXPIRED one before proceeding — see
+     *     resolveLeaseState(), the one place this decision is made);
+     *   - runs $callback with that SAME lock still held, inside the SAME
+     *     transaction.
+     *
+     * A concurrent beginLease() call for this Website genuinely BLOCKS on
+     * MySQL's own row lock until this transaction commits or rolls back
+     * — it can never interleave with $callback's own writes. Conversely,
+     * a mutation that arrives after generation has already committed its
+     * lease genuinely refuses here, before $callback ever runs, never
+     * after.
+     *
+     * $callback receives the LOCKED Website row and must perform its
+     * ENTIRE mutation inside the closure for this guarantee to hold —
+     * any database write belongs inside it. A filesystem write (e.g. an
+     * asset upload) may still happen inside the closure too; if the
+     * closure or the outer transaction later throws, the caller is
+     * responsible for its own compensation (deleting an orphaned file)
+     * exactly as the existing upload endpoints already do for their own
+     * inner transactions.
+     *
+     * @template TReturn
+     *
+     * @param  \Closure(Website): TReturn  $callback
+     * @return TReturn
+     *
+     * @throws GenerationInProgressException
+     */
+    public function runExclusive(Website $website, \Closure $callback): mixed
+    {
+        return DB::transaction(function () use ($website, $callback) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+            $this->resolveLeaseState($locked);
+
+            return $callback($locked);
+        });
+    }
+
+    /**
+     * Independent-review correction round 5 (item 2) — the ONE place
+     * "is this lease still active" is decided, so no caller (previously
+     * WebsiteSetupSessionManager::runIfNotGenerating()/beginEdit(), which
+     * each separately and incorrectly checked only
+     * `generation_lease_token !== null`, never expiry) can invent its own
+     * definition of stale and permanently block on a crashed generation.
+     *
+     * Must be called with $locked already SELECT...FOR UPDATE'd by the
+     * caller, inside the same transaction that will go on to mutate.
+     *
+     * @throws GenerationInProgressException
+     */
+    private function resolveLeaseState(Website $locked): void
+    {
+        if ($locked->generation_lease_token === null) {
+            return;
+        }
+
+        if (! $this->leaseExpired($locked)) {
+            throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
+        }
+
+        // Independent-review correction round 4 — recovers ONLY the
+        // attempt THIS expired lease owns, never every pending attempt
+        // for the Website.
+        if ($locked->generation_lease_attempt_uid !== null) {
+            $this->guidedGeneration->recoverAttemptByUid($locked->generation_lease_attempt_uid);
+        }
+
+        // Independent-review correction round 5 (item 2) — the expired
+        // lease is explicitly cleared here, under this SAME row lock, so
+        // a crashed generation can never permanently freeze setup/Studio
+        // mutations behind a lease nothing will ever come back to
+        // release. Clearing it (rather than merely treating it as
+        // "expired, so ignore it") also means the ORIGINAL worker's own
+        // later release()/commit still only ever matches by exact token
+        // — this row no longer carries that token, so both remain safe,
+        // fenced no-ops.
+        $locked->forceFill([
+            'generation_lease_token' => null,
+            'generation_lease_started_at' => null,
+            'generation_lease_attempt_uid' => null,
+        ])->save();
     }
 
     /**
@@ -97,28 +188,6 @@ final class WebsiteGenerationCoordinator
                 'generation_lease_started_at' => null,
                 'generation_lease_attempt_uid' => null,
             ]);
-    }
-
-    /**
-     * A non-locking precondition guard for mutation endpoints that are
-     * not themselves part of the generate/rebuild flow (e.g. Studio's
-     * general asset upload/delete) — refuses while a lease is active and
-     * not yet expired. Short-lived by design: the lock is released
-     * before this returns, so callers needing a stronger guarantee
-     * should hold their OWN lock across both this check and their
-     * mutation (see WebsiteSetupSessionManager::runIfNotGenerating()).
-     *
-     * @throws GenerationInProgressException
-     */
-    public function assertNotLeased(Website $website): void
-    {
-        DB::transaction(function () use ($website) {
-            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
-
-            if ($locked->generation_lease_token !== null && ! $this->leaseExpired($locked)) {
-                throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
-            }
-        });
     }
 
     private function leaseExpired(Website $locked): bool

@@ -3,6 +3,7 @@
 namespace App\Library\Website\Setup;
 
 use App\Enums\Questionnaire\QuestionnaireResponseStatus;
+use App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator;
 use App\Library\Website\Setup\Exceptions\AnswerRevisionConflictException;
 use App\Library\Website\Setup\Exceptions\GenerationInProgressException;
 use App\Models\Business;
@@ -44,6 +45,7 @@ final class WebsiteSetupSessionManager
 
     public function __construct(
         private readonly QuestionnaireStepResolver $stepResolver,
+        private readonly WebsiteGenerationCoordinator $generationCoordinator,
     ) {
     }
 
@@ -52,31 +54,44 @@ final class WebsiteSetupSessionManager
      * section uploads, template swap, back-navigation, answer edits)
      * shares. Independent-review correction round 4 (item 1) — locks the
      * WEBSITE row FIRST (same row WebsiteGenerationCoordinator leases),
-     * refuses while that lease is genuinely active, THEN locks the
-     * response row and runs `$callback` with BOTH locks still held — so a
-     * concurrent generate() call, whether wizard- or Studio-originated
-     * (both acquire the identical Website lease), can never interleave
-     * with this mutation's own writes, and this mutation can never
-     * silently race a lease that is acquired a moment later (the website
-     * row lock is held for the whole transaction, not merely checked
-     * once up front). Never stores an uploaded file or writes anything
-     * before this check passes. Lock order (Website, then
-     * QuestionnaireResponse) is fixed everywhere this is called, so two
-     * callers can never deadlock against each other.
+     * THEN locks the response row and runs `$callback` with BOTH locks
+     * still held — so a concurrent generate() call, whether wizard- or
+     * Studio-originated (both acquire the identical Website lease), can
+     * never interleave with this mutation's own writes, and this
+     * mutation can never silently race a lease that is acquired a moment
+     * later (the website row lock is held for the whole transaction, not
+     * merely checked once up front). Never stores an uploaded file or
+     * writes anything before this check passes. Lock order (Website,
+     * then QuestionnaireResponse) is fixed everywhere this is called, so
+     * two callers can never deadlock against each other.
+     *
+     * Independent-review correction round 5 (item 2) — the Website-lock-
+     * and-refuse-while-leased half of this is now delegated entirely to
+     * WebsiteGenerationCoordinator::runExclusive(), the one place lease
+     * expiry is decided. This method used to check only
+     * `generation_lease_token !== null` itself, with no expiry check at
+     * all — a crashed generation's lease (its token left set forever,
+     * since nothing was left running to call release()) permanently
+     * blocked every setup mutation until some LATER generation attempt
+     * happened to reclaim and then release it. runExclusive() instead
+     * recovers and clears a genuinely EXPIRED lease before proceeding,
+     * while still refusing immediately for a genuinely active one.
      *
      * @throws GenerationInProgressException
      */
     public function runIfNotGenerating(QuestionnaireResponse $response, \Closure $callback): mixed
     {
-        return DB::transaction(function () use ($response, $callback) {
-            if ($response->website_id !== null) {
-                $website = Website::whereKey($response->website_id)->lockForUpdate()->first();
+        if ($response->website_id === null) {
+            return DB::transaction(function () use ($response, $callback) {
+                $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
-                if ($website !== null && $website->generation_lease_token !== null) {
-                    throw new GenerationInProgressException('Your website is currently being generated — changes cannot be made until it finishes.');
-                }
-            }
+                return $callback($locked);
+            });
+        }
 
+        $website = Website::findOrFail($response->website_id);
+
+        return $this->generationCoordinator->runExclusive($website, function () use ($response, $callback) {
             $locked = QuestionnaireResponse::whereKey($response->id)->lockForUpdate()->firstOrFail();
 
             return $callback($locked);
@@ -327,20 +342,14 @@ final class WebsiteSetupSessionManager
             throw new DomainException('Only a completed setup session can be reopened for editing.');
         }
 
-        return DB::transaction(function () use ($completed) {
-            // Independent-review correction round 4 (item 1) — edit-
-            // session OPENING coordinates through the same Website lock:
-            // a generation (wizard- or Studio-originated) already in
-            // flight must never have its own facts yanked out from under
-            // it by a freshly reopened edit session.
-            if ($completed->website_id !== null) {
-                $website = Website::whereKey($completed->website_id)->lockForUpdate()->first();
-
-                if ($website !== null && $website->generation_lease_token !== null) {
-                    throw new GenerationInProgressException('Your website is currently being generated — try again once it finishes.');
-                }
-            }
-
+        // Independent-review correction round 4 (item 1) / round 5 (item
+        // 2) — edit-session OPENING coordinates through the same Website
+        // lock, via the same runExclusive()/resolveLeaseState() path
+        // every other setup mutation now uses: a generation already in
+        // flight must never have its own facts yanked out from under it,
+        // but a merely CRASHED one (expired lease, nothing left to
+        // release it) must never permanently block reopening either.
+        $open = function () use ($completed) {
             $locked = QuestionnaireResponse::whereKey($completed->id)->lockForUpdate()->firstOrFail();
 
             $firstStepKey = $this->stepResolver->firstStepKey($locked->version->steps(), $locked->answers ?? []);
@@ -353,7 +362,15 @@ final class WebsiteSetupSessionManager
             ])->save();
 
             return $locked->refresh();
-        });
+        };
+
+        if ($completed->website_id === null) {
+            return DB::transaction($open);
+        }
+
+        $website = Website::findOrFail($completed->website_id);
+
+        return $this->generationCoordinator->runExclusive($website, $open);
     }
 
     /**

@@ -578,6 +578,91 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertSee($firstAssetPath, false);
     }
 
+    /**
+     * Independent-review correction round 5 (item 2) — a CRASHED
+     * generation (its lease token left set forever, since nothing was
+     * left running to call release()) must never permanently block
+     * autosave. WebsiteSetupSessionManager::runIfNotGenerating() used to
+     * check only `generation_lease_token !== null`, with no expiry check
+     * at all — this proves the fix: once the lease's own LEASE_SECONDS
+     * window has passed, autosave succeeds immediately, without needing
+     * some later, unrelated generation attempt to happen to reclaim and
+     * release it first.
+     */
+    public function test_an_expired_crashed_lease_never_permanently_blocks_autosave(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        // Simulates a worker that crashed mid-generation: the lease token
+        // is still set, but its own window expired long ago, and nothing
+        // is left running to ever call release().
+        $website->forceFill([
+            'generation_lease_token' => (string) \Illuminate\Support\Str::uuid(),
+            'generation_lease_started_at' => now()->subSeconds(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::LEASE_SECONDS + 60),
+        ])->save();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.autosave', [$workspace->uid, $business->uid, 'business_name']), [
+            'value' => 'Recovered After Crash',
+            'answers_revision' => 1,
+        ])->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'phone']));
+
+        $response = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame('Recovered After Crash', $response->answer('business_name'));
+        $this->assertNull($website->fresh()->generation_lease_token, 'The expired crashed lease must be cleared, not merely bypassed.');
+    }
+
+    /**
+     * Independent-review correction round 5 (item 2) — the same recovery
+     * for the gallery/custom-section upload endpoints, which also route
+     * through runIfNotGenerating(). A crashed generation must never
+     * permanently block uploading a photo either.
+     */
+    public function test_an_expired_crashed_lease_never_permanently_blocks_gallery_or_custom_section_uploads(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern']);
+        $website = Website::where('business_id', $business->id)->sole();
+
+        $website->forceFill([
+            'generation_lease_token' => (string) \Illuminate\Support\Str::uuid(),
+            'generation_lease_started_at' => now()->subSeconds(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::LEASE_SECONDS + 60),
+        ])->save();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.gallery.upload', [$workspace->uid, $business->uid]), [
+            'photos' => [$this->fakeImageUpload('recovered.png')],
+        ])->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'gallery']));
+
+        $this->assertSame(1, $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)->count());
+        $this->assertNull($website->fresh()->generation_lease_token);
+
+        // Re-expire it again (the gallery upload above already cleared
+        // and, since it never itself re-leases, left it null — re-set it
+        // to prove the custom-section endpoint recovers independently
+        // too, not merely because the gallery call happened to run
+        // first). Refreshed first: this PHP object's own `original` is
+        // stale after the coordinator's separate, direct-query clear
+        // during the gallery call above, which would otherwise make
+        // Eloquent believe `generation_lease_started_at` is unchanged
+        // from its own first forceFill() and silently skip persisting it.
+        $website->refresh()->forceFill([
+            'generation_lease_token' => (string) \Illuminate\Support\Str::uuid(),
+            'generation_lease_started_at' => now()->subSeconds(\App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator::LEASE_SECONDS + 60),
+        ])->save();
+
+        $this->post(route('customer.workspaces.businesses.website.setup.custom-section.upload', [$workspace->uid, $business->uid]), [
+            'photo' => $this->fakeImageUpload('recovered-custom.png'),
+        ])->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'custom_section']));
+
+        $this->assertSame(1, $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::CustomSection->value)->count());
+        $this->assertNull($website->fresh()->generation_lease_token);
+    }
+
     public function test_a_gallery_collection_at_the_documented_threshold_enables_the_gallery_page(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

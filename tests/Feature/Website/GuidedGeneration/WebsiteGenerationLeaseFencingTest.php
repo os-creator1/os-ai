@@ -27,7 +27,7 @@ use Tests\TestCase;
  * still held by a slow caller), then proving the coordinator and
  * GuidedGenerationCommitService refuse to act on that stale token. This is
  * what actually exercises the CAS comparisons in
- * WebsiteGenerationCoordinator::beginLease()/release()/assertNotLeased()
+ * WebsiteGenerationCoordinator::beginLease()/release()/runExclusive()
  * and GuidedGenerationCommitService::run()/generateValidateAndCommit() —
  * a real two-process race would only ever land in one of these same
  * states, nondeterministically. True process-level concurrency (exactly
@@ -279,19 +279,44 @@ class WebsiteGenerationLeaseFencingTest extends TestCase
         $this->assertSame(count($plan), $website->pages()->count());
     }
 
-    public function test_assert_not_leased_blocks_while_leased_and_passes_once_released(): void
+    /**
+     * Independent-review correction round 5 (item 1) — replaces the old
+     * assertNotLeased() test: that method (a check released before the
+     * caller's own mutation ran) is removed entirely in favor of
+     * runExclusive(), which holds the Website lock across the whole
+     * mutation. Proves the refusal side still works, AND that the
+     * supplied callback never runs at all for a genuinely active lease
+     * — never a check that passes and then lets a doomed mutation start.
+     */
+    public function test_run_exclusive_refuses_while_actively_leased_and_never_runs_the_callback(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $coordinator = app(WebsiteGenerationCoordinator::class);
 
-        $token = $coordinator->beginLease($website);
+        $coordinator->beginLease($website);
 
-        $this->expectException(GenerationInProgressException::class);
-        $coordinator->assertNotLeased($website);
+        $callbackRan = false;
+
+        try {
+            $coordinator->runExclusive($website, function () use (&$callbackRan) {
+                $callbackRan = true;
+            });
+            $this->fail('Expected GenerationInProgressException.');
+        } catch (GenerationInProgressException) {
+            // Expected.
+        }
+
+        $this->assertFalse($callbackRan, 'The mutation callback must never run while a lease is genuinely active.');
     }
 
-    public function test_assert_not_leased_passes_once_the_lease_is_expired(): void
+    /**
+     * Independent-review correction round 5 (item 2) — an EXPIRED lease
+     * must never refuse runExclusive(): the callback must genuinely run,
+     * under the same lock, and the expired lease must be cleared by the
+     * time it does.
+     */
+    public function test_run_exclusive_recovers_an_expired_lease_and_runs_the_callback(): void
     {
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
@@ -302,9 +327,14 @@ class WebsiteGenerationLeaseFencingTest extends TestCase
             'generation_lease_started_at' => now()->subSeconds(WebsiteGenerationCoordinator::LEASE_SECONDS + 1),
         ]);
 
-        // Must not throw.
-        $coordinator->assertNotLeased($website);
-        $this->assertTrue(true);
+        $sawClearedLease = false;
+
+        $coordinator->runExclusive($website, function (Website $locked) use (&$sawClearedLease) {
+            $sawClearedLease = $locked->generation_lease_token === null;
+        });
+
+        $this->assertTrue($sawClearedLease, 'The expired lease must already be cleared by the time the callback runs.');
+        $this->assertNull($website->fresh()->generation_lease_token);
     }
 
     private function completedResponseFor(\App\Models\Business $business, Website $website): QuestionnaireResponse
