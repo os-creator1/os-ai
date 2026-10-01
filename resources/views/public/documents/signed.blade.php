@@ -20,7 +20,7 @@
 <main>
     <h1>Signature recorded</h1>
     <p>Thank you. Your typed signature for &ldquo;{{ $document->title }}&rdquo; was recorded on {{ $document->signed_at?->format('j F Y') }}.</p>
-    <p>{{ $business->name }} has been notified. You can close this page.</p>
+    <p>{{ $parties['business_name'] }} has been notified. You can close this page.</p>
 </main>
 </body>
 </html>

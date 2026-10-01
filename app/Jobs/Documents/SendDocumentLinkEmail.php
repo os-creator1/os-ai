@@ -8,8 +8,10 @@ use App\Models\BusinessDocument;
 use App\Notifications\Documents\DocumentIssuedNotification;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Throwable;
 
 /**
  * Implementation Contract 17 §11.3 / §7.1 — delivery of the secure link.
@@ -40,6 +42,15 @@ use Illuminate\Support\Facades\Notification;
  * and never touches quickSend(), ManagedMessageDispatcher, the wallet or any
  * messaging/metering path (§11.3).
  *
+ * DELIVERY IS RECORDED, HONESTLY. `status = sent` says the draft was frozen and a
+ * link minted; it cannot say the email reached the provider. This job writes
+ * that second fact — `link_delivered_at` on success, `link_delivery_failed_at`
+ * on failure (failed()) — but ONLY against the link whose token it carries: a
+ * link that has since been rotated is neither emailed nor recorded, because the
+ * token it holds is already dead and the newer send owns the outcome. A failure
+ * never un-sends the document; the owner sees it and re-sends the link
+ * (DocumentManager::resendLink()).
+ *
  * Inherits Base's $tries = 1 / $maxExceptions = 1: a delivery failure is
  * resolved by the owner re-sending the document — which rotates the token —
  * never by a silent retry that could race that rotation.
@@ -58,6 +69,14 @@ class SendDocumentLinkEmail extends Base implements ShouldQueueAfterCommit, Shou
 
         if ($document === null) {
             Log::warning('Document link email skipped: document no longer exists.', ['document_id' => $this->documentId]);
+
+            return;
+        }
+
+        // A rotated or revoked link is dead: emailing its token would hand the
+        // recipient a link that already refuses them.
+        if (! self::holdsCurrentLink($document, $this->plaintextToken)) {
+            Log::warning('Document link email skipped: the link was rotated or revoked.', ['document_id' => $this->documentId]);
 
             return;
         }
@@ -83,5 +102,50 @@ class SendDocumentLinkEmail extends Base implements ShouldQueueAfterCommit, Shou
             (string) $document->title,
             (bool) $document->requires_signature,
         ));
+
+        self::recordOutcome($this->documentId, $this->plaintextToken, true);
+    }
+
+    /**
+     * The queue worker (or the synchronous queue) calls this when handle()
+     * throws or the job times out. Logs the exception CLASS only: the message
+     * of a mail-transport failure is not ours to vouch for, and the token must
+     * never reach a log or `failed_jobs` in readable form.
+     */
+    public function failed(Throwable $exception): void
+    {
+        Log::warning('Document link email failed.', [
+            'document_id' => $this->documentId,
+            'exception' => $exception::class,
+        ]);
+
+        self::recordOutcome($this->documentId, $this->plaintextToken, false);
+    }
+
+    /**
+     * Writes the delivery fact for the link whose plaintext token is given —
+     * and for no other. The token is checked against the stored hash, so a
+     * stale job can never overwrite the outcome of a newer send.
+     */
+    public static function recordOutcome(int $documentId, string $plaintextToken, bool $delivered): void
+    {
+        $document = BusinessDocument::query()->find($documentId);
+
+        if ($document === null || ! self::holdsCurrentLink($document, $plaintextToken)) {
+            return;
+        }
+
+        BusinessDocument::query()->whereKey($documentId)
+            ->where('access_token_hash', $document->access_token_hash)
+            ->update($delivered
+                ? ['link_delivered_at' => now(), 'link_delivery_failed_at' => null]
+                : ['link_delivered_at' => null, 'link_delivery_failed_at' => now()]);
+    }
+
+    private static function holdsCurrentLink(BusinessDocument $document, string $plaintextToken): bool
+    {
+        $hash = $document->access_token_hash;
+
+        return is_string($hash) && $hash !== '' && Hash::check($plaintextToken, $hash);
     }
 }

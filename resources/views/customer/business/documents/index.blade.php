@@ -11,14 +11,18 @@
         <label>Type <select name="kind" required><option value="proposal">Proposal</option><option value="invoice">Invoice</option></select></label>
         <label>Title <input name="title" required maxlength="200"></label>
         <label>Location <select name="location_uid" required>@foreach($locations as $location)<option value="{{ $location->uid }}">{{ $location->name }}</option>@endforeach</select></label>
-        <label>Customer <select name="contact_uid" required>@foreach($contacts as $contact)<option value="{{ $contact->uid }}">{{ $contact->phone }} (Location {{ $contact->location_id }})</option>@endforeach</select></label>
+        <label>Customer <select name="contact_uid" required>@foreach($contacts as $contact)<option value="{{ $contact->uid }}">{{ $contact->phone }} ({{ optional($locations->firstWhere("id", $contact->location_id))->name }})</option>@endforeach</select></label>
         <label>Opportunity (optional) <select name="opportunity_uid"><option value="">None</option>@foreach($opportunities as $opportunity)<option value="{{ $opportunity->uid }}">{{ $opportunity->title }}</option>@endforeach</select></label>
         <button class="btn btn-primary" type="submit">Create draft</button>
     </form>
 </div>
 <div class="card p-2">
     @forelse($documents as $document)
-        <p><a href="{{ route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]) }}">{{ $document->title }}</a> — {{ $document->kind->value }} — {{ $document->status->value }}@if($document->businessLocation) — {{ $document->businessLocation->name }}@endif @if($document->currentVersion) — {{ number_format($document->currentVersion->total_minor / 100, 2) }} {{ $document->currentVersion->currency_code }}@endif @if($document->paid_at) — paid {{ $document->paid_at->format('j M Y') }}@endif</p>
+        <p><a href="{{ route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]) }}">{{ $document->title }}</a> — {{ $document->kind->value }} — {{ $document->status->value }}@if($document->businessLocation) — {{ $document->businessLocation->name }}@endif
+            @if($document->currentVersion) — {{ number_format($document->currentVersion->total_minor / 100, 2) }} {{ $document->currentVersion->currency_code }} @endif
+            @if($document->sent_at) — sent {{ $document->sent_at->format('j M Y') }} @endif
+            @if($document->signed_at) — signed {{ $document->signed_at->format('j M Y') }} @endif
+            @if($document->paid_at) — paid {{ $document->paid_at->format('j M Y') }} @endif</p>
     @empty<p>No documents yet.</p>@endforelse
     {{ $documents->links() }}
 </div>

@@ -141,7 +141,7 @@ class DocumentSendUiTest extends TestCase
         $this->assertSame('draft', $document->fresh()->status->value);
     }
 
-    public function test_an_already_sent_document_cannot_be_sent_again_without_first_revising(): void
+    public function test_a_second_send_of_an_already_sent_document_is_an_idempotent_replay(): void
     {
         $bundle = $this->activeBundle();
         $document = $this->draftDocumentViaHttp($bundle);
@@ -155,14 +155,18 @@ class DocumentSendUiTest extends TestCase
         $sentAt = $document->fresh()->sent_at;
         $this->assertSame('sent', $document->fresh()->status->value);
 
-        // The lifecycle rule DocumentSendAndSignTest pins at the manager
-        // level holds through the UI too: no open draft version remains, so
-        // a second Send is refused rather than silently re-freezing anything.
-        $this->post($this->url($bundle, '/'.$document->uid.'/send'))->assertSessionHasErrors();
+        // A browser retry / double-click: no open draft version remains, so the
+        // second Send is a REPLAY — it succeeds without error, mints no new
+        // link, emails nobody again and re-freezes nothing.
+        $hash = $document->fresh()->access_token_hash;
+        Notification::fake();
+        $this->post($this->url($bundle, '/'.$document->uid.'/send'))->assertRedirect()->assertSessionHasNoErrors();
+        Notification::assertNothingSent();
 
         $document = $document->fresh();
         $this->assertSame('sent', $document->status->value);
         $this->assertSame($sentAt->toDateTimeString(), $document->sent_at->toDateTimeString());
+        $this->assertSame($hash, $document->access_token_hash, 'A replayed send must not rotate the link.');
     }
 
     public function test_signing_the_ui_sent_document_still_locks_it_against_a_second_signature(): void
@@ -189,6 +193,7 @@ class DocumentSendUiTest extends TestCase
         $document = $document->fresh();
 
         $this->post($this->signUrl($document, $token), [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat Rivera',
             'signer_email' => 'pat@example.test',
             'typed_name' => 'Pat Rivera',

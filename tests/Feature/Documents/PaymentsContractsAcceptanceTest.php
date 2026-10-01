@@ -90,6 +90,7 @@ class PaymentsContractsAcceptanceTest extends TestCase
             ->assertSee('Kitchen renovation proposal');
 
         $this->post($this->signUrl($document, (string) $token), [
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat Rivera',
             'signer_email' => 'pat@example.test',
             'typed_name' => 'Pat Rivera',

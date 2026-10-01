@@ -64,6 +64,8 @@ class BusinessDocument extends Model
         'expires_at' => 'datetime',
         'access_token_expires_at' => 'datetime',
         'access_token_rotated_at' => 'datetime',
+        'link_delivered_at' => 'datetime',
+        'link_delivery_failed_at' => 'datetime',
         'expiry_reminder_last_sent_at' => 'datetime',
     ];
 

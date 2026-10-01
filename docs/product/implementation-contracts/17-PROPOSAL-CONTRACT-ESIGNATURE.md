@@ -1,6 +1,13 @@
 # Implementation Contract 17 — Proposal / Contract / E-Signature / Invoice
 
 **Status:** Planning contract only. Does not authorize implementation.
+
+> **Amended by [17A](./17A-PROPOSALS-CONTRACTS-ESIGN-V1-COMPLETION.md)** (V1
+> completion pass): send and sign are now idempotent replays rather than
+> refusals, a signature binds the version that was displayed, the issued
+> content freezes the party names, link delivery is recorded and re-sendable,
+> and the lifecycle events carry Business/Location/Contact identity. Where 17A
+> and §5.2, §5.3.1, §5.5, §7.1 or §10 below disagree, 17A governs.
 Recon was performed against `main` @ `30ad21c7`; §3.7 records what has
 changed on `main` since, without rewriting the dated evidence. Seven
 dependency-ordered sub-slices (§12/§18, A–G) implement this contract;

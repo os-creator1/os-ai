@@ -297,9 +297,10 @@ class DocumentSendAndSignTest extends TestCase
     // Sign
     // -----------------------------------------------------------------
 
-    private function evidence(array $overrides = []): array
+    private function evidence(\App\Models\BusinessDocument $document, array $overrides = []): array
     {
         return array_merge([
+            'displayed_version_uid' => \Tests\Support\Documents\ShownVersion::uid($document),
             'signer_name' => 'Pat Rivera',
             'signer_email' => 'pat@example.test',
             'typed_name' => 'Pat Rivera',
@@ -314,7 +315,7 @@ class DocumentSendAndSignTest extends TestCase
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant));
         $version = BusinessDocumentVersion::findOrFail($document->current_version_id);
 
-        $signature = app(DocumentManager::class)->sign($document, $this->evidence());
+        $signature = app(DocumentManager::class)->sign($document, $this->evidence($document));
 
         $this->assertSame((int) $version->id, (int) $signature->business_document_version_id);
         $this->assertSame($version->content_hash, $signature->signed_content_hash);
@@ -333,7 +334,7 @@ class DocumentSendAndSignTest extends TestCase
         $tenant = $this->sendableTenant();
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant, ['recipient' => 'office@example.test']));
 
-        $signature = app(DocumentManager::class)->sign($document, $this->evidence(['signer_email' => 'owner@example.test']));
+        $signature = app(DocumentManager::class)->sign($document, $this->evidence($document, ['signer_email' => 'owner@example.test']));
 
         $this->assertSame('office@example.test', $document->refresh()->recipient_email_snapshot);
         $this->assertSame('owner@example.test', $signature->signer_email);
@@ -343,10 +344,10 @@ class DocumentSendAndSignTest extends TestCase
     {
         $tenant = $this->sendableTenant();
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant));
-        app(DocumentManager::class)->sign($document, $this->evidence());
+        app(DocumentManager::class)->sign($document, $this->evidence($document));
 
         try {
-            app(DocumentManager::class)->sign($document->refresh(), $this->evidence(['typed_name' => 'Someone Else']));
+            app(DocumentManager::class)->sign($document->refresh(), $this->evidence($document, ['typed_name' => 'Someone Else']));
             $this->fail('A second signature must be refused.');
         } catch (ValidationException $e) {
             $this->assertStringContainsString('already been signed', implode(' ', $e->errors()['document']));
@@ -362,7 +363,7 @@ class DocumentSendAndSignTest extends TestCase
         $tenant = $this->sendableTenant();
         [$document] = $this->sendAndCaptureToken($this->draftDocument($tenant));
 
-        app(DocumentManager::class)->sign($document, $this->evidence());
+        app(DocumentManager::class)->sign($document, $this->evidence($document));
 
         Event::assertDispatched(DocumentSigned::class, function (DocumentSigned $event) {
             $payload = json_encode(get_object_vars($event));
@@ -380,7 +381,7 @@ class DocumentSendAndSignTest extends TestCase
 
         $this->assertFalse((bool) $document->requires_signature);
         $this->expectException(ValidationException::class);
-        app(DocumentManager::class)->sign($document, $this->evidence());
+        app(DocumentManager::class)->sign($document, $this->evidence($document));
     }
 
     public function test_an_expired_offer_cannot_be_signed(): void
@@ -390,7 +391,7 @@ class DocumentSendAndSignTest extends TestCase
         DB::table('business_documents')->where('id', $document->id)->update(['expires_at' => now()->subDay()]);
 
         $this->expectException(ValidationException::class);
-        app(DocumentManager::class)->sign($document->refresh(), $this->evidence());
+        app(DocumentManager::class)->sign($document->refresh(), $this->evidence($document));
     }
 
     public function test_malformed_signature_evidence_is_refused_and_writes_nothing(): void
@@ -400,7 +401,7 @@ class DocumentSendAndSignTest extends TestCase
 
         foreach ([['typed_name' => ''], ['signer_name' => ''], ['signer_email' => 'not-an-email']] as $bad) {
             try {
-                app(DocumentManager::class)->sign($document->refresh(), $this->evidence($bad));
+                app(DocumentManager::class)->sign($document->refresh(), $this->evidence($document, $bad));
                 $this->fail('Malformed evidence must be refused.');
             } catch (ValidationException) {
                 // expected

@@ -125,23 +125,44 @@ final class DocumentManager
      *
      * The plaintext token is generated BEFORE the transaction and never
      * stored: only Hash::make()'s value reaches `access_token_hash`, exactly
-     * as ClientInvitationManager does. Re-sending ROTATES the token, which
-     * invalidates every previously issued link immediately (§5.2).
+     * as ClientInvitationManager does. Re-sending a REVISED version ROTATES
+     * the token, which invalidates every previously issued link immediately
+     * (§5.2).
+     *
+     * IDEMPOTENT. A second send of a document that is already `sent` and has
+     * no open draft version — a double-clicked button, a browser retry, a
+     * concurrent second request that queued behind the first on the row lock —
+     * is a REPLAY: it returns the document unchanged, mints no new token,
+     * supersedes nothing, queues no second email and emits no second
+     * DocumentSent. Only a genuine draft (the first send, or a revision's
+     * send) makes a transition. Every other state is refused by the one
+     * transition map (DocumentStatus::allowedTransitions()).
      *
      * Delivery is dispatched strictly AFTER commit — a recipient must never
-     * be emailed a link for a row a later failure rolled back.
+     * be emailed a link for a row a later failure rolled back — and a delivery
+     * failure NEVER fails or un-sends the document: it is recorded on
+     * `link_delivery_failed_at` and the owner re-sends the link
+     * (resendLink()).
      */
     public function send(BusinessDocument $document): BusinessDocument
     {
         $plaintextToken = Str::random(64);
+        $replayed = false;
 
-        $result = DB::transaction(function () use ($document, $plaintextToken) {
+        $result = DB::transaction(function () use ($document, $plaintextToken, &$replayed) {
             $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
-            $this->require(in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Sent], true), 'Only a draft or sent document can be sent.');
-            $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'The document offer has already expired.');
+            $this->assertTransition($document, DocumentStatus::Sent, 'Only a draft or sent document can be sent.');
 
             $version = BusinessDocumentVersion::where('business_document_id', $document->id)
                 ->where('state', DocumentVersionState::Draft->value)->lockForUpdate()->first();
+
+            if ($version === null && $document->status === DocumentStatus::Sent && $document->current_version_id !== null) {
+                $replayed = true;
+
+                return $document;
+            }
+
+            $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'The document offer has already expired.');
             $this->require($version !== null, 'No open draft version.');
 
             $lines = $version->lineItems()->get();
@@ -179,6 +200,10 @@ final class DocumentManager
                 $old->save();
             }
 
+            // The party names the signer is shown are frozen INTO the content
+            // before it is hashed, so the signed record can never be re-read
+            // through a later Business / Location / Contact rename.
+            $version->content = $this->withPartiesSnapshot($document, is_array($version->content) ? $version->content : []);
             $version->content_hash = $this->hasher->hash($version);
             $version->state = DocumentVersionState::Issued;
             $version->issued_at = now();
@@ -189,12 +214,18 @@ final class DocumentManager
             $document->access_token_expires_at = $document->expires_at
                 ?? now()->addDays((int) config('documents.link_ttl_days'));
             $document->access_token_rotated_at = now();
+            $document->link_delivered_at = null;
+            $document->link_delivery_failed_at = null;
             $document->status = DocumentStatus::Sent;
             $document->sent_at = $document->sent_at ?? now();
             $document->save();
 
             return $document->refresh();
         });
+
+        if ($replayed) {
+            return $result;
+        }
 
         $version = BusinessDocumentVersion::findOrFail($result->current_version_id);
 
@@ -210,9 +241,16 @@ final class DocumentManager
         // connection here is `database`, so an unencrypted payload would sit
         // in `jobs`, and in `failed_jobs` indefinitely on any failure.
         DB::afterCommit(function () use ($result, $version, $plaintextToken) {
-            SendDocumentLinkEmail::dispatch((int) $result->id, $plaintextToken);
+            $this->dispatchLinkEmail($result, $plaintextToken);
 
-            DocumentSent::dispatch($result->id, (int) $version->id, (int) $version->version_number);
+            DocumentSent::dispatch(
+                $result->id,
+                (int) $version->id,
+                (int) $version->version_number,
+                (int) $result->business_id,
+                (int) $result->business_location_id,
+                (int) $result->contact_id,
+            );
         });
 
         return $result;
@@ -238,6 +276,12 @@ final class DocumentManager
      *
      * The status is re-checked under the document lock, so a resend racing a
      * void or a final payment loses cleanly instead of re-arming a dead link.
+     *
+     * A SIGNED document may have its link re-sent: a signed proposal is
+     * payable, and the link is how the customer reaches the payment surface
+     * (Payments lane). Delivery is recorded like send()'s: the new link starts
+     * with neither `link_delivered_at` nor `link_delivery_failed_at`, and a
+     * provider failure is contained and recorded rather than thrown.
      */
     public function resendLink(BusinessDocument $document): BusinessDocument
     {
@@ -260,16 +304,67 @@ final class DocumentManager
             $document->access_token_expires_at = $document->expires_at
                 ?? now()->addDays((int) config('documents.link_ttl_days'));
             $document->access_token_rotated_at = now();
+            $document->link_delivered_at = null;
+            $document->link_delivery_failed_at = null;
             $document->save();
 
             return $document->refresh();
         });
 
-        DB::afterCommit(function () use ($result, $plaintextToken) {
-            SendDocumentLinkEmail::dispatch((int) $result->id, $plaintextToken);
-        });
+        DB::afterCommit(fn () => $this->dispatchLinkEmail($result, $plaintextToken));
 
         return $result;
+    }
+
+    /**
+     * Queue the link email and contain every way that can fail. By the time
+     * this runs the document is committed as `sent`: a mail-provider outage
+     * (which a synchronous queue surfaces right here, a real queue inside the
+     * job) must not turn that committed fact into a 500, and must not skip the
+     * DocumentSent event that follows. It is recorded instead — the owner sees
+     * "delivery failed" and re-sends. Only the exception CLASS is logged,
+     * never its message, so the token can never reach a log through it.
+     */
+    private function dispatchLinkEmail(BusinessDocument $document, string $plaintextToken): void
+    {
+        try {
+            SendDocumentLinkEmail::dispatch((int) $document->id, $plaintextToken);
+        } catch (Throwable $e) {
+            Log::warning('Document link email could not be delivered.', [
+                'document_id' => (int) $document->id,
+                'exception' => $e::class,
+            ]);
+
+            SendDocumentLinkEmail::recordOutcome((int) $document->id, $plaintextToken, false);
+        }
+    }
+
+    /**
+     * §5.3.1 — the names printed on the issued document, frozen into the
+     * version's content at send. Server-owned: whatever a browser put under
+     * `parties` in the draft is overwritten here.
+     *
+     * @param  array<string, mixed>  $content
+     * @return array<string, mixed>
+     */
+    private function withPartiesSnapshot(BusinessDocument $document, array $content): array
+    {
+        $business = Business::findOrFail($document->business_id);
+        $location = BusinessLocation::findOrFail($document->business_location_id);
+
+        $parties = [
+            'business_name' => (string) $business->name,
+            'business_location_name' => (string) $location->name,
+            'document_title' => (string) $document->title,
+        ];
+
+        if (is_string($document->recipient_name_snapshot) && $document->recipient_name_snapshot !== '') {
+            $parties['recipient_name'] = $document->recipient_name_snapshot;
+        }
+
+        $content['parties'] = $parties;
+
+        return $content;
     }
 
     /**
@@ -368,12 +463,21 @@ final class DocumentManager
         $result = DB::transaction(function () use ($document, $evidence) {
             $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
 
-            // Checked FIRST so a second submission gets the accurate refusal
-            // rather than the generic status one — the document is already
-            // `signed` by then, and unique(business_document_id) would refuse
-            // it anyway, even under a race.
-            $this->require(! $document->signature()->exists(), 'This document has already been signed.');
-            $this->require($document->status === DocumentStatus::Sent, 'This document is not awaiting signature.');
+            // IDEMPOTENT REPLAY, checked FIRST. A second submission that
+            // repeats the SAME signing act — a double-clicked button, a browser
+            // retry, a concurrent request that queued behind the first on the
+            // row lock — returns the signature that already exists: one row,
+            // one transition, and (see below) one DocumentSigned. A DIFFERENT
+            // act against an already-signed document is refused, and
+            // unique(business_document_id) would refuse it even under a race.
+            $existing = $document->signature()->first();
+            if ($existing !== null) {
+                $this->require($this->repeatsSignature($existing, $evidence), 'This document has already been signed.');
+
+                return $existing;
+            }
+
+            $this->assertTransition($document, DocumentStatus::Signed, 'This document is not awaiting signature.');
             $this->require((bool) $document->requires_signature, 'This document does not require a signature.');
             $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'This document has expired.');
 
@@ -381,6 +485,15 @@ final class DocumentManager
                 ->whereKey($document->current_version_id)->lockForUpdate()->first();
             $this->require($version !== null && $version->state === DocumentVersionState::Issued, 'No issued version to sign.');
             $this->require(is_string($version->content_hash) && strlen($version->content_hash) === 64, 'The issued version has no content hash.');
+
+            // WHAT WAS SHOWN IS WHAT IS SIGNED. The page the signer read was
+            // rendered from one specific issued version; if the owner revised
+            // and re-sent between that render and this submit, the current
+            // version is a different document. Binding to the displayed
+            // version's uid makes that a refusal instead of a signature on
+            // terms the signer never saw.
+            $displayed = $evidence['displayed_version_uid'] ?? null;
+            $this->require(is_string($displayed) && hash_equals((string) $version->uid, $displayed), 'This document was updated after you opened it. Please reload it and review the current version.');
 
             $signerName = trim((string) ($evidence['signer_name'] ?? ''));
             $signerEmail = trim((string) ($evidence['signer_email'] ?? ''));
@@ -412,13 +525,43 @@ final class DocumentManager
             return $signature;
         });
 
-        DB::afterCommit(fn () => DocumentSigned::dispatch(
-            (int) $result->business_document_id,
-            (int) $result->business_document_version_id,
-            (int) $result->id,
-        ));
+        // Only the submission that actually wrote the row announces it: a
+        // replay returns the existing row (wasRecentlyCreated = false) and
+        // emits nothing.
+        if ($result->wasRecentlyCreated) {
+            $signed = BusinessDocument::findOrFail($result->business_document_id);
+
+            DB::afterCommit(fn () => DocumentSigned::dispatch(
+                (int) $result->business_document_id,
+                (int) $result->business_document_version_id,
+                (int) $result->id,
+                (int) $signed->business_id,
+                (int) $signed->business_location_id,
+                (int) $signed->contact_id,
+            ));
+        }
 
         return $result;
+    }
+
+    /**
+     * Whether a submission repeats the signing act already on record: same
+     * displayed version, same signer name / email and same typed mark. The
+     * comparison is exact on the typed mark and name, and case-insensitive on
+     * the email address.
+     *
+     * @param  array<string, mixed>  $evidence
+     */
+    private function repeatsSignature(BusinessDocumentSignature $existing, array $evidence): bool
+    {
+        $displayed = $evidence['displayed_version_uid'] ?? null;
+        $version = BusinessDocumentVersion::find($existing->business_document_version_id);
+
+        return $version !== null
+            && is_string($displayed) && hash_equals((string) $version->uid, $displayed)
+            && trim((string) ($evidence['signer_name'] ?? '')) === $existing->signer_name
+            && trim((string) ($evidence['typed_name'] ?? '')) === $existing->typed_name
+            && strcasecmp(trim((string) ($evidence['signer_email'] ?? '')), (string) $existing->signer_email) === 0;
     }
 
     public function addCatalogLine(BusinessDocument $document, CatalogItem $item, int $quantity, User $actor, ?int $explicitPriceMinor = null): BusinessDocumentLineItem
@@ -506,7 +649,7 @@ final class DocumentManager
     {
         $result = DB::transaction(function () use ($document, $reason) {
             $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
-            $this->require(in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Sent, DocumentStatus::Signed], true), 'Document cannot be voided.');
+            $this->assertTransition($document, DocumentStatus::Void, 'Document cannot be voided.');
             $this->require(trim($reason) !== '' && mb_strlen($reason) <= 255, 'Void reason required.');
             $version = $document->current_version_id
                 ? BusinessDocumentVersion::whereKey($document->current_version_id)->lockForUpdate()->first()
@@ -537,7 +680,12 @@ final class DocumentManager
             $document->save();
             return $document->refresh();
         });
-        DB::afterCommit(fn () => DocumentVoided::dispatch($result->id));
+        DB::afterCommit(fn () => DocumentVoided::dispatch(
+            (int) $result->id,
+            (int) $result->business_id,
+            (int) $result->business_location_id,
+            (int) $result->contact_id,
+        ));
         return $result;
     }
 
@@ -601,14 +749,20 @@ final class DocumentManager
                     if ($succeeded) {
                         return null;
                     }
+                    $this->assertTransition($document, DocumentStatus::Expired, 'Document cannot expire.');
                     $document->status = DocumentStatus::Expired;
                     $document->expired_at = now();
                     $document->save();
-                    return $document->id;
+                    return $document;
                 });
                 if ($result !== null) {
                     $expired++;
-                    DB::afterCommit(fn () => DocumentExpired::dispatch($result));
+                    DB::afterCommit(fn () => DocumentExpired::dispatch(
+                        (int) $result->id,
+                        (int) $result->business_id,
+                        (int) $result->business_location_id,
+                        (int) $result->contact_id,
+                    ));
                 }
             } catch (Throwable $e) {
                 Log::error('DocumentManager::expireDue failed to expire a document', [
@@ -891,6 +1045,18 @@ final class DocumentManager
     private function validQuantity(int $quantity): void
     {
         $this->require($quantity > 0 && $quantity <= 4294967295, 'Invalid quantity.');
+    }
+
+    /**
+     * The ONE lifecycle guard. Every status move the manager makes is checked
+     * against DocumentStatus::allowedTransitions() on the LOCKED row, so an
+     * impossible transition (signing a draft, voiding a paid document,
+     * expiring a signed one, anything out of a terminal state) is refused here
+     * regardless of which caller reached it.
+     */
+    private function assertTransition(BusinessDocument $document, DocumentStatus $to, string $message): void
+    {
+        $this->require($document->status instanceof DocumentStatus && $document->status->canTransitionTo($to), $message);
     }
 
     private function require(bool $condition, string $message): void

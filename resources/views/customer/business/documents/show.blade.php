@@ -1,10 +1,11 @@
 @extends('layouts/contentLayoutMaster')
-@section('title', 'Document draft')
+@section('title', 'Document')
 @section('content')
 <a href="{{ route('customer.workspaces.businesses.documents.index', [$workspaceUid, $businessUid]) }}">Documents</a>
 <h4>{{ $document->title }} <small>{{ $document->status->value }}</small></h4>
 <x-flash-alert />
 @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+@php($base = [$workspaceUid, $businessUid, $document->uid])
 @php($statusValue = $document->status->value)
 @php($money = fn ($minor) => number_format(((int) $minor) / 100, 2))
 <p class="text-muted" data-role="document-summary">
@@ -22,9 +23,24 @@
 @elseif(in_array($statusValue, ['sent', 'signed']))
     <div class="alert alert-info" data-role="awaiting-notice">Sent{{ $document->sent_at ? ' on ' . $document->sent_at->format('j F Y') : '' }} — awaiting {{ $statusValue === 'sent' && $document->requires_signature ? 'signature and payment' : 'payment' }}.</div>
 @endif
+<div class="card p-2 mb-2" data-role="history-panel">
+    <h5>History</h5>
+    <ul data-role="history">
+        <li>Created {{ $document->created_at?->format('j M Y H:i') }}</li>
+        @if($document->sent_at)<li>Sent {{ $document->sent_at->format('j M Y H:i') }}@if($document->recipient_email_snapshot) to {{ $document->recipient_email_snapshot }}@endif</li>@endif
+        @foreach($versions as $listed)
+            @if($listed->issued_at)<li>Version {{ $listed->version_number }} issued {{ $listed->issued_at->format('j M Y H:i') }} ({{ $listed->state->value }})</li>@endif
+        @endforeach
+        @if($document->signed_at)<li>Signed {{ $document->signed_at->format('j M Y H:i') }}@if($signature) by {{ $signature->signer_name }}@endif</li>@endif
+        @if($document->paid_at)<li>Paid {{ $document->paid_at->format('j M Y H:i') }}</li>@endif
+        @if($document->expired_at)<li>Expired {{ $document->expired_at->format('j M Y H:i') }}</li>@endif
+        @if($document->voided_at)<li>Voided {{ $document->voided_at->format('j M Y H:i') }}@if($document->void_reason): {{ $document->void_reason }}@endif</li>@endif
+    </ul>
+</div>
 @if($issued)
 <div class="card p-2 mb-2" data-role="issued-version">
     <h5>Sent version {{ $issued->version_number }} <small class="text-muted">(frozen — this is what the customer sees)</small></h5>
+    @if(! empty($issued->content['body']))<div data-role="issued-terms" style="white-space:pre-wrap">{{ $issued->content['body'] }}</div>@endif
     @foreach($issued->lineItems->sortBy('position') as $line)
         <div>{{ $line->name }} — {{ $line->quantity }} × {{ $money($line->unit_price_minor) }} = {{ $money($line->line_total_minor) }} {{ $line->currency_code }}</div>
     @endforeach
@@ -32,6 +48,13 @@
     @foreach($issued->paymentScheduleItems->sortBy('sequence') as $term)
         <div data-role="schedule-item">{{ ucfirst($term->kind->value) }}: {{ $money($term->amount_minor) }} {{ $term->currency_code }} — {{ $term->status->value }}@if($term->paid_at) ({{ $term->paid_at->format('j F Y') }})@endif</div>
     @endforeach
+    @if($signature)
+        <h6>Signature</h6>
+        <p data-role="signature">
+            Typed by {{ $signature->typed_name }} ({{ $signature->signer_name }}, {{ $signature->signer_email }}) on {{ $signature->signed_at->format('j M Y H:i') }}.
+            This is a typed-signature record bound to this exact version (fingerprint {{ substr($signature->signed_content_hash, 0, 12) }}).
+        </p>
+    @endif
 </div>
 @endif
 @if($payments->isNotEmpty())
@@ -60,6 +83,15 @@
 @endif
 @if(in_array($statusValue, ['sent', 'signed']))
 <div class="card p-2 mb-2" data-role="link-actions">
+    <p data-role="delivery">
+        @if($document->link_delivery_failed_at)
+            The email with the link could not be delivered. Re-send it below.
+        @elseif($document->link_delivered_at)
+            The email with the link was handed to the mail provider {{ $document->link_delivered_at->format('j M Y H:i') }}.
+        @else
+            The email with the link is being delivered.
+        @endif
+    </p>
     <form method="post" action="{{ route('customer.workspaces.businesses.documents.resend', [$workspaceUid, $businessUid, $document->uid]) }}">
         @csrf
         <button class="btn btn-secondary" type="submit">Re-send payment link</button>
@@ -73,7 +105,6 @@
 </div>
 @endif
 @if($version)
-@php($base = [$workspaceUid, $businessUid, $document->uid])
 <div class="card p-2 mb-2">
     <h5>Draft details</h5>
     <form method="post" action="{{ route('customer.workspaces.businesses.documents.update', $base) }}">
