@@ -51,6 +51,18 @@
             'category'     => 'Google Business Profile',
             'default'      => false,
         ],
+        // Business Email foundation. manage_business_email governs connecting,
+        // reconnecting and disconnecting the Business's own mailbox — a
+        // credential-class action — so, like manage_google_business_profile,
+        // it defaults FALSE and a Workspace owner grants it explicitly.
+        // Sending an email to a Contact is governed by the existing
+        // conversation/contact keys (chat_box + view_contact); no parallel
+        // send permission is invented.
+        'manage_business_email' => [
+            'display_name' => 'manage_business_email',
+            'category'     => 'Email',
+            'default'      => false,
+        ],
         // SEO (Contract 18 §10.2). Three independent capabilities, none of
         // which reuses view_keywords (the legacy inbound-SMS keyword
         // product), view_reports, website or any Google Business Profile

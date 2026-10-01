@@ -515,6 +515,10 @@ final class CustomerMenuBuilder
             $this->item($user, 'text-messaging', 'Text messaging', 'message-circle', ['view_numbers'], 'customer.workspaces.businesses.text-messaging.show', $scoped, $current, [
                 'customer.workspaces.businesses.text-messaging.',
             ]),
+            // Business Email foundation — the Business's own connected mailbox.
+            $this->item($user, 'email', 'Email', 'mail', ['manage_business_email', 'chat_box'], 'customer.workspaces.businesses.email.show', $scoped, $current, [
+                'customer.workspaces.businesses.email.',
+            ]),
         ];
 
         $billingAndTeam = [];
