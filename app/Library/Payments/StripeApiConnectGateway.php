@@ -176,6 +176,7 @@ final class StripeApiConnectGateway implements StripeConnectGateway
         string $idempotencyKey,
         string $operationId,
         string $description,
+        array $metadata = [],
     ): PaymentIntentSnapshot {
         try {
             $intent = $this->client()->paymentIntents->create([
@@ -183,8 +184,10 @@ final class StripeApiConnectGateway implements StripeConnectGateway
                 'currency' => strtolower($currencyCode),
                 'automatic_payment_methods' => ['enabled' => true],
                 'description' => mb_substr($description, 0, 350),
-                // Read back by the finalizer to prove operation identity (§8.3).
-                'metadata' => ['app_operation_id' => $operationId],
+                // `app_operation_id` is read back by the finalizer to prove
+                // operation identity (§8.3). The rest is traceability only and
+                // can never overwrite it.
+                'metadata' => [...$metadata, 'app_operation_id' => $operationId],
             ], [
                 'stripe_account' => $connectedAccountId,
                 'idempotency_key' => $idempotencyKey,

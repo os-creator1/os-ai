@@ -1252,6 +1252,9 @@
             // revise opens version N+1 on an already-sent document.
             Route::post('{documentUid}/send', 'Business\DocumentsController@send')->middleware('throttle:30,1')->name('send');
             Route::post('{documentUid}/revise', 'Business\DocumentsController@revise')->middleware('throttle:30,1')->name('revise');
+            // Re-deliver the CURRENT issued version's link (rotates the token,
+            // changes no content) — the recovery path for a lost email.
+            Route::post('{documentUid}/resend', 'Business\DocumentsController@resend')->middleware('throttle:30,1')->name('resend');
             Route::post('{documentUid}/void', 'Business\DocumentsController@void')->name('void');
             // Sub-slice F §7.4/§6.1 — refund one captured payment. Same single
             // `payments_contracts` capability as every route above plus an

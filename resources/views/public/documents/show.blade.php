@@ -48,6 +48,15 @@
         <p data-role="already-signed">This document was signed on {{ $document->signed_at?->format('j F Y') }}.</p>
     @endif
 
+    {{-- Paid confirmation. Rendered ONLY from persisted state, which only the
+         verified provider webhook (or a verified server-side retrieval)
+         writes — coming back from the card form proves nothing here. --}}
+    @if($document->status === \App\Enums\Documents\DocumentStatus::Paid)
+        <p data-role="paid-confirmation"><strong>Payment received — thank you.</strong> This was paid in full on {{ $document->paid_at?->format('j F Y') }}.</p>
+    @elseif($paymentProcessing)
+        <p data-role="payment-processing">Your payment is being confirmed. This page shows it as paid as soon as your bank confirms it — you do not need to pay again.</p>
+    @endif
+
     <table data-role="lines">
         <thead>
         <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
@@ -79,6 +88,13 @@
                     <td>{{ ucfirst($item->kind instanceof \BackedEnum ? $item->kind->value : $item->kind) }}</td>
                     <td>@if($item->due_at)Due {{ $item->due_at->format('j F Y') }}@endif</td>
                     <td class="num">{{ number_format($item->amount_minor / 100, 2) }} {{ $item->currency_code }}</td>
+                    <td data-role="schedule-status">
+                        @if($item->status === \App\Enums\Documents\PaymentScheduleItemStatus::Paid)
+                            Paid
+                        @elseif($item->status === \App\Enums\Documents\PaymentScheduleItemStatus::Refunded)
+                            Refunded
+                        @endif
+                    </td>
                 </tr>
             @endforeach
             </tbody>

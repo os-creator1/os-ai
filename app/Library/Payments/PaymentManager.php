@@ -9,8 +9,10 @@ use App\Enums\Documents\PaymentScheduleItemStatus;
 use App\Exceptions\Payments\PaymentStartException;
 use App\Exceptions\Payments\RefundException;
 use App\Library\Documents\PublicDocumentAccess;
+use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPayment;
+use App\Models\BusinessLocation;
 use App\Models\BusinessDocumentPaymentScheduleItem;
 use App\Models\BusinessDocumentRefund;
 use App\Models\BusinessDocumentVersion;
@@ -179,6 +181,7 @@ final class PaymentManager
                 self::idempotencyKeyFor($payment),
                 (string) $payment->local_idempotency_key,
                 self::descriptionFor((string) $access->document->uid),
+                self::bindingMetadata($access->business, $access->location, $access->document),
             );
 
         // ---- (15) shared idempotent finalizer ---------------------------
@@ -212,6 +215,31 @@ final class PaymentManager
     private static function descriptionFor(string $documentUid): string
     {
         return 'Document ' . $documentUid;
+    }
+
+    /**
+     * The tenant identity stamped on the provider object — OUR uids, never a
+     * numeric id and never PII. It makes an intent traceable from the
+     * connected account's dashboard back to exactly one document, Location and
+     * Business.
+     *
+     * INFORMATIONAL, NEVER AUTHORITATIVE. An inbound event is re-derived from
+     * the persisted `provider_payment_intent_id` and then cross-checked
+     * against the row's own connection, operation id, amount and currency; no
+     * path reads these keys to decide anything. They are a pure function of
+     * the durable rows, in ONE place, because PAY START and §7.5's
+     * reconciliation must send byte-identical creation arguments under one
+     * idempotency key.
+     *
+     * @return array<string, string>
+     */
+    private static function bindingMetadata(Business $business, BusinessLocation $location, BusinessDocument $document): array
+    {
+        return [
+            'app_business_uid' => (string) $business->uid,
+            'app_location_uid' => (string) $location->uid,
+            'app_document_uid' => (string) $document->uid,
+        ];
     }
 
     // =================================================================
@@ -419,6 +447,7 @@ final class PaymentManager
         $candidates = BusinessDocumentPayment::query()
             ->whereIn('status', self::activeStatuses())
             ->where('updated_at', '<=', $threshold)
+            ->orderBy('updated_at')
             ->orderBy('id')
             ->limit($limit)
             ->get();
@@ -432,8 +461,10 @@ final class PaymentManager
                 // happens to be connected to now.
                 $connection = BusinessStripeConnection::query()->find($payment->business_stripe_connection_id);
                 $document = BusinessDocument::query()->find($payment->business_document_id);
+                $business = Business::query()->find($payment->business_id);
+                $location = $document === null ? null : BusinessLocation::query()->find($document->business_location_id);
 
-                if ($connection === null || $document === null) {
+                if ($connection === null || $document === null || $business === null || $location === null) {
                     continue;
                 }
 
@@ -450,13 +481,21 @@ final class PaymentManager
                         self::idempotencyKeyFor($payment),
                         (string) $payment->local_idempotency_key,
                         self::descriptionFor((string) $document->uid),
+                        self::bindingMetadata($business, $location, $document),
                     );
 
-                $disposition = $this->finalizer->apply($payment, $snapshot);
+                $this->finalizer->apply($payment, $snapshot);
 
-                if ($disposition === PaymentFinalizer::APPLIED
-                    && ! in_array($payment->refresh()->status->value, self::activeStatuses(), true)) {
+                if (! in_array($payment->refresh()->status->value, self::activeStatuses(), true)) {
                     $reconciled++;
+                } else {
+                    // Still in flight at the provider. Re-observed, never
+                    // decided — but its `updated_at` moves, so the oldest-first
+                    // ordering below rotates through EVERY stale attempt
+                    // instead of re-reading the same first rows forever (an
+                    // attempt on a void document, for instance, can stay
+                    // `created` indefinitely and must not starve the rest).
+                    $payment->touch();
                 }
             } catch (Throwable $e) {
                 // One unreachable account or one provider hiccup must not

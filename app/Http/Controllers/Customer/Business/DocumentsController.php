@@ -36,7 +36,7 @@ class DocumentsController extends CustomerBaseController
         $business = $this->business($workspaceUid, $businessUid);
         $ids = $this->locations->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
         return view('customer.business.documents.index', [
-            'documents' => BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->latest()->paginate(25),
+            'documents' => BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->with(['businessLocation', 'currentVersion'])->latest()->paginate(25),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
             'locations' => BusinessLocation::where('business_id', $business->id)->whereIn('id', $ids)->where('lifecycle_state', 'active')->get(),
             'contacts' => Contacts::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
@@ -60,8 +60,17 @@ class DocumentsController extends CustomerBaseController
     {
         $document = $this->document($workspaceUid, $businessUid, $documentUid);
         $version = $document->versions()->where('state', 'draft')->first();
+        $issued = $document->current_version_id === null ? null : $document->versions()->whereKey($document->current_version_id)->first();
+        $payments = $document->payments()->with('refunds')->orderBy('id')->get();
         return view('customer.business.documents.show', [
             'document' => $document, 'version' => $version?->load(['lineItems', 'paymentScheduleItems']),
+            // What the customer was actually sent: the frozen issued version,
+            // never the live Catalog. Read-only on this page.
+            'issued' => $issued?->load(['lineItems', 'paymentScheduleItems']),
+            'payments' => $payments,
+            'refundable' => $payments->mapWithKeys(fn (BusinessDocumentPayment $payment) => [$payment->id => $this->payments->refundableAmount($payment)]),
+            'contact' => Contacts::find($document->contact_id),
+            'location' => BusinessLocation::find($document->business_location_id),
             'catalogItems' => CatalogItem::where('business_id', $document->business_id)->where('lifecycle_state', 'active')->orderBy('position')->get(),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
         ]);
@@ -91,6 +100,17 @@ class DocumentsController extends CustomerBaseController
     {
         $this->manager->send($this->document($workspaceUid, $businessUid, $documentUid));
         return back();
+    }
+
+    /**
+     * Re-deliver the secure link for the current issued version (the recovery
+     * path when the first email never arrived). Rotates the link; changes no
+     * commercial content and no payment state.
+     */
+    public function resend(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
+    {
+        $this->manager->resendLink($this->document($workspaceUid, $businessUid, $documentUid));
+        return back()->with(['status' => 'success', 'message' => 'The payment link was re-sent. Earlier links no longer work.']);
     }
 
     /**

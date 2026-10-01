@@ -21,6 +21,15 @@ single most important rule in this document is §4: every existing payment
 artifact in this repository belongs to lane A or lane D, and **none of it
 may be reused**.
 
+> **Amendment — Payments & Invoices V1 completion.** Sub-slices A–G are
+> merged. A later completion lane audited the invoice/payment flow and amended
+> four statements here: §7.1 gains a *re-send current version's link* action;
+> §8.3 now records (rather than ignores) a provider-confirmed capture that lands
+> on a void/expired/paid document, and lets `failed` yield to a provider-confirmed
+> `succeeded` on the same intent; §10 gains `DocumentPaymentFailed` and carries
+> Business/Location/Contact identity on the payment events. See
+> [`PAYMENTS-INVOICES-V1-COMPLETION-CONTRACT.md`](../../automation/PAYMENTS-INVOICES-V1-COMPLETION-CONTRACT.md).
+
 ## 1. Objective
 
 Build the V1 Payments & Contracts module: a Business authors a Proposal

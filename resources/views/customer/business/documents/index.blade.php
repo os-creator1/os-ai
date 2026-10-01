@@ -18,7 +18,7 @@
 </div>
 <div class="card p-2">
     @forelse($documents as $document)
-        <p><a href="{{ route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]) }}">{{ $document->title }}</a> — {{ $document->kind->value }} — {{ $document->status->value }}</p>
+        <p><a href="{{ route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]) }}">{{ $document->title }}</a> — {{ $document->kind->value }} — {{ $document->status->value }}@if($document->businessLocation) — {{ $document->businessLocation->name }}@endif @if($document->currentVersion) — {{ number_format($document->currentVersion->total_minor / 100, 2) }} {{ $document->currentVersion->currency_code }}@endif @if($document->paid_at) — paid {{ $document->paid_at->format('j M Y') }}@endif</p>
     @empty<p>No documents yet.</p>@endforelse
     {{ $documents->links() }}
 </div>

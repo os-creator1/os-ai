@@ -92,8 +92,10 @@ class FakeStripeConnectGateway implements StripeConnectGateway
         string $idempotencyKey,
         string $operationId,
         string $description,
+        array $metadata = [],
     ): PaymentIntentSnapshot {
         $this->record('createPaymentIntent', [
+            'metadata' => $metadata,
             'account' => $connectedAccountId,
             'amount' => $amountMinor,
             'currency' => $currencyCode,
