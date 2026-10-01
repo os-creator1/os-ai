@@ -156,10 +156,16 @@ class TagManager
      * `ContactTagAdded` occurrence is ever created, including under a
      * genuine concurrent race (the repository's own unique-constraint catch
      * handles that, not a check here).
+     *
+     * `$origin` is an OPAQUE causation reference a caller may attach (the
+     * Automations engine passes `automation_step_run:{id}`). It is copied onto
+     * the event verbatim and never interpreted here, so this domain stays
+     * ignorant of who consumes it while a consumer can tell its own writes apart
+     * from a person's — the one thing loop prevention needs.
      */
-    public function attachTag(Business $business, Contacts $contact, Tag $tag): ?ContactTag
+    public function attachTag(Business $business, Contacts $contact, Tag $tag, ?string $origin = null): ?ContactTag
     {
-        return DB::transaction(function () use ($business, $contact, $tag): ?ContactTag {
+        return DB::transaction(function () use ($business, $contact, $tag, $origin): ?ContactTag {
             // Lock order fixed (Contact, then Tag) everywhere both are
             // locked in this class, so two concurrent attach/detach calls
             // naming the same pair in either argument order can never
@@ -184,6 +190,7 @@ class TagManager
                 tagName: $authoritativeTag->name,
                 locationId: $authoritativeContact->location_id !== null ? (int) $authoritativeContact->location_id : null,
                 membershipId: (int) $membership->id,
+                origin: $origin,
             );
 
             return $membership;
@@ -197,14 +204,25 @@ class TagManager
      */
     public function detachTag(Business $business, Contacts $contact, Tag $tag): bool
     {
-        return DB::transaction(function () use ($business, $contact, $tag): bool {
+        return $this->detachMembership($business, $contact, $tag) !== null;
+    }
+
+    /**
+     * The one detach implementation: `detachTag()` is its boolean view. Returns
+     * the id of the membership row it removed (the id the `ContactTagRemoved`
+     * occurrence key is built from), or null when the pair was already absent.
+     * `$origin` is the same opaque causation reference `attachTag()` takes.
+     */
+    public function detachMembership(Business $business, Contacts $contact, Tag $tag, ?string $origin = null): ?int
+    {
+        return DB::transaction(function () use ($business, $contact, $tag, $origin): ?int {
             $authoritativeContact = $this->authoritativeContact($business, $contact, lock: true);
             $authoritativeTag = $this->authoritativeTag($business, $tag, lock: true);
 
             $membershipId = $this->contactTags->detach($authoritativeContact, $authoritativeTag);
 
             if ($membershipId === null) {
-                return false;
+                return null;
             }
 
             ContactTagRemoved::dispatch(
@@ -214,9 +232,10 @@ class TagManager
                 tagName: $authoritativeTag->name,
                 locationId: $authoritativeContact->location_id !== null ? (int) $authoritativeContact->location_id : null,
                 membershipId: $membershipId,
+                origin: $origin,
             );
 
-            return true;
+            return $membershipId;
         });
     }
 

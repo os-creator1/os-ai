@@ -46,6 +46,21 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
+// This harness times the booking engine's own commit. The lifecycle events the
+// engine emits after that commit have listeners in other modules (Automations
+// enrolling a workflow, for one); their cost — even autoloading them in a cold
+// process — would land BEFORE the "committed" instant printed below and make a
+// booking look like it finished after a competing writer that was merely waiting
+// on its lock. The harness is about the engine's locking, not its subscribers, so
+// the dispatch is swallowed here.
+Illuminate\Support\Facades\Event::fake([
+    App\Events\Calendar\AppointmentScheduled::class,
+    App\Events\Calendar\AppointmentRescheduled::class,
+    App\Events\Calendar\AppointmentCancelled::class,
+    App\Events\Calendar\AppointmentCompleted::class,
+    App\Events\Calendar\AppointmentNoShow::class,
+]);
+
 const WRONG_DATABASE_EXIT_CODE = 3;
 const REFUSED_EXIT_CODE = 4;
 

@@ -363,7 +363,11 @@ Query count is constant in the number of Contacts and messages (tested). Entry: 
 ## 8. Automations integration seam (for the next slice)
 
 Do **not** add `SendEmail` here. The follow-up slice consumes this foundation as
-follows.
+follows. **Status:** consumed — `send_email` now exists as an Automations node
+(`SendEmailNodeExecutor`, `AUTOMATIONS-MERGED-FOUNDATIONS-INTEGRATION.md` §7), calling
+`BusinessEmailSender::send()` with `automation:{workflow}:{step run}:email` and
+`BusinessEmailSource::Automation`. Retryable failures are terminal for the step
+(the engine never re-runs an External step), and suppression remains open (§9).
 
 **Send action API.** Call
 `app(BusinessEmailSender::class)->send(new BusinessEmailSendRequest(...))`.

@@ -22,6 +22,13 @@ use Illuminate\Foundation\Events\Dispatchable;
  * identified by id only (never phone/name), and `tagName` is a short,
  * customer-authored label — not personal data about the Contact.
  *
+ * `origin` IS AN OPAQUE CAUSATION REFERENCE, null for a person's own change.
+ * A caller that mutates tags on behalf of something else (the Automations
+ * engine passes `automation_step_run:{id}`) says so at the TagManager seam, and
+ * it rides here unchanged. This domain never reads it; a consumer uses it to
+ * tell its own writes from a person's, which is what stops one automation's tag
+ * change from re-triggering the automation that made it.
+ *
  * LOCATION CONTEXT, PER THE TAGS FOUNDATION'S OWN SCOPING DECISION: tags are
  * Business-wide (never Location-scoped — see `create_tags_table`'s
  * docblock), so there is no Location to read off the TAG. `locationId` is
@@ -43,6 +50,7 @@ abstract class ContactTagEvent implements ShouldDispatchAfterCommit
         public readonly string $tagName,
         public readonly ?int $locationId,
         public readonly int $membershipId,
+        public readonly ?string $origin = null,
     ) {
     }
 

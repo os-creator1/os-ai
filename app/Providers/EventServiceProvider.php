@@ -9,6 +9,11 @@ use App\Events\Business\BusinessUpdated;
 use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Conversation\InboundMessageReceived;
 use App\Events\Entitlement\WorkspacePlanAssigned;
+use App\Events\Calendar\AppointmentCancelled;
+use App\Events\Calendar\AppointmentRescheduled;
+use App\Events\Calendar\AppointmentScheduled;
+use App\Events\Crm\ContactTagAdded;
+use App\Events\Crm\ContactTagRemoved;
 use App\Events\Crm\CrmOpportunityCreated;
 use App\Events\Crm\CrmOpportunityLost;
 use App\Events\Crm\CrmOpportunityStageChanged;
@@ -22,7 +27,11 @@ use App\Events\Opportunity\OpportunityExecutionFailed;
 use App\Events\Opportunity\OpportunityExecutionSucceeded;
 use App\Events\Website\WebsitePublished;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Events\Forms\FormSubmissionRecorded;
+use App\Listeners\Automation\Workflow\EnrollFromAppointmentEvent;
+use App\Listeners\Automation\Workflow\EnrollFromContactTagEvent;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
+use App\Listeners\Automation\Workflow\EnrollFromFormSubmission;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Seo\QueueSeoAuditOnWebsitePublished;
@@ -136,6 +145,27 @@ class EventServiceProvider extends ServiceProvider
         ],
         CrmOpportunityLost::class => [
             EnrollFromCrmOpportunityEvent::class,
+        ],
+        // Automations V2 — the merged foundations' after-commit facts. Each domain
+        // emits and knows nothing of workflows; these queued listeners hand each
+        // fact to its trigger source (Contact Tags, Forms, Calendar).
+        ContactTagAdded::class => [
+            EnrollFromContactTagEvent::class,
+        ],
+        ContactTagRemoved::class => [
+            EnrollFromContactTagEvent::class,
+        ],
+        FormSubmissionRecorded::class => [
+            EnrollFromFormSubmission::class,
+        ],
+        AppointmentScheduled::class => [
+            EnrollFromAppointmentEvent::class,
+        ],
+        AppointmentCancelled::class => [
+            EnrollFromAppointmentEvent::class,
+        ],
+        AppointmentRescheduled::class => [
+            EnrollFromAppointmentEvent::class,
         ],
         // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
         // shown when their facts stop holding. Invalidation queues nothing;

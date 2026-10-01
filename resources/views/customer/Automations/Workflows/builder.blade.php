@@ -37,6 +37,10 @@
                                           each: ->id, ->name, ->archived
       iterable $crmStages               optional; their stages,
                                           each: ->id, ->pipeline_id, ->name, ->archived
+      iterable $tags                    optional; this Business's contact tags,
+                                          each: ->id, ->name, ->archived
+      iterable $forms                   optional; this Business's forms,
+                                          each: ->id, ->name, ->lifecycle
 --}}
 
 @php
@@ -70,6 +74,8 @@
             'writableFields' => $toArrayList($writableFields ?? [], ['id', 'label', 'contact_group_id', 'type']),
             'crmPipelines' => $toArrayList($crmPipelines ?? [], ['id', 'name', 'archived']),
             'crmStages' => $toArrayList($crmStages ?? [], ['id', 'pipeline_id', 'name', 'archived']),
+            'tags' => $toArrayList($tags ?? [], ['id', 'name', 'archived']),
+            'forms' => $toArrayList($forms ?? [], ['id', 'name', 'lifecycle']),
         ],
         'limits' => [
             'maxNodes' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_NODES_PER_VERSION,
@@ -87,6 +93,7 @@
         'plus', 'flag', 'triangle-alert', 'ellipsis-vertical', 'chevron-up', 'chevron-down',
         'trash-2', 'search', 'user', 'user-plus', 'message-square-reply', 'calendar-clock', 'hand', 'x',
         'briefcase-business', 'arrow-right-left', 'trophy', 'circle-x',
+        'mail', 'tag', 'clipboard-list', 'calendar-check', 'calendar-x',
     ];
 
     $statusLabel = __('automations.v2.list.status_' . $statusValue);
@@ -256,6 +263,9 @@
         @include('customer.Automations.Workflows.partials.node-form-send-sms')
         @include('customer.Automations.Workflows.partials.node-form-update-contact-field')
         @include('customer.Automations.Workflows.partials.node-form-internal-notification')
+        @include('customer.Automations.Workflows.partials.node-form-send-email')
+        @include('customer.Automations.Workflows.partials.node-form-add-tag')
+        @include('customer.Automations.Workflows.partials.node-form-remove-tag')
         @include('customer.Automations.Workflows.partials.node-form-wait')
         @include('customer.Automations.Workflows.partials.node-form-if-else')
         @include('customer.Automations.Workflows.partials.node-form-end')

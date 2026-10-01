@@ -1798,6 +1798,21 @@ threshold — was resolved in Correction Round 2 at 15 minutes.
 
 ---
 
+## 22A. ADDENDUM — MERGED FOUNDATIONS (TAGS, BUSINESS EMAIL, CALENDAR, FORMS)
+
+§9 and §10 originally excluded tag, form and appointment triggers and any email
+action because nothing existed to report or send them. Those foundations have
+merged, so the engine now also supports `contact_tag_added`, `contact_tag_removed`,
+`form_submitted`, `appointment_scheduled`, `appointment_cancelled` and
+`appointment_rescheduled` triggers; `send_email`, `add_tag` and `remove_tag`
+actions; and the `contact.has_tag:{tag_id}` condition (§11). The architecture is
+unchanged — same registries, the one enrollment door, the existing
+`causation_depth` loop rule. Payment, document, proposal and contract triggers
+remain excluded until their integrations land. The full contract is
+`AUTOMATIONS-MERGED-FOUNDATIONS-INTEGRATION.md`.
+
+---
+
 ## 23. VALIDATION RECORD
 
 * Every file:line citation in §1 was read on `f6cfd8897b45a4be63073561a9050f080fdbee05`.

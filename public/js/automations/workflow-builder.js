@@ -2,15 +2,15 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ "./resources/js/automations/workflow-builder/api.js"
+/***/ "./resources/js/automations/workflow-builder/api.js":
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/api.js ***!
   \**********************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createApiClient: () => (/* binding */ createApiClient)
+/* harmony export */   "createApiClient": () => (/* binding */ createApiClient)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
@@ -134,17 +134,17 @@ function createApiClient(basePath) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/autosave.js"
+/***/ "./resources/js/automations/workflow-builder/autosave.js":
 /*!***************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/autosave.js ***!
   \***************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createAutosave: () => (/* binding */ createAutosave)
+/* harmony export */   "createAutosave": () => (/* binding */ createAutosave)
 /* harmony export */ });
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
 function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
@@ -287,17 +287,17 @@ function createAutosave(_ref) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js"
+/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js":
 /*!**********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/canvas-renderer.js ***!
   \**********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   renderCanvas: () => (/* binding */ renderCanvas)
+/* harmony export */   "renderCanvas": () => (/* binding */ renderCanvas)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _summaries_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./summaries.js */ "./resources/js/automations/workflow-builder/summaries.js");
@@ -544,29 +544,31 @@ function renderBranches(node, handlers, state, depth) {
   return split;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/conditions.js"
+/***/ "./resources/js/automations/workflow-builder/conditions.js":
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/conditions.js ***!
   \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   BOOLEAN_SUBJECTS: () => (/* binding */ BOOLEAN_SUBJECTS),
-/* harmony export */   CUSTOM_FIELD_PREFIX: () => (/* binding */ CUSTOM_FIELD_PREFIX),
-/* harmony export */   GROUP_SUBJECTS: () => (/* binding */ GROUP_SUBJECTS),
-/* harmony export */   REPLIED_SUBJECT: () => (/* binding */ REPLIED_SUBJECT),
-/* harmony export */   SUBJECT_LABELS: () => (/* binding */ SUBJECT_LABELS),
-/* harmony export */   TEXT_SUBJECTS: () => (/* binding */ TEXT_SUBJECTS),
-/* harmony export */   customFieldId: () => (/* binding */ customFieldId),
-/* harmony export */   describeCondition: () => (/* binding */ describeCondition),
-/* harmony export */   isDateSubject: () => (/* binding */ isDateSubject),
-/* harmony export */   needsOperand: () => (/* binding */ needsOperand),
-/* harmony export */   operatorLabel: () => (/* binding */ operatorLabel),
-/* harmony export */   subjectLabel: () => (/* binding */ subjectLabel),
-/* harmony export */   subjectOperators: () => (/* binding */ subjectOperators)
+/* harmony export */   "BOOLEAN_SUBJECTS": () => (/* binding */ BOOLEAN_SUBJECTS),
+/* harmony export */   "CUSTOM_FIELD_PREFIX": () => (/* binding */ CUSTOM_FIELD_PREFIX),
+/* harmony export */   "GROUP_SUBJECTS": () => (/* binding */ GROUP_SUBJECTS),
+/* harmony export */   "HAS_TAG_PREFIX": () => (/* binding */ HAS_TAG_PREFIX),
+/* harmony export */   "REPLIED_SUBJECT": () => (/* binding */ REPLIED_SUBJECT),
+/* harmony export */   "SUBJECT_LABELS": () => (/* binding */ SUBJECT_LABELS),
+/* harmony export */   "TEXT_SUBJECTS": () => (/* binding */ TEXT_SUBJECTS),
+/* harmony export */   "customFieldId": () => (/* binding */ customFieldId),
+/* harmony export */   "describeCondition": () => (/* binding */ describeCondition),
+/* harmony export */   "isDateSubject": () => (/* binding */ isDateSubject),
+/* harmony export */   "needsOperand": () => (/* binding */ needsOperand),
+/* harmony export */   "operatorLabel": () => (/* binding */ operatorLabel),
+/* harmony export */   "subjectLabel": () => (/* binding */ subjectLabel),
+/* harmony export */   "subjectOperators": () => (/* binding */ subjectOperators),
+/* harmony export */   "tagId": () => (/* binding */ tagId)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
@@ -575,9 +577,11 @@ function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e 
 // Automations V2 (contract §11) — the closed condition-subject vocabulary this
 // builder may offer, in customer words. It mirrors ConditionSubjectRegistry
 // exactly: the four identity subjects, "subscribed", "in group", a group's
-// custom fields, and V2-F's `contact.replied_since_enrollment` — offered now
-// that the inbound producer it reads from has shipped. Nothing here is a
-// Lead, Form, Payment or Tag subject, because none of those is registered.
+// custom fields, V2-F's `contact.replied_since_enrollment` — offered now
+// that the inbound producer it reads from has shipped — and the Business's
+// own tags (`contact.has_tag:{id}`, "has tag" / "does not have tag").
+// Nothing here is a Lead, Form or Payment subject, because none of those is
+// registered.
 //
 // Operator families follow ConditionOperator exactly (forText, forBoolean,
 // forDate, forReference). A custom field's family follows its own type the
@@ -585,6 +589,7 @@ function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e 
 
 var REPLIED_SUBJECT = 'contact.replied_since_enrollment';
 var CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
+var HAS_TAG_PREFIX = 'contact.has_tag:';
 var TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company'];
 var BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT];
 var GROUP_SUBJECTS = ['contact.in_group'];
@@ -614,6 +619,24 @@ var BOOLEAN_OPERATOR_LABELS = _defineProperty({
   is_false: 'has not replied yet'
 });
 var OPERAND_FREE = ['is_empty', 'is_not_empty', 'is_true', 'is_false'];
+
+/** The tag id in a `contact.has_tag:{id}` subject, or null when it is not one. */
+function tagId(subject) {
+  if (typeof subject !== 'string' || !subject.startsWith(HAS_TAG_PREFIX)) {
+    return null;
+  }
+  var raw = subject.slice(HAS_TAG_PREFIX.length);
+  return /^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : null;
+}
+function tagFor(subject, catalogs) {
+  var id = tagId(subject);
+  if (id === null || !catalogs) {
+    return null;
+  }
+  return (catalogs.tags || []).find(function (tag) {
+    return Number(tag.id) === id;
+  }) || null;
+}
 function customFieldId(subject) {
   if (typeof subject !== 'string' || !subject.startsWith(CUSTOM_FIELD_PREFIX)) {
     return null;
@@ -635,7 +658,7 @@ function isDateSubject(subject, catalogs) {
   return field !== null && field.type === 'date';
 }
 function subjectOperators(subject, catalogs) {
-  if (BOOLEAN_SUBJECTS.includes(subject)) {
+  if (BOOLEAN_SUBJECTS.includes(subject) || tagId(subject) !== null) {
     return BOOLEAN_OPERATORS;
   }
   if (GROUP_SUBJECTS.includes(subject)) {
@@ -653,10 +676,17 @@ function subjectLabel(subject, catalogs) {
   if (SUBJECT_LABELS[subject]) {
     return SUBJECT_LABELS[subject];
   }
+  if (tagId(subject) !== null) {
+    var tag = tagFor(subject, catalogs);
+    return tag ? "Tag \u201C".concat(tag.name, "\u201D") : 'A tag';
+  }
   var field = fieldFor(subject, catalogs);
   return field ? field.label : 'A contact field';
 }
 function operatorLabel(subject, operator) {
+  if (tagId(subject) !== null && (operator === 'is_true' || operator === 'is_false')) {
+    return operator === 'is_true' ? 'is on the contact' : 'is not on the contact';
+  }
   var booleanLabels = BOOLEAN_OPERATOR_LABELS[subject];
   if (booleanLabels && booleanLabels[operator]) {
     return booleanLabels[operator];
@@ -683,6 +713,11 @@ function describeCondition(condition, catalogs) {
   if (subject === 'contact.subscribed') {
     return "Contact ".concat(operatorLabel(subject, operator));
   }
+  if (tagId(subject) !== null) {
+    var tag = tagFor(subject, catalogs);
+    var name = tag ? "\u201C".concat(tag.name, "\u201D") : 'a tag';
+    return operator === 'is_false' ? "Contact does not have the tag ".concat(name) : "Contact has the tag ".concat(name);
+  }
   if (subject === 'contact.in_group') {
     return operator === 'not_equals' ? "Contact is not in ".concat(groupName(condition.operand, catalogs)) : "Contact is in ".concat(groupName(condition.operand, catalogs));
   }
@@ -695,30 +730,30 @@ function describeCondition(condition, catalogs) {
   return "".concat(label, " ").concat(words, " \u201C").concat(operand, "\u201D");
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/constants.js"
+/***/ "./resources/js/automations/workflow-builder/constants.js":
 /*!****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/constants.js ***!
   \****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   CONTACT_SOURCE_LABELS: () => (/* binding */ CONTACT_SOURCE_LABELS),
-/* harmony export */   ENROLLMENT_POLICY_LABELS: () => (/* binding */ ENROLLMENT_POLICY_LABELS),
-/* harmony export */   INSERTABLE_TYPES: () => (/* binding */ INSERTABLE_TYPES),
-/* harmony export */   NODE_ICONS: () => (/* binding */ NODE_ICONS),
-/* harmony export */   NODE_LABELS: () => (/* binding */ NODE_LABELS),
-/* harmony export */   NODE_TYPES: () => (/* binding */ NODE_TYPES),
-/* harmony export */   STEP_CATALOG: () => (/* binding */ STEP_CATALOG),
-/* harmony export */   TRIGGER_TYPES: () => (/* binding */ TRIGGER_TYPES),
-/* harmony export */   closesSequence: () => (/* binding */ closesSequence),
-/* harmony export */   defaultConfigFor: () => (/* binding */ defaultConfigFor),
-/* harmony export */   isBranching: () => (/* binding */ isBranching),
-/* harmony export */   isTerminal: () => (/* binding */ isTerminal),
-/* harmony export */   offsetLabel: () => (/* binding */ offsetLabel),
-/* harmony export */   triggerTypeInfo: () => (/* binding */ triggerTypeInfo)
+/* harmony export */   "CONTACT_SOURCE_LABELS": () => (/* binding */ CONTACT_SOURCE_LABELS),
+/* harmony export */   "ENROLLMENT_POLICY_LABELS": () => (/* binding */ ENROLLMENT_POLICY_LABELS),
+/* harmony export */   "INSERTABLE_TYPES": () => (/* binding */ INSERTABLE_TYPES),
+/* harmony export */   "NODE_ICONS": () => (/* binding */ NODE_ICONS),
+/* harmony export */   "NODE_LABELS": () => (/* binding */ NODE_LABELS),
+/* harmony export */   "NODE_TYPES": () => (/* binding */ NODE_TYPES),
+/* harmony export */   "STEP_CATALOG": () => (/* binding */ STEP_CATALOG),
+/* harmony export */   "TRIGGER_TYPES": () => (/* binding */ TRIGGER_TYPES),
+/* harmony export */   "closesSequence": () => (/* binding */ closesSequence),
+/* harmony export */   "defaultConfigFor": () => (/* binding */ defaultConfigFor),
+/* harmony export */   "isBranching": () => (/* binding */ isBranching),
+/* harmony export */   "isTerminal": () => (/* binding */ isTerminal),
+/* harmony export */   "offsetLabel": () => (/* binding */ offsetLabel),
+/* harmony export */   "triggerTypeInfo": () => (/* binding */ triggerTypeInfo)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
@@ -736,6 +771,9 @@ var NODE_TYPES = {
   SEND_SMS: 'send_sms',
   UPDATE_CONTACT_FIELD: 'update_contact_field',
   INTERNAL_NOTIFICATION: 'internal_notification',
+  SEND_EMAIL: 'send_email',
+  ADD_TAG: 'add_tag',
+  REMOVE_TAG: 'remove_tag',
   WAIT: 'wait',
   IF_ELSE: 'if_else',
   END: 'end'
@@ -743,7 +781,7 @@ var NODE_TYPES = {
 
 // Customer wording for each step. Outcome-first: what the step does for the
 // business, never how the engine names it.
-var NODE_LABELS = _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty({}, NODE_TYPES.TRIGGER, 'Trigger'), NODE_TYPES.SEND_SMS, 'Send text message'), NODE_TYPES.UPDATE_CONTACT_FIELD, 'Update contact field'), NODE_TYPES.INTERNAL_NOTIFICATION, 'Notify your team'), NODE_TYPES.WAIT, 'Wait'), NODE_TYPES.IF_ELSE, 'If / Else'), NODE_TYPES.END, 'End workflow');
+var NODE_LABELS = _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty({}, NODE_TYPES.TRIGGER, 'Trigger'), NODE_TYPES.SEND_SMS, 'Send text message'), NODE_TYPES.UPDATE_CONTACT_FIELD, 'Update contact field'), NODE_TYPES.INTERNAL_NOTIFICATION, 'Notify your team'), NODE_TYPES.SEND_EMAIL, 'Send email'), NODE_TYPES.ADD_TAG, 'Add tag'), NODE_TYPES.REMOVE_TAG, 'Remove tag'), NODE_TYPES.WAIT, 'Wait'), NODE_TYPES.IF_ELSE, 'If / Else'), NODE_TYPES.END, 'End workflow');
 
 // The step picker's catalogue. Every entry is a registered node type; the
 // keywords are only there so a search for "delay", "sms" or "branch" finds
@@ -754,6 +792,12 @@ var STEP_CATALOG = [{
   description: 'Text the contact. Personalise it with their name.',
   keywords: ['sms', 'text', 'message', 'send', 'follow up', 'reminder'],
   icon: 'message-square-text'
+}, {
+  type: NODE_TYPES.SEND_EMAIL,
+  group: 'Messages',
+  description: 'Email the contact from your connected mailbox. Personalise it with their name.',
+  keywords: ['email', 'mail', 'message', 'send', 'follow up', 'confirmation'],
+  icon: 'mail'
 }, {
   type: NODE_TYPES.INTERNAL_NOTIFICATION,
   group: 'Messages',
@@ -766,6 +810,18 @@ var STEP_CATALOG = [{
   description: 'Save a value on the contact, such as a status or a note.',
   keywords: ['update', 'field', 'contact', 'save', 'set', 'status', 'note'],
   icon: 'user-pen'
+}, {
+  type: NODE_TYPES.ADD_TAG,
+  group: 'Contact',
+  description: 'Tag the contact so you can find, segment or follow up with them later.',
+  keywords: ['tag', 'label', 'add', 'segment', 'mark'],
+  icon: 'tag'
+}, {
+  type: NODE_TYPES.REMOVE_TAG,
+  group: 'Contact',
+  description: 'Take a tag off the contact.',
+  keywords: ['tag', 'label', 'remove', 'untag', 'clear'],
+  icon: 'tag'
 }, {
   type: NODE_TYPES.WAIT,
   group: 'Timing',
@@ -825,6 +881,16 @@ function defaultConfigFor(type) {
       return {
         message: ''
       };
+    case NODE_TYPES.SEND_EMAIL:
+      return {
+        subject: '',
+        body: ''
+      };
+    case NODE_TYPES.ADD_TAG:
+    case NODE_TYPES.REMOVE_TAG:
+      return {
+        tag_id: null
+      };
     case NODE_TYPES.WAIT:
       return {
         mode: 'duration',
@@ -844,7 +910,7 @@ function defaultConfigFor(type) {
 }
 
 // Triggers with a real producer today (WorkflowTriggerType::isIngestableInThisSlice()).
-// Forms, calendars, payments and tags have none, so none is offered.
+// Payments, documents and proposals have none, so none is offered.
 var TRIGGER_TYPES = [{
   value: 'contact_created',
   title: 'Contact is created',
@@ -896,6 +962,45 @@ var TRIGGER_TYPES = [{
   description: 'Starts when an opportunity is marked lost.',
   icon: 'circle-x',
   defaultPolicy: 'once_per_occurrence'
+},
+// Contact tags, forms and appointments. Each is its own occurrence: a
+// contact can be tagged, submit a form or book again.
+{
+  value: 'contact_tag_added',
+  title: 'Tag added to a contact',
+  description: 'Starts when a tag is added to a contact.',
+  icon: 'tag',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'contact_tag_removed',
+  title: 'Tag removed from a contact',
+  description: 'Starts when a tag is taken off a contact.',
+  icon: 'tag',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'form_submitted',
+  title: 'Form submitted',
+  description: 'Starts when someone finishes and submits one of your forms.',
+  icon: 'clipboard-list',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'appointment_scheduled',
+  title: 'Appointment booked',
+  description: 'Starts when an appointment is booked for a contact.',
+  icon: 'calendar-check',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'appointment_cancelled',
+  title: 'Appointment cancelled',
+  description: 'Starts when an appointment is cancelled.',
+  icon: 'calendar-x',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'appointment_rescheduled',
+  title: 'Appointment rescheduled',
+  description: 'Starts when an appointment is moved to another time.',
+  icon: 'calendar-clock',
+  defaultPolicy: 'once_per_occurrence'
 }];
 function triggerTypeInfo(value) {
   return TRIGGER_TYPES.find(function (entry) {
@@ -920,24 +1025,24 @@ function offsetLabel(offset) {
   return "".concat(offset, " before");
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/document-model.js"
+/***/ "./resources/js/automations/workflow-builder/document-model.js":
 /*!*********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/document-model.js ***!
   \*********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   cloneDocument: () => (/* binding */ cloneDocument),
-/* harmony export */   countNodes: () => (/* binding */ countNodes),
-/* harmony export */   insertAt: () => (/* binding */ insertAt),
-/* harmony export */   insertBranchAt: () => (/* binding */ insertBranchAt),
-/* harmony export */   moveWithin: () => (/* binding */ moveWithin),
-/* harmony export */   newNode: () => (/* binding */ newNode),
-/* harmony export */   removeFrom: () => (/* binding */ removeFrom),
-/* harmony export */   sequenceDepthOf: () => (/* binding */ sequenceDepthOf)
+/* harmony export */   "cloneDocument": () => (/* binding */ cloneDocument),
+/* harmony export */   "countNodes": () => (/* binding */ countNodes),
+/* harmony export */   "insertAt": () => (/* binding */ insertAt),
+/* harmony export */   "insertBranchAt": () => (/* binding */ insertBranchAt),
+/* harmony export */   "moveWithin": () => (/* binding */ moveWithin),
+/* harmony export */   "newNode": () => (/* binding */ newNode),
+/* harmony export */   "removeFrom": () => (/* binding */ removeFrom),
+/* harmony export */   "sequenceDepthOf": () => (/* binding */ sequenceDepthOf)
 /* harmony export */ });
 function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
@@ -1111,18 +1216,18 @@ function countNodes(doc) {
   return count;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/dom.js"
+/***/ "./resources/js/automations/workflow-builder/dom.js":
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/dom.js ***!
   \**********************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   el: () => (/* binding */ el),
-/* harmony export */   icon: () => (/* binding */ icon)
+/* harmony export */   "el": () => (/* binding */ el),
+/* harmony export */   "icon": () => (/* binding */ icon)
 /* harmony export */ });
 // Automations V2 (contract §13.1) — the two DOM helpers every builder module
 // shares. Elements are built with textContent, never innerHTML, so nothing a
@@ -1153,17 +1258,17 @@ function icon(name, className) {
   return wrap;
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/drawer.js"
+/***/ "./resources/js/automations/workflow-builder/drawer.js":
 /*!*************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/drawer.js ***!
   \*************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createDrawer: () => (/* binding */ createDrawer)
+/* harmony export */   "createDrawer": () => (/* binding */ createDrawer)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
@@ -1328,6 +1433,8 @@ function createDrawer(_ref) {
       populateIfElse(node);
     } else if (node.type === 'update_contact_field') {
       populateUpdateContactField(node);
+    } else if (node.type === 'add_tag' || node.type === 'remove_tag') {
+      populateTagAction(node);
     } else if (node.type === 'wait') {
       populateWait(node);
     } else {
@@ -1421,7 +1528,8 @@ function createDrawer(_ref) {
     function syncVisibility() {
       var type = selectedType();
       sections.forEach(function (section) {
-        section.hidden = section.dataset.triggerSection !== type;
+        // A section may serve several triggers (both tag triggers share one filter).
+        section.hidden = !section.dataset.triggerSection.split(' ').includes(type);
       });
       formEl.querySelectorAll('[data-trigger-note]').forEach(function (note) {
         note.hidden = note.dataset.triggerNote !== type;
@@ -1475,7 +1583,64 @@ function createDrawer(_ref) {
     policySourceInput.value = node.config.enrollment_policy_source || 'default';
     confirmNote.hidden = true;
     populateStageFilters(node.config);
+    populateTagAndFormFilters(node.config);
     syncVisibility();
+  }
+
+  /**
+   * Tag triggers may narrow to one tag, and "Form submitted" to one form — each
+   * optional ("any"). Options are this Business's own catalog only; an archived
+   * tag stays visible, marked, only where the trigger already names it.
+   */
+  function populateTagAndFormFilters(config) {
+    var tagSelect = formEl.querySelector('[data-role="wf-tag-filter-select"]');
+    var formSelect = formEl.querySelector('[data-role="wf-form-filter-select"]');
+    var noTags = formEl.querySelector('[data-role="wf-no-tags"]');
+    var noForms = formEl.querySelector('[data-role="wf-no-forms"]');
+    var tags = catalogs.tags || [];
+    var forms = catalogs.forms || [];
+    var selectedTag = config.tag_id != null ? String(config.tag_id) : '';
+    var selectedForm = config.form_id != null ? String(config.form_id) : '';
+    fillSelect(tagSelect, tags.filter(function (row) {
+      return !row.archived || String(row.id) === selectedTag;
+    }).map(function (row) {
+      return {
+        id: row.id,
+        label: row.archived ? "".concat(row.name, " (archived)") : row.name
+      };
+    }), 'id', 'label', 'Any tag');
+    tagSelect.value = selectedTag;
+    noTags.hidden = tags.length > 0;
+    fillSelect(formSelect, forms.map(function (row) {
+      return {
+        id: row.id,
+        label: row.name
+      };
+    }), 'id', 'label', 'Any form');
+    formSelect.value = selectedForm;
+    noForms.hidden = forms.length > 0;
+  }
+
+  /** "Add tag" / "Remove tag": one Business tag. Archived ones are hidden unless already chosen. */
+  function populateTagAction(node) {
+    var select = formEl.querySelector('[data-role="wf-tag-select"]');
+    var noTags = formEl.querySelector('[data-role="wf-no-tags"]');
+    var tags = catalogs.tags || [];
+    var selected = node.config.tag_id != null ? String(node.config.tag_id) : '';
+
+    // Add refuses an archived tag; Remove still accepts one. Keep either visible,
+    // marked, only where the step already names it.
+    var rows = tags.filter(function (row) {
+      return !row.archived || String(row.id) === selected || node.type === 'remove_tag';
+    }).map(function (row) {
+      return {
+        id: row.id,
+        label: row.archived ? "".concat(row.name, " (archived)") : row.name
+      };
+    });
+    fillSelect(select, rows, 'id', 'label', 'Choose a tag');
+    select.value = selected;
+    noTags.hidden = tags.length > 0;
   }
 
   /**
@@ -1582,6 +1747,17 @@ function createDrawer(_ref) {
       if (customGroup.children.length === 0) {
         customGroup.remove();
       }
+
+      // "Has tag" / "does not have tag": one subject per tag of this Business.
+      var tagGroup = row.querySelector('[data-role="wf-condition-tag-group"]');
+      (catalogs.tags || []).forEach(function (tag) {
+        var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, tag.archived ? "".concat(tag.name, " (archived)") : tag.name);
+        opt.value = "contact.has_tag:".concat(tag.id);
+        tagGroup.appendChild(opt);
+      });
+      if (tagGroup.children.length === 0) {
+        tagGroup.remove();
+      }
       fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null);
       function syncOperators() {
         var subject = subjectSelect.value;
@@ -1621,7 +1797,7 @@ function createDrawer(_ref) {
         // A stored subject this Business no longer offers (a deleted
         // field): keep it visible and honest instead of silently
         // swapping in another subject.
-        var orphan = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, 'A field that no longer exists');
+        var orphan = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, String(condition.subject).startsWith('contact.has_tag:') ? 'A tag that no longer exists' : 'A field that no longer exists');
         orphan.value = condition.subject;
         subjectSelect.appendChild(orphan);
         subjectSelect.value = condition.subject;
@@ -1693,6 +1869,12 @@ function createDrawer(_ref) {
       config.source = formEl.querySelector('select[data-field="source"]').value;
       var _groupValue = formEl.querySelector('[data-role="wf-contact-group-select"]').value;
       config.contact_group_id = _groupValue ? Number(_groupValue) : null;
+    } else if (triggerType === 'contact_tag_added' || triggerType === 'contact_tag_removed') {
+      var tagValue = formEl.querySelector('[data-role="wf-tag-filter-select"]').value;
+      config.tag_id = tagValue ? Number(tagValue) : null;
+    } else if (triggerType === 'form_submitted') {
+      var formValue = formEl.querySelector('[data-role="wf-form-filter-select"]').value;
+      config.form_id = formValue ? Number(formValue) : null;
     } else if (triggerType === 'opportunity_stage_changed') {
       ;
       [['pipeline_id', 'wf-crm-pipeline-select'], ['from_stage_id', 'wf-crm-from-stage-select'], ['to_stage_id', 'wf-crm-to-stage-select']].forEach(function (_ref2) {
@@ -1731,6 +1913,12 @@ function createDrawer(_ref) {
       value: formEl.querySelector('[data-field="value"]').value
     };
   }
+  function readTagAction() {
+    var tagValue = formEl.querySelector('[data-role="wf-tag-select"]').value;
+    return {
+      tag_id: tagValue ? Number(tagValue) : null
+    };
+  }
   function save() {
     if (!currentNode || readOnly) {
       return;
@@ -1742,6 +1930,8 @@ function createDrawer(_ref) {
       config = readIfElse();
     } else if (currentNode.type === 'update_contact_field') {
       config = readUpdateContactField();
+    } else if (currentNode.type === 'add_tag' || currentNode.type === 'remove_tag') {
+      config = readTagAction();
     } else if (currentNode.type === 'wait') {
       config = readWait();
     } else if (currentNode.type === 'end') {
@@ -1784,17 +1974,17 @@ function createDrawer(_ref) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/history.js"
+/***/ "./resources/js/automations/workflow-builder/history.js":
 /*!**************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/history.js ***!
   \**************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createHistory: () => (/* binding */ createHistory)
+/* harmony export */   "createHistory": () => (/* binding */ createHistory)
 /* harmony export */ });
 // Automations V2 (contract §13.1, V2-D) — client-side document-history
 // undo/redo. Bounded to 50 snapshots, exactly as the contract specifies.
@@ -1851,14 +2041,1195 @@ function createHistory(initialDocument) {
   };
 }
 
-/***/ },
+/***/ }),
 
-/***/ "./resources/js/automations/workflow-builder/index.js"
+/***/ "./resources/js/automations/workflow-builder/recipes.js":
+/*!**************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/recipes.js ***!
+  \**************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "listRecipes": () => (/* binding */ listRecipes)
+/* harmony export */ });
+/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
+// Automations V2 (contract §13.3, task requirement, V2-D) — recipe
+// templates. A recipe is ONLY a starting document: each factory below
+// produces the exact same §5.3 nested-list shape a hand-built workflow
+// would, using nothing but the launch node/trigger vocabulary
+// (constants.js). There is no second engine, no recipe-specific runtime,
+// and no domain (Forms/Calendar/Payments/Pipeline/Tags) this contract does
+// not support — every recipe here is mechanically re-derivable from
+// NODE_TYPES alone.
+
+function starter(triggerConfig, body) {
+  var root = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('trigger', triggerConfig);
+  root.next = body;
+  return {
+    schema_version: 1,
+    root: root
+  };
+}
+var TRIGGER_DEFAULTS = {
+  contact_created: {
+    trigger_type: 'contact_created',
+    source: 'any',
+    contact_group_id: null,
+    enrollment_policy: 'once_ever',
+    enrollment_policy_source: 'default',
+    failure_policy: 'halt'
+  },
+  contact_date_reached: {
+    trigger_type: 'contact_date_reached',
+    contact_group_id: null,
+    date_field_id: null,
+    offset: '0 day',
+    send_at: '09:00',
+    enrollment_policy: 'once_per_occurrence',
+    enrollment_policy_source: 'default',
+    failure_policy: 'halt'
+  }
+};
+function listRecipes() {
+  return [{
+    key: 'welcome_new_contact',
+    titleKey: 'welcome_new_contact',
+    descriptionKey: 'welcome_new_contact_description',
+    build: function build() {
+      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
+        body: 'Hi {first_name}, thanks for reaching out! We will be in touch shortly.'
+      })]);
+    }
+  }, {
+    key: 'notify_team_new_contact',
+    titleKey: 'notify_team_new_contact',
+    descriptionKey: 'notify_team_new_contact_description',
+    build: function build() {
+      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('internal_notification', {
+        message: 'New contact: {first_name} {last_name}'
+      })]);
+    }
+  }, {
+    key: 'check_in_after_days',
+    titleKey: 'check_in_after_days',
+    descriptionKey: 'check_in_after_days_description',
+    build: function build() {
+      var wait = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('wait', {
+        mode: 'duration',
+        amount: 2,
+        unit: 'days'
+      });
+      var branch = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('if_else', {
+        match: 'all',
+        conditions: [{
+          subject: 'contact.subscribed',
+          operator: 'is_true'
+        }]
+      });
+      branch.yes = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
+        body: 'Hi {first_name}, just checking in — still interested?'
+      })];
+      branch.no = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('end', {})];
+
+      // A straight chain is one flat sibling array (contract §5.3's
+      // own example: n_1/n_2/n_3 all sit directly under root.next),
+      // never nesting via one step's own `next` — the canvas
+      // renderer and every insert/delete/move helper share that
+      // one invariant throughout this module.
+      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [wait, branch]);
+    }
+  }, {
+    key: 'date_reminder',
+    titleKey: 'date_reminder',
+    descriptionKey: 'date_reminder_description',
+    build: function build() {
+      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_date_reached), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
+        body: 'Hi {first_name}, just a friendly reminder from {business_name}!'
+      })]);
+    }
+  }];
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/step-picker.js":
+/*!******************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/step-picker.js ***!
+  \******************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "createStepPicker": () => (/* binding */ createStepPicker)
+/* harmony export */ });
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+// Automations V2 (contract §13.1) — the step picker behind every "+".
+//
+// A searchable list of the steps that are VALID at that exact spot. The canvas
+// decides which types those are (an End only closes a path; an If / Else is
+// withheld at the nesting limit), so the picker can never offer a shape the
+// document validator would refuse. Search matches the customer label, the
+// description and a few everyday words ("delay", "sms", "branch").
+//
+// Keyboard: typing filters, ↑/↓ move, Enter adds, Escape closes.
+
+
+function createStepPicker(hostEl) {
+  var panel = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker');
+  panel.dataset.role = 'wf-step-picker';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Add a step');
+  panel.hidden = true;
+  var searchWrap = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker__search');
+  searchWrap.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('search'));
+  var search = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('input', 'wf-picker__input');
+  search.type = 'search';
+  search.placeholder = 'Search steps';
+  search.setAttribute('aria-label', 'Search steps');
+  search.dataset.role = 'wf-step-search';
+  searchWrap.appendChild(search);
+  var list = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker__list');
+  list.setAttribute('role', 'listbox');
+  var note = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__note');
+  note.hidden = true;
+  panel.appendChild(searchWrap);
+  panel.appendChild(list);
+  panel.appendChild(note);
+  hostEl.appendChild(panel);
+  var options = null;
+  var anchor = null;
+  var activeIndex = 0;
+  var visible = [];
+  function matches(entry, query) {
+    if (query === '') {
+      return true;
+    }
+    var haystack = [_constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[entry.type], entry.description, entry.group].concat(_toConsumableArray(entry.keywords)).join(' ').toLowerCase();
+    return query.split(/\s+/).filter(Boolean).every(function (word) {
+      return haystack.includes(word);
+    });
+  }
+  function render() {
+    var query = search.value.trim().toLowerCase();
+    list.innerHTML = '';
+    visible = _constants_js__WEBPACK_IMPORTED_MODULE_0__.STEP_CATALOG.filter(function (entry) {
+      return options.types.includes(entry.type) && matches(entry, query);
+    });
+    if (activeIndex >= visible.length) {
+      activeIndex = Math.max(0, visible.length - 1);
+    }
+    if (visible.length === 0) {
+      list.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__empty', 'No step matches that search.'));
+    }
+    var lastGroup = null;
+    visible.forEach(function (entry, index) {
+      if (entry.group !== lastGroup) {
+        list.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__group', entry.group));
+        lastGroup = entry.group;
+      }
+      var option = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('button', 'wf-picker__option');
+      option.type = 'button';
+      option.setAttribute('role', 'option');
+      option.dataset.nodeType = entry.type;
+      option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+      option.classList.toggle('is-active', index === activeIndex);
+      option.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)(entry.icon, "wf-tone wf-tone--".concat(entry.type)));
+      var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__text');
+      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__label', _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[entry.type]));
+      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__description', options.hints && options.hints[entry.type] || entry.description));
+      option.appendChild(text);
+      option.addEventListener('mouseenter', function () {
+        activeIndex = index;
+        syncActive();
+      });
+      option.addEventListener('click', function () {
+        return choose(entry.type);
+      });
+      list.appendChild(option);
+    });
+  }
+  function syncActive() {
+    list.querySelectorAll('.wf-picker__option').forEach(function (option, index) {
+      var active = index === activeIndex;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (active) {
+        option.scrollIntoView({
+          block: 'nearest'
+        });
+      }
+    });
+  }
+  function position() {
+    var rect = anchor.getBoundingClientRect();
+    var width = panel.offsetWidth || 340;
+    var height = panel.offsetHeight || 380;
+    var left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
+    var below = rect.bottom + 8;
+    var top = below + height > window.innerHeight - 12 ? Math.max(12, rect.top - height - 8) : below;
+    panel.style.left = "".concat(left, "px");
+    panel.style.top = "".concat(top, "px");
+  }
+  function choose(type) {
+    var chosen = options;
+    close();
+    chosen.onPick(type);
+  }
+  function open(anchorEl, pickerOptions) {
+    anchor = anchorEl;
+    options = pickerOptions;
+    activeIndex = 0;
+    search.value = '';
+    note.hidden = !pickerOptions.note;
+    note.textContent = pickerOptions.note || '';
+    panel.hidden = false;
+    anchor.setAttribute('aria-expanded', 'true');
+    render();
+    position();
+    search.focus();
+  }
+  function close() {
+    if (panel.hidden) {
+      return;
+    }
+    panel.hidden = true;
+    if (anchor) {
+      anchor.setAttribute('aria-expanded', 'false');
+      anchor.focus({
+        preventScroll: true
+      });
+    }
+    anchor = null;
+    options = null;
+  }
+  search.addEventListener('input', function () {
+    activeIndex = 0;
+    render();
+  });
+  panel.addEventListener('keydown', function (event) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      activeIndex = Math.min(visible.length - 1, activeIndex + 1);
+      syncActive();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      activeIndex = Math.max(0, activeIndex - 1);
+      syncActive();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (visible[activeIndex]) {
+        choose(visible[activeIndex].type);
+      }
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  });
+  document.addEventListener('mousedown', function (event) {
+    if (!panel.hidden && !panel.contains(event.target) && event.target !== anchor && !(anchor && anchor.contains(event.target))) {
+      close();
+    }
+  });
+  var reposition = function reposition() {
+    if (!panel.hidden && anchor && anchor.isConnected) {
+      position();
+    }
+  };
+  window.addEventListener('resize', reposition);
+  // Capture phase: the canvas scrolls inside its own viewport, not the window.
+  window.addEventListener('scroll', reposition, true);
+  return {
+    open: open,
+    close: close,
+    isOpen: function isOpen() {
+      return !panel.hidden;
+    }
+  };
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/summaries.js":
+/*!****************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/summaries.js ***!
+  \****************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "summarize": () => (/* binding */ summarize)
+/* harmony export */ });
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+/* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
+// Automations V2 (contract §13.1) — what each card SAYS.
+//
+// A card on the canvas is only useful if it tells a person what the step does
+// for this contact, in plain language, without opening it: "Wait 2 days",
+// "Text: “Hi {first_name}…”", "If the customer has not replied yet". This
+// module turns a node's stored config into that sentence. It reads only the
+// document and the Business catalogs the page was handed; it never shows an
+// identifier, and an unfinished step reads as the thing still to do.
+
+
+var EXCERPT_LENGTH = 90;
+function excerpt(text) {
+  var clean = String(text || '').replace(/\s+/g, ' ').trim();
+  return clean.length > EXCERPT_LENGTH ? "".concat(clean.slice(0, EXCERPT_LENGTH - 1), "\u2026") : clean;
+}
+function groupName(catalogs, id) {
+  var group = (catalogs.contactGroups || []).find(function (row) {
+    return String(row.id) === String(id);
+  });
+  return group ? group.name : null;
+}
+function fieldLabel(rows, id) {
+  var field = (rows || []).find(function (row) {
+    return String(row.id) === String(id);
+  });
+  return field ? field.label : null;
+}
+
+/** A CRM pipeline or stage name from the Business catalog, or null when not set or not found. */
+function crmName(rows, id) {
+  if (id === null || id === undefined || id === '') {
+    return null;
+  }
+  var row = (rows || []).find(function (candidate) {
+    return String(candidate.id) === String(id);
+  });
+  return row ? row.name : null;
+}
+
+/** A tag or form name from the Business catalog, or null when not set or not found. */
+function namedRow(rows, id) {
+  return crmName(rows, id);
+}
+function plural(amount, unit) {
+  var singular = unit.replace(/s$/, '');
+  return Number(amount) === 1 ? "1 ".concat(singular) : "".concat(amount, " ").concat(unit);
+}
+function formatMoment(value) {
+  var match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(value || ''));
+  if (!match) {
+    return null;
+  }
+  var date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+}
+function formatTime(value) {
+  var match = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
+  if (!match) {
+    return null;
+  }
+  var date = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
+  return date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+/**
+ * @returns {{ title: string, summary: string, incomplete: boolean }}
+ */
+function summarize(node, catalogs) {
+  var config = node.config || {};
+  switch (node.type) {
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.TRIGGER:
+      return summarizeTrigger(config, catalogs);
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_SMS:
+      return config.body && String(config.body).trim() !== '' ? {
+        summary: "\u201C".concat(excerpt(config.body), "\u201D"),
+        incomplete: false
+      } : {
+        summary: 'Write the message to send',
+        incomplete: true
+      };
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.INTERNAL_NOTIFICATION:
+      return config.message && String(config.message).trim() !== '' ? {
+        summary: "\u201C".concat(excerpt(config.message), "\u201D"),
+        incomplete: false
+      } : {
+        summary: 'Write what your team should be told',
+        incomplete: true
+      };
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_EMAIL:
+      return config.subject && String(config.subject).trim() !== '' && config.body && String(config.body).trim() !== '' ? {
+        summary: "\u201C".concat(excerpt(config.subject), "\u201D"),
+        incomplete: false
+      } : {
+        summary: 'Write the email subject and message',
+        incomplete: true
+      };
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.ADD_TAG:
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.REMOVE_TAG:
+      {
+        var tag = namedRow(catalogs.tags, config.tag_id);
+        var verb = node.type === _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.ADD_TAG ? 'Add' : 'Remove';
+        return tag ? {
+          summary: "".concat(verb, " the tag \u201C").concat(tag, "\u201D"),
+          incomplete: false
+        } : {
+          summary: 'Choose a tag',
+          incomplete: true
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.UPDATE_CONTACT_FIELD:
+      {
+        var label = fieldLabel(catalogs.writableFields, config.field_id);
+        if (!label) {
+          return {
+            summary: 'Choose a field to update',
+            incomplete: true
+          };
+        }
+        return String(config.value || '') === '' ? {
+          summary: "Clear ".concat(label),
+          incomplete: false
+        } : {
+          summary: "Set ".concat(label, " to \u201C").concat(excerpt(config.value), "\u201D"),
+          incomplete: false
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.WAIT:
+      if (config.mode === 'until_datetime') {
+        var moment = formatMoment(config.at);
+        return moment ? {
+          summary: "Until ".concat(moment),
+          incomplete: false
+        } : {
+          summary: 'Choose when to continue',
+          incomplete: true
+        };
+      }
+      return Number(config.amount) > 0 && config.unit ? {
+        summary: "Wait ".concat(plural(config.amount, config.unit)),
+        incomplete: false
+      } : {
+        summary: 'Choose how long to wait',
+        incomplete: true
+      };
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.IF_ELSE:
+      {
+        var conditions = Array.isArray(config.conditions) ? config.conditions : [];
+        if (conditions.length === 0) {
+          return {
+            summary: 'Add a condition to check',
+            incomplete: true
+          };
+        }
+        var joiner = config.match === 'any' ? ' or ' : ' and ';
+        // Read as one sentence after "If": built-in subjects go lower-case
+        // ("If customer has not replied yet and first name is …"), while a
+        // custom field keeps the capitals its Business gave its label.
+        var sentence = conditions.map(function (condition) {
+          var text = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.describeCondition)(condition, catalogs);
+          return (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.customFieldId)(condition && condition.subject) === null ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+        }).join(joiner);
+        return {
+          summary: "If ".concat(sentence),
+          incomplete: false
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.END:
+      return {
+        summary: 'The workflow stops here for this contact',
+        incomplete: false
+      };
+    default:
+      return {
+        summary: '',
+        incomplete: false
+      };
+  }
+}
+function summarizeTrigger(config, catalogs) {
+  var info = (0,_constants_js__WEBPACK_IMPORTED_MODULE_0__.triggerTypeInfo)(config.trigger_type);
+  if (!info) {
+    return {
+      title: 'Trigger',
+      summary: 'Choose what starts this workflow',
+      incomplete: true
+    };
+  }
+  var group = groupName(catalogs, config.contact_group_id);
+  switch (info.value) {
+    case 'contact_created':
+      {
+        var when = group ? "When a contact is added to ".concat(group) : 'When any new contact is added';
+        var source = config.source && config.source !== 'any' ? " \xB7 ".concat(_constants_js__WEBPACK_IMPORTED_MODULE_0__.CONTACT_SOURCE_LABELS[config.source] || '') : '';
+        return {
+          title: info.title,
+          summary: "".concat(when).concat(source),
+          incomplete: false
+        };
+      }
+    case 'message_received':
+      return {
+        title: info.title,
+        summary: 'When a contact texts your business',
+        incomplete: false
+      };
+    case 'contact_date_reached':
+      {
+        var field = fieldLabel(catalogs.dateFields, config.date_field_id);
+        if (!group || !field) {
+          return {
+            title: info.title,
+            summary: 'Choose a group and a date field',
+            incomplete: true
+          };
+        }
+        var time = formatTime(config.send_at);
+        var _when = !config.offset || config.offset === '0 day' ? 'On' : "".concat(config.offset, " before");
+        return {
+          title: info.title,
+          summary: "".concat(_when, " ").concat(field, " \xB7 ").concat(group).concat(time ? " \xB7 at ".concat(time) : ''),
+          incomplete: false
+        };
+      }
+    case 'manual_enrollment':
+      return {
+        title: info.title,
+        summary: 'When you add a contact to this workflow',
+        incomplete: false
+      };
+    case 'opportunity_created':
+      return {
+        title: info.title,
+        summary: 'When a new opportunity is added, in any pipeline',
+        incomplete: false
+      };
+    case 'opportunity_stage_changed':
+      {
+        var pipeline = crmName(catalogs.crmPipelines, config.pipeline_id);
+        var from = crmName(catalogs.crmStages, config.from_stage_id);
+        var to = crmName(catalogs.crmStages, config.to_stage_id);
+        var move = 'When an opportunity moves stage';
+        if (from && to) {
+          move = "When an opportunity moves from ".concat(from, " to ").concat(to);
+        } else if (to) {
+          move = "When an opportunity moves to ".concat(to);
+        } else if (from) {
+          move = "When an opportunity leaves ".concat(from);
+        }
+        return {
+          title: info.title,
+          summary: "".concat(move).concat(pipeline ? " \xB7 ".concat(pipeline) : ''),
+          incomplete: false
+        };
+      }
+    case 'opportunity_won':
+      return {
+        title: info.title,
+        summary: 'When an opportunity is marked won',
+        incomplete: false
+      };
+    case 'opportunity_lost':
+      return {
+        title: info.title,
+        summary: 'When an opportunity is marked lost',
+        incomplete: false
+      };
+    case 'contact_tag_added':
+    case 'contact_tag_removed':
+      {
+        var tag = namedRow(catalogs.tags, config.tag_id);
+        var verb = info.value === 'contact_tag_added' ? 'added to' : 'removed from';
+        return {
+          title: info.title,
+          summary: tag ? "When \u201C".concat(tag, "\u201D is ").concat(verb, " a contact") : "When any tag is ".concat(verb, " a contact"),
+          incomplete: false
+        };
+      }
+    case 'form_submitted':
+      {
+        var form = namedRow(catalogs.forms, config.form_id);
+        return {
+          title: info.title,
+          summary: form ? "When \u201C".concat(form, "\u201D is submitted") : 'When any form is submitted',
+          incomplete: false
+        };
+      }
+    case 'appointment_scheduled':
+      return {
+        title: info.title,
+        summary: 'When an appointment is booked for a contact',
+        incomplete: false
+      };
+    case 'appointment_cancelled':
+      return {
+        title: info.title,
+        summary: 'When an appointment is cancelled',
+        incomplete: false
+      };
+    case 'appointment_rescheduled':
+      return {
+        title: info.title,
+        summary: 'When an appointment is moved to another time',
+        incomplete: false
+      };
+    default:
+      return {
+        title: info.title,
+        summary: '',
+        incomplete: false
+      };
+  }
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/test-panel.js":
+/*!*****************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/test-panel.js ***!
+  \*****************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "createTestPanel": () => (/* binding */ createTestPanel)
+/* harmony export */ });
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+// Automations V2 (contract §13.1 "Test workflow", §16) — try the workflow on
+// one real contact, with no side effects.
+//
+// A person searches this Business's contacts by name or number and picks one;
+// the page then asks WorkflowSimulator for the path that contact would take
+// through the saved draft. Nothing is sent, changed or enrolled — the
+// simulator's own guarantee — and this panel says so. The result is shown two
+// ways: as a plain step-by-step story here, and as a highlighted path on the
+// canvas (the caller's onPath), so a branch that goes the "wrong" way is
+// obvious at a glance.
+
+
+var DID_WORDS = {
+  started: 'Starts the workflow',
+  would_run: 'Would run',
+  would_wait: 'Would wait',
+  branched: 'Checks the condition',
+  ended: 'Ends the workflow',
+  skipped: 'Would stop here',
+  held: 'Would pause here'
+};
+var ENDED_WORDS = {
+  path_end: 'The path runs out of steps, so the workflow finishes for this contact.',
+  end_step: 'The workflow ends at an End step.',
+  step_limit: 'The test stopped after the most steps one run can take.',
+  stopped: 'The workflow would stop for this contact at the step above.'
+};
+var REFUSED_WORDS = {
+  contact_belongs_to_another_business: 'That contact is not part of this business.',
+  workflow_cannot_be_walked: 'This workflow can’t be tested until the highlighted problems are fixed.',
+  version_has_no_business: 'This workflow can’t be tested right now.'
+};
+function createTestPanel(_ref) {
+  var panelEl = _ref.panelEl,
+    api = _ref.api,
+    basePath = _ref.basePath,
+    beforeRun = _ref.beforeRun,
+    onPath = _ref.onPath,
+    onClose = _ref.onClose;
+  var searchInput = panelEl.querySelector('[data-role="wf-test-search"]');
+  var contactsEl = panelEl.querySelector('[data-role="wf-test-contacts"]');
+  var resultEl = panelEl.querySelector('[data-role="wf-test-result"]');
+  var pickEl = panelEl.querySelector('[data-role="wf-test-pick"]');
+  var clearButton = panelEl.querySelector('[data-role="wf-test-clear"]');
+  var closeButton = panelEl.querySelector('[data-role="wf-test-close"]');
+  var searchTimer = null;
+  var searchSeq = 0;
+  function open() {
+    panelEl.hidden = false;
+    showPicker();
+    searchInput.focus({
+      preventScroll: true
+    });
+    search();
+  }
+  function close() {
+    if (panelEl.hidden) {
+      return;
+    }
+    panelEl.hidden = true;
+    onPath(null);
+    if (onClose) {
+      onClose();
+    }
+  }
+  function isOpen() {
+    return !panelEl.hidden;
+  }
+  function showPicker() {
+    pickEl.hidden = false;
+    resultEl.hidden = true;
+    clearButton.hidden = true;
+    resultEl.innerHTML = '';
+  }
+  function search() {
+    return _search.apply(this, arguments);
+  }
+  function _search() {
+    _search = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
+      var seq, result, contacts, _t;
+      return _regenerator().w(function (_context) {
+        while (1) switch (_context.p = _context.n) {
+          case 0:
+            seq = ++searchSeq;
+            contactsEl.innerHTML = '';
+            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Searching…'));
+            _context.p = 1;
+            _context.n = 2;
+            return api.testContacts(basePath, searchInput.value.trim());
+          case 2:
+            result = _context.v;
+            _context.n = 4;
+            break;
+          case 3:
+            _context.p = 3;
+            _t = _context.v;
+            result = {
+              status: 0,
+              body: null
+            };
+          case 4:
+            if (!(seq !== searchSeq)) {
+              _context.n = 5;
+              break;
+            }
+            return _context.a(2);
+          case 5:
+            contactsEl.innerHTML = '';
+            if (!(result.status === 401)) {
+              _context.n = 6;
+              break;
+            }
+            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'You don’t have permission to view contacts.'));
+            return _context.a(2);
+          case 6:
+            contacts = result.body && result.body.contacts || [];
+            if (!(result.status !== 200)) {
+              _context.n = 7;
+              break;
+            }
+            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Contacts couldn’t be loaded. Try again.'));
+            return _context.a(2);
+          case 7:
+            if (!(contacts.length === 0)) {
+              _context.n = 8;
+              break;
+            }
+            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', searchInput.value.trim() ? 'No contact matches that search.' : 'This business has no contacts yet.'));
+            return _context.a(2);
+          case 8:
+            contacts.forEach(function (contact) {
+              var button = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('button', 'wf-test__contact');
+              button.type = 'button';
+              button.dataset.role = 'wf-test-contact';
+              button.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('user'));
+              var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-text');
+              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-name', contact.name || contact.phone));
+              if (contact.name) {
+                text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-phone', contact.phone));
+              }
+              button.appendChild(text);
+              button.addEventListener('click', function () {
+                return run(contact);
+              });
+              contactsEl.appendChild(button);
+            });
+          case 9:
+            return _context.a(2);
+        }
+      }, _callee, null, [[1, 3]]);
+    }));
+    return _search.apply(this, arguments);
+  }
+  function run(_x) {
+    return _run.apply(this, arguments);
+  }
+  function _run() {
+    _run = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(contact) {
+      var result, heading, body, steps, timeline, end, _t2;
+      return _regenerator().w(function (_context2) {
+        while (1) switch (_context2.p = _context2.n) {
+          case 0:
+            pickEl.hidden = true;
+            resultEl.hidden = false;
+            clearButton.hidden = false;
+            resultEl.innerHTML = '';
+            resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Running the test…'));
+            _context2.n = 1;
+            return beforeRun();
+          case 1:
+            _context2.p = 1;
+            _context2.n = 2;
+            return api.simulate(basePath, contact.uid);
+          case 2:
+            result = _context2.v;
+            _context2.n = 4;
+            break;
+          case 3:
+            _context2.p = 3;
+            _t2 = _context2.v;
+            result = {
+              status: 0,
+              body: null
+            };
+          case 4:
+            resultEl.innerHTML = '';
+            heading = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-test__subject');
+            heading.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('user'));
+            heading.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', null, "Testing with ".concat(contact.name || contact.phone)));
+            resultEl.appendChild(heading);
+            body = result.body || {};
+            if (!(result.status !== 200 || body.refused)) {
+              _context2.n = 5;
+              break;
+            }
+            resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__notice', REFUSED_WORDS[body.refused] || body.message || 'The test couldn’t run. Try again.'));
+            onPath(null);
+            return _context2.a(2);
+          case 5:
+            if (body.validation && Object.keys(body.validation).length > 0) {
+              resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__notice', 'This draft still has problems to fix before it can publish. The path below shows what would happen as it stands.'));
+            }
+            steps = Array.isArray(body.path) ? body.path : [];
+            timeline = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('ol', 'wf-test__timeline');
+            steps.forEach(function (step) {
+              var item = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('li', 'wf-test__step');
+              item.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)(_constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_ICONS[step.type] || 'zap', "wf-tone wf-tone--".concat(step.type)));
+              var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-test__step-text');
+              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-title', step.type === 'trigger' ? 'Trigger' : _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[step.type] || 'Step'));
+              var line = DID_WORDS[step.did] || '';
+              if (step.did === 'branched' && step.branch) {
+                line = "Takes the ".concat(step.branch === 'yes' ? 'Yes' : 'No', " path");
+              }
+              if (step.did === 'would_wait' && step.resume_at) {
+                line = "Would wait until ".concat(new Date(step.resume_at).toLocaleString(undefined, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short'
+                }));
+              }
+              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-did', line));
+
+              // The simulator's detail explains what testing withheld ("Nothing
+              // is sent while testing") or why a path stopped. For a start, a
+              // branch or a timed wait the line above already says it.
+              var explains = ['would_run', 'held', 'skipped'].includes(step.did) || step.did === 'would_wait' && !step.resume_at;
+              if (step.detail && explains) {
+                text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-detail', step.detail));
+              }
+              item.appendChild(text);
+              timeline.appendChild(item);
+            });
+            resultEl.appendChild(timeline);
+            if (body.ended && ENDED_WORDS[body.ended]) {
+              end = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__end');
+              end.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('flag'));
+              end.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', null, ENDED_WORDS[body.ended]));
+              resultEl.appendChild(end);
+            }
+            onPath(new Map(steps.map(function (step) {
+              return [step.key, step];
+            })));
+          case 6:
+            return _context2.a(2);
+        }
+      }, _callee2, null, [[1, 3]]);
+    }));
+    return _run.apply(this, arguments);
+  }
+  searchInput.addEventListener('input', function () {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(search, 250);
+  });
+  clearButton.addEventListener('click', function () {
+    onPath(null);
+    showPicker();
+    searchInput.focus({
+      preventScroll: true
+    });
+  });
+  closeButton.addEventListener('click', close);
+  panelEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  });
+  return {
+    open: open,
+    close: close,
+    isOpen: isOpen
+  };
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/validation.js":
+/*!*****************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/validation.js ***!
+  \*****************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "DOCUMENT_KEY": () => (/* binding */ DOCUMENT_KEY),
+/* harmony export */   "countIssues": () => (/* binding */ countIssues),
+/* harmony export */   "hasErrors": () => (/* binding */ hasErrors),
+/* harmony export */   "renderDocumentBanner": () => (/* binding */ renderDocumentBanner)
+/* harmony export */ });
+// Automations V2 (contract §14.4, V2-D) — turning the server's
+// node_key-keyed errors into customer-facing feedback. The server is the
+// only authority on what is valid (WorkflowDefinitionValidator); this
+// module never re-derives a validation rule, it only places the server's
+// own messages: document-level ones in a banner, per-step ones on their
+// card (canvas-renderer.js reads the same `errors` map directly).
+var DOCUMENT_KEY = '_document';
+function hasErrors(errors) {
+  return Object.keys(errors || {}).length > 0;
+}
+function countIssues(errors) {
+  return Object.values(errors || {}).reduce(function (total, list) {
+    return total + list.length;
+  }, 0);
+}
+function renderDocumentBanner(bannerEl, errors, messageTemplate) {
+  var documentMessages = errors && errors[DOCUMENT_KEY] || [];
+  var total = countIssues(errors);
+  if (total === 0) {
+    bannerEl.classList.add('d-none');
+    bannerEl.innerHTML = '';
+    return;
+  }
+  bannerEl.classList.remove('d-none');
+  bannerEl.innerHTML = '';
+  var summary = document.createElement('p');
+  summary.className = 'mb-1 fw-semibold';
+  summary.textContent = messageTemplate.replace(':count', String(total));
+  bannerEl.appendChild(summary);
+  documentMessages.forEach(function (message) {
+    var p = document.createElement('p');
+    p.className = 'mb-0';
+    p.textContent = message;
+    bannerEl.appendChild(p);
+  });
+}
+
+/***/ }),
+
+/***/ "./resources/js/automations/workflow-builder/zoom-pan.js":
+/*!***************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/zoom-pan.js ***!
+  \***************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "createZoomPan": () => (/* binding */ createZoomPan)
+/* harmony export */ });
+// Automations V2 (contract §13.1, V2-D) — lightweight viewport zoom/pan.
+// No graph library: a CSS transform on one surface element, driven by
+// wheel/pinch, drag, buttons and the keyboard. This state is presentation
+// only — it is never read by autosave and never leaves this module, so
+// zooming or panning can never modify the workflow document (task
+// requirement, test #21).
+
+var MIN_SCALE = 0.4;
+var MAX_SCALE = 2;
+var STEP = 1.2;
+function createZoomPan(viewport, surface) {
+  var scale = 1;
+  var tx = 0;
+  var ty = 0;
+  var panning = false;
+  var panStartX = 0;
+  var panStartY = 0;
+  var panOriginX = 0;
+  var panOriginY = 0;
+  function apply() {
+    surface.style.transform = "translate(".concat(tx, "px, ").concat(ty, "px) scale(").concat(scale, ")");
+  }
+  function clampScale(value) {
+    return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
+  }
+  function zoomIn() {
+    scale = clampScale(scale * STEP);
+    apply();
+  }
+  function zoomOut() {
+    scale = clampScale(scale / STEP);
+    apply();
+  }
+  function reset() {
+    scale = 1;
+    tx = 0;
+    ty = 0;
+    apply();
+  }
+  function fit() {
+    var viewportWidth = viewport.clientWidth;
+    var surfaceWidth = surface.scrollWidth || viewportWidth;
+    if (surfaceWidth > 0) {
+      scale = clampScale(Math.min(1, viewportWidth / surfaceWidth));
+    }
+    tx = 0;
+    ty = 0;
+    apply();
+  }
+  function onWheel(event) {
+    if (!event.ctrlKey && !event.metaKey) {
+      return;
+    }
+    event.preventDefault();
+    if (event.deltaY < 0) {
+      zoomIn();
+    } else {
+      zoomOut();
+    }
+  }
+  function onPointerDown(event) {
+    // Pan from the empty canvas only: pressing a card, a "+" or a menu is a
+    // click on that control, never the start of a drag.
+    if (event.button !== 0 || event.target.closest('button, a, input, select, textarea, [role="button"], .dropdown-menu')) {
+      return;
+    }
+    panning = true;
+    panStartX = event.clientX;
+    panStartY = event.clientY;
+    panOriginX = tx;
+    panOriginY = ty;
+    viewport.classList.add('is-panning');
+  }
+  function onPointerMove(event) {
+    if (!panning) {
+      return;
+    }
+    tx = panOriginX + (event.clientX - panStartX);
+    ty = panOriginY + (event.clientY - panStartY);
+    apply();
+  }
+  function onPointerUp() {
+    panning = false;
+    viewport.classList.remove('is-panning');
+  }
+  function onKeydown(event) {
+    if (!(event.ctrlKey || event.metaKey)) {
+      return;
+    }
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomIn();
+    } else if (event.key === '-') {
+      event.preventDefault();
+      zoomOut();
+    } else if (event.key === '0') {
+      event.preventDefault();
+      reset();
+    }
+  }
+  viewport.addEventListener('wheel', onWheel, {
+    passive: false
+  });
+  viewport.addEventListener('mousedown', onPointerDown);
+  window.addEventListener('mousemove', onPointerMove);
+  window.addEventListener('mouseup', onPointerUp);
+  viewport.addEventListener('keydown', onKeydown);
+  apply();
+  return {
+    zoomIn: zoomIn,
+    zoomOut: zoomOut,
+    reset: reset,
+    fit: fit,
+    getState: function getState() {
+      return {
+        scale: scale,
+        tx: tx,
+        ty: ty
+      };
+    }
+  };
+}
+
+/***/ })
+
+/******/ 	});
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	var __webpack_module_cache__ = {};
+/******/
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+/******/
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/
+/************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/
+/************************************************************************/
+var __webpack_exports__ = {};
+// This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
+(() => {
 /*!************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/index.js ***!
   \************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./canvas-renderer.js */ "./resources/js/automations/workflow-builder/canvas-renderer.js");
 /* harmony import */ var _drawer_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./drawer.js */ "./resources/js/automations/workflow-builder/drawer.js");
@@ -2433,1240 +3804,7 @@ window.AutomationsWorkflowBuilder = {
   initBuilder: initBuilder,
   initChooser: initChooser
 };
+})();
 
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/recipes.js"
-/*!**************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/recipes.js ***!
-  \**************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   listRecipes: () => (/* binding */ listRecipes)
-/* harmony export */ });
-/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
-// Automations V2 (contract §13.3, task requirement, V2-D) — recipe
-// templates. A recipe is ONLY a starting document: each factory below
-// produces the exact same §5.3 nested-list shape a hand-built workflow
-// would, using nothing but the launch node/trigger vocabulary
-// (constants.js). There is no second engine, no recipe-specific runtime,
-// and no domain (Forms/Calendar/Payments/Pipeline/Tags) this contract does
-// not support — every recipe here is mechanically re-derivable from
-// NODE_TYPES alone.
-
-function starter(triggerConfig, body) {
-  var root = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('trigger', triggerConfig);
-  root.next = body;
-  return {
-    schema_version: 1,
-    root: root
-  };
-}
-var TRIGGER_DEFAULTS = {
-  contact_created: {
-    trigger_type: 'contact_created',
-    source: 'any',
-    contact_group_id: null,
-    enrollment_policy: 'once_ever',
-    enrollment_policy_source: 'default',
-    failure_policy: 'halt'
-  },
-  contact_date_reached: {
-    trigger_type: 'contact_date_reached',
-    contact_group_id: null,
-    date_field_id: null,
-    offset: '0 day',
-    send_at: '09:00',
-    enrollment_policy: 'once_per_occurrence',
-    enrollment_policy_source: 'default',
-    failure_policy: 'halt'
-  }
-};
-function listRecipes() {
-  return [{
-    key: 'welcome_new_contact',
-    titleKey: 'welcome_new_contact',
-    descriptionKey: 'welcome_new_contact_description',
-    build: function build() {
-      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
-        body: 'Hi {first_name}, thanks for reaching out! We will be in touch shortly.'
-      })]);
-    }
-  }, {
-    key: 'notify_team_new_contact',
-    titleKey: 'notify_team_new_contact',
-    descriptionKey: 'notify_team_new_contact_description',
-    build: function build() {
-      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('internal_notification', {
-        message: 'New contact: {first_name} {last_name}'
-      })]);
-    }
-  }, {
-    key: 'check_in_after_days',
-    titleKey: 'check_in_after_days',
-    descriptionKey: 'check_in_after_days_description',
-    build: function build() {
-      var wait = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('wait', {
-        mode: 'duration',
-        amount: 2,
-        unit: 'days'
-      });
-      var branch = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('if_else', {
-        match: 'all',
-        conditions: [{
-          subject: 'contact.subscribed',
-          operator: 'is_true'
-        }]
-      });
-      branch.yes = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
-        body: 'Hi {first_name}, just checking in — still interested?'
-      })];
-      branch.no = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('end', {})];
-
-      // A straight chain is one flat sibling array (contract §5.3's
-      // own example: n_1/n_2/n_3 all sit directly under root.next),
-      // never nesting via one step's own `next` — the canvas
-      // renderer and every insert/delete/move helper share that
-      // one invariant throughout this module.
-      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [wait, branch]);
-    }
-  }, {
-    key: 'date_reminder',
-    titleKey: 'date_reminder',
-    descriptionKey: 'date_reminder_description',
-    build: function build() {
-      return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_date_reached), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
-        body: 'Hi {first_name}, just a friendly reminder from {business_name}!'
-      })]);
-    }
-  }];
-}
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/step-picker.js"
-/*!******************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/step-picker.js ***!
-  \******************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createStepPicker: () => (/* binding */ createStepPicker)
-/* harmony export */ });
-/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
-/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
-function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
-function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
-function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
-function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
-function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
-function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
-// Automations V2 (contract §13.1) — the step picker behind every "+".
-//
-// A searchable list of the steps that are VALID at that exact spot. The canvas
-// decides which types those are (an End only closes a path; an If / Else is
-// withheld at the nesting limit), so the picker can never offer a shape the
-// document validator would refuse. Search matches the customer label, the
-// description and a few everyday words ("delay", "sms", "branch").
-//
-// Keyboard: typing filters, ↑/↓ move, Enter adds, Escape closes.
-
-
-function createStepPicker(hostEl) {
-  var panel = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker');
-  panel.dataset.role = 'wf-step-picker';
-  panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-label', 'Add a step');
-  panel.hidden = true;
-  var searchWrap = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker__search');
-  searchWrap.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('search'));
-  var search = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('input', 'wf-picker__input');
-  search.type = 'search';
-  search.placeholder = 'Search steps';
-  search.setAttribute('aria-label', 'Search steps');
-  search.dataset.role = 'wf-step-search';
-  searchWrap.appendChild(search);
-  var list = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-picker__list');
-  list.setAttribute('role', 'listbox');
-  var note = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__note');
-  note.hidden = true;
-  panel.appendChild(searchWrap);
-  panel.appendChild(list);
-  panel.appendChild(note);
-  hostEl.appendChild(panel);
-  var options = null;
-  var anchor = null;
-  var activeIndex = 0;
-  var visible = [];
-  function matches(entry, query) {
-    if (query === '') {
-      return true;
-    }
-    var haystack = [_constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[entry.type], entry.description, entry.group].concat(_toConsumableArray(entry.keywords)).join(' ').toLowerCase();
-    return query.split(/\s+/).filter(Boolean).every(function (word) {
-      return haystack.includes(word);
-    });
-  }
-  function render() {
-    var query = search.value.trim().toLowerCase();
-    list.innerHTML = '';
-    visible = _constants_js__WEBPACK_IMPORTED_MODULE_0__.STEP_CATALOG.filter(function (entry) {
-      return options.types.includes(entry.type) && matches(entry, query);
-    });
-    if (activeIndex >= visible.length) {
-      activeIndex = Math.max(0, visible.length - 1);
-    }
-    if (visible.length === 0) {
-      list.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__empty', 'No step matches that search.'));
-    }
-    var lastGroup = null;
-    visible.forEach(function (entry, index) {
-      if (entry.group !== lastGroup) {
-        list.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-picker__group', entry.group));
-        lastGroup = entry.group;
-      }
-      var option = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('button', 'wf-picker__option');
-      option.type = 'button';
-      option.setAttribute('role', 'option');
-      option.dataset.nodeType = entry.type;
-      option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
-      option.classList.toggle('is-active', index === activeIndex);
-      option.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)(entry.icon, "wf-tone wf-tone--".concat(entry.type)));
-      var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__text');
-      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__label', _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[entry.type]));
-      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__description', options.hints && options.hints[entry.type] || entry.description));
-      option.appendChild(text);
-      option.addEventListener('mouseenter', function () {
-        activeIndex = index;
-        syncActive();
-      });
-      option.addEventListener('click', function () {
-        return choose(entry.type);
-      });
-      list.appendChild(option);
-    });
-  }
-  function syncActive() {
-    list.querySelectorAll('.wf-picker__option').forEach(function (option, index) {
-      var active = index === activeIndex;
-      option.classList.toggle('is-active', active);
-      option.setAttribute('aria-selected', active ? 'true' : 'false');
-      if (active) {
-        option.scrollIntoView({
-          block: 'nearest'
-        });
-      }
-    });
-  }
-  function position() {
-    var rect = anchor.getBoundingClientRect();
-    var width = panel.offsetWidth || 340;
-    var height = panel.offsetHeight || 380;
-    var left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
-    var below = rect.bottom + 8;
-    var top = below + height > window.innerHeight - 12 ? Math.max(12, rect.top - height - 8) : below;
-    panel.style.left = "".concat(left, "px");
-    panel.style.top = "".concat(top, "px");
-  }
-  function choose(type) {
-    var chosen = options;
-    close();
-    chosen.onPick(type);
-  }
-  function open(anchorEl, pickerOptions) {
-    anchor = anchorEl;
-    options = pickerOptions;
-    activeIndex = 0;
-    search.value = '';
-    note.hidden = !pickerOptions.note;
-    note.textContent = pickerOptions.note || '';
-    panel.hidden = false;
-    anchor.setAttribute('aria-expanded', 'true');
-    render();
-    position();
-    search.focus();
-  }
-  function close() {
-    if (panel.hidden) {
-      return;
-    }
-    panel.hidden = true;
-    if (anchor) {
-      anchor.setAttribute('aria-expanded', 'false');
-      anchor.focus({
-        preventScroll: true
-      });
-    }
-    anchor = null;
-    options = null;
-  }
-  search.addEventListener('input', function () {
-    activeIndex = 0;
-    render();
-  });
-  panel.addEventListener('keydown', function (event) {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      activeIndex = Math.min(visible.length - 1, activeIndex + 1);
-      syncActive();
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      activeIndex = Math.max(0, activeIndex - 1);
-      syncActive();
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      if (visible[activeIndex]) {
-        choose(visible[activeIndex].type);
-      }
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-    }
-  });
-  document.addEventListener('mousedown', function (event) {
-    if (!panel.hidden && !panel.contains(event.target) && event.target !== anchor && !(anchor && anchor.contains(event.target))) {
-      close();
-    }
-  });
-  var reposition = function reposition() {
-    if (!panel.hidden && anchor && anchor.isConnected) {
-      position();
-    }
-  };
-  window.addEventListener('resize', reposition);
-  // Capture phase: the canvas scrolls inside its own viewport, not the window.
-  window.addEventListener('scroll', reposition, true);
-  return {
-    open: open,
-    close: close,
-    isOpen: function isOpen() {
-      return !panel.hidden;
-    }
-  };
-}
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/summaries.js"
-/*!****************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/summaries.js ***!
-  \****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   summarize: () => (/* binding */ summarize)
-/* harmony export */ });
-/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
-/* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
-// Automations V2 (contract §13.1) — what each card SAYS.
-//
-// A card on the canvas is only useful if it tells a person what the step does
-// for this contact, in plain language, without opening it: "Wait 2 days",
-// "Text: “Hi {first_name}…”", "If the customer has not replied yet". This
-// module turns a node's stored config into that sentence. It reads only the
-// document and the Business catalogs the page was handed; it never shows an
-// identifier, and an unfinished step reads as the thing still to do.
-
-
-var EXCERPT_LENGTH = 90;
-function excerpt(text) {
-  var clean = String(text || '').replace(/\s+/g, ' ').trim();
-  return clean.length > EXCERPT_LENGTH ? "".concat(clean.slice(0, EXCERPT_LENGTH - 1), "\u2026") : clean;
-}
-function groupName(catalogs, id) {
-  var group = (catalogs.contactGroups || []).find(function (row) {
-    return String(row.id) === String(id);
-  });
-  return group ? group.name : null;
-}
-function fieldLabel(rows, id) {
-  var field = (rows || []).find(function (row) {
-    return String(row.id) === String(id);
-  });
-  return field ? field.label : null;
-}
-
-/** A CRM pipeline or stage name from the Business catalog, or null when not set or not found. */
-function crmName(rows, id) {
-  if (id === null || id === undefined || id === '') {
-    return null;
-  }
-  var row = (rows || []).find(function (candidate) {
-    return String(candidate.id) === String(id);
-  });
-  return row ? row.name : null;
-}
-function plural(amount, unit) {
-  var singular = unit.replace(/s$/, '');
-  return Number(amount) === 1 ? "1 ".concat(singular) : "".concat(amount, " ").concat(unit);
-}
-function formatMoment(value) {
-  var match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(value || ''));
-  if (!match) {
-    return null;
-  }
-  var date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
-  return date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  });
-}
-function formatTime(value) {
-  var match = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
-  if (!match) {
-    return null;
-  }
-  var date = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
-  return date.toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit'
-  });
-}
-
-/**
- * @returns {{ title: string, summary: string, incomplete: boolean }}
- */
-function summarize(node, catalogs) {
-  var config = node.config || {};
-  switch (node.type) {
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.TRIGGER:
-      return summarizeTrigger(config, catalogs);
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_SMS:
-      return config.body && String(config.body).trim() !== '' ? {
-        summary: "\u201C".concat(excerpt(config.body), "\u201D"),
-        incomplete: false
-      } : {
-        summary: 'Write the message to send',
-        incomplete: true
-      };
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.INTERNAL_NOTIFICATION:
-      return config.message && String(config.message).trim() !== '' ? {
-        summary: "\u201C".concat(excerpt(config.message), "\u201D"),
-        incomplete: false
-      } : {
-        summary: 'Write what your team should be told',
-        incomplete: true
-      };
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.UPDATE_CONTACT_FIELD:
-      {
-        var label = fieldLabel(catalogs.writableFields, config.field_id);
-        if (!label) {
-          return {
-            summary: 'Choose a field to update',
-            incomplete: true
-          };
-        }
-        return String(config.value || '') === '' ? {
-          summary: "Clear ".concat(label),
-          incomplete: false
-        } : {
-          summary: "Set ".concat(label, " to \u201C").concat(excerpt(config.value), "\u201D"),
-          incomplete: false
-        };
-      }
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.WAIT:
-      if (config.mode === 'until_datetime') {
-        var moment = formatMoment(config.at);
-        return moment ? {
-          summary: "Until ".concat(moment),
-          incomplete: false
-        } : {
-          summary: 'Choose when to continue',
-          incomplete: true
-        };
-      }
-      return Number(config.amount) > 0 && config.unit ? {
-        summary: "Wait ".concat(plural(config.amount, config.unit)),
-        incomplete: false
-      } : {
-        summary: 'Choose how long to wait',
-        incomplete: true
-      };
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.IF_ELSE:
-      {
-        var conditions = Array.isArray(config.conditions) ? config.conditions : [];
-        if (conditions.length === 0) {
-          return {
-            summary: 'Add a condition to check',
-            incomplete: true
-          };
-        }
-        var joiner = config.match === 'any' ? ' or ' : ' and ';
-        // Read as one sentence after "If": built-in subjects go lower-case
-        // ("If customer has not replied yet and first name is …"), while a
-        // custom field keeps the capitals its Business gave its label.
-        var sentence = conditions.map(function (condition) {
-          var text = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.describeCondition)(condition, catalogs);
-          return (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.customFieldId)(condition && condition.subject) === null ? text.charAt(0).toLowerCase() + text.slice(1) : text;
-        }).join(joiner);
-        return {
-          summary: "If ".concat(sentence),
-          incomplete: false
-        };
-      }
-    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.END:
-      return {
-        summary: 'The workflow stops here for this contact',
-        incomplete: false
-      };
-    default:
-      return {
-        summary: '',
-        incomplete: false
-      };
-  }
-}
-function summarizeTrigger(config, catalogs) {
-  var info = (0,_constants_js__WEBPACK_IMPORTED_MODULE_0__.triggerTypeInfo)(config.trigger_type);
-  if (!info) {
-    return {
-      title: 'Trigger',
-      summary: 'Choose what starts this workflow',
-      incomplete: true
-    };
-  }
-  var group = groupName(catalogs, config.contact_group_id);
-  switch (info.value) {
-    case 'contact_created':
-      {
-        var when = group ? "When a contact is added to ".concat(group) : 'When any new contact is added';
-        var source = config.source && config.source !== 'any' ? " \xB7 ".concat(_constants_js__WEBPACK_IMPORTED_MODULE_0__.CONTACT_SOURCE_LABELS[config.source] || '') : '';
-        return {
-          title: info.title,
-          summary: "".concat(when).concat(source),
-          incomplete: false
-        };
-      }
-    case 'message_received':
-      return {
-        title: info.title,
-        summary: 'When a contact texts your business',
-        incomplete: false
-      };
-    case 'contact_date_reached':
-      {
-        var field = fieldLabel(catalogs.dateFields, config.date_field_id);
-        if (!group || !field) {
-          return {
-            title: info.title,
-            summary: 'Choose a group and a date field',
-            incomplete: true
-          };
-        }
-        var time = formatTime(config.send_at);
-        var _when = !config.offset || config.offset === '0 day' ? 'On' : "".concat(config.offset, " before");
-        return {
-          title: info.title,
-          summary: "".concat(_when, " ").concat(field, " \xB7 ").concat(group).concat(time ? " \xB7 at ".concat(time) : ''),
-          incomplete: false
-        };
-      }
-    case 'manual_enrollment':
-      return {
-        title: info.title,
-        summary: 'When you add a contact to this workflow',
-        incomplete: false
-      };
-    case 'opportunity_created':
-      return {
-        title: info.title,
-        summary: 'When a new opportunity is added, in any pipeline',
-        incomplete: false
-      };
-    case 'opportunity_stage_changed':
-      {
-        var pipeline = crmName(catalogs.crmPipelines, config.pipeline_id);
-        var from = crmName(catalogs.crmStages, config.from_stage_id);
-        var to = crmName(catalogs.crmStages, config.to_stage_id);
-        var move = 'When an opportunity moves stage';
-        if (from && to) {
-          move = "When an opportunity moves from ".concat(from, " to ").concat(to);
-        } else if (to) {
-          move = "When an opportunity moves to ".concat(to);
-        } else if (from) {
-          move = "When an opportunity leaves ".concat(from);
-        }
-        return {
-          title: info.title,
-          summary: "".concat(move).concat(pipeline ? " \xB7 ".concat(pipeline) : ''),
-          incomplete: false
-        };
-      }
-    case 'opportunity_won':
-      return {
-        title: info.title,
-        summary: 'When an opportunity is marked won',
-        incomplete: false
-      };
-    case 'opportunity_lost':
-      return {
-        title: info.title,
-        summary: 'When an opportunity is marked lost',
-        incomplete: false
-      };
-    default:
-      return {
-        title: info.title,
-        summary: '',
-        incomplete: false
-      };
-  }
-}
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/test-panel.js"
-/*!*****************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/test-panel.js ***!
-  \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createTestPanel: () => (/* binding */ createTestPanel)
-/* harmony export */ });
-/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
-/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
-function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
-function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
-function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
-function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
-// Automations V2 (contract §13.1 "Test workflow", §16) — try the workflow on
-// one real contact, with no side effects.
-//
-// A person searches this Business's contacts by name or number and picks one;
-// the page then asks WorkflowSimulator for the path that contact would take
-// through the saved draft. Nothing is sent, changed or enrolled — the
-// simulator's own guarantee — and this panel says so. The result is shown two
-// ways: as a plain step-by-step story here, and as a highlighted path on the
-// canvas (the caller's onPath), so a branch that goes the "wrong" way is
-// obvious at a glance.
-
-
-var DID_WORDS = {
-  started: 'Starts the workflow',
-  would_run: 'Would run',
-  would_wait: 'Would wait',
-  branched: 'Checks the condition',
-  ended: 'Ends the workflow',
-  skipped: 'Would stop here',
-  held: 'Would pause here'
-};
-var ENDED_WORDS = {
-  path_end: 'The path runs out of steps, so the workflow finishes for this contact.',
-  end_step: 'The workflow ends at an End step.',
-  step_limit: 'The test stopped after the most steps one run can take.',
-  stopped: 'The workflow would stop for this contact at the step above.'
-};
-var REFUSED_WORDS = {
-  contact_belongs_to_another_business: 'That contact is not part of this business.',
-  workflow_cannot_be_walked: 'This workflow can’t be tested until the highlighted problems are fixed.',
-  version_has_no_business: 'This workflow can’t be tested right now.'
-};
-function createTestPanel(_ref) {
-  var panelEl = _ref.panelEl,
-    api = _ref.api,
-    basePath = _ref.basePath,
-    beforeRun = _ref.beforeRun,
-    onPath = _ref.onPath,
-    onClose = _ref.onClose;
-  var searchInput = panelEl.querySelector('[data-role="wf-test-search"]');
-  var contactsEl = panelEl.querySelector('[data-role="wf-test-contacts"]');
-  var resultEl = panelEl.querySelector('[data-role="wf-test-result"]');
-  var pickEl = panelEl.querySelector('[data-role="wf-test-pick"]');
-  var clearButton = panelEl.querySelector('[data-role="wf-test-clear"]');
-  var closeButton = panelEl.querySelector('[data-role="wf-test-close"]');
-  var searchTimer = null;
-  var searchSeq = 0;
-  function open() {
-    panelEl.hidden = false;
-    showPicker();
-    searchInput.focus({
-      preventScroll: true
-    });
-    search();
-  }
-  function close() {
-    if (panelEl.hidden) {
-      return;
-    }
-    panelEl.hidden = true;
-    onPath(null);
-    if (onClose) {
-      onClose();
-    }
-  }
-  function isOpen() {
-    return !panelEl.hidden;
-  }
-  function showPicker() {
-    pickEl.hidden = false;
-    resultEl.hidden = true;
-    clearButton.hidden = true;
-    resultEl.innerHTML = '';
-  }
-  function search() {
-    return _search.apply(this, arguments);
-  }
-  function _search() {
-    _search = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
-      var seq, result, contacts, _t;
-      return _regenerator().w(function (_context) {
-        while (1) switch (_context.p = _context.n) {
-          case 0:
-            seq = ++searchSeq;
-            contactsEl.innerHTML = '';
-            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Searching…'));
-            _context.p = 1;
-            _context.n = 2;
-            return api.testContacts(basePath, searchInput.value.trim());
-          case 2:
-            result = _context.v;
-            _context.n = 4;
-            break;
-          case 3:
-            _context.p = 3;
-            _t = _context.v;
-            result = {
-              status: 0,
-              body: null
-            };
-          case 4:
-            if (!(seq !== searchSeq)) {
-              _context.n = 5;
-              break;
-            }
-            return _context.a(2);
-          case 5:
-            contactsEl.innerHTML = '';
-            if (!(result.status === 401)) {
-              _context.n = 6;
-              break;
-            }
-            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'You don’t have permission to view contacts.'));
-            return _context.a(2);
-          case 6:
-            contacts = result.body && result.body.contacts || [];
-            if (!(result.status !== 200)) {
-              _context.n = 7;
-              break;
-            }
-            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Contacts couldn’t be loaded. Try again.'));
-            return _context.a(2);
-          case 7:
-            if (!(contacts.length === 0)) {
-              _context.n = 8;
-              break;
-            }
-            contactsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', searchInput.value.trim() ? 'No contact matches that search.' : 'This business has no contacts yet.'));
-            return _context.a(2);
-          case 8:
-            contacts.forEach(function (contact) {
-              var button = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('button', 'wf-test__contact');
-              button.type = 'button';
-              button.dataset.role = 'wf-test-contact';
-              button.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('user'));
-              var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-text');
-              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-name', contact.name || contact.phone));
-              if (contact.name) {
-                text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__contact-phone', contact.phone));
-              }
-              button.appendChild(text);
-              button.addEventListener('click', function () {
-                return run(contact);
-              });
-              contactsEl.appendChild(button);
-            });
-          case 9:
-            return _context.a(2);
-        }
-      }, _callee, null, [[1, 3]]);
-    }));
-    return _search.apply(this, arguments);
-  }
-  function run(_x) {
-    return _run.apply(this, arguments);
-  }
-  function _run() {
-    _run = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(contact) {
-      var result, heading, body, steps, timeline, end, _t2;
-      return _regenerator().w(function (_context2) {
-        while (1) switch (_context2.p = _context2.n) {
-          case 0:
-            pickEl.hidden = true;
-            resultEl.hidden = false;
-            clearButton.hidden = false;
-            resultEl.innerHTML = '';
-            resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__muted', 'Running the test…'));
-            _context2.n = 1;
-            return beforeRun();
-          case 1:
-            _context2.p = 1;
-            _context2.n = 2;
-            return api.simulate(basePath, contact.uid);
-          case 2:
-            result = _context2.v;
-            _context2.n = 4;
-            break;
-          case 3:
-            _context2.p = 3;
-            _t2 = _context2.v;
-            result = {
-              status: 0,
-              body: null
-            };
-          case 4:
-            resultEl.innerHTML = '';
-            heading = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-test__subject');
-            heading.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('user'));
-            heading.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', null, "Testing with ".concat(contact.name || contact.phone)));
-            resultEl.appendChild(heading);
-            body = result.body || {};
-            if (!(result.status !== 200 || body.refused)) {
-              _context2.n = 5;
-              break;
-            }
-            resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__notice', REFUSED_WORDS[body.refused] || body.message || 'The test couldn’t run. Try again.'));
-            onPath(null);
-            return _context2.a(2);
-          case 5:
-            if (body.validation && Object.keys(body.validation).length > 0) {
-              resultEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__notice', 'This draft still has problems to fix before it can publish. The path below shows what would happen as it stands.'));
-            }
-            steps = Array.isArray(body.path) ? body.path : [];
-            timeline = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('ol', 'wf-test__timeline');
-            steps.forEach(function (step) {
-              var item = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('li', 'wf-test__step');
-              item.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)(_constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_ICONS[step.type] || 'zap', "wf-tone wf-tone--".concat(step.type)));
-              var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'wf-test__step-text');
-              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-title', step.type === 'trigger' ? 'Trigger' : _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[step.type] || 'Step'));
-              var line = DID_WORDS[step.did] || '';
-              if (step.did === 'branched' && step.branch) {
-                line = "Takes the ".concat(step.branch === 'yes' ? 'Yes' : 'No', " path");
-              }
-              if (step.did === 'would_wait' && step.resume_at) {
-                line = "Would wait until ".concat(new Date(step.resume_at).toLocaleString(undefined, {
-                  dateStyle: 'medium',
-                  timeStyle: 'short'
-                }));
-              }
-              text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-did', line));
-
-              // The simulator's detail explains what testing withheld ("Nothing
-              // is sent while testing") or why a path stopped. For a start, a
-              // branch or a timed wait the line above already says it.
-              var explains = ['would_run', 'held', 'skipped'].includes(step.did) || step.did === 'would_wait' && !step.resume_at;
-              if (step.detail && explains) {
-                text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-test__step-detail', step.detail));
-              }
-              item.appendChild(text);
-              timeline.appendChild(item);
-            });
-            resultEl.appendChild(timeline);
-            if (body.ended && ENDED_WORDS[body.ended]) {
-              end = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'wf-test__end');
-              end.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)('flag'));
-              end.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', null, ENDED_WORDS[body.ended]));
-              resultEl.appendChild(end);
-            }
-            onPath(new Map(steps.map(function (step) {
-              return [step.key, step];
-            })));
-          case 6:
-            return _context2.a(2);
-        }
-      }, _callee2, null, [[1, 3]]);
-    }));
-    return _run.apply(this, arguments);
-  }
-  searchInput.addEventListener('input', function () {
-    window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(search, 250);
-  });
-  clearButton.addEventListener('click', function () {
-    onPath(null);
-    showPicker();
-    searchInput.focus({
-      preventScroll: true
-    });
-  });
-  closeButton.addEventListener('click', close);
-  panelEl.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      close();
-    }
-  });
-  return {
-    open: open,
-    close: close,
-    isOpen: isOpen
-  };
-}
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/validation.js"
-/*!*****************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/validation.js ***!
-  \*****************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   DOCUMENT_KEY: () => (/* binding */ DOCUMENT_KEY),
-/* harmony export */   countIssues: () => (/* binding */ countIssues),
-/* harmony export */   hasErrors: () => (/* binding */ hasErrors),
-/* harmony export */   renderDocumentBanner: () => (/* binding */ renderDocumentBanner)
-/* harmony export */ });
-// Automations V2 (contract §14.4, V2-D) — turning the server's
-// node_key-keyed errors into customer-facing feedback. The server is the
-// only authority on what is valid (WorkflowDefinitionValidator); this
-// module never re-derives a validation rule, it only places the server's
-// own messages: document-level ones in a banner, per-step ones on their
-// card (canvas-renderer.js reads the same `errors` map directly).
-var DOCUMENT_KEY = '_document';
-function hasErrors(errors) {
-  return Object.keys(errors || {}).length > 0;
-}
-function countIssues(errors) {
-  return Object.values(errors || {}).reduce(function (total, list) {
-    return total + list.length;
-  }, 0);
-}
-function renderDocumentBanner(bannerEl, errors, messageTemplate) {
-  var documentMessages = errors && errors[DOCUMENT_KEY] || [];
-  var total = countIssues(errors);
-  if (total === 0) {
-    bannerEl.classList.add('d-none');
-    bannerEl.innerHTML = '';
-    return;
-  }
-  bannerEl.classList.remove('d-none');
-  bannerEl.innerHTML = '';
-  var summary = document.createElement('p');
-  summary.className = 'mb-1 fw-semibold';
-  summary.textContent = messageTemplate.replace(':count', String(total));
-  bannerEl.appendChild(summary);
-  documentMessages.forEach(function (message) {
-    var p = document.createElement('p');
-    p.className = 'mb-0';
-    p.textContent = message;
-    bannerEl.appendChild(p);
-  });
-}
-
-/***/ },
-
-/***/ "./resources/js/automations/workflow-builder/zoom-pan.js"
-/*!***************************************************************!*\
-  !*** ./resources/js/automations/workflow-builder/zoom-pan.js ***!
-  \***************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createZoomPan: () => (/* binding */ createZoomPan)
-/* harmony export */ });
-// Automations V2 (contract §13.1, V2-D) — lightweight viewport zoom/pan.
-// No graph library: a CSS transform on one surface element, driven by
-// wheel/pinch, drag, buttons and the keyboard. This state is presentation
-// only — it is never read by autosave and never leaves this module, so
-// zooming or panning can never modify the workflow document (task
-// requirement, test #21).
-
-var MIN_SCALE = 0.4;
-var MAX_SCALE = 2;
-var STEP = 1.2;
-function createZoomPan(viewport, surface) {
-  var scale = 1;
-  var tx = 0;
-  var ty = 0;
-  var panning = false;
-  var panStartX = 0;
-  var panStartY = 0;
-  var panOriginX = 0;
-  var panOriginY = 0;
-  function apply() {
-    surface.style.transform = "translate(".concat(tx, "px, ").concat(ty, "px) scale(").concat(scale, ")");
-  }
-  function clampScale(value) {
-    return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
-  }
-  function zoomIn() {
-    scale = clampScale(scale * STEP);
-    apply();
-  }
-  function zoomOut() {
-    scale = clampScale(scale / STEP);
-    apply();
-  }
-  function reset() {
-    scale = 1;
-    tx = 0;
-    ty = 0;
-    apply();
-  }
-  function fit() {
-    var viewportWidth = viewport.clientWidth;
-    var surfaceWidth = surface.scrollWidth || viewportWidth;
-    if (surfaceWidth > 0) {
-      scale = clampScale(Math.min(1, viewportWidth / surfaceWidth));
-    }
-    tx = 0;
-    ty = 0;
-    apply();
-  }
-  function onWheel(event) {
-    if (!event.ctrlKey && !event.metaKey) {
-      return;
-    }
-    event.preventDefault();
-    if (event.deltaY < 0) {
-      zoomIn();
-    } else {
-      zoomOut();
-    }
-  }
-  function onPointerDown(event) {
-    // Pan from the empty canvas only: pressing a card, a "+" or a menu is a
-    // click on that control, never the start of a drag.
-    if (event.button !== 0 || event.target.closest('button, a, input, select, textarea, [role="button"], .dropdown-menu')) {
-      return;
-    }
-    panning = true;
-    panStartX = event.clientX;
-    panStartY = event.clientY;
-    panOriginX = tx;
-    panOriginY = ty;
-    viewport.classList.add('is-panning');
-  }
-  function onPointerMove(event) {
-    if (!panning) {
-      return;
-    }
-    tx = panOriginX + (event.clientX - panStartX);
-    ty = panOriginY + (event.clientY - panStartY);
-    apply();
-  }
-  function onPointerUp() {
-    panning = false;
-    viewport.classList.remove('is-panning');
-  }
-  function onKeydown(event) {
-    if (!(event.ctrlKey || event.metaKey)) {
-      return;
-    }
-    if (event.key === '+' || event.key === '=') {
-      event.preventDefault();
-      zoomIn();
-    } else if (event.key === '-') {
-      event.preventDefault();
-      zoomOut();
-    } else if (event.key === '0') {
-      event.preventDefault();
-      reset();
-    }
-  }
-  viewport.addEventListener('wheel', onWheel, {
-    passive: false
-  });
-  viewport.addEventListener('mousedown', onPointerDown);
-  window.addEventListener('mousemove', onPointerMove);
-  window.addEventListener('mouseup', onPointerUp);
-  viewport.addEventListener('keydown', onKeydown);
-  apply();
-  return {
-    zoomIn: zoomIn,
-    zoomOut: zoomOut,
-    reset: reset,
-    fit: fit,
-    getState: function getState() {
-      return {
-        scale: scale,
-        tx: tx,
-        ty: ty
-      };
-    }
-  };
-}
-
-/***/ },
-
-/***/ "./resources/scss/base/pages/automations-workflow-builder.scss"
-/*!*********************************************************************!*\
-  !*** ./resources/scss/base/pages/automations-workflow-builder.scss ***!
-  \*********************************************************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-__webpack_require__.r(__webpack_exports__);
-// extracted by mini-css-extract-plugin
-
-
-/***/ }
-
-/******/ 	});
-/************************************************************************/
-/******/ 	// The module cache
-/******/ 	var __webpack_module_cache__ = {};
-/******/ 	
-/******/ 	// The require function
-/******/ 	function __webpack_require__(moduleId) {
-/******/ 		// Check if module is in cache
-/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
-/******/ 		if (cachedModule !== undefined) {
-/******/ 			return cachedModule.exports;
-/******/ 		}
-/******/ 		// Create a new module (and put it into the cache)
-/******/ 		var module = __webpack_module_cache__[moduleId] = {
-/******/ 			// no module.id needed
-/******/ 			// no module.loaded needed
-/******/ 			exports: {}
-/******/ 		};
-/******/ 	
-/******/ 		// Execute the module function
-/******/ 		if (!(moduleId in __webpack_modules__)) {
-/******/ 			delete __webpack_module_cache__[moduleId];
-/******/ 			var e = new Error("Cannot find module '" + moduleId + "'");
-/******/ 			e.code = 'MODULE_NOT_FOUND';
-/******/ 			throw e;
-/******/ 		}
-/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
-/******/ 	
-/******/ 		// Return the exports of the module
-/******/ 		return module.exports;
-/******/ 	}
-/******/ 	
-/******/ 	// expose the modules object (__webpack_modules__)
-/******/ 	__webpack_require__.m = __webpack_modules__;
-/******/ 	
-/************************************************************************/
-/******/ 	/* webpack/runtime/chunk loaded */
-/******/ 	(() => {
-/******/ 		var deferred = [];
-/******/ 		__webpack_require__.O = (result, chunkIds, fn, priority) => {
-/******/ 			if(chunkIds) {
-/******/ 				priority = priority || 0;
-/******/ 				for(var i = deferred.length; i > 0 && deferred[i - 1][2] > priority; i--) deferred[i] = deferred[i - 1];
-/******/ 				deferred[i] = [chunkIds, fn, priority];
-/******/ 				return;
-/******/ 			}
-/******/ 			var notFulfilled = Infinity;
-/******/ 			for (var i = 0; i < deferred.length; i++) {
-/******/ 				var [chunkIds, fn, priority] = deferred[i];
-/******/ 				var fulfilled = true;
-/******/ 				for (var j = 0; j < chunkIds.length; j++) {
-/******/ 					if ((priority & 1 === 0 || notFulfilled >= priority) && Object.keys(__webpack_require__.O).every((key) => (__webpack_require__.O[key](chunkIds[j])))) {
-/******/ 						chunkIds.splice(j--, 1);
-/******/ 					} else {
-/******/ 						fulfilled = false;
-/******/ 						if(priority < notFulfilled) notFulfilled = priority;
-/******/ 					}
-/******/ 				}
-/******/ 				if(fulfilled) {
-/******/ 					deferred.splice(i--, 1)
-/******/ 					var r = fn();
-/******/ 					if (r !== undefined) result = r;
-/******/ 				}
-/******/ 			}
-/******/ 			return result;
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/define property getters */
-/******/ 	(() => {
-/******/ 		// define getter functions for harmony exports
-/******/ 		__webpack_require__.d = (exports, definition) => {
-/******/ 			for(var key in definition) {
-/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
-/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
-/******/ 				}
-/******/ 			}
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
-/******/ 	(() => {
-/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/make namespace object */
-/******/ 	(() => {
-/******/ 		// define __esModule on exports
-/******/ 		__webpack_require__.r = (exports) => {
-/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
-/******/ 			}
-/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/jsonp chunk loading */
-/******/ 	(() => {
-/******/ 		// no baseURI
-/******/ 		
-/******/ 		// object to store loaded and loading chunks
-/******/ 		// undefined = chunk not loaded, null = chunk preloaded/prefetched
-/******/ 		// [resolve, reject, Promise] = chunk loading, 0 = chunk loaded
-/******/ 		var installedChunks = {
-/******/ 			"/js/automations/workflow-builder": 0,
-/******/ 			"css/base/pages/automations-workflow-builder": 0
-/******/ 		};
-/******/ 		
-/******/ 		// no chunk on demand loading
-/******/ 		
-/******/ 		// no prefetching
-/******/ 		
-/******/ 		// no preloaded
-/******/ 		
-/******/ 		// no HMR
-/******/ 		
-/******/ 		// no HMR manifest
-/******/ 		
-/******/ 		__webpack_require__.O.j = (chunkId) => (installedChunks[chunkId] === 0);
-/******/ 		
-/******/ 		// install a JSONP callback for chunk loading
-/******/ 		var webpackJsonpCallback = (parentChunkLoadingFunction, data) => {
-/******/ 			var [chunkIds, moreModules, runtime] = data;
-/******/ 			// add "moreModules" to the modules object,
-/******/ 			// then flag all "chunkIds" as loaded and fire callback
-/******/ 			var moduleId, chunkId, i = 0;
-/******/ 			if(chunkIds.some((id) => (installedChunks[id] !== 0))) {
-/******/ 				for(moduleId in moreModules) {
-/******/ 					if(__webpack_require__.o(moreModules, moduleId)) {
-/******/ 						__webpack_require__.m[moduleId] = moreModules[moduleId];
-/******/ 					}
-/******/ 				}
-/******/ 				if(runtime) var result = runtime(__webpack_require__);
-/******/ 			}
-/******/ 			if(parentChunkLoadingFunction) parentChunkLoadingFunction(data);
-/******/ 			for(;i < chunkIds.length; i++) {
-/******/ 				chunkId = chunkIds[i];
-/******/ 				if(__webpack_require__.o(installedChunks, chunkId) && installedChunks[chunkId]) {
-/******/ 					installedChunks[chunkId][0]();
-/******/ 				}
-/******/ 				installedChunks[chunkId] = 0;
-/******/ 			}
-/******/ 			return __webpack_require__.O(result);
-/******/ 		}
-/******/ 		
-/******/ 		var chunkLoadingGlobal = self["webpackChunkos_ai"] = self["webpackChunkos_ai"] || [];
-/******/ 		chunkLoadingGlobal.forEach(webpackJsonpCallback.bind(null, 0));
-/******/ 		chunkLoadingGlobal.push = webpackJsonpCallback.bind(null, chunkLoadingGlobal.push.bind(chunkLoadingGlobal));
-/******/ 	})();
-/******/ 	
-/************************************************************************/
-/******/ 	
-/******/ 	// startup
-/******/ 	// Load entry module and return exports
-/******/ 	// This entry module depends on other loaded chunks and execution need to be delayed
-/******/ 	__webpack_require__.O(undefined, ["css/base/pages/automations-workflow-builder"], () => (__webpack_require__("./resources/js/automations/workflow-builder/index.js")))
-/******/ 	var __webpack_exports__ = __webpack_require__.O(undefined, ["css/base/pages/automations-workflow-builder"], () => (__webpack_require__("./resources/scss/base/pages/automations-workflow-builder.scss")))
-/******/ 	__webpack_exports__ = __webpack_require__.O(__webpack_exports__);
-/******/ 	
 /******/ })()
 ;

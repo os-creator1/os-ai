@@ -5,8 +5,10 @@
     exactly: trigger_type, enrollment_policy(+source), failure_policy, and the
     trigger-specific fields. Only WorkflowTriggerType cases with a real producer
     are offered — contact created, a contact date, added by hand, and (V2-F)
-    "Customer sends a text" (`message_received`). There is no Forms, Calendar,
-    Payment or Tag trigger, because nothing in the product reports one.
+    "Customer sends a text" (`message_received`) — plus the merged foundations'
+    after-commit facts: a tag added or removed, a form submitted, an appointment
+    booked, cancelled or rescheduled. There is no Payment, Document or Proposal
+    trigger, because those integrations are separate lanes.
 --}}
 @php
     // Grouped the way a person thinks about them. The opportunity triggers are
@@ -23,6 +25,18 @@
             ['value' => 'opportunity_stage_changed', 'icon' => 'arrow-right-left'],
             ['value' => 'opportunity_won', 'icon' => 'trophy'],
             ['value' => 'opportunity_lost', 'icon' => 'circle-x'],
+        ],
+        'tags' => [
+            ['value' => 'contact_tag_added', 'icon' => 'tag'],
+            ['value' => 'contact_tag_removed', 'icon' => 'tag'],
+        ],
+        'forms' => [
+            ['value' => 'form_submitted', 'icon' => 'clipboard-list'],
+        ],
+        'appointments' => [
+            ['value' => 'appointment_scheduled', 'icon' => 'calendar-check'],
+            ['value' => 'appointment_cancelled', 'icon' => 'calendar-x'],
+            ['value' => 'appointment_rescheduled', 'icon' => 'calendar-clock'],
         ],
     ];
 @endphp
@@ -115,6 +129,43 @@
             <p class="wf-help">
                 <x-ds-icon name="info" size="16" />
                 <span>{{ __('automations.v2.trigger_form.opportunity_contact_note') }}</span>
+            </p>
+        </div>
+    @endforeach
+
+    {{-- Contact tag triggers — one optional filter, this Business's tags only
+         (drawer.js, catalogs.tags). A section lists every trigger it serves. --}}
+    <div class="wf-field-group" data-trigger-section="contact_tag_added contact_tag_removed" hidden>
+        <div class="wf-field">
+            <label class="wf-field__label">{{ __('automations.v2.trigger_form.tag_filter') }}</label>
+            <select class="form-select" data-field="tag_id" data-role="wf-tag-filter-select"></select>
+        </div>
+        <p class="wf-help" data-role="wf-no-tags" hidden>{{ __('automations.v2.trigger_form.no_tags') }}</p>
+        <p class="wf-help">
+            <x-ds-icon name="info" size="16" />
+            <span>{{ __('automations.v2.trigger_form.tag_loop_note') }}</span>
+        </p>
+    </div>
+
+    {{-- "Form submitted" — one optional filter, this Business's forms only
+         (drawer.js, catalogs.forms). --}}
+    <div class="wf-field-group" data-trigger-section="form_submitted" hidden>
+        <div class="wf-field">
+            <label class="wf-field__label">{{ __('automations.v2.trigger_form.form_filter') }}</label>
+            <select class="form-select" data-field="form_id" data-role="wf-form-filter-select"></select>
+        </div>
+        <p class="wf-help" data-role="wf-no-forms" hidden>{{ __('automations.v2.trigger_form.no_forms') }}</p>
+        <p class="wf-help">
+            <x-ds-icon name="info" size="16" />
+            <span>{{ __('automations.v2.trigger_form.form_note') }}</span>
+        </p>
+    </div>
+
+    @foreach (['appointment_scheduled', 'appointment_cancelled', 'appointment_rescheduled'] as $appointmentTrigger)
+        <div class="wf-field-group" data-trigger-note="{{ $appointmentTrigger }}" hidden>
+            <p class="wf-help">
+                <x-ds-icon name="info" size="16" />
+                <span>{{ __('automations.v2.trigger_form.appointment_note') }}</span>
             </p>
         </div>
     @endforeach

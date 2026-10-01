@@ -32,6 +32,8 @@ final class WorkflowReferenceCatalog
      * @param array<int, array{id: int, contact_group_id: int, label: string, type: string, is_phone: bool}> $fields keyed by id, in id order
      * @param array<int, array{id: int, name: string, archived: bool}> $pipelines CRM sales pipelines, keyed by id, in board order
      * @param array<int, array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}> $stages CRM stages, keyed by id, in board order
+     * @param array<int, array{id: int, name: string, archived: bool}> $tags contact tags, keyed by id, in name order
+     * @param array<int, array{id: int, name: string, lifecycle: string}> $forms forms, keyed by id, in name order
      */
     public function __construct(
         public readonly int $businessId,
@@ -39,6 +41,8 @@ final class WorkflowReferenceCatalog
         private readonly array $fields,
         private readonly array $pipelines = [],
         private readonly array $stages = [],
+        private readonly array $tags = [],
+        private readonly array $forms = [],
     ) {
     }
 
@@ -106,6 +110,51 @@ final class WorkflowReferenceCatalog
     public function writableFields(): array
     {
         return array_values(array_filter($this->fields, fn (array $field): bool => ! $field['is_phone']));
+    }
+
+    // ---------------------------------------------------------------
+    // Contact tags and forms (Business-wide; never Location-scoped here)
+    // ---------------------------------------------------------------
+
+    /**
+     * The tag, when it belongs to this Business — archived or not.
+     *
+     * @return array{id: int, name: string, archived: bool}|null
+     */
+    public function tag(int $tagId): ?array
+    {
+        return $this->tags[$tagId] ?? null;
+    }
+
+    /**
+     * Every tag, archived ones flagged: the Builder offers the active ones and
+     * keeps an archived one visible only where a workflow still names it.
+     *
+     * @return list<array{id: int, name: string, archived: bool}>
+     */
+    public function tags(): array
+    {
+        return array_values($this->tags);
+    }
+
+    /**
+     * The form, when it belongs to this Business, in any lifecycle state.
+     *
+     * @return array{id: int, name: string, lifecycle: string}|null
+     */
+    public function form(int $formId): ?array
+    {
+        return $this->forms[$formId] ?? null;
+    }
+
+    /**
+     * Every form of the Business, for the "Form submitted" trigger's filter.
+     *
+     * @return list<array{id: int, name: string, lifecycle: string}>
+     */
+    public function forms(): array
+    {
+        return array_values($this->forms);
     }
 
     // ---------------------------------------------------------------

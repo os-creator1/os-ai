@@ -3,9 +3,9 @@
     ConditionSubjectRegistry's: V2-F's "Customer replied"
     (`contact.replied_since_enrollment`, offered now that its inbound producer
     has shipped), the contact's identity fields, subscription, group membership
-    and the Business's custom fields. Nothing outside that set — no Lead,
-    Booking, Form, Payment, Tag or Pipeline subject — is ever offered, because
-    none is registered.
+    the Business's custom fields, and "has tag" / "does not have tag" for the
+    Business's own tags. Nothing outside that set — no Lead, Booking, Form,
+    Payment or Pipeline subject — is ever offered, because none is registered.
 
     Custom-field subjects reuse the writable-field catalog the Update contact
     field form uses (workflow-builder/drawer.js's `catalogs.writableFields`):
@@ -55,6 +55,7 @@
                     <option value="contact.subscribed">{{ __('automations.v2.if_else_form.subject_subscribed') }}</option>
                     <option value="contact.in_group">{{ __('automations.v2.if_else_form.subject_in_group') }}</option>
                 </optgroup>
+                <optgroup label="{{ __('automations.v2.if_else_form.group_tags') }}" data-role="wf-condition-tag-group"></optgroup>
                 <optgroup label="{{ __('automations.v2.if_else_form.group_custom_fields') }}" data-role="wf-condition-custom-field-group"></optgroup>
             </select>
             <p class="wf-help" data-role="wf-condition-help" hidden>{{ __('automations.v2.if_else_form.replied_help') }}</p>

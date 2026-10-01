@@ -164,6 +164,8 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             populateIfElse(node)
         } else if (node.type === 'update_contact_field') {
             populateUpdateContactField(node)
+        } else if (node.type === 'add_tag' || node.type === 'remove_tag') {
+            populateTagAction(node)
         } else if (node.type === 'wait') {
             populateWait(node)
         } else {
@@ -265,7 +267,8 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         function syncVisibility() {
             const type = selectedType()
             sections.forEach((section) => {
-                section.hidden = section.dataset.triggerSection !== type
+                // A section may serve several triggers (both tag triggers share one filter).
+                section.hidden = !section.dataset.triggerSection.split(' ').includes(type)
             })
             formEl.querySelectorAll('[data-trigger-note]').forEach((note) => {
                 note.hidden = note.dataset.triggerNote !== type
@@ -324,7 +327,51 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         policySourceInput.value = node.config.enrollment_policy_source || 'default'
         confirmNote.hidden = true
         populateStageFilters(node.config)
+        populateTagAndFormFilters(node.config)
         syncVisibility()
+    }
+
+    /**
+     * Tag triggers may narrow to one tag, and "Form submitted" to one form — each
+     * optional ("any"). Options are this Business's own catalog only; an archived
+     * tag stays visible, marked, only where the trigger already names it.
+     */
+    function populateTagAndFormFilters(config) {
+        const tagSelect = formEl.querySelector('[data-role="wf-tag-filter-select"]')
+        const formSelect = formEl.querySelector('[data-role="wf-form-filter-select"]')
+        const noTags = formEl.querySelector('[data-role="wf-no-tags"]')
+        const noForms = formEl.querySelector('[data-role="wf-no-forms"]')
+        const tags = catalogs.tags || []
+        const forms = catalogs.forms || []
+
+        const selectedTag = config.tag_id != null ? String(config.tag_id) : ''
+        const selectedForm = config.form_id != null ? String(config.form_id) : ''
+
+        fillSelect(tagSelect, tags.filter((row) => !row.archived || String(row.id) === selectedTag).map((row) => ({ id: row.id, label: row.archived ? `${row.name} (archived)` : row.name })), 'id', 'label', 'Any tag')
+        tagSelect.value = selectedTag
+        noTags.hidden = tags.length > 0
+
+        fillSelect(formSelect, forms.map((row) => ({ id: row.id, label: row.name })), 'id', 'label', 'Any form')
+        formSelect.value = selectedForm
+        noForms.hidden = forms.length > 0
+    }
+
+    /** "Add tag" / "Remove tag": one Business tag. Archived ones are hidden unless already chosen. */
+    function populateTagAction(node) {
+        const select = formEl.querySelector('[data-role="wf-tag-select"]')
+        const noTags = formEl.querySelector('[data-role="wf-no-tags"]')
+        const tags = catalogs.tags || []
+        const selected = node.config.tag_id != null ? String(node.config.tag_id) : ''
+
+        // Add refuses an archived tag; Remove still accepts one. Keep either visible,
+        // marked, only where the step already names it.
+        const rows = tags
+            .filter((row) => !row.archived || String(row.id) === selected || node.type === 'remove_tag')
+            .map((row) => ({ id: row.id, label: row.archived ? `${row.name} (archived)` : row.name }))
+
+        fillSelect(select, rows, 'id', 'label', 'Choose a tag')
+        select.value = selected
+        noTags.hidden = tags.length > 0
     }
 
     /**
@@ -436,6 +483,19 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 customGroup.remove()
             }
 
+            // "Has tag" / "does not have tag": one subject per tag of this Business.
+            const tagGroup = row.querySelector('[data-role="wf-condition-tag-group"]')
+
+            ;(catalogs.tags || []).forEach((tag) => {
+                const opt = el('option', null, tag.archived ? `${tag.name} (archived)` : tag.name)
+                opt.value = `contact.has_tag:${tag.id}`
+                tagGroup.appendChild(opt)
+            })
+
+            if (tagGroup.children.length === 0) {
+                tagGroup.remove()
+            }
+
             fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null)
 
             function syncOperators() {
@@ -482,7 +542,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 // A stored subject this Business no longer offers (a deleted
                 // field): keep it visible and honest instead of silently
                 // swapping in another subject.
-                const orphan = el('option', null, 'A field that no longer exists')
+                const orphan = el('option', null, String(condition.subject).startsWith('contact.has_tag:') ? 'A tag that no longer exists' : 'A field that no longer exists')
                 orphan.value = condition.subject
                 subjectSelect.appendChild(orphan)
                 subjectSelect.value = condition.subject
@@ -562,6 +622,12 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             config.source = formEl.querySelector('select[data-field="source"]').value
             const groupValue = formEl.querySelector('[data-role="wf-contact-group-select"]').value
             config.contact_group_id = groupValue ? Number(groupValue) : null
+        } else if (triggerType === 'contact_tag_added' || triggerType === 'contact_tag_removed') {
+            const tagValue = formEl.querySelector('[data-role="wf-tag-filter-select"]').value
+            config.tag_id = tagValue ? Number(tagValue) : null
+        } else if (triggerType === 'form_submitted') {
+            const formValue = formEl.querySelector('[data-role="wf-form-filter-select"]').value
+            config.form_id = formValue ? Number(formValue) : null
         } else if (triggerType === 'opportunity_stage_changed') {
             ;[
                 ['pipeline_id', 'wf-crm-pipeline-select'],
@@ -605,6 +671,12 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         }
     }
 
+    function readTagAction() {
+        const tagValue = formEl.querySelector('[data-role="wf-tag-select"]').value
+
+        return { tag_id: tagValue ? Number(tagValue) : null }
+    }
+
     function save() {
         if (!currentNode || readOnly) {
             return
@@ -618,6 +690,8 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             config = readIfElse()
         } else if (currentNode.type === 'update_contact_field') {
             config = readUpdateContactField()
+        } else if (currentNode.type === 'add_tag' || currentNode.type === 'remove_tag') {
+            config = readTagAction()
         } else if (currentNode.type === 'wait') {
             config = readWait()
         } else if (currentNode.type === 'end') {

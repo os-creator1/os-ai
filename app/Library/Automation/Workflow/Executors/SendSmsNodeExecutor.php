@@ -6,9 +6,10 @@ use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
 use App\Library\Automation\Workflow\Runtime\AutomationSendContext;
+use App\Library\Automation\Workflow\Runtime\ClaimedStepRun;
+use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Models\AutomationEnrollment;
-use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
 use App\Models\Campaigns;
@@ -189,26 +190,14 @@ class SendSmsNodeExecutor implements NodeExecutor
     }
 
     /**
-     * The step run the advancer claimed for this node before calling execute().
-     *
-     * Found by `UNIQUE(enrollment_id, node_id)`, so it is exactly one row and
-     * exactly the claim this send belongs to. The advancer always creates it
-     * first; null is only possible for a caller that invokes the executor
-     * outside the advancer, and such a send is simply not marked as automation
-     * output rather than being refused.
+     * The step run the advancer claimed for this node before calling execute() —
+     * see ClaimedStepRun. Null only for a caller that invokes the executor
+     * outside the advancer; such a send is simply not marked as automation output
+     * rather than being refused.
      */
     private function claimedStepRunId(AutomationWorkflowNode $node, AutomationEnrollment $enrollment): ?int
     {
-        if ($enrollment->getKey() === null || $node->getKey() === null) {
-            return null;
-        }
-
-        $id = AutomationStepRun::query()
-            ->where('enrollment_id', $enrollment->getKey())
-            ->where('node_id', $node->getKey())
-            ->value('id');
-
-        return $id === null ? null : (int) $id;
+        return ClaimedStepRun::idFor($node, $enrollment);
     }
 
     /**
@@ -322,19 +311,7 @@ class SendSmsNodeExecutor implements NodeExecutor
      */
     private function renderBody(string $body, Contacts $contact): string
     {
-        $group = $contact->contactGroup;
-
-        if ($group === null) {
-            return $body;
-        }
-
-        $replacements = [];
-
-        foreach ($group->getFields()->get() as $field) {
-            $replacements['{' . $field->tag . '}'] = (string) $contact->getValueByField($field);
-        }
-
-        return strtr($body, $replacements);
+        return ContactMergeFields::render($body, $contact);
     }
 
     private function maskedPhone(Contacts $contact): string

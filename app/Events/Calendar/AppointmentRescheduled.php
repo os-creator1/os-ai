@@ -34,6 +34,27 @@ class AppointmentRescheduled implements ShouldDispatchAfterCommit
         public readonly string $newStartAt,
         public readonly string $newEndAt,
         public readonly ?int $rescheduledByUserId,
+        public readonly ?int $rescheduleCount = null,
     ) {
+    }
+
+    /**
+     * One reschedule, one key: the appointment's own `reschedule_count` after this
+     * move, which the booking transaction increments under the appointment lock,
+     * so two real reschedules can never share it and a redelivered event always
+     * recomposes the same one. An event built without the count (an older caller)
+     * falls back to a digest of the move itself — still deterministic, and unique
+     * unless the appointment moves back to an identical earlier position.
+     */
+    public function occurrenceKey(): string
+    {
+        if ($this->rescheduleCount !== null) {
+            return 'appointment_rescheduled:' . $this->appointmentId . ':' . $this->rescheduleCount;
+        }
+
+        return 'appointment_rescheduled:' . $this->appointmentId . ':' . substr(sha1(implode('|', [
+            $this->previousStaffUserId, $this->newStaffUserId,
+            $this->previousStartAt, $this->previousEndAt, $this->newStartAt, $this->newEndAt,
+        ])), 0, 16);
     }
 }

@@ -17,6 +17,7 @@ use App\Models\Business;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
+use App\Models\Tag;
 
 /**
  * Automations V2 §11 — the If / Else step.
@@ -153,6 +154,14 @@ class IfElseNodeExecutor implements NodeExecutor
                 ->whereKey($groupId)
                 ->where('business_id', (int) $business->id)
                 ->exists();
+        }
+
+        $tagId = ConditionSubjectRegistry::tagId($key);
+
+        if ($tagId !== null) {
+            // A tag id in the key that is not this Business's reads as false for
+            // "has" AND for "does not have": a forged reference asserts nothing.
+            return Tag::query()->whereKey($tagId)->where('business_id', (int) $business->id)->exists();
         }
 
         $fieldId = ConditionSubjectRegistry::customFieldId($key);

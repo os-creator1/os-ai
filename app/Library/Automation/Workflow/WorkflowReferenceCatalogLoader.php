@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\DB;
  * Loads a WorkflowReferenceCatalog in exactly ONE statement, whatever the size
  * of the Business or of any workflow that will be checked against it.
  *
- * Two families of reference live in a workflow document, and both are read here
- * at once, as two halves of one UNION ALL:
+ * Four families of reference live in a workflow document, and all are read here
+ * at once, as four halves of one UNION ALL:
  *
  *   CONTACT  groups LEFT JOIN fields, filtered on the group's business_id: a
  *            group with no fields still arrives (that is what the LEFT JOIN is
@@ -70,9 +70,46 @@ class WorkflowReferenceCatalogLoader
                 'crm_pipeline_stages.archived_at as child_archived_at',
             ]);
 
+        // Contact tags and forms: one row each, in the parent columns (a tag's
+        // `archived_at` is its parent archive flag; a form's lifecycle state rides
+        // in `field_type`, the one free text column a parent-only row leaves null).
+        $tag = DB::table('tags')
+            ->where('tags.business_id', $businessId)
+            ->select([
+                DB::raw("'tag' as source"),
+                DB::raw('0 as parent_position'),
+                'tags.id as parent_id',
+                'tags.name as parent_name',
+                'tags.archived_at as parent_archived_at',
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                DB::raw('null as field_type'),
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+            ]);
+
+        $form = DB::table('forms')
+            ->where('forms.business_id', $businessId)
+            ->select([
+                DB::raw("'form' as source"),
+                DB::raw('0 as parent_position'),
+                'forms.id as parent_id',
+                'forms.name as parent_name',
+                DB::raw('null as parent_archived_at'),
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                'forms.lifecycle_state as field_type',
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+            ]);
+
         // Contact groups by name (as before); pipelines and their stages in the
-        // order the CRM board shows them.
-        $rows = $contact->unionAll($crm)
+        // order the CRM board shows them; tags and forms by name.
+        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)
             ->orderBy('source')
             ->orderBy('parent_position')
             ->orderBy('parent_name')
@@ -85,9 +122,31 @@ class WorkflowReferenceCatalogLoader
         $fields = [];
         $pipelines = [];
         $stages = [];
+        $tags = [];
+        $forms = [];
 
         foreach ($rows as $row) {
             $parentId = (int) $row->parent_id;
+
+            if ($row->source === 'tag') {
+                $tags[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'archived' => $row->parent_archived_at !== null,
+                ];
+
+                continue;
+            }
+
+            if ($row->source === 'form') {
+                $forms[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'lifecycle' => (string) $row->field_type,
+                ];
+
+                continue;
+            }
 
             if ($row->source === 'crm') {
                 $pipelines[$parentId] ??= [
@@ -128,6 +187,6 @@ class WorkflowReferenceCatalogLoader
 
         ksort($fields);
 
-        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages);
+        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms);
     }
 }

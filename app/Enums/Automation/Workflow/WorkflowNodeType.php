@@ -26,6 +26,15 @@ enum WorkflowNodeType: string
     case UpdateContactField = 'update_contact_field';
     case InternalNotification = 'internal_notification';
 
+    /*
+     * Merged-foundation actions. Each calls its owning domain's canonical seam
+     * (BusinessEmailSender, TagManager); none talks to a provider or writes a
+     * domain table itself.
+     */
+    case SendEmail = 'send_email';
+    case AddTag = 'add_tag';
+    case RemoveTag = 'remove_tag';
+
     case Wait = 'wait';
     case IfElse = 'if_else';
     case End = 'end';
@@ -34,8 +43,11 @@ enum WorkflowNodeType: string
     {
         return match ($this) {
             self::Trigger, self::Wait, self::IfElse, self::End => NodeSideEffectClass::None,
-            self::UpdateContactField => NodeSideEffectClass::IdempotentDatabase,
-            self::SendSms, self::InternalNotification => NodeSideEffectClass::External,
+            // TagManager's attach/detach are idempotent by their own contract: a
+            // second attach of a held tag, or a detach of an absent one, writes
+            // nothing and emits nothing.
+            self::UpdateContactField, self::AddTag, self::RemoveTag => NodeSideEffectClass::IdempotentDatabase,
+            self::SendSms, self::InternalNotification, self::SendEmail => NodeSideEffectClass::External,
         };
     }
 
@@ -64,6 +76,9 @@ enum WorkflowNodeType: string
             self::SendSms => 'Send a text message',
             self::UpdateContactField => 'Update a contact field',
             self::InternalNotification => 'Notify the team',
+            self::SendEmail => 'Send an email',
+            self::AddTag => 'Add a tag',
+            self::RemoveTag => 'Remove a tag',
             self::Wait => 'Wait',
             self::IfElse => 'If / Else',
             self::End => 'End',

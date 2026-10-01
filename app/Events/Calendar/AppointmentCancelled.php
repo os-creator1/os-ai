@@ -23,4 +23,10 @@ class AppointmentCancelled implements ShouldDispatchAfterCommit
         public readonly ?string $reason,
     ) {
     }
+
+    /** Cancelled is terminal (no reopen transition exists), so the id is the occurrence. */
+    public function occurrenceKey(): string
+    {
+        return 'appointment_cancelled:' . $this->appointmentId;
+    }
 }
