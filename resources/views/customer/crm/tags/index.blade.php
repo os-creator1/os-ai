@@ -3,8 +3,14 @@
 {{--
     Contact Tags foundation — the minimum standalone CRM surface: create,
     rename and archive this Business's tags, and attach/detach a tag on a
-    Contact by phone number. Every mutation goes through TagManager
-    (ContactTagsController); this view only renders its result.
+    Contact. Every mutation goes through TagManager (ContactTagsController);
+    this view only renders its result.
+
+    CORRECTED (independent review, correction round 1): attaching by phone
+    number was removed — two Contacts in one Business may legitimately
+    share a phone, and silently choosing between them is not acceptable.
+    The Contact's own uid (never its raw numeric id) is the stable identity
+    this form submits instead.
 --}}
 
 @section('title', 'Tags')
@@ -58,10 +64,10 @@
                                         <form method="POST" action="{{ route('customer.workspaces.businesses.tags.attach', $tagArgs($tag)) }}" class="d-flex flex-column gap-1" data-role="crm-tag-attach">
                                             @csrf
                                             <div class="d-flex gap-1">
-                                                <input name="phone" class="form-control form-control-sm" placeholder="Contact phone" required>
+                                                <input name="contact_uid" class="form-control form-control-sm" placeholder="Contact ID" required>
                                                 <x-button type="submit" variant="outline" size="sm">Add to contact</x-button>
                                             </div>
-                                            @error('phone')
+                                            @error('contact_uid')
                                                 <div class="text-danger small">{{ $message }}</div>
                                             @enderror
                                         </form>

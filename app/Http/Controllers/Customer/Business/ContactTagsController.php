@@ -93,23 +93,27 @@ class ContactTagsController extends CustomerBaseController
         return back()->with('status', 'Tag archived.');
     }
 
+    /**
+     * CORRECTED (independent review, correction round 1). A phone number is
+     * never a stable Contact identity — two Contacts in one Business may
+     * legitimately share one, and silently choosing `first()` between them
+     * could attach the wrong one. `contact_uid` is the same stable,
+     * non-numeric identity `detach()` already resolves through, so this
+     * carries no new identity scheme.
+     */
     public function attach(string $workspaceUid, string $businessUid, string $tagUid, Request $request): RedirectResponse
     {
         $business = $this->business($workspaceUid, $businessUid);
         $this->authorize(self::MANAGE_PERMISSION);
         $tag = $this->tag($business, $tagUid);
 
-        $data = $request->validate(['phone' => ['required', 'string']]);
-        $contact = $this->contactByPhone($business, $data['phone']);
-
-        if ($contact === null) {
-            return back()->withErrors(['phone' => 'No contact with that phone number was found.']);
-        }
+        $data = $request->validate(['contact_uid' => ['required', 'string']]);
+        $contact = $this->contact($business, $data['contact_uid']);
 
         try {
             $this->tags->attachTag($business, $contact, $tag);
         } catch (CrmRuleException $exception) {
-            return back()->withErrors(['phone' => $exception->getMessage()]);
+            return back()->withErrors(['contact_uid' => $exception->getMessage()]);
         }
 
         return back()->with('status', 'Tag added.');
@@ -149,26 +153,6 @@ class ContactTagsController extends CustomerBaseController
     private function contact(Business $business, string $uid): Contacts
     {
         $contact = Contacts::query()->where('business_id', $business->id)->where('uid', $uid)->first() ?? abort(404);
-
-        $this->assertLocationAccessible($contact);
-
-        return $contact;
-    }
-
-    /**
-     * The same normalization the inbound messaging path already applies
-     * before any phone comparison (punctuation stripped, nothing else) —
-     * not a second, differently-shaped scheme.
-     */
-    private function contactByPhone(Business $business, string $phone): ?Contacts
-    {
-        $normalized = str_replace(['(', ')', '+', '-', ' '], '', trim($phone));
-
-        $contact = Contacts::query()->where('business_id', $business->id)->where('phone', $normalized)->first();
-
-        if ($contact === null) {
-            return null;
-        }
 
         $this->assertLocationAccessible($contact);
 

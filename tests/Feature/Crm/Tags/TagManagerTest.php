@@ -11,10 +11,15 @@ use App\Models\BusinessLocation;
 use App\Models\ContactTag;
 use App\Models\Contacts;
 use App\Models\Tag;
+use App\Repositories\Contracts\ContactTagRepository;
+use App\Repositories\Contracts\TagRepository;
+use Exception;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Mockery;
 use RuntimeException;
 use Tests\Feature\Crm\Concerns\CreatesCrmFixtures;
 use Tests\TestCase;
@@ -327,5 +332,198 @@ class TagManagerTest extends TestCase
         $second = $this->manager()->attachTag($business, $contact, $tag);
 
         $this->assertNotSame((int) $first->id, (int) $second->id, 'Re-attaching must mint a genuinely new occurrence id.');
+    }
+
+    // =================================================================
+    // Correction round 1, §1 — authoritative re-derivation, never the
+    // caller's own (possibly forged or stale) model instance.
+    // =================================================================
+
+    public function test_a_forged_contact_business_id_cannot_be_attached_to_another_businesss_tag(): void
+    {
+        [, $businessA] = $this->crmTenant('Business A', 'Workspace A');
+        [, $businessB] = $this->crmTenant('Business B', 'Workspace B');
+
+        $tagA = $this->manager()->createTag($businessA, 'VIP');
+        $realContactB = $this->crmContact($businessB);
+
+        // A REAL Contact row, genuinely belonging to Business B — only its
+        // in-memory property is forged to look like Business A's.
+        $realContactB->business_id = $businessA->id;
+        $this->assertSame((int) $businessB->id, (int) DB::table('contacts')->where('id', $realContactB->id)->value('business_id'), 'Sanity: the PERSISTED row must still genuinely belong to Business B.');
+
+        Event::fake([ContactTagAdded::class]);
+
+        try {
+            $this->manager()->attachTag($businessA, $realContactB, $tagA);
+            $this->fail('Expected a CrmRuleException refusing the forged Contact.');
+        } catch (CrmRuleException) {
+            // expected
+        }
+
+        Event::assertNotDispatched(ContactTagAdded::class);
+        $this->assertSame(0, DB::table('contact_tags')->count(), 'No membership row may exist after a refused forged attach.');
+    }
+
+    public function test_a_forged_tag_business_id_cannot_be_attached_under_another_business(): void
+    {
+        [, $businessA] = $this->crmTenant('Business A', 'Workspace A');
+        [, $businessB] = $this->crmTenant('Business B', 'Workspace B');
+
+        $realTagB = $this->manager()->createTag($businessB, 'VIP');
+        $contactA = $this->crmContact($businessA);
+
+        // A REAL Tag row, genuinely belonging to Business B — only its
+        // in-memory property is forged to look like Business A's.
+        $realTagB->business_id = $businessA->id;
+        $this->assertSame((int) $businessB->id, (int) DB::table('tags')->where('id', $realTagB->id)->value('business_id'), 'Sanity: the PERSISTED row must still genuinely belong to Business B.');
+
+        Event::fake([ContactTagAdded::class]);
+
+        try {
+            $this->manager()->attachTag($businessA, $contactA, $realTagB);
+            $this->fail('Expected a CrmRuleException refusing the forged Tag.');
+        } catch (CrmRuleException) {
+            // expected
+        }
+
+        Event::assertNotDispatched(ContactTagAdded::class);
+        $this->assertSame(0, DB::table('contact_tags')->count(), 'No membership row may exist after a refused forged attach.');
+    }
+
+    public function test_stale_in_memory_contact_location_never_leaks_into_the_event(): void
+    {
+        [, $business] = $this->crmTenant();
+        $locationOld = $this->location($business);
+        $locationNew = $this->location($business);
+        $tag = $this->manager()->createTag($business, 'VIP');
+        $contact = $this->crmContact($business);
+        $contact->forceFill(['location_id' => $locationOld->id])->save();
+
+        // The caller's own in-memory copy, loaded BEFORE the Location
+        // changed underneath it.
+        $staleContact = Contacts::query()->findOrFail($contact->id);
+        DB::table('contacts')->where('id', $contact->id)->update(['location_id' => $locationNew->id]);
+        $this->assertSame((int) $locationOld->id, (int) $staleContact->location_id, 'Sanity: the caller\'s copy must genuinely still read the OLD Location.');
+
+        Event::fake([ContactTagAdded::class]);
+
+        $this->manager()->attachTag($business, $staleContact, $tag);
+
+        Event::assertDispatched(function (ContactTagAdded $event) use ($locationNew) {
+            return $event->locationId === (int) $locationNew->id;
+        });
+    }
+
+    public function test_stale_in_memory_tag_name_never_leaks_into_the_event(): void
+    {
+        [, $business] = $this->crmTenant();
+        $tag = $this->manager()->createTag($business, 'VIP');
+        $contact = $this->crmContact($business);
+
+        // The caller's own in-memory copy, loaded BEFORE the rename.
+        $staleTag = Tag::query()->findOrFail($tag->id);
+        $this->manager()->renameTag($business, $tag->fresh(), 'Renamed');
+        $this->assertSame('VIP', $staleTag->name, 'Sanity: the caller\'s copy must genuinely still read the OLD name.');
+
+        Event::fake([ContactTagAdded::class]);
+
+        $this->manager()->attachTag($business, $contact, $staleTag);
+
+        Event::assertDispatched(fn (ContactTagAdded $event) => $event->tagName === 'Renamed');
+    }
+
+    // =================================================================
+    // Correction round 1, §2 — the DB unique index, not the pre-write
+    // check, is the real backstop against a normalized-name race.
+    // =================================================================
+
+    public function test_two_racing_creates_of_the_same_normalized_name_leave_exactly_one_canonical_tag(): void
+    {
+        [, $business] = $this->crmTenant();
+
+        $first = $this->manager()->createTag($business, 'VIP');
+
+        try {
+            $this->manager()->createTag($business, 'vip'); // same normalized name
+            $this->fail('Expected a CrmRuleException, not a raw database exception.');
+        } catch (CrmRuleException) {
+            // expected — a raw QueryException/UniqueConstraintViolationException
+            // here would fail this test as an uncaught exception.
+        }
+
+        $this->assertSame(1, DB::table('tags')->where('business_id', $business->id)->where('normalized_name', 'vip')->count());
+        $survivor = Tag::query()->where('business_id', $business->id)->where('normalized_name', 'vip')->firstOrFail();
+        $this->assertSame((int) $first->id, (int) $survivor->id);
+    }
+
+    public function test_a_rename_racing_an_existing_tags_normalized_name_leaves_exactly_one_canonical_tag(): void
+    {
+        [, $business] = $this->crmTenant();
+        $tagA = $this->manager()->createTag($business, 'VIP');
+        $tagB = $this->manager()->createTag($business, 'Lead');
+
+        try {
+            $this->manager()->renameTag($business, $tagB, 'vip'); // collides with $tagA's normalized name
+            $this->fail('Expected a CrmRuleException, not a raw database exception.');
+        } catch (CrmRuleException) {
+            // expected
+        }
+
+        $this->assertSame('Lead', $tagB->fresh()->name, 'A refused rename must never partially apply.');
+        $this->assertSame(1, DB::table('tags')->where('business_id', $business->id)->where('normalized_name', 'vip')->count());
+        $this->assertSame((int) $tagA->id, (int) Tag::query()->where('business_id', $business->id)->where('normalized_name', 'vip')->firstOrFail()->id);
+    }
+
+    /**
+     * Deterministically exercises the genuine RACE-WINDOW branch itself (the
+     * `catch` around the write, not the ordinary pre-check): the repository
+     * is doubled so its pre-check reports no conflict — exactly what a real
+     * concurrent request's pre-check would also see — and its write throws
+     * the same `UniqueConstraintViolationException` MySQL's own
+     * `tags_business_normalized_unique` index would raise. Proves the
+     * translation itself, which the sequential tests above cannot reach
+     * (their pre-check always already sees the conflict).
+     */
+    public function test_a_genuine_create_race_window_violation_is_translated_not_leaked(): void
+    {
+        [, $business] = $this->crmTenant();
+
+        $tagRepository = Mockery::mock(TagRepository::class);
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+        $tagRepository->shouldReceive('create')->once()->andThrow(
+            new UniqueConstraintViolationException('mysql', 'insert into `tags` ...', [], new Exception('Duplicate entry for key tags_business_normalized_unique')),
+        );
+
+        $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
+
+        try {
+            $manager->createTag($business, 'VIP');
+            $this->fail('Expected a CrmRuleException, not the raw UniqueConstraintViolationException.');
+        } catch (CrmRuleException $exception) {
+            $this->assertSame('A tag named "VIP" already exists.', $exception->getMessage());
+        }
+    }
+
+    /** The rename-side sibling of the create race-window test above. */
+    public function test_a_genuine_rename_race_window_violation_is_translated_not_leaked(): void
+    {
+        [, $business] = $this->crmTenant();
+        $realTag = $this->manager()->createTag($business, 'Lead');
+
+        $tagRepository = Mockery::mock(TagRepository::class);
+        $tagRepository->shouldReceive('findByNormalizedName')->once()->andReturnNull();
+        $tagRepository->shouldReceive('rename')->once()->andThrow(
+            new UniqueConstraintViolationException('mysql', 'update `tags` ...', [], new Exception('Duplicate entry for key tags_business_normalized_unique')),
+        );
+
+        $manager = new TagManager($tagRepository, app(ContactTagRepository::class));
+
+        try {
+            $manager->renameTag($business, $realTag, 'VIP');
+            $this->fail('Expected a CrmRuleException, not the raw UniqueConstraintViolationException.');
+        } catch (CrmRuleException $exception) {
+            $this->assertSame('A tag named "VIP" already exists.', $exception->getMessage());
+        }
     }
 }
