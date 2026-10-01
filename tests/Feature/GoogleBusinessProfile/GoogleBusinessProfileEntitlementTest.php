@@ -118,7 +118,7 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         foreach ([
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
-            PlatformFeature::Forms,
+            // (Forms left this list at the Forms V1 flip — intentional and unrelated to GBP.)
         ] as $planned) {
             $this->assertFalse(
                 PlatformFeatureRegistry::isAvailable($planned->value),

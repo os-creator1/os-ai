@@ -1,0 +1,369 @@
+<?php
+
+namespace App\Library\Forms;
+
+use App\Enums\Forms\FormContactResolution;
+use App\Enums\Forms\FormFieldType;
+use App\Events\Forms\FormSubmissionRecorded;
+use App\Library\Crm\CrmOpportunityService;
+use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Models\Contacts;
+use App\Models\CrmOpportunity;
+use App\Models\CrmPipeline;
+use App\Models\FormSubmission;
+use App\Models\FormVersion;
+use App\Repositories\Eloquent\EloquentContactsRepository;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * Forms V1 — the ONE writer of `form_submissions`, and the one place a visitor's
+ * answers become a historical fact, a Contact and (where configured) a CRM
+ * Opportunity.
+ *
+ * THE FLOW, in the order it matters:
+ *
+ *  1. AUTHORITY. FormDeploymentResolver re-reads and mutually proves every row
+ *     from persistence; the Location is the DEPLOYMENT's. A posted
+ *     `location_uid` may only restate it.
+ *  2. OPERATION TOKEN. Must be genuine for this deployment (FormOperationToken).
+ *  3. VALIDATION against the form's CURRENT VERSION, producing normalized values
+ *     keyed by field key. A refusal here writes nothing and does not consume the
+ *     token, so the visitor can correct and resend.
+ *  4. REPLAY. A row already claiming (deployment, nonce) is returned as-is — no
+ *     second row, Contact, Opportunity or event. The same token with a DIFFERENT
+ *     body is refused rather than silently answered with the first body.
+ *  5. ONE TRANSACTION: INSERT the submission first, as the idempotency claim; the
+ *     unique (deployment, nonce) index is the real concurrency backstop — a racing
+ *     twin blocks on it, then loses with a duplicate-key error and converges on
+ *     the winner's row. Then resolve the Contact (Location-local, under the
+ *     existing identity lock), create the Opportunity if configured, link both
+ *     onto the submission, and dispatch FormSubmissionRecorded AFTER COMMIT.
+ *
+ * ANYTHING THAT THROWS INSIDE THE TRANSACTION (a blacklisted phone, a database
+ * error) rolls the claim back with it: no submission, no Contact, no
+ * Opportunity, no event, and the token stays usable.
+ *
+ * AN INQUIRY IS NEVER MESSAGING CONSENT. A Contact created here is not
+ * subscribed and triggers no contact-created automation (see
+ * EloquentContactsRepository::findOrCreateForForm()).
+ *
+ * LEAD OVER CRM. If the configured Opportunity pipeline has since been archived
+ * or removed, the submission is still recorded with no Opportunity — an inquiry
+ * is never lost because a CRM setting went stale.
+ */
+final class FormSubmissionService
+{
+    public const TOKEN_FIELD = 'operation_token';
+
+    public const LOCATION_FIELD = 'location_uid';
+
+    public const HONEYPOT_FIELD = 'form_hp';
+
+    private const TEXT_MAX = 200;
+
+    private const TEXTAREA_MAX = 2000;
+
+    private const EMAIL_MAX = 160;
+
+    /**
+     * Attempts for the claiming transaction. Two requests queued on one
+     * duplicate-key INSERT while its holder rolls back is a textbook InnoDB
+     * deadlock: the server aborts one of them with SQLSTATE 40001 even though
+     * nothing is wrong. Laravel retries a deadlocked OUTERMOST transaction
+     * natively; on the retry the loser meets the winner's committed claim and
+     * converges as a replay, so a visitor never sees the server's arbitration.
+     */
+    private const DEADLOCK_ATTEMPTS = 3;
+
+    public function __construct(
+        private readonly FormDeploymentResolver $resolver,
+        private readonly EloquentContactsRepository $contacts,
+        private readonly CrmOpportunityService $opportunities,
+    ) {
+    }
+
+    /**
+     * @param  array<string, mixed>  $input  the visitor's request input: answers keyed by field key, plus TOKEN_FIELD and optionally LOCATION_FIELD
+     *
+     * @throws Exceptions\FormUnavailableException when the form cannot accept a submission at all
+     * @throws ValidationException when the token, the answers or the posted Location are not acceptable
+     */
+    public function submit(string $deploymentUid, array $input): FormSubmissionResult
+    {
+        $context = $this->resolver->resolve($deploymentUid);
+
+        $this->assertLocationRestated($context, $input[self::LOCATION_FIELD] ?? null);
+
+        $nonce = FormOperationToken::nonce($context->deployment, $input[self::TOKEN_FIELD] ?? null)
+            ?? throw ValidationException::withMessages(['form' => ['This form has expired. Reload the page and send it again.']]);
+
+        $values = $this->validated($context->version, $input);
+        $payloadHash = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        $existing = $this->claimedBy($context, $nonce, false);
+        if ($existing !== null) {
+            return $this->replay($existing, $payloadHash);
+        }
+
+        try {
+            $submission = DB::transaction(
+                fn (): FormSubmission => $this->record($context, $nonce, $values, $payloadHash),
+                self::DEADLOCK_ATTEMPTS
+            );
+        } catch (UniqueConstraintViolationException $exception) {
+            // A concurrent twin won the claim. Read the winner with a CURRENT
+            // read (not a possibly stale snapshot); if there is none, the
+            // violation was something else and must not be swallowed.
+            $existing = $this->claimedBy($context, $nonce, true);
+
+            if ($existing === null) {
+                throw $exception;
+            }
+
+            return $this->replay($existing, $payloadHash);
+        }
+
+        return new FormSubmissionResult($submission, false);
+    }
+
+    private function assertLocationRestated(FormDeploymentContext $context, mixed $posted): void
+    {
+        $posted = trim((string) $posted);
+
+        if ($posted !== '' && $posted !== (string) $context->location->uid) {
+            throw ValidationException::withMessages([
+                self::LOCATION_FIELD => ['That location is not valid for this form.'],
+            ]);
+        }
+    }
+
+    private function claimedBy(FormDeploymentContext $context, string $nonce, bool $currentRead): ?FormSubmission
+    {
+        $query = FormSubmission::query()
+            ->where('form_deployment_id', $context->deployment->id)
+            ->where('operation_nonce', $nonce);
+
+        return ($currentRead ? $query->lockForUpdate() : $query)->first();
+    }
+
+    private function replay(FormSubmission $existing, string $payloadHash): FormSubmissionResult
+    {
+        if (! hash_equals($existing->payload_hash, $payloadHash)) {
+            throw ValidationException::withMessages([
+                'form' => ['This form was already sent with different answers. Reload the page to send a new response.'],
+            ]);
+        }
+
+        return new FormSubmissionResult($existing, true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $values
+     */
+    private function record(FormDeploymentContext $context, string $nonce, array $values, string $payloadHash): FormSubmission
+    {
+        $uid = (string) Str::uuid();
+
+        // The CLAIM: this INSERT is what the unique (deployment, nonce) index
+        // arbitrates between concurrent requests.
+        $submission = FormSubmission::create([
+            'uid' => $uid,
+            'business_id' => $context->business->id,
+            'business_location_id' => $context->location->id,
+            'form_id' => $context->form->id,
+            'form_version_id' => $context->version->id,
+            'form_deployment_id' => $context->deployment->id,
+            'source' => $context->deployment->source,
+            'operation_nonce' => $nonce,
+            'payload_hash' => $payloadHash,
+            'values' => $values,
+            'contact_resolution' => FormContactResolution::None->value,
+            'occurrence_key' => FormSubmissionRecorded::occurrenceKeyFor($uid),
+        ]);
+
+        [$contact, $resolution] = $this->resolveContact($context, $values);
+
+        $opportunity = $contact !== null && $context->version->create_opportunity
+            ? $this->createOpportunity($context, $contact, $values)
+            : null;
+
+        $this->link($submission, $contact, $resolution, $opportunity);
+
+        FormSubmissionRecorded::dispatch(
+            (int) $context->business->id,
+            (int) $context->location->id,
+            (int) $context->form->id,
+            (int) $context->version->id,
+            (int) $submission->id,
+            $contact?->id === null ? null : (int) $contact->id,
+            $opportunity?->id === null ? null : (int) $opportunity->id,
+            $resolution->value,
+            $submission->occurrence_key,
+        );
+
+        return $submission->fresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $values
+     * @return array{0: ?Contacts, 1: FormContactResolution}
+     */
+    private function resolveContact(FormDeploymentContext $context, array $values): array
+    {
+        $fields = collect($context->version->fields);
+
+        $phoneKey = $fields->firstWhere('type', FormFieldType::Phone->value)['key'] ?? null;
+        $phone = $phoneKey === null ? null : ($values[$phoneKey] ?? null);
+
+        if ($phone === null || $phone === '') {
+            return [null, FormContactResolution::None];
+        }
+
+        $nameKey = $fields->firstWhere('contact_name', true)['key'] ?? null;
+        $emailKey = $fields->firstWhere('type', FormFieldType::Email->value)['key'] ?? null;
+
+        [$first, $last] = $this->splitName((string) ($nameKey === null ? '' : ($values[$nameKey] ?? '')));
+
+        $details = array_filter([
+            'FIRST_NAME' => $first,
+            'LAST_NAME' => $last,
+            'EMAIL' => $emailKey === null ? null : ($values[$emailKey] ?? null),
+        ], fn ($value) => $value !== null && $value !== '');
+
+        // The Location is the authoritative row the resolver re-read — the
+        // Contacts seam takes its Business from it.
+        return $this->contacts->findOrCreateForForm($context->location, (string) $phone, $details);
+    }
+
+    /**
+     * @param  array<string, mixed>  $values
+     */
+    private function createOpportunity(FormDeploymentContext $context, Contacts $contact, array $values): ?CrmOpportunity
+    {
+        $pipelineId = $context->version->opportunity_pipeline_id
+            ?? CrmPipeline::query()
+                ->where('business_id', $context->business->id)
+                ->whereNull('archived_at')
+                ->orderBy('position')
+                ->orderBy('id')
+                ->value('id');
+
+        if ($pipelineId === null) {
+            return null;
+        }
+
+        $nameKey = collect($context->version->fields)->firstWhere('contact_name', true)['key'] ?? null;
+        $name = $nameKey === null ? '' : trim((string) ($values[$nameKey] ?? ''));
+        $title = Str::limit(trim(($name !== '' ? $name.' — ' : '').$context->form->name), CrmOpportunityService::TITLE_MAX, '');
+
+        try {
+            return $this->opportunities->createAtLocation(
+                (int) $context->business->id,
+                (int) $context->location->id,
+                (int) $pipelineId,
+                (int) $contact->id,
+                $title,
+                null,
+                null,
+                null,
+                CrmOpportunity::SOURCE_FORM,
+            );
+        } catch (CrmRuleException) {
+            // Stale CRM setting (archived pipeline, no active stage): keep the
+            // lead, skip the deal.
+            return null;
+        }
+    }
+
+    /**
+     * The one post-insert write, inside the claiming transaction. A
+     * query-builder update on purpose: the model refuses every Eloquent update,
+     * so nothing but this method can touch a submission, and it can touch only
+     * these three columns.
+     */
+    private function link(FormSubmission $submission, ?Contacts $contact, FormContactResolution $resolution, ?CrmOpportunity $opportunity): void
+    {
+        DB::table('form_submissions')->where('id', $submission->id)->update([
+            'contact_id' => $contact?->id,
+            'contact_resolution' => $resolution->value,
+            'crm_opportunity_id' => $opportunity?->id,
+        ]);
+    }
+
+    /**
+     * Normalized answers keyed by field key, in the form's own field order (so
+     * the payload hash is stable). Unknown posted keys are ignored, never stored.
+     *
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    private function validated(FormVersion $version, array $input): array
+    {
+        $rules = [];
+        $labels = [];
+        $data = [];
+
+        foreach ($version->fields as $field) {
+            $key = $field['key'];
+            $type = FormFieldType::from($field['type']);
+            $required = (bool) $field['required'];
+            $raw = $input[$key] ?? null;
+            $data[$key] = is_string($raw) ? (trim($raw) === '' ? null : trim($raw)) : $raw;
+            $labels[$key] = $field['label'];
+            $presence = $required ? 'required' : 'nullable';
+
+            $rules[$key] = match ($type) {
+                FormFieldType::Text => [$presence, 'string', 'max:'.self::TEXT_MAX],
+                FormFieldType::Textarea => [$presence, 'string', 'max:'.self::TEXTAREA_MAX],
+                FormFieldType::Email => [$presence, 'string', 'email', 'max:'.self::EMAIL_MAX],
+                FormFieldType::Phone => [$presence, 'string', 'regex:/^\+?[0-9 ().\-]{7,32}$/', function (string $attribute, mixed $value, \Closure $fail): void {
+                    $digits = strlen(preg_replace('/\D+/', '', (string) $value));
+                    if ($digits < 7 || $digits > 15) {
+                        $fail('Enter a valid phone number.');
+                    }
+                }],
+                FormFieldType::Select => [$presence, 'string', Rule::in($field['options'])],
+                FormFieldType::Checkbox => $required ? ['accepted'] : ['nullable', 'boolean'],
+                FormFieldType::Date => [$presence, 'date_format:Y-m-d'],
+            };
+        }
+
+        $validated = Validator::make($data, $rules, [], $labels)->validate();
+
+        $values = [];
+        foreach ($version->fields as $field) {
+            $key = $field['key'];
+            $value = $validated[$key] ?? null;
+
+            $values[$key] = match (FormFieldType::from($field['type'])) {
+                FormFieldType::Checkbox => filter_var($value, FILTER_VALIDATE_BOOLEAN),
+                FormFieldType::Phone => $value === null ? null : (preg_replace('/\D+/', '', (string) $value) ?: null),
+                FormFieldType::Email => $value === null ? null : mb_strtolower((string) $value),
+                default => $value,
+            };
+        }
+
+        return $values;
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function splitName(string $name): array
+    {
+        $name = trim($name);
+
+        if ($name === '') {
+            return ['', ''];
+        }
+
+        $parts = explode(' ', $name, 2);
+
+        return [$parts[0], trim($parts[1] ?? '')];
+    }
+}

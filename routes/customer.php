@@ -1590,6 +1590,46 @@
 
         /*
         |----------------------------------------------------------------
+        | Forms / Questionnaires (Forms V1 domain foundation)
+        |----------------------------------------------------------------
+        |
+        | A STANDALONE product surface — not under Website, and authorized by
+        | its own `forms` capability and PlatformFeature::Forms, never
+        | WebsiteGeneration. Definitions are Business-wide; submissions follow
+        | the operational Location. Every action runs the chain in this order,
+        | each gate independent of the others:
+        |
+        |   1. Workspace/Business tenancy        (404)
+        |   2. the `forms` capability             (401 - this app renders a failed
+        |      authorize() as 401, exactly like the catalog and CRM)
+        |   3. the Forms entitlement              (404)
+        |   4. Location-scoped actions/reads: the Location belongs to THIS
+        |      Business, then LocationAccessGuard (404)
+        |
+        | Both controllers are thin: every write is FormManager, every
+        | submission read is FormSubmissionReader. `{businessUid}` in every
+        | path is what classifies these routes as Business-scoped for View As.
+        | The literal `submissions` segment is declared BEFORE `{formUid}` so it
+        | is never captured as a form uid.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/forms')->name('businesses.forms.')->group(function () {
+            Route::get('/', 'Business\FormsController@index')->name('index');
+            Route::get('/new', 'Business\FormsController@create')->name('create');
+            Route::post('/', 'Business\FormsController@store')->name('store');
+
+            Route::get('/submissions', 'Business\FormSubmissionsController@index')->name('submissions.index');
+            Route::get('/submissions/{submissionUid}', 'Business\FormSubmissionsController@show')->name('submissions.show');
+
+            Route::get('/{formUid}', 'Business\FormsController@edit')->name('edit');
+            Route::post('/{formUid}', 'Business\FormsController@update')->name('update');
+            Route::post('/{formUid}/activate', 'Business\FormsController@activate')->name('activate');
+            Route::post('/{formUid}/deactivate', 'Business\FormsController@deactivate')->name('deactivate');
+            Route::post('/{formUid}/locations/{locationUid}', 'Business\FormsController@setLocation')->name('locations.set');
+        });
+
+        /*
+        |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)
         |----------------------------------------------------------------
         |

@@ -121,6 +121,12 @@ final class CustomerMenuBuilder
         // the entitlement decision (§6). Omitting the key here would hide the
         // entry forever once the feature is entitled.
         'calendar',
+        // Forms (Forms V1). Same reason as every entry here: entitled() answers
+        // from the bulk snapshot, which fails closed on any key not listed, so
+        // an unlisted `forms` would hide the Forms entry for every account
+        // forever. Nav gating only — every Forms route independently carries
+        // tenancy, the `forms` capability and the entitlement decision.
+        'forms',
         // Packages & Products (Contract 16 §12.E). Omitting this line would
         // not merely fall back to a slower query: entitled() answers from the
         // bulk snapshot, which fails closed on any key not listed here, so an
@@ -266,6 +272,17 @@ final class CustomerMenuBuilder
         // is separately gated and would 404 regardless of what the menu shows.
         $items[] = $this->entitled('calendar', $this->item($user, 'calendar', 'Calendar', 'calendar', ['access_backend'], 'customer.workspaces.businesses.calendar.index', $scoped, $current, [
             'customer.workspaces.businesses.calendar.',
+        ]));
+
+        // Forms — the standalone Forms / Questionnaires product (Forms V1). Its
+        // own top-level entry, independent of whether the Business uses the
+        // Website module: offered exactly when the `forms` capability (item())
+        // and the Forms entitlement (entitled()) both let the actor in.
+        // Visibility is NEVER authorization — every Forms route independently
+        // re-runs the full chain, so this entry changes nothing about what a
+        // request can do.
+        $items[] = $this->entitled('forms', $this->item($user, 'forms', 'Forms', 'clipboard', ['forms'], 'customer.workspaces.businesses.forms.index', $scoped, $current, [
+            'customer.workspaces.businesses.forms.',
         ]));
 
         $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [

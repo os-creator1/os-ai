@@ -10,6 +10,21 @@
         ->whereUuid('bookingTypeUuid')->name('public.booking.confirmed');
 
     /*
+    | Forms V1 — a form's own public link. {deploymentUid} is the persisted
+    | FormDeployment uid: the deterministic evidence of WHICH Location a
+    | submission belongs to. Every action re-runs the full authority stack and
+    | answers any refusal with the same 404. The POST is the one public mutation
+    | and is held to the same 10/minute the public booking and document-sign
+    | mutations use; the GET is sized for a real visitor who reloads.
+    */
+    Route::get('forms/{deploymentUid}', 'Public\PublicFormController@show')
+        ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.show');
+    Route::post('forms/{deploymentUid}', 'Public\PublicFormController@submit')
+        ->whereUuid('deploymentUid')->middleware('throttle:10,1')->name('public.forms.submit');
+    Route::get('forms/{deploymentUid}/thanks', 'Public\PublicFormController@thanks')
+        ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.thanks');
+
+    /*
     | Implementation Contract 17 §6.3 — the secure document link.
     |
     | Two segments, and the split is load-bearing: {uid} LOCATES the row and

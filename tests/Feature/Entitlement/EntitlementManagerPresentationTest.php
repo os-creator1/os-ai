@@ -252,7 +252,10 @@ class EntitlementManagerPresentationTest extends TestCase
         $result = app(EntitlementManager::class)->decideAvailableFeaturesForBusiness($workspace, $business, $this->createAdmin());
 
         $this->assertArrayHasKey(PlatformFeature::Calendar->value, $result);
-        $this->assertArrayNotHasKey(PlatformFeature::Forms->value, $result);
+        // Forms V1: flipped Planned -> Available. It is Business-scoped and
+        // packaged into every tier, so it joins this map like every other
+        // Available Business feature.
+        $this->assertArrayHasKey(PlatformFeature::Forms->value, $result);
 
         // Correction 1 — ProspectOutreach is Available but Workspace-
         // scoped only (PlatformFeatureRegistry::isWorkspaceScoped()): this
@@ -294,7 +297,7 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::SeoBasicVisibility->value, $result);
         $this->assertArrayHasKey(PlatformFeature::SeoModule->value, $result);
 
-        $this->assertCount(11, $result);
+        $this->assertCount(12, $result);
     }
 
     /**

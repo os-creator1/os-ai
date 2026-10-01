@@ -13,6 +13,7 @@ use App\Events\Crm\CrmOpportunityStageChanged;
 use App\Events\Crm\CrmOpportunityWon;
 use App\Library\Crm\Exceptions\CrmRuleException;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\CrmOpportunityHistory;
@@ -55,6 +56,90 @@ class CrmOpportunityService
             throw new CrmRuleException('That pipeline or contact is not part of this Business.');
         }
 
+        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, null);
+    }
+
+    /**
+     * Creates a deal AT AN EXPLICIT LOCATION, for a caller that has already
+     * resolved one (a form submission). Takes IDS ONLY, on purpose: every row is
+     * re-read from persistence here and proven against the Business by its OWN
+     * persisted columns, so a caller's in-memory model — whose business_id /
+     * location_id could be anything — is never trusted for ownership.
+     *
+     * The Location must belong to the Business; the Contact must belong to the
+     * Business AND sit at that very Location (a deal is never attributed to a
+     * Location other than its Contact's, and a Contact with no Location cannot
+     * prove one); the pipeline, and a stage if one is named, must belong to the
+     * Business and, for the stage, to that pipeline. The authoritative Location
+     * row — not the id the caller sent — supplies `location_id`.
+     *
+     * Everything after that is the same persistence step create() uses.
+     */
+    public function createAtLocation(
+        int $businessId,
+        int $locationId,
+        int $pipelineId,
+        int $contactId,
+        string $title,
+        ?int $valueMinor = null,
+        ?int $stageId = null,
+        ?int $actorUserId = null,
+        string $source = CrmOpportunity::SOURCE_MANUAL,
+    ): CrmOpportunity {
+        $title = $this->title($title);
+
+        $business = Business::query()->find($businessId)
+            ?? throw new CrmRuleException('That Business does not exist.');
+
+        $location = BusinessLocation::query()
+            ->where('id', $locationId)
+            ->where('business_id', $business->id)
+            ->first() ?? throw new CrmRuleException('That location is not part of this Business.');
+
+        $contact = Contacts::query()
+            ->where('id', $contactId)
+            ->where('business_id', $business->id)
+            ->first() ?? throw new CrmRuleException('That contact is not part of this Business.');
+
+        if ($contact->location_id === null || (int) $contact->location_id !== (int) $location->id) {
+            throw new CrmRuleException('That contact belongs to a different location.');
+        }
+
+        $pipeline = CrmPipeline::query()
+            ->where('id', $pipelineId)
+            ->where('business_id', $business->id)
+            ->first() ?? throw new CrmRuleException('That pipeline is not part of this Business.');
+
+        $stage = null;
+        if ($stageId !== null) {
+            $stage = CrmPipelineStage::query()
+                ->where('id', $stageId)
+                ->where('pipeline_id', $pipeline->id)
+                ->where('business_id', $business->id)
+                ->first() ?? throw new CrmRuleException('That stage belongs to a different pipeline.');
+        }
+
+        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, (int) $location->id);
+    }
+
+    /**
+     * The shared tail of create() and createAtLocation(): the checks that do
+     * not depend on how the rows were obtained, then the transaction. Callers
+     * have already validated the title and proven tenancy.
+     *
+     * @param  ?int  $explicitLocationId  null = the single-Active-Location rule, as create() always applied
+     */
+    private function persist(
+        Business $business,
+        CrmPipeline $pipeline,
+        Contacts $contact,
+        string $title,
+        ?int $valueMinor,
+        ?CrmPipelineStage $stage,
+        ?int $actorUserId,
+        string $source,
+        ?int $explicitLocationId,
+    ): CrmOpportunity {
         if ($pipeline->archived_at !== null) {
             throw new CrmRuleException('That pipeline is archived.');
         }
@@ -66,12 +151,12 @@ class CrmOpportunityService
             throw new CrmRuleException('The value cannot be negative.');
         }
 
-        return DB::transaction(function () use ($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source): CrmOpportunity {
+        return DB::transaction(function () use ($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, $explicitLocationId): CrmOpportunity {
             $now = now();
 
             $opportunity = CrmOpportunity::create([
                 'business_id' => $business->id,
-                'location_id' => CrmOpportunity::singleActiveLocationIdFor($business->id),
+                'location_id' => $explicitLocationId ?? CrmOpportunity::singleActiveLocationIdFor($business->id),
                 'pipeline_id' => $pipeline->id,
                 'stage_id' => $stage->id,
                 'contact_id' => $contact->id,
