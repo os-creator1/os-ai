@@ -2,8 +2,14 @@
 
 namespace App\Library\Website\GuidedGeneration;
 
+use App\Enums\Catalog\CatalogItemLifecycleState;
+use App\Enums\Website\WebsiteAssetPurpose;
 use App\Library\Website\WebsiteStarterDraftService;
+use App\Models\BusinessBackdrop;
+use App\Models\CatalogItem;
+use App\Models\CatalogItemImage;
 use App\Models\Website;
+use App\Models\WebsiteAsset;
 
 /**
  * Website Guided Generation contract §8.7, completed by this lane,
@@ -58,13 +64,26 @@ final class MediaBindingService
 {
     /**
      * @param  array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
+     * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  see WebsitePageStrategy::buildPlan()'s matching parameter
+     * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers (WebsiteSetupAnswerApplier never writes these anywhere canonical — 'faq' has no canonical model — so the wizard controller reads them straight from QuestionnaireResponse.answers and hands them here)
      * @return array{pages: array, warnings: array<int, string>}
      */
-    public function bind(Website $website, array $pages): array
+    public function bind(Website $website, array $pages, ?array $customSection = null, ?array $customerFaq = null): array
     {
         $pages = $this->bindForms($website, $pages);
+        $pages = $this->bindBackdrops($website, $pages);
+        $pages = $this->bindCustomSection($pages, $customSection);
+        $pages = $this->bindCustomerFaq($pages, $customerFaq);
+        $pages = $this->mirrorPackageImages($website, $pages);
 
-        $assets = $website->assets()->orderBy('id')->get();
+        // Independent-review correction round 2 — only GALLERY-purpose
+        // assets are ever eligible for the hero, image_text pool, or
+        // Gallery page. A custom-section photo or a derived package-
+        // mirror image must never enter this general pool (they exist
+        // for one narrow, already-bound purpose each — see
+        // bindCustomSection()/mirrorPackageImages()). Ordered by the
+        // owner's own gallery `sort_order`, not insertion id.
+        $assets = $website->assets()->where('purpose', WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->get();
         $warnings = [];
 
         if ($assets->isEmpty()) {
@@ -74,8 +93,13 @@ final class MediaBindingService
             return ['pages' => $this->fillGalleryFromAssets($pages, $assets->all(), $warnings), 'warnings' => $warnings];
         }
 
-        $heroAssetUid = $assets->first()->uid;
-        $remainingPool = $assets->slice(1)->values();
+        // Independent-review correction round 2 — the owner's selected
+        // cover (WebsiteGalleryManager::setCover()) is the homepage hero
+        // candidate whenever one is set; only when none exists does the
+        // first asset by sort_order act as the deterministic fallback.
+        $heroAsset = $assets->firstWhere('is_cover', true) ?? $assets->first();
+        $heroAssetUid = $heroAsset->uid;
+        $remainingPool = $assets->reject(fn (WebsiteAsset $asset) => $asset->is($heroAsset))->values();
         // Every asset is still eligible for the round-robin pool at
         // least once, even when only one photo exists in total — a
         // service page's own inline photo is not "the hero repeated on
@@ -206,6 +230,233 @@ final class MediaBindingService
         }
 
         return $pages;
+    }
+
+    /**
+     * The Backdrops page's `backdrops` section is always constructed here
+     * from the Business's own real, available BusinessBackdrop rows —
+     * never merged with anything AI wrote (see class docblock). Image
+     * references are resolved URLs from BusinessBackdropImage::url()
+     * (Business-owned, not Website-owned), so — unlike a `gallery` or
+     * `image_text` slot — there is nothing here for
+     * WebsiteSectionValidator's Website-scoped asset-uid check to
+     * validate against, by design.
+     */
+    private function bindBackdrops(Website $website, array $pages): array
+    {
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'backdrops') {
+                continue;
+            }
+
+            $hasSection = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'backdrops');
+            if ($hasSection) {
+                continue;
+            }
+
+            $backdrops = BusinessBackdrop::where('business_id', $website->business_id)
+                ->where('availability', true)
+                ->orderBy('position')
+                ->with('images')
+                ->get();
+
+            $items = $backdrops
+                ->map(fn (BusinessBackdrop $backdrop) => [
+                    'name' => $backdrop->name,
+                    'description' => $backdrop->description,
+                    'availability' => true,
+                    'images' => $backdrop->images->map(fn ($image) => [
+                        'url' => $image->url(),
+                        'alt_text' => $image->alt_text,
+                    ])->all(),
+                ])
+                ->filter(fn (array $item) => $item['images'] !== [])
+                ->values()
+                ->all();
+
+            if ($items === []) {
+                continue;
+            }
+
+            $pages[$index]['sections'][] = ['type' => 'backdrops', 'data' => ['heading' => 'Our Backdrops', 'items' => $items]];
+        }
+
+        return $pages;
+    }
+
+    /**
+     * The optional custom section's content is always the owner's own
+     * questionnaire answer, applied here verbatim (whether the body text
+     * was hand-typed or AI-drafted at answer time — either way it is
+     * already a fixed string by the time generation runs) — never
+     * something the main guided-generation AI call writes or rewrites.
+     */
+    private function bindCustomSection(array $pages, ?array $customSection): array
+    {
+        if ($customSection === null) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'custom_section') {
+                continue;
+            }
+
+            $hasSection = collect($page['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'custom_section');
+            if ($hasSection) {
+                continue;
+            }
+
+            $pages[$index]['sections'][] = [
+                'type' => 'custom_section',
+                'data' => [
+                    'heading' => $customSection['title'],
+                    'body' => $customSection['body'] ?? '',
+                    'layout' => $customSection['layout'] ?? 'stacked',
+                    'images' => $customSection['images'] ?? [],
+                ],
+            ];
+        }
+
+        return $pages;
+    }
+
+    /**
+     * Independent-review correction round 2 — the owner's own
+     * customer-entered FAQ question/answer pairs are appended to the FAQ
+     * page's `faq` section VERBATIM, never through AI (the task's own
+     * instruction: "Do not ask AI to rewrite factual customer-entered
+     * Q&A"). A section AI did write on the same page keeps its own
+     * (general, non-customer-specific) entries; the customer's real
+     * pairs are added alongside them, always present regardless of
+     * whether AI wrote anything for this page at all.
+     *
+     * @param  ?array<int, array{question: string, answer: string}>  $customerFaq
+     */
+    private function bindCustomerFaq(array $pages, ?array $customerFaq): array
+    {
+        if ($customerFaq === null || $customerFaq === []) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'faq') {
+                continue;
+            }
+
+            $sectionIndex = collect($page['sections'] ?? [])->search(fn ($section) => ($section['type'] ?? null) === 'faq');
+
+            if ($sectionIndex === false) {
+                $pages[$index]['sections'][] = ['type' => 'faq', 'data' => ['heading' => 'Frequently Asked Questions', 'items' => []]];
+                $sectionIndex = array_key_last($pages[$index]['sections']);
+            }
+
+            // Customer-entered pairs take priority over AI's generic
+            // filler — WebsiteSectionValidator caps a faq section at 20
+            // items total, so the real, factual customer pairs go first
+            // and AI's own entries only fill whatever room remains.
+            $existingItems = $pages[$index]['sections'][$sectionIndex]['data']['items'] ?? [];
+            $pages[$index]['sections'][$sectionIndex]['data']['items'] = array_slice(
+                array_merge($customerFaq, $existingItems),
+                0,
+                20,
+            );
+        }
+
+        return $pages;
+    }
+
+    /**
+     * The Packages page's `services` section lists real CatalogItem
+     * facts (WebsitePageStrategy::catalogEntities()) but, like every
+     * other AI-authored section, may never carry an image AI chose
+     * itself. A package's own cover image (CatalogItemImage, Business-
+     * owned) is mirrored into a WebsiteAsset row here — matched to its
+     * item by name (the same canonical fact AI was given and instructed
+     * to use verbatim) — purely so WebsiteSectionValidator has a real,
+     * Website-scoped asset uid to validate against; this is a narrow,
+     * idempotent derived copy of one image file for rendering, never a
+     * duplicate of the package's own structured data (see
+     * create_catalog_item_images_table migration and this class's own
+     * architectural-decision note in the Website Builder redesign plan).
+     * A package with no cover image, or no matching item, is left exactly
+     * as AI wrote it — never a broken or fabricated slot.
+     */
+    private function mirrorPackageImages(Website $website, array $pages): array
+    {
+        $catalogItemsByName = CatalogItem::where('business_id', $website->business_id)
+            ->where('lifecycle_state', CatalogItemLifecycleState::Active->value)
+            ->with('images')
+            ->get()
+            ->keyBy(fn (CatalogItem $item) => mb_strtolower(trim($item->name)));
+
+        if ($catalogItemsByName->isEmpty()) {
+            return $pages;
+        }
+
+        foreach ($pages as $index => $page) {
+            if (($page['page_type'] ?? null) !== 'packages') {
+                continue;
+            }
+
+            foreach ($page['sections'] ?? [] as $sectionIndex => $section) {
+                if (($section['type'] ?? null) !== 'services') {
+                    continue;
+                }
+
+                foreach (($section['data']['items'] ?? []) as $itemIndex => $item) {
+                    if (! empty($item['image'])) {
+                        continue;
+                    }
+
+                    $catalogItem = $catalogItemsByName->get(mb_strtolower(trim($item['name'] ?? '')));
+                    $cover = $catalogItem?->coverImage();
+
+                    if ($cover === null) {
+                        continue;
+                    }
+
+                    $mirrored = $this->mirroredAssetFor($website, $cover);
+                    $pages[$index]['sections'][$sectionIndex]['data']['items'][$itemIndex]['image'] = $mirrored->uid;
+                }
+            }
+        }
+
+        return $pages;
+    }
+
+    /**
+     * Idempotent by source: a repeat generation/rebuild finds the
+     * already-mirrored asset by its provenance link rather than creating
+     * a second copy every time.
+     */
+    private function mirroredAssetFor(Website $website, CatalogItemImage $cover): WebsiteAsset
+    {
+        $existing = WebsiteAsset::where('website_id', $website->id)
+            ->where('source_catalog_item_image_id', $cover->id)
+            ->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        return WebsiteAsset::create([
+            'website_id' => $website->id,
+            'disk' => $cover->disk,
+            'path' => $cover->path,
+            'mime_type' => $cover->mime_type,
+            'size' => $cover->size,
+            'width' => $cover->width,
+            'height' => $cover->height,
+            'alt_text' => $cover->alt_text,
+            'source_catalog_item_image_id' => $cover->id,
+            // Independent-review correction round 2 — a derived,
+            // idempotent copy for section-validator purposes only; it
+            // must never enter the general hero/gallery pool (see
+            // bind()'s own purpose-scoped asset query) and never counts
+            // against a customer's upload storage allowance.
+            'purpose' => WebsiteAssetPurpose::PackageMirror->value,
+        ]);
     }
 
     /**

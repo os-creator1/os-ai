@@ -1655,9 +1655,51 @@
         |
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/website')->name('businesses.website.')->group(function () {
-            Route::get('/', 'Business\WebsiteController@show')->name('show');
+            // Website Builder redesign: the primary entry now renders the
+            // unified Website Studio (or the empty state) via
+            // WebsiteStudioController — the route NAME is unchanged, so
+            // every existing internal link/redirect/test keeps working.
+            // The legacy single-page /setup + POST / (WebsiteController@
+            // setup/store) below are deliberately left fully intact and
+            // reachable — never removed — for any caller still using the
+            // older design/template picker directly; the new empty state
+            // links to setup.start (the wizard) instead.
+            Route::get('/', 'Business\WebsiteStudioController@show')->name('show');
             Route::get('/setup', 'Business\WebsiteController@setup')->name('setup');
             Route::post('/', 'Business\WebsiteController@store')->name('store');
+
+            Route::prefix('studio')->name('studio.')->group(function () {
+                Route::get('/{tab?}', 'Business\WebsiteStudioController@show')->name('show');
+            });
+
+            // URL segment is deliberately "/build", NOT "/setup" — the
+            // literal /setup path above already belongs to the legacy
+            // WebsiteController@setup route; reusing it here would make
+            // this whole group unreachable (Laravel dispatches an
+            // incoming request to whichever same-method/same-path route
+            // was registered first, regardless of route name). Route
+            // NAMES stay "setup.*" since that is the concept, only the
+            // URL segment differs.
+            Route::prefix('build')->name('setup.')->group(function () {
+                Route::get('/', 'Business\WebsiteWizardController@start')->name('start');
+                Route::get('/review', 'Business\WebsiteWizardController@reviewGenerate')->name('review');
+                Route::post('/generate', 'Business\WebsiteWizardController@generate')->name('generate');
+                Route::post('/template', 'Business\WebsiteWizardController@chooseTemplate')->name('template');
+
+                Route::post('/gallery/upload', 'Business\WebsiteWizardController@uploadGalleryPhotos')->name('gallery.upload');
+                Route::post('/gallery/{assetUid}/update', 'Business\WebsiteWizardController@updateGalleryPhoto')->name('gallery.update');
+                Route::post('/gallery/{assetUid}/move', 'Business\WebsiteWizardController@moveGalleryPhoto')->name('gallery.move');
+                Route::delete('/gallery/{assetUid}', 'Business\WebsiteWizardController@removeGalleryPhoto')->name('gallery.remove');
+
+                Route::post('/custom-section/image', 'Business\WebsiteWizardController@uploadCustomSectionImage')->name('custom-section.upload');
+                Route::delete('/custom-section/image/{assetUid}', 'Business\WebsiteWizardController@removeCustomSectionImage')->name('custom-section.remove');
+                Route::post('/custom-section/improve', 'Business\WebsiteWizardController@improveCustomSection')->name('custom-section.improve');
+
+                Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
+                Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');
+                Route::post('/{stepKey}/answers', 'Business\WebsiteWizardController@autosaveAnswer')->name('autosave');
+            });
+            Route::get('/edit-setup', 'Business\WebsiteWizardController@editSetupAnswers')->name('edit-setup');
 
             Route::get('/pages', 'Business\WebsiteController@pages')->name('pages.index');
             Route::get('/pages/create', 'Business\WebsiteController@createPage')->name('pages.create');

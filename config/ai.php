@@ -200,6 +200,43 @@ return [
             'max_request_cost_microusd' => (int) env('AI_ROUTE_COMPACTION_MAX_REQUEST_COST_MICROUSD', 50_000),
             'price_version' => (int) env('AI_ROUTE_COMPACTION_PRICE_VERSION', 1),
         ],
+        // Independent-review correction round 2 — guided website
+        // generation asks for ONE response containing an entire
+        // multi-page website as structured JSON; the shared `routine`
+        // envelope (4,000 input / 800 output tokens, sized for a single
+        // short campaign-message or COO draft) cannot fit that shape at
+        // all, so production generation could never actually succeed
+        // against it. This is a DEDICATED, category-specific envelope —
+        // it changes nothing for campaign_message_draft/agency_prospect_
+        // reply/coo_*, which keep using `routine` unchanged. Still
+        // gpt-4o-mini (the same per-token price), still one full-site
+        // request plus at most one bounded corrective retry (never one
+        // call per page) — only the token ceiling changes, and
+        // WebsitePageStrategy bounds the plan's own page count
+        // (MAX_SERVICE_DETAIL_PAGES/MAX_LOCATION_PAGES) so a
+        // questionnaire cannot grow the prompt past what this envelope
+        // can afford in the first place.
+        //
+        // At the prices below: 12,000 input tokens x $0.15/M = $0.0018,
+        // plus 8,000 output tokens x $0.60/M = $0.0048 -> $0.0066 per
+        // call, $0.0132 for one full call plus its one corrective retry
+        // (GuidedGenerationCommitService's own existing bounded-retry
+        // rule, unchanged). max_request_cost_microusd is set with a
+        // small margin (6,700) over the exact 6,600-microusd worst case
+        // to absorb the estimator's own per-message framing-token
+        // allowance without ever affording a call materially larger
+        // than the envelope this comment documents.
+        'website_generation' => [
+            'provider' => 'openai',
+            'model' => env('AI_ROUTE_WEBSITE_GENERATION_MODEL', 'gpt-4o-mini'),
+            'input_price_microusd_per_mtok' => (int) env('AI_ROUTE_WEBSITE_GENERATION_INPUT_PRICE_MICROUSD_PER_MTOK', 150_000),
+            'cached_input_price_microusd_per_mtok' => (int) env('AI_ROUTE_WEBSITE_GENERATION_CACHED_INPUT_PRICE_MICROUSD_PER_MTOK', 75_000),
+            'output_price_microusd_per_mtok' => (int) env('AI_ROUTE_WEBSITE_GENERATION_OUTPUT_PRICE_MICROUSD_PER_MTOK', 600_000),
+            'max_input_tokens' => (int) env('AI_ROUTE_WEBSITE_GENERATION_MAX_INPUT_TOKENS', 12_000),
+            'max_output_tokens' => (int) env('AI_ROUTE_WEBSITE_GENERATION_MAX_OUTPUT_TOKENS', 8_000),
+            'max_request_cost_microusd' => (int) env('AI_ROUTE_WEBSITE_GENERATION_MAX_REQUEST_COST_MICROUSD', 6_700),
+            'price_version' => (int) env('AI_ROUTE_WEBSITE_GENERATION_PRICE_VERSION', 1),
+        ],
         'reasoning' => [
             'provider' => 'openai',
             'model' => env('AI_ROUTE_REASONING_MODEL', 'gpt-4o'),
@@ -232,7 +269,7 @@ return [
         'coo_interactive' => 'routine',
         'coo_move_explanation' => 'routine',
         'conversation_compaction' => 'compaction',
-        'website_generation' => 'routine',
+        'website_generation' => 'website_generation',
         'campaign_message_draft' => 'routine',
         'agency_prospect_reply' => 'routine',
     ],

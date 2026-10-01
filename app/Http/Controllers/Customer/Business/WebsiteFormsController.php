@@ -61,6 +61,7 @@ class WebsiteFormsController extends CustomerBaseController
         }
 
         $website->forms()->create([
+            'business_id' => $business->id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Photo Booth Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),

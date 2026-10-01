@@ -9,11 +9,17 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 /**
- * Tenancy is derived by joining through website_id -> websites.business_id
- * (business_id is deliberately not duplicated here), matching WebsitePage
- * and WebsiteAsset. `fields` is a plain, code-validated JSON config —
- * WebsiteFormFieldType is the only source of truth for what a field's
- * `type` may be.
+ * Website Builder redesign: `business_id` makes this a real, reusable
+ * canonical Business-owned resource (Website Studio's Forms tab, and any
+ * future Automations reference), backfilled from the owning Website.
+ * `website_id` stays required and unchanged, so every pre-existing
+ * form-binding code path (MediaBindingService::bindForms(),
+ * WebsiteSectionValidator's Website-scoped $validFormUids,
+ * WebsiteStarterDraftService::ensurePhotoBoothQuoteForm()) is unaffected
+ * — a `form` section's `form_uid` still resolves exactly as before.
+ *
+ * `fields` is a plain, code-validated JSON config — WebsiteFormFieldType
+ * is the only source of truth for what a field's `type` may be.
  */
 class WebsiteForm extends Model
 {
@@ -26,6 +32,7 @@ class WebsiteForm extends Model
     protected $fillable = [
         'uid',
         'website_id',
+        'business_id',
         'type',
         'name',
         'fields',
@@ -44,6 +51,11 @@ class WebsiteForm extends Model
     public function website(): BelongsTo
     {
         return $this->belongsTo(Website::class);
+    }
+
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
     }
 
     public function submissions(): HasMany

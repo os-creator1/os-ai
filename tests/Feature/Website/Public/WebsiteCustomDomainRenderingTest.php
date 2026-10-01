@@ -833,6 +833,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
         [, $business] = $this->entitledTenant();
         $website = $this->createWebsite($business);
         $form = $website->forms()->create([
+            'business_id' => $website->business_id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),

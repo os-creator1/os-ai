@@ -30,6 +30,16 @@ final class WebsiteAiDraftGenerator
     private const MAX_PAGES = 20;
 
     /**
+     * Independent-review correction round 3 (item 3) — this generator's
+     * own schema caps it at a handful of short pages (MAX_PAGES = 20,
+     * each with a small fixed set of section types) — nowhere near what
+     * `website_generation`'s own 8,000-output-token envelope is sized
+     * for. Stated explicitly rather than inheriting that shared route's
+     * full ceiling by default.
+     */
+    private const MAX_OUTPUT_TOKENS = 800;
+
+    /**
      * §11.4 — the last generate() stopped because the included AI is used
      * up, which is a different fact from "generation failed" and needs a
      * different sentence.
@@ -50,6 +60,42 @@ final class WebsiteAiDraftGenerator
      * @throws ValidationException only if the Website already has pages
      */
     public function generate(Website $website): bool
+    {
+        $pages = $this->generateValidatedPages($website);
+
+        if ($pages === null) {
+            return false;
+        }
+
+        foreach ($pages as $pageData) {
+            $this->draftPages->createPage($website, $pageData);
+        }
+
+        return true;
+    }
+
+    /**
+     * Independent-review correction round 6 — generate() above performs
+     * exactly three things: the precondition check, the AI request/
+     * validation, and committing the resulting pages. This exposes the
+     * first two alone, so a caller that must commit the resulting batch
+     * through its OWN fenced transaction (WebsiteController::generate()'s
+     * legacy, non-template branch, via WebsiteGenerationCoordinator::
+     * commitFencedLegacyDraft()) can do so without this class ever
+     * writing a page itself — the Website-level generation lease must be
+     * the only thing standing between "AI returned a batch" and "that
+     * batch is persisted," never an unguarded loop of createPage() calls.
+     * generate() itself is UNCHANGED in behavior and remains the direct,
+     * self-committing entry point for any caller that does not need
+     * fencing (e.g. the existing unit-level tests of this class).
+     *
+     * @return ?array the validated page batch, or null on any failure
+     *                (same meaning as generate()'s false return — check
+     *                lastRunWasPausedByBudget() to tell which).
+     *
+     * @throws ValidationException only if the Website already has pages
+     */
+    public function generateValidatedPages(Website $website): ?array
     {
         if ($website->pages()->exists()) {
             throw ValidationException::withMessages([
@@ -75,15 +121,7 @@ final class WebsiteAiDraftGenerator
             $pages = $this->requestAndValidate($messages, $business, $actorUserId);
         }
 
-        if ($pages === null) {
-            return false;
-        }
-
-        foreach ($pages as $pageData) {
-            $this->draftPages->createPage($website, $pageData);
-        }
-
-        return true;
+        return $pages;
     }
 
     /**
@@ -109,7 +147,7 @@ final class WebsiteAiDraftGenerator
 
     private function requestAndValidate(array $messages, \App\Models\Business $business, ?int $actorUserId): ?array
     {
-        $raw = $this->client->complete($messages, $business, $actorUserId);
+        $raw = $this->client->complete($messages, $business, $actorUserId, self::MAX_OUTPUT_TOKENS);
 
         if ($this->client->lastCallWasBudgetExhausted()) {
             $this->pausedByBudget = true;

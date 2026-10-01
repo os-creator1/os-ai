@@ -337,7 +337,12 @@ class AiGatewayTest extends TestCase
         $this->assertNotNull($entry->actual_cost_microusd);
         $this->assertLessThan($entry->estimated_cost_microusd, $entry->actual_cost_microusd, 'The actual cost of a short reply must be less than the worst-case estimate reserved for it.');
 
-        $routeConfig = config('ai.routes.routine');
+        // buildRequest()'s default category (WebsiteGeneration) resolves
+        // to its own `website_generation` route (independent-review
+        // correction round 2) — same per-token prices as `routine` today,
+        // but read from the route this request actually uses rather than
+        // relying on that coincidence.
+        $routeConfig = config('ai.routes.website_generation');
         $expectedActual = (int) ceil(500 * $routeConfig['input_price_microusd_per_mtok'] / 1_000_000)
             + (int) ceil(100 * $routeConfig['output_price_microusd_per_mtok'] / 1_000_000);
         $this->assertSame($expectedActual, $entry->actual_cost_microusd);
@@ -567,8 +572,13 @@ class AiGatewayTest extends TestCase
             'cap_microusd' => $cap,
         ]);
 
-        config(['ai.routes.routine.max_request_cost_microusd' => 10_000_000]);
-        config(['ai.routes.routine.output_price_microusd_per_mtok' => 3_000_000]);
+        // Category A (website_generation) now resolves to its own
+        // dedicated `website_generation` route (independent-review
+        // correction round 2), not `routine` — inflate ITS price/cap
+        // instead so this test's "spends almost the entire shared pool"
+        // setup still holds.
+        config(['ai.routes.website_generation.max_request_cost_microusd' => 10_000_000]);
+        config(['ai.routes.website_generation.output_price_microusd_per_mtok' => 3_000_000]);
 
         // Category A (website_generation) spends almost the entire
         // shared pool.
@@ -602,7 +612,13 @@ class AiGatewayTest extends TestCase
         $this->assertSame(AiModelRoute::Routine, $router->defaultRouteFor(AiUsageCategory::CooDiagnosis));
         $this->assertSame(AiModelRoute::Routine, $router->defaultRouteFor(AiUsageCategory::CooInteractive));
         $this->assertSame(AiModelRoute::Compaction, $router->defaultRouteFor(AiUsageCategory::ConversationCompaction));
-        $this->assertSame(AiModelRoute::Routine, $router->defaultRouteFor(AiUsageCategory::WebsiteGeneration));
+        // Independent-review correction round 2 — guided website
+        // generation moved to its own dedicated, bounded envelope
+        // (config('ai.routes.website_generation'): 12,000 input / 8,000
+        // output tokens) because one full-site JSON response cannot fit
+        // `routine`'s 800-output-token ceiling; every other category is
+        // unchanged.
+        $this->assertSame(AiModelRoute::WebsiteGeneration, $router->defaultRouteFor(AiUsageCategory::WebsiteGeneration));
         $this->assertSame(AiModelRoute::Routine, $router->defaultRouteFor(AiUsageCategory::CampaignMessageDraft));
         $this->assertSame(AiModelRoute::Routine, $router->defaultRouteFor(AiUsageCategory::AgencyProspectReply));
     }
@@ -654,7 +670,12 @@ class AiGatewayTest extends TestCase
     public function test_a_request_exceeding_its_routes_max_cost_is_refused_as_too_expensive(): void
     {
         [, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
-        config(['ai.routes.routine.max_request_cost_microusd' => 1]);
+        // buildRequest()'s default category (WebsiteGeneration) now
+        // resolves to its own dedicated `website_generation` route
+        // (independent-review correction round 2), not `routine` — the
+        // config key this test constrains must match whichever route
+        // the request under test actually uses.
+        config(['ai.routes.website_generation.max_request_cost_microusd' => 1]);
 
         $request = $this->buildRequest($workspace, maxOutputTokens: 500);
         $result = $this->gateway()->complete($request);

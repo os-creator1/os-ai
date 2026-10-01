@@ -33,12 +33,25 @@ class Website extends Model
         'published_revision_id',
         'theme',
         'template_key',
+        'gallery_page_enabled',
+        'presentation_changes_pending_at',
+        'generation_lease_token',
+        'generation_lease_started_at',
+        'generation_lease_attempt_uid',
     ];
 
     protected $casts = [
         'status' => WebsiteStatus::class,
         'theme' => 'array',
+        'gallery_page_enabled' => 'boolean',
+        'presentation_changes_pending_at' => 'datetime',
+        'generation_lease_started_at' => 'datetime',
     ];
+
+    public function isGenerationLeased(): bool
+    {
+        return $this->generation_lease_token !== null;
+    }
 
     /**
      * websites.uid is a database UUID column; HasUid's default
@@ -117,6 +130,11 @@ class Website extends Model
     public function guidedGenerationAttempts(): HasMany
     {
         return $this->hasMany(WebsiteGuidedGenerationAttempt::class);
+    }
+
+    public function questionnaireResponses(): HasMany
+    {
+        return $this->hasMany(QuestionnaireResponse::class);
     }
 
     /**

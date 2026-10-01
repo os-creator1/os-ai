@@ -27,6 +27,8 @@ class CatalogItem extends Model
         'price_minor',
         'currency_code',
         'position',
+        'featured',
+        'source_questionnaire_item_key',
         'created_by_user_id',
     ];
 
@@ -34,6 +36,7 @@ class CatalogItem extends Model
         'type' => CatalogItemType::class,
         'price_minor' => 'integer',
         'position' => 'integer',
+        'featured' => 'boolean',
         // Contract §5.1: not fillable — changed only through
         // CatalogItemManager's archive()/reactivate() (Sub-slice B), never
         // ordinary mass-assignment, mirroring BusinessLocation exactly.
@@ -59,6 +62,22 @@ class CatalogItem extends Model
     public function snapshots(): HasMany
     {
         return $this->hasMany(PackageSnapshot::class);
+    }
+
+    public function images(): HasMany
+    {
+        return $this->hasMany(CatalogItemImage::class)->orderBy('position');
+    }
+
+    public function coverImage(): ?CatalogItemImage
+    {
+        return $this->images->firstWhere('is_cover', true) ?? $this->images->first();
+    }
+
+    /** The established "contact for pricing" signal — never a separate flag. */
+    public function isQuoteOnly(): bool
+    {
+        return $this->price_minor === null;
     }
 
     public function isActive(): bool

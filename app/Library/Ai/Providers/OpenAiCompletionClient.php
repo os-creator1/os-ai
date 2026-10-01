@@ -24,6 +24,18 @@ use Throwable;
  */
 final class OpenAiCompletionClient implements AiCompletionClient
 {
+    /**
+     * Independent-review correction round 4 (item 1) — an explicit,
+     * bounded provider/network timeout, comfortably shorter than
+     * WebsiteGenerationCoordinator::LEASE_SECONDS (300). Without this,
+     * the underlying HTTP client's own default (effectively unbounded
+     * for a hung connection) could let a genuinely active call run past
+     * the lease's own expiry, which would otherwise let a recovering
+     * worker reclaim a lease a still-running provider call is legitimately
+     * using.
+     */
+    private const PROVIDER_TIMEOUT_SECONDS = 60;
+
     public function complete(AiCompletionRequest $request): AiCompletionResult
     {
         if (! config('services.openai.active') || empty(config('services.openai.api_key'))) {
@@ -31,7 +43,10 @@ final class OpenAiCompletionClient implements AiCompletionClient
         }
 
         try {
-            $client = OpenAI::client(config('services.openai.api_key'));
+            $client = OpenAI::factory()
+                ->withApiKey(config('services.openai.api_key'))
+                ->withHttpClient(new \GuzzleHttp\Client(['timeout' => self::PROVIDER_TIMEOUT_SECONDS, 'connect_timeout' => 10]))
+                ->make();
 
             $payload = [
                 'model' => $request->model,

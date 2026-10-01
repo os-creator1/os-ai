@@ -21,4 +21,10 @@ enum WebsiteSectionType: string
     case ContactDetails = 'contact_details';
     case Gallery = 'gallery';
     case Form = 'form';
+
+    /** Website Builder redesign — built entirely by MediaBindingService from real BusinessBackdropImage rows, never AI-authored (same rule as Gallery/Form). */
+    case Backdrops = 'backdrops';
+
+    /** Website Builder redesign — the wizard's single optional editorial/story section. */
+    case CustomSection = 'custom_section';
 }

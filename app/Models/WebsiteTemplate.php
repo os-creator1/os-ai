@@ -29,6 +29,7 @@ class WebsiteTemplate extends Model
 {
     protected $fillable = [
         'key',
+        'niche_key',
         'display_name',
         'description',
         'theme',

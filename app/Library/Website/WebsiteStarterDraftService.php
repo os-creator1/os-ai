@@ -153,6 +153,34 @@ final class WebsiteStarterDraftService
     public function createFromTemplate(Business $business, WebsiteTemplate $template, ?string $name = null): Website
     {
         return DB::transaction(function () use ($business, $template, $name) {
+            $website = $this->createShellFromTemplate($business, $template, $name);
+
+            // A pre-existing Website (createShellFromTemplate()'s own
+            // idempotency) already has its own pages — never rebuild them
+            // here, only a brand-new shell gets its starter pages.
+            if ($website->pages()->doesntExist()) {
+                $this->buildPagesFromTemplate($website, $business);
+            }
+
+            return $website;
+        });
+    }
+
+    /**
+     * Website Builder redesign — the wizard's template-choice step needs
+     * the Website row to exist immediately (so later steps have
+     * somewhere to attach uploaded photos/forms to) WITHOUT eagerly
+     * building starter pages that guided generation is about to replace
+     * anyway the moment the wizard finishes (GuidedGenerationCommitService
+     * always deletes and recreates the full page set — building starter
+     * pages here would be pure waste, and briefly-published or previewed
+     * placeholder content the owner never asked for). Idempotent, exactly
+     * like createFromTemplate(): a second call for the same Business
+     * returns its existing Website unchanged.
+     */
+    public function createShellFromTemplate(Business $business, WebsiteTemplate $template, ?string $name = null): Website
+    {
+        return DB::transaction(function () use ($business, $template, $name) {
             Business::whereKey($business->id)->lockForUpdate()->firstOrFail();
 
             $existing = Website::where('business_id', $business->id)->first();
@@ -160,16 +188,42 @@ final class WebsiteStarterDraftService
                 return $existing;
             }
 
-            $website = Website::create([
+            return Website::create([
                 'business_id' => $business->id,
                 'name' => $name ?: Str::limit($business->name, 120, ''),
                 'theme' => $template->theme,
                 'template_key' => $template->key,
             ]);
+        });
+    }
 
-            $this->buildPagesFromTemplate($website, $business);
+    /**
+     * Independent-review correction round 2 — lets the owner change their
+     * mind about the template from the wizard's own Back arrow, WITHOUT
+     * losing saved answers or creating a second Website/questionnaire
+     * response. Safe only because a pre-generation shell (createShellFromTemplate()'s
+     * own contract) never has any pages yet — guided generation always
+     * builds the real page set for the first time at the end of the
+     * wizard, so there is nothing here to "lose" by swapping the
+     * template early. Refuses once real pages exist (a generated or
+     * rebuilt Website), since that is no longer the pre-generation shell
+     * this method is for.
+     */
+    public function updateShellTemplate(Website $website, WebsiteTemplate $template): Website
+    {
+        return DB::transaction(function () use ($website, $template) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
 
-            return $website;
+            if ($locked->pages()->exists()) {
+                throw new \DomainException('This website already has generated pages and can no longer have its template swapped this way.');
+            }
+
+            $locked->update([
+                'theme' => $template->theme,
+                'template_key' => $template->key,
+            ]);
+
+            return $locked->refresh();
         });
     }
 
@@ -303,7 +357,7 @@ final class WebsiteStarterDraftService
      */
     private function createGalleryPage(Website $website, Business $business, ?array $contact): void
     {
-        $items = $website->assets()->orderBy('id')->limit(24)->get()
+        $items = $website->assets()->where('purpose', \App\Enums\Website\WebsiteAssetPurpose::Gallery->value)->orderBy('sort_order')->orderBy('id')->limit(24)->get()
             ->map(fn ($asset) => ['image' => $asset->uid])
             ->all();
 
@@ -703,6 +757,7 @@ final class WebsiteStarterDraftService
         return $website->forms()->firstOrCreate(
             ['type' => WebsiteForm::TYPE_QUOTE_REQUEST],
             [
+                'business_id' => $website->business_id,
                 'name' => 'Photo Booth Quote Request',
                 'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
                 'submit_label' => 'Request a quote',

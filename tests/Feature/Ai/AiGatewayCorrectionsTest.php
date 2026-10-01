@@ -331,11 +331,15 @@ class AiGatewayCorrectionsTest extends TestCase
     {
         [, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $router = app(AiModelRouter::class);
-        $limit = (int) config('ai.routes.routine.max_input_tokens');
+        // AiUsageCategory::WebsiteGeneration resolves to its own
+        // `website_generation` route (independent-review correction
+        // round 2), not `routine` — read the ceiling this request
+        // actually uses.
+        $limit = (int) config('ai.routes.website_generation.max_input_tokens');
 
         // A per-request cost ceiling high enough that only the INPUT limit
         // can be what refuses — otherwise this would prove the wrong guard.
-        config(['ai.routes.routine.max_request_cost_microusd' => 100_000_000]);
+        config(['ai.routes.website_generation.max_request_cost_microusd' => 100_000_000]);
 
         $atLimit = $this->messagesOfExactlyInputTokens($limit);
         $this->assertSame($limit, $router->estimateInputTokens($atLimit), 'Fixture must sit exactly on the boundary.');

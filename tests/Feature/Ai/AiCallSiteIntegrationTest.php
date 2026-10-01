@@ -210,7 +210,11 @@ class AiCallSiteIntegrationTest extends TestCase
         $this->assertSame(1, $this->fakeClient->callCount());
 
         $sentRequest = $this->fakeClient->requests()[0];
-        $this->assertSame((int) config('ai.routes.routine.max_output_tokens'), $sentRequest->maxOutputTokens);
+        // Independent-review correction round 2 — website generation now
+        // routes through its own dedicated `website_generation` route
+        // (12,000 input / 8,000 output tokens), not the shared `routine`
+        // envelope, which cannot fit a full-site JSON response at all.
+        $this->assertSame((int) config('ai.routes.website_generation.max_output_tokens'), $sentRequest->maxOutputTokens);
         $this->assertTrue($sentRequest->jsonMode, 'Website generation must request JSON mode.');
 
         $this->assertSame(

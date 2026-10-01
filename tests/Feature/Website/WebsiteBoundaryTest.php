@@ -68,14 +68,21 @@ class WebsiteBoundaryTest extends TestCase
         }
     }
 
-    public function test_website_section_type_enum_has_exactly_the_ten_known_cases_and_no_generic_form_variant(): void
+    /**
+     * Website Builder redesign added exactly two more closed cases
+     * (`backdrops`, `custom_section`) — both, like `gallery`/`form`
+     * before them, built entirely server-side and never AI-authored
+     * (WebsitePageStrategy::withoutAiUnfillableSections()). The set
+     * remains closed at 12, not open-ended.
+     */
+    public function test_website_section_type_enum_has_exactly_the_twelve_known_cases_and_no_generic_form_variant(): void
     {
         $values = array_map(static fn (WebsiteSectionType $case) => $case->value, WebsiteSectionType::cases());
 
         sort($values);
 
         $this->assertSame(
-            ['contact_details', 'cta', 'faq', 'form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
+            ['backdrops', 'contact_details', 'cta', 'custom_section', 'faq', 'form', 'gallery', 'hero', 'image_text', 'services', 'testimonials', 'text'],
             $values
         );
 
