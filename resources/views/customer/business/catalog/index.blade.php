@@ -66,6 +66,11 @@
                                             Quote only
                                         @else
                                             {{ \App\Library\Catalog\CatalogMoney::format($item->price_minor, $item->currency_code) }}
+                                            @if (strtoupper((string) $item->currency_code) !== strtoupper((string) $business->currency_code))
+                                                <small class="d-block text-warning" data-role="currency-mismatch">
+                                                    Not in your business currency ({{ strtoupper((string) $business->currency_code) }}), so it can't be added to a quote or invoice.
+                                                </small>
+                                            @endif
                                         @endif
                                     </td>
                                     <td class="text-nowrap">

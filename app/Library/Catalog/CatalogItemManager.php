@@ -311,7 +311,10 @@ final class CatalogItemManager
             throw new CatalogRuleException('Set both a price and a currency, or leave both blank for a quote-only item.');
         }
 
-        if ($currencyCode !== null && strlen($currencyCode) !== 3) {
+        // Three letters A-Z, not merely three characters: "U$D" or "123" is a
+        // malformed currency, and a price in it could never be snapshotted into
+        // a document. Still no ISO-4217 lookup (see the docblock above).
+        if ($currencyCode !== null && preg_match('/^[A-Z]{3}$/', $currencyCode) !== 1) {
             throw new CatalogRuleException('Currency must be a 3-letter code.');
         }
 

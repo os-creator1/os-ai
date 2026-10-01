@@ -838,6 +838,46 @@ detail the original text could not know.
   Sub-slice D merged. Sub-slice E's controllers retire the rest of it, so it is
   inverted to assert that every B–E deliverable now exists.
 
+### V1 completion record (branch `agent/packages-products-v1-completion`)
+
+A gap-closing pass over A–E against §14. It changes no schema, no route and no
+entitlement, and adds no catalog rule the contract did not already state.
+
+- **Per-Location page query bound.** `CatalogLocationOfferReader` resolved every
+  item through `CatalogItemPricingResolver::resolve()`, which re-reads the item,
+  the Location and the override per call — three-plus queries per item. The
+  resolver now has `resolveLoaded(item, location, ?override)`, the same
+  refusals and price order over rows the caller already holds, and `resolve()`
+  delegates to it, so the rule still lives in one place. The reader reads items
+  and overrides in two queries for the whole page regardless of catalog size,
+  and refuses a Location of another Business.
+- **Snapshot seam for Proposal/Invoice/Booking.** `PackageSnapshotService`
+  keeps `snapshot()` unchanged and adds, over the same locked capture:
+  `snapshotForBusiness(Business, CatalogItem, BusinessLocation, ?User, ?int)` —
+  the form a transactional module should call, which refuses an item of any
+  other Business by checking the LOCKED row, never the caller's model — and
+  `findForBusiness(Business, uid): ?PackageSnapshot`, the tenant-scoped read by
+  the stable `uid` (a foreign snapshot is `null`). A document stores the
+  snapshot `uid`; it never re-reads the catalog for what it was priced at.
+- **Write-once at the model layer.** `PackageSnapshot` throws on an Eloquent
+  update or delete. This guards the Eloquent path only; it is not a database
+  lock, and the source-boundary test remains the proof that no production
+  statement mutates the table. The real database invariant is unchanged: the
+  `restrictOnDelete` FKs mean an item, Location or Business a snapshot
+  references can only be archived, never hard-deleted.
+- **Malformed currency.** `CatalogItemManager` now requires three letters A–Z,
+  not merely three characters, so `U$D` or `123` is refused at the domain
+  boundary and not only by the form.
+- **Business currency.** An item may still be priced in a currency other than
+  the Business's (the currency is captured per item, §3.3), but the catalog list
+  now says so, because `DocumentManager::addCatalogLine()` refuses a line whose
+  snapshot currency differs from the Business's document currency. No new
+  constraint was added; the page just stops that being a surprise.
+- **Stale edits.** The catalog has no revision/fencing column and this pass adds
+  none: concurrent edits serialize on the `catalog_items` row lock (§7) and the
+  last committed edit wins, which is the contract's stated behavior. A stale
+  REORDER is refused (the submitted list must match the locked active set).
+
 ## 13. Required tests
 
 Beyond each sub-slice's own tests (§12): once D ships, an end-to-end test

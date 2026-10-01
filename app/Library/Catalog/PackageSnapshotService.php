@@ -54,13 +54,64 @@ final class PackageSnapshotService
         ?User $actor = null,
         ?int $explicitPriceMinor = null,
     ): PackageSnapshot {
-        return DB::transaction(function () use ($item, $location, $actor, $explicitPriceMinor) {
+        return $this->capture(null, $item, $location, $actor, $explicitPriceMinor);
+    }
+
+    /**
+     * The form a transactional module (Proposal, Invoice, Booking) should
+     * call: the SAME locked capture as snapshot(), but the caller names the
+     * Business it is acting for, and a catalog item or Location of any other
+     * Business is refused — checked against the locked row, never the
+     * caller's copy of the model — so a raw id taken from a request can never
+     * pull another Business's catalog into this Business's document.
+     *
+     * @throws CatalogRuleException foreign Business item/Location, or any of snapshot()'s refusals
+     */
+    public function snapshotForBusiness(
+        Business $business,
+        CatalogItem $item,
+        BusinessLocation $location,
+        ?User $actor = null,
+        ?int $explicitPriceMinor = null,
+    ): PackageSnapshot {
+        return $this->capture($business, $item, $location, $actor, $explicitPriceMinor);
+    }
+
+    /**
+     * The read side of the seam: one snapshot by its stable `uid`, scoped to
+     * the Business asking. A snapshot of another Business is simply not found
+     * (null), indistinguishable from a uid that does not exist. A snapshot is
+     * write-once, so what this returns is exactly what was captured, however
+     * the catalog has changed since.
+     */
+    public function findForBusiness(Business $business, string $snapshotUid): ?PackageSnapshot
+    {
+        return PackageSnapshot::query()
+            ->where('business_id', $business->id)
+            ->where('uid', $snapshotUid)
+            ->first();
+    }
+
+    private function capture(
+        ?Business $expectedBusiness,
+        CatalogItem $item,
+        BusinessLocation $location,
+        ?User $actor,
+        ?int $explicitPriceMinor,
+    ): PackageSnapshot {
+        return DB::transaction(function () use ($expectedBusiness, $item, $location, $actor, $explicitPriceMinor) {
             // 1. Re-read and lock the authoritative CatalogItem from persistence
             //    rather than trusting potentially stale caller-supplied fields (§7).
             $lockedItem = CatalogItem::query()->whereKey($item->id)->lockForUpdate()->first();
 
             if ($lockedItem === null) {
                 throw new CatalogRuleException('That catalog item does not exist.');
+            }
+
+            // 1b. When the caller named a Business, the LOCKED row must be that
+            //     Business's — the caller's copy of the model proves nothing.
+            if ($expectedBusiness !== null && (int) $lockedItem->business_id !== (int) $expectedBusiness->id) {
+                throw new CatalogRuleException('That catalog item does not belong to this Business.');
             }
 
             // 2. Re-derive the authoritative Business from the locked item.

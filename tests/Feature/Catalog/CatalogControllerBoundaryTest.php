@@ -197,7 +197,10 @@ class CatalogControllerBoundaryTest extends TestCase
 
         // Effective price: ONLY the resolver.
         $this->assertStringContainsString('CatalogItemPricingResolver', $reader);
-        $this->assertMatchesRegularExpression('/\$this->resolver->resolve\(/', $reader);
+        $this->assertMatchesRegularExpression('/\$this->resolver->resolve(?:Loaded)?\(/', $reader);
+        // ...and never a second copy of the rule: the reader decides nothing
+        // from `is_enabled`, the archived state or the fallback price itself.
+        $this->assertDoesNotMatchRegularExpression('/->is_enabled|->isArchived\(|->price_minor\b/', $reader);
     }
 
     public function test_the_http_layer_never_references_the_snapshot_service(): void

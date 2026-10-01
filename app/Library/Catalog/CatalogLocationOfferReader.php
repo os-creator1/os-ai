@@ -66,11 +66,22 @@ class CatalogLocationOfferReader
             ->get()
             ->keyBy('catalog_item_id');
 
-        return $items->map(function (CatalogItem $item) use ($business, $location, $overrides): array {
+        // The Location must be this Business's own: items are read by
+        // `business_id`, so a foreign Location would otherwise be silently
+        // paired with this Business's catalog.
+        if ((int) $location->business_id !== (int) $business->id) {
+            throw new CatalogRuleException('That Location does not belong to this Business.');
+        }
+
+        return $items->map(function (CatalogItem $item) use ($location, $overrides): array {
             $override = $overrides->get($item->id);
 
             try {
-                $price = $this->resolver->resolve($business, $item, $location);
+                // The items above came from a Business-scoped query and the
+                // overrides from one bulk read, so the resolver's own rules
+                // run in memory: two queries for the whole page, never
+                // three per item.
+                $price = $this->resolver->resolveLoaded($item, $location, $override);
                 $offered = true;
                 $reason = null;
             } catch (CatalogRuleException $e) {
