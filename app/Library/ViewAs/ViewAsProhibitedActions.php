@@ -50,6 +50,11 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.gbp.bind',
         'customer.workspaces.businesses.gbp.unbind',
         'customer.gbp.oauth.callback',
+        // provider credentials and sending as the Business (Business Email)
+        'customer.workspaces.businesses.email.connect',
+        'customer.workspaces.businesses.email.disconnect',
+        'customer.workspaces.businesses.email.send',
+        'customer.email.oauth.callback',
         // API credentials / sending-server configuration
         'customer.developer.generate',
         'customer.developer.server',
@@ -94,6 +99,7 @@ final class ViewAsProhibitedActions
         'user.callback.',
         'user.registers.',
         'customer.gbp.oauth.',
+        'customer.email.oauth.',
         // Contract 21 §7 — the authenticated V1 signup re-entry and its hosted
         // Checkout return buy a lane-A plan for the ACTOR's own account. A View
         // As session never starts, resumes or confirms a platform purchase.

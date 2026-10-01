@@ -500,6 +500,26 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Business Email OAuth callback — ONE FIXED, TENANT-FREE URI per provider
+    |--------------------------------------------------------------------------
+    |
+    | Providers match `redirect_uri` exactly, so this can never carry a
+    | Workspace or Business segment (BusinessEmailOAuthConfig refuses to start
+    | a flow unless the configured redirect equals it). The Business is
+    | resolved ONLY from the signed state and the whole tenancy/permission
+    | chain is re-run before the nonce is consumed. It stays GET because the
+    | provider redirects the browser here; it is authenticated like every other
+    | customer route and never authenticates or creates a user. See
+    | Business\BusinessEmailController::callback().
+    |
+    */
+    Route::get('email/oauth/{provider}/callback', 'Business\BusinessEmailController@callback')
+        ->whereIn('provider', ['google', 'microsoft'])
+        ->middleware('throttle:20,1')
+        ->name('email.oauth.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | External calendar connection (Contract 15 §5.5, Sub-slice F)
     |--------------------------------------------------------------------------
     |
@@ -1116,6 +1136,30 @@
             Route::post('/unbind', 'Business\GoogleBusinessProfileController@unbind')->name('unbind');
             Route::post('/disconnect', 'Business\GoogleBusinessProfileController@disconnect')->name('disconnect');
             Route::post('/refresh', 'Business\GoogleBusinessProfileController@refresh')->middleware('throttle:10,1')->name('refresh');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Business Email (Settings → Email) — the Business's own connected
+        | Google / Microsoft mailbox and a manual send to a Contact.
+        |
+        | Every action runs Workspace -> Business -> BusinessRouteAccess ->
+        | active Business; every failure is 404, never 403. Connect and send
+        | are CSRF-protected POSTs. The OAuth callback lives OUTSIDE this
+        | group at the one fixed tenant-free URI (`customer.email.oauth.callback`).
+        | Connect / disconnect / send are View-As prohibited
+        | (ViewAsProhibitedActions): a viewing agency actor never connects a
+        | client's mailbox nor sends mail as the client.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/email')->name('businesses.email.')->group(function () {
+            Route::get('/', 'Business\BusinessEmailController@show')->name('show');
+            Route::post('/connect/{provider}', 'Business\BusinessEmailController@connect')
+                ->whereIn('provider', ['google', 'microsoft'])
+                ->middleware('throttle:10,1')
+                ->name('connect');
+            Route::post('/disconnect', 'Business\BusinessEmailController@disconnect')->name('disconnect');
+            Route::post('/send', 'Business\BusinessEmailController@send')->middleware('throttle:20,1')->name('send');
         });
 
         /*
