@@ -9,7 +9,7 @@
                 <x-card title="Businesses">
                     <form method="GET" action="{{ route('admin.businesses.index') }}" class="row g-2 mb-3">
                         <div class="col-md-4">
-                            <x-input name="search" type="text" placeholder="Search name, email, domain" value="{{ $filters['search'] }}" />
+                            <x-input name="search" type="text" placeholder="Search name, uid, email, domain" value="{{ $filters['search'] }}" />
                         </div>
                         <div class="col-md-3">
                             <x-select
@@ -30,11 +30,22 @@
                         </div>
                     </form>
 
-                    <x-table :headers="['Name', 'Owner', 'Industry', 'Status', '']">
+                    <x-table :headers="['Name', 'Owner', 'Workspace', 'Industry', 'Status', '']">
                         @forelse ($businesses as $business)
                             <tr>
-                                <td>{{ $business->name }}</td>
+                                <td>{{ $business->name }}<div class="text-muted small">{{ $business->uid }}</div></td>
                                 <td>{{ $business->customer?->user?->displayName() ?? 'Unknown' }}</td>
+                                <td>
+                                    @if ($business->workspace)
+                                        @can('view workspace')
+                                            <a href="{{ route('admin.workspaces.show', $business->workspace) }}">{{ $business->workspace->name }}</a>
+                                        @else
+                                            {{ $business->workspace->name }}
+                                        @endcan
+                                    @else
+                                        —
+                                    @endif
+                                </td>
                                 <td>{{ ucfirst(str_replace('_', ' ', $business->industry?->value ?? '')) }}</td>
                                 <td>{{ ucfirst($business->status->value) }}</td>
                                 <td>
@@ -46,7 +57,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="5"><x-empty-state icon="inbox" title="No businesses found." /></td>
+                                <td colspan="6"><x-empty-state icon="inbox" title="No businesses found." /></td>
                             </tr>
                         @endforelse
                     </x-table>

@@ -7,6 +7,8 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Requests\Workspace\AdminWorkspaceIndexRequest;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\PlatformOwner\PlatformOwnerOverviewReader;
+use App\Library\PlatformOwner\WorkspaceSupportReader;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
@@ -28,6 +30,8 @@ class WorkspaceController extends AdminBaseController
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly EntitlementManager $entitlementManager,
+        private readonly WorkspaceSupportReader $support,
+        private readonly PlatformOwnerOverviewReader $overview,
     ) {
     }
 
@@ -50,6 +54,9 @@ class WorkspaceController extends AdminBaseController
         return view('admin.workspaces.index', [
             'workspaces' => $workspaces,
             'filters' => $request->filters(),
+            // Plan + subscription for the whole page in two queries, never one
+            // lookup per row.
+            'page' => $this->overview->forWorkspacePage($workspaces->items()),
             'breadcrumbs' => $this->breadcrumbs(),
         ]);
     }
@@ -58,10 +65,17 @@ class WorkspaceController extends AdminBaseController
     {
         $this->authorize('view workspace');
 
-        $workspace->loadMissing(['owner', 'businesses.customer.user', 'memberships.user', 'memberships.assignedBusinesses']);
+        $workspace->loadMissing(['owner']);
+
+        // Platform Owner / Admin V1 — the support cockpit's read model. Its
+        // member and Business lists are capped; nothing here loads a
+        // Workspace's whole membership.
+        $support = $this->support->forWorkspace($workspace);
 
         $viewData = [
             'workspace' => $workspace,
+            'support' => $support,
+            'actors' => $this->support->actorLabels($support['recentActions']),
             'breadcrumbs' => $this->breadcrumbs($workspace),
         ];
 
@@ -122,7 +136,9 @@ class WorkspaceController extends AdminBaseController
             abort(404);
         }
 
-        $business = $workspace->businesses->firstWhere('uid', $businessUid);
+        // Indexed lookup scoped to THIS Workspace — a Business uid that
+        // belongs anywhere else is simply not found.
+        $business = $workspace->businesses()->where('uid', (string) $businessUid)->first();
 
         if ($business === null) {
             abort(404);

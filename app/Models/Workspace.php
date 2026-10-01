@@ -6,6 +6,7 @@ use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 class Workspace extends Model
@@ -52,5 +53,15 @@ class Workspace extends Model
     public function businesses(): HasMany
     {
         return $this->hasMany(Business::class);
+    }
+
+    /**
+     * The lane-A platform subscription (at most one per Workspace —
+     * `ps_workspace_unique`). Read-side relation for admin lookup; the
+     * subscription itself is only ever written by PlatformSubscriptionFinalizer.
+     */
+    public function platformSubscription(): HasOne
+    {
+        return $this->hasOne(PlatformSubscription::class);
     }
 }

@@ -9,7 +9,7 @@
                 <x-card title="Workspaces">
                     <form method="GET" action="{{ route('admin.workspaces.index') }}" class="row g-2 mb-3">
                         <div class="col-md-6">
-                            <x-input name="search" type="text" placeholder="Search name or uid" value="{{ $filters['search'] }}" />
+                            <x-input name="search" type="text" placeholder="Search workspace, business, owner/member email, uid, Stripe customer or subscription id" value="{{ $filters['search'] }}" />
                         </div>
                         <div class="col-md-4">
                             <x-select
@@ -23,11 +23,15 @@
                         </div>
                     </form>
 
-                    <x-table :headers="['Name', 'Owner', 'Status', 'Businesses', 'Active members', '']">
+                    <x-table :headers="['Name', 'Owner', 'Status', 'Plan', 'Subscription', 'Businesses', 'Active members', '']">
                         @forelse ($workspaces as $workspace)
+                            @php
+                                $assignment = $page['assignments']->get($workspace->id);
+                                $subscription = $page['subscriptions']->get($workspace->id);
+                            @endphp
                             <tr>
-                                <td>{{ $workspace->name }}</td>
-                                <td>{{ $workspace->owner?->displayName() ?? 'Unknown' }}</td>
+                                <td>{{ $workspace->name }}<div class="text-muted small">{{ $workspace->uid }}</div></td>
+                                <td>{{ $workspace->owner?->displayName() ?? 'Unknown' }}<div class="text-muted small">{{ $workspace->owner?->email }}</div></td>
                                 <td>
                                     @if ($workspace->is_active)
                                         <x-badge variant="success">Active</x-badge>
@@ -35,6 +39,15 @@
                                         <x-badge variant="neutral">Inactive</x-badge>
                                     @endif
                                 </td>
+                                <td data-testid="po-index-plan">
+                                    @if ($assignment)
+                                        {{ $assignment->catalog?->display_name ?? '—' }}
+                                        <div class="text-muted small">{{ $assignment->status->value }}@if ($assignment->locked_at) · locked @elseif ($assignment->grace_started_at) · grace @endif</div>
+                                    @else
+                                        <span class="text-muted">No plan</span>
+                                    @endif
+                                </td>
+                                <td data-testid="po-index-subscription">{{ $subscription?->status?->value ?? '—' }}</td>
                                 <td>{{ $workspace->businesses_count }}</td>
                                 <td>{{ $workspace->active_memberships_count }}</td>
                                 <td>
@@ -43,7 +56,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="6"><x-empty-state icon="inbox" title="No workspaces found." /></td>
+                                <td colspan="8"><x-empty-state icon="inbox" title="No workspaces found." /></td>
                             </tr>
                         @endforelse
                     </x-table>

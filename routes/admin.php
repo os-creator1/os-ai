@@ -579,10 +579,15 @@
     |
     */
     Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
+        // Platform Owner / Admin V1 — ->missing() on the Business routes so an
+        // unknown {business} is a plain 404, never the 500 the global handler
+        // would otherwise produce outside the local environment (see the usage-
+        // billing routes below for the same rule).
         Route::resource('businesses', 'BusinessController', [
             'only' => ['index', 'show', 'edit', 'update'],
-        ]);
-        Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update');
+        ])->missing(fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request));
+        Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update')
+            ->missing(fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request));
 
         // RFC-005 Admin Usage Billing Surface Contract — remediation #5.
         //
@@ -683,7 +688,32 @@
         Route::get('workspaces', 'WorkspaceController@index')->name('workspaces.index');
         Route::get('workspaces/{workspace}', 'WorkspaceController@show')
             ->whereUuid('workspace')
-            ->name('workspaces.show');
+            ->name('workspaces.show')
+            ->missing(fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request));
+
+        /*
+        |--------------------------------------------------------------------------
+        | Platform Owner overview and audit (Platform Owner / Admin V1)
+        |--------------------------------------------------------------------------
+        |
+        | docs/product/implementation-contracts/22-PLATFORM-OWNER-ADMIN-V1.md.
+        | Read-only. Same no-literal-"admin/"-segment, no-"admin."-name-prefix
+        | shape as the routes above; EnsureUserIsAdministrator
+        | (PlatformOwnerAuthority) is this group's own boundary. The Workspace
+        | page is the support cockpit; these two are the entry and the trail.
+        |
+        */
+        Route::get('platform-owner', 'PlatformOwnerController@overview')->name('platform-owner.overview');
+        Route::get('platform-owner/audit', 'PlatformOwnerController@audit')->name('platform-owner.audit');
+
+        // The one lifecycle control on the support page
+        // (EntitlementManager::recoverAccess(), through PlatformOwnerAccountActions).
+        // Named outside the `admin.workspaces.` family on purpose: that family
+        // is pinned to the RFC-004 M3 entitlement surface.
+        Route::post('platform-owner/workspaces/{workspace}/restore-access', 'WorkspaceAccessController@restore')
+            ->whereUuid('workspace')
+            ->name('platform-owner.workspaces.restore-access')
+            ->missing(fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request));
 
         /*
         |--------------------------------------------------------------------------

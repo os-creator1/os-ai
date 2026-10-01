@@ -165,15 +165,37 @@ class EloquentWorkspaceRepository extends EloquentBaseRepository implements Work
             ]);
 
         if (filled($filters['search'] ?? null)) {
-            $search = $filters['search'];
+            $search = trim((string) $filters['search']);
 
-            $query->where(function ($inner) use ($search) {
-                $inner->where('name', 'like', "%{$search}%")
-                    ->orWhere('uid', 'like', "%{$search}%")
-                    ->orWhereHas('owner', function ($ownerQuery) use ($search) {
-                        $ownerQuery->where('first_name', 'like', "%{$search}%")
-                            ->orWhere('last_name', 'like', "%{$search}%")
-                            ->orWhere('email', 'like', "%{$search}%");
+            // LIKE wildcards in the term are literal characters, never
+            // operators — a pasted "%" must not match every Workspace.
+            $contains = '%' . addcslashes($search, '\\%_') . '%';
+            $prefix = addcslashes($search, '\\%_') . '%';
+
+            $query->where(function ($inner) use ($search, $contains, $prefix) {
+                $inner->where('name', 'like', $contains)
+                    ->orWhere('uid', 'like', $contains)
+                    ->orWhereHas('owner', function ($ownerQuery) use ($contains) {
+                        $ownerQuery->where('first_name', 'like', $contains)
+                            ->orWhere('last_name', 'like', $contains)
+                            ->orWhere('email', 'like', $contains);
+                    })
+                    // Platform Owner / Admin V1 — find an account from whatever
+                    // the customer quotes to support. Each branch is an EXISTS
+                    // over an indexed column: Business name/uid, a member's
+                    // email (prefix), and the exact Stripe customer or
+                    // subscription id stored on the platform subscription
+                    // (both uniquely/ordinarily indexed). No fuzzy search.
+                    ->orWhereHas('businesses', function ($businessQuery) use ($contains) {
+                        $businessQuery->where('name', 'like', $contains)
+                            ->orWhere('uid', 'like', $contains);
+                    })
+                    ->orWhereHas('memberships.user', function ($memberQuery) use ($prefix) {
+                        $memberQuery->where('email', 'like', $prefix);
+                    })
+                    ->orWhereHas('platformSubscription', function ($subscriptionQuery) use ($search) {
+                        $subscriptionQuery->where('provider_customer_id', $search)
+                            ->orWhere('provider_subscription_id', $search);
                     });
             });
         }

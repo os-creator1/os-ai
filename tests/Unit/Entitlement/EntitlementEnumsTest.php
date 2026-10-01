@@ -45,7 +45,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertCount(2, WorkspaceEntitlementOverrideState::cases());
     }
 
-    public function test_workspace_entitlement_transition_type_has_exactly_fourteen_cases(): void
+    public function test_workspace_entitlement_transition_type_has_exactly_fifteen_cases(): void
     {
         $expected = [
             'plan_assigned',
@@ -66,11 +66,14 @@ class EntitlementEnumsTest extends TestCase
             'grace_started',
             'account_locked',
             'access_restored',
+            // Platform Owner / Admin V1 — a platform administrator changed one
+            // Business's own status. Appended, never reordered.
+            'business_status_changed',
         ];
 
         $actual = array_map(fn ($case) => $case->value, WorkspaceEntitlementTransitionType::cases());
 
-        $this->assertCount(14, WorkspaceEntitlementTransitionType::cases());
+        $this->assertCount(15, WorkspaceEntitlementTransitionType::cases());
         $this->assertSame($expected, $actual);
     }
 
