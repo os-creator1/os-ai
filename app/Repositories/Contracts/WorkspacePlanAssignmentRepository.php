@@ -14,6 +14,19 @@ interface WorkspacePlanAssignmentRepository extends BaseRepository
 {
     public function findByWorkspaceId(int $workspaceId): ?WorkspacePlanAssignment;
 
+    /**
+     * A BULK read for a list screen: the assignments of many Workspaces in one
+     * statement, each carrying the catalog row's display name as the
+     * `plan_display_name` attribute, keyed by workspace id. A Workspace with no
+     * assignment is simply absent. Plain data access — the Contract 03
+     * lifecycle decision over these facts is CustomerAccountAccessResolver's,
+     * never made here. Not request-memoized: it is a one-shot page read.
+     *
+     * @param  array<int, int>  $workspaceIds
+     * @return array<int, WorkspacePlanAssignment>
+     */
+    public function lifecycleFactsForWorkspaces(array $workspaceIds): array;
+
     public function create(array $attributes): WorkspacePlanAssignment;
 
     /**

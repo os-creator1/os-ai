@@ -10,6 +10,7 @@ use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\UsageBillingPresenter;
 use App\Library\ViewAs\ViewAsManager;
+use App\Library\Workspace\AgencyClientListReader;
 use App\Library\Workspace\AgencyClientRelationshipManager;
 use App\Models\AgencyClientWorkspaceRelationship;
 use App\Models\Business;
@@ -61,6 +62,7 @@ class AgencyClientsController extends Controller
         private readonly BusinessUsageWalletRepository $walletRepository,
         private readonly UsageBillingPresenter $usageBillingPresenter,
         private readonly PaymentProviderCustomerRepository $providerCustomerRepository,
+        private readonly AgencyClientListReader $clientListReader,
     ) {
     }
 
@@ -68,22 +70,24 @@ class AgencyClientsController extends Controller
     {
         $agencyWorkspace = $this->resolveAuthorizedAgencyWorkspace($workspaceUid);
 
-        $search = trim((string) $request->query('search', ''));
+        // Agency V1 completion: one bounded, paginated read keyed by THIS
+        // Agency Workspace's id (AgencyClientListReader) — search and the
+        // Business-state filter run in SQL, and a page costs a fixed number
+        // of statements however many clients the Agency has.
+        $search = mb_substr(trim((string) $request->query('search', '')), 0, AgencyClientListReader::MAX_SEARCH_LENGTH);
+        $state = (string) $request->query('state', '');
+        $state = in_array($state, AgencyClientListReader::STATE_FILTERS, true) ? $state : '';
 
-        $clients = $this->relationshipRepository
-            ->activeForAgencyWorkspace((int) $agencyWorkspace->id)
-            ->map(fn (AgencyClientWorkspaceRelationship $relationship) => $this->presentClientRow($relationship))
-            ->filter()
-            ->when($search !== '', fn (Collection $rows) => $rows->filter(
-                fn (array $row) => str_contains(mb_strtolower($row['workspace_name']), mb_strtolower($search))
-                    || ($row['business_name'] !== null && str_contains(mb_strtolower($row['business_name']), mb_strtolower($search)))
-            ))
-            ->values();
+        $clients = $this->clientListReader
+            ->page((int) $agencyWorkspace->id, $search, $state, max(1, (int) $request->query('page', 1)))
+            ->withQueryString();
 
         return view('customer.agency.clients.index', [
             'agencyWorkspace' => $agencyWorkspace,
             'clients' => $clients,
             'search' => $search,
+            'state' => $state,
+            'stateFilters' => AgencyClientListReader::STATE_FILTERS,
         ]);
     }
 
@@ -314,40 +318,5 @@ class AgencyClientsController extends Controller
         }
 
         return [$clientWorkspace, $relationship];
-    }
-
-    /**
-     * One list row. Never null for a structurally sound Active relationship
-     * (clientWorkspace() is a real FK with no delete path), but guarded
-     * defensively rather than assumed. A Client Workspace whose Business
-     * count is not exactly one under the current 1-Workspace/1-Business
-     * assumption is surfaced as a data-integrity flag on the row, never
-     * silently resolved to an arbitrary Business (Contract 10 owns repair).
-     *
-     * @return array<string, mixed>|null
-     */
-    private function presentClientRow(AgencyClientWorkspaceRelationship $relationship): ?array
-    {
-        $clientWorkspace = $relationship->clientWorkspace;
-
-        if ($clientWorkspace === null) {
-            return null;
-        }
-
-        $businesses = $this->workspaceRepository->businessesForWorkspace($clientWorkspace);
-
-        return [
-            'workspace_uid' => $clientWorkspace->uid,
-            'workspace_name' => $clientWorkspace->name,
-            'business_name' => $businesses->count() === 1 ? $businesses->first()->name : null,
-            // Newly-invited-client flow correction — the ONLY thing that
-            // decides whether "View As" is offered on this row: Draft is
-            // never selectable (never the "single business" the row can
-            // View As), so the list must tell "waiting for the client to
-            // finish setup" apart from "ready".
-            'business_status' => $businesses->count() === 1 ? $businesses->first()->status->value : null,
-            'business_count' => $businesses->count(),
-            'established_at' => $relationship->established_at,
-        ];
     }
 }

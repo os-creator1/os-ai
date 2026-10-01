@@ -40,6 +40,14 @@ final availability/navigation integration for what is built; Sub-slice C
 verification (OD-4) and a data-use sign-off (OD-5) — see Contract 18 §19,
 §21.H for both requirements before C may start.
 
+**Agency V1 completion** is not one of the 14 numbered contracts either.
+[Contract 21 Lane C](./implementation-contracts/21-LANE-C-AGENCY-SAAS.md) built
+Agency SaaS revenue; [Contract 22](./implementation-contracts/22-AGENCY-WHITE-LABEL.md)
+is the acceptance/completion pass over the whole Agency product — the bounded
+Clients list, the SaaS Plan entitlement and deactivation rules, White Label for
+the signed-in client chrome, and the explicit list of what is deferred
+(custom branded domain, Agency-initiated suspension, per-plan feature limits).
+
 ## Wave mapping (for reference, full detail in the Roadmap)
 
 - **Wave 1:** 01, 02, 03, 06 (concurrent, no real conflicts).

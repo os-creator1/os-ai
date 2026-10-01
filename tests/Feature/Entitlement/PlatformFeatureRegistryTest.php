@@ -35,8 +35,10 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::AdsBasicVisibility,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
-            PlatformFeature::WhiteLabel,
             PlatformFeature::AgencyPackageCapabilities,
+            // (WhiteLabel left this list at the Agency V1 completion flip;
+            // test_white_label_is_available_and_workspace_scoped_after_the_agency_v1_flip
+            // asserts it is Available and Workspace-scoped.)
             // (PackagesProducts left this list at Contract 16 Sub-slice E's final
             // flip; test_packages_products_is_available_after_sub_slice_es_final_flip
             // asserts it is Available.)
@@ -66,6 +68,18 @@ class PlatformFeatureRegistryTest extends TestCase
         // were already held to — this assertion reflects that direct
         // repository evidence, not an inherited product-intent assumption.
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
+    }
+
+    public function test_white_label_is_available_and_workspace_scoped_after_the_agency_v1_flip(): void
+    {
+        // Agency V1 completion: a real, executable, Workspace-scoped surface now exists
+        // (AgencyWhiteLabelController over AgencyWhiteLabelManager). Branding belongs to
+        // the Agency Workspace, not to a Business, so it is Workspace-scoped like
+        // ProspectOutreach and decided through decideForWorkspace().
+        $this->assertSame('white_label', PlatformFeature::WhiteLabel->value);
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::WhiteLabel->value));
+        $this->assertTrue(PlatformFeatureRegistry::isWorkspaceScoped(PlatformFeature::WhiteLabel->value));
+        $this->assertFalse(PlatformFeatureRegistry::isBusinessScoped(PlatformFeature::WhiteLabel->value));
     }
 
     public function test_packages_products_is_available_after_sub_slice_es_final_flip(): void

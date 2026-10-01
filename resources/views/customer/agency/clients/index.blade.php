@@ -43,19 +43,36 @@
         </x-card>
 
         <x-card title="Managed clients">
+            @php
+                $stateLabels = ['setup' => 'Waiting for setup', 'active' => 'Active business', 'inactive' => 'Inactive business'];
+                $isFiltered = $search !== '' || $state !== '';
+            @endphp
             <form method="GET" action="{{ route('customer.workspaces.clients.index', $agencyWorkspace->uid) }}" class="mb-3" data-role="clients-search-form">
-                <x-search-field id="clients-search" name="search" label="Search clients" :value="$search" placeholder="Search by name" />
+                <div class="row align-items-end">
+                    <div class="col-12 col-md-8">
+                        <x-search-field id="clients-search" name="search" label="Search clients" :value="$search" placeholder="Search by name" />
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label for="clients-state" class="form-label">Business</label>
+                        <select id="clients-state" name="state" class="form-select" data-role="clients-state-filter" onchange="this.form.submit()">
+                            <option value="">All clients</option>
+                            @foreach ($stateFilters as $option)
+                                <option value="{{ $option }}" @selected($state === $option)>{{ $stateLabels[$option] }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                </div>
             </form>
 
             @if ($clients->isEmpty())
                 <x-empty-state
                     icon="users"
-                    :title="$search !== '' ? 'No clients match your search' : 'No clients yet'"
-                    :description="$search !== '' ? 'Try a different search term.' : 'Invite your first client above to get started.'"
+                    :title="$isFiltered ? 'No clients match your search' : 'No clients yet'"
+                    :description="$isFiltered ? 'Try a different search term or filter.' : 'Invite your first client above to get started.'"
                     data-role="clients-empty-state"
                 />
             @else
-                <x-table :headers="['Client', 'Business', 'Since', '']" data-role="clients-table">
+                <x-table :headers="['Client', 'Business', 'Account', 'Plan', 'Agency billing', 'Since', '']" data-role="clients-table">
                     @foreach ($clients as $client)
                         @php
                             // Newly-invited-client flow correction (review
@@ -86,6 +103,18 @@
                                     </x-badge>
                                 @endif
                             </td>
+                            <td data-role="client-account-state">
+                                <x-badge :variant="$client['account']['variant']">{{ $client['account']['label'] }}</x-badge>
+                            </td>
+                            <td data-role="client-plan">{{ $client['plan_name'] ?? '—' }}</td>
+                            <td data-role="client-agency-billing">
+                                @if ($client['agency_subscription_status'] !== null)
+                                    {{ $client['agency_subscription_plan'] }}
+                                    <span class="text-caption">· {{ str_replace('_', ' ', $client['agency_subscription_status']->value) }}</span>
+                                @else
+                                    —
+                                @endif
+                            </td>
                             <td>{{ $client['established_at']?->format('M j, Y') }}</td>
                             <td class="text-end">
                                 <div class="d-flex justify-content-end gap-1">
@@ -114,6 +143,7 @@
                         </tr>
                     @endforeach
                 </x-table>
+                <div class="mt-3" data-role="clients-pagination">{{ $clients->links() }}</div>
             @endif
         </x-card>
     </section>

@@ -81,6 +81,10 @@ final class ViewAsProhibitedActions
         // support work.
         'customer.workspaces.agency-plan.',
         'customer.workspaces.agency.saas.',
+        // Agency V1 completion — the Agency's own brand is its identity, not
+        // something a View As session (which is "the client") may read or
+        // change. Both the page and the save are refused outright.
+        'customer.workspaces.agency.white-label.',
         'customer.workspaces.members.',
         'customer.workspaces.additional-business-slots.',
         'customer.workspaces.businesses.locations.allocations.',

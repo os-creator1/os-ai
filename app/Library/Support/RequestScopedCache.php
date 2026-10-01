@@ -52,6 +52,13 @@ final class RequestScopedCache
 {
     private const ATTRIBUTE = '__request_scoped_cache';
 
+    /**
+     * One shared key for "this Workspace's ACTIVE managing-Agency relationship
+     * row, or null" — read by the customer menu and by the signed-in client
+     * chrome in the same request, so the question is asked once.
+     */
+    public const ACTIVE_AGENCY_RELATIONSHIP_PREFIX = 'agency-client-relationship:active:';
+
     public function remember(string $key, Closure $resolver): mixed
     {
         $store = $this->store();
