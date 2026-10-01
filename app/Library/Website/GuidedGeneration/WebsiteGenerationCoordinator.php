@@ -171,6 +171,47 @@ final class WebsiteGenerationCoordinator
     }
 
     /**
+     * Independent-review correction round 6 — the canonical fenced commit
+     * for the LEGACY (non-template) AI draft generator
+     * (WebsiteAiDraftGenerator), mirroring GuidedGenerationCommitService's
+     * own final in-transaction fence exactly, rather than inventing a
+     * second lease/fencing mechanism for this one remaining path: locks
+     * the Website row, verifies the caller's lease token is STILL the one
+     * on the row, and ONLY THEN runs the supplied page-creation callback
+     * inside that SAME transaction. A Throwable from the callback rolls
+     * back the whole transaction — $createPages must create the ENTIRE
+     * batch or none of it ever persists.
+     *
+     * An obsolete worker (one whose lease already expired and was
+     * reclaimed by a newer caller before this runs) finds its token no
+     * longer matches and this returns false WITHOUT EVER invoking
+     * $createPages — it writes zero pages, exactly like an obsolete
+     * guided-generation worker's own final fence check.
+     *
+     * The AI provider call itself must already be finished before this is
+     * called (§ the generator's own documented discipline of keeping
+     * provider calls outside any database transaction) — this method only
+     * ever wraps the already-validated page batch's persistence.
+     *
+     * @param  \Closure(Website): void  $createPages  receives the LOCKED Website row; must create the entire page batch
+     * @return bool true if the batch was committed, false if this worker's lease had already been reclaimed (a safe, fenced no-op)
+     */
+    public function commitFencedLegacyDraft(Website $website, string $token, \Closure $createPages): bool
+    {
+        return DB::transaction(function () use ($website, $token, $createPages) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->generation_lease_token !== $token) {
+                return false;
+            }
+
+            $createPages($locked);
+
+            return true;
+        });
+    }
+
+    /**
      * Compare-and-swap release: clears the lease ONLY if it still carries
      * this exact token. A caller whose lease was already reclaimed as
      * stale (it ran past LEASE_SECONDS and a newer worker took over) has

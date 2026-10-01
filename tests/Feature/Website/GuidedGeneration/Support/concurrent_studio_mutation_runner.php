@@ -17,6 +17,14 @@
  *   php concurrent_studio_mutation_runner.php delete-asset <websiteId> <assetUid> <holdSeconds> <dbName>
  *   php concurrent_studio_mutation_runner.php store-gallery <websiteId> <assetUidsCsv> <holdSeconds> <dbName>
  *   php concurrent_studio_mutation_runner.php update-page <websiteId> <pageUid> <newTitle> <holdSeconds> <dbName>
+ *   php concurrent_studio_mutation_runner.php legacy-commit <websiteId> <holdSeconds> <dbName>
+ *
+ * `legacy-commit` (independent-review correction round 6) exercises
+ * WebsiteGenerationCoordinator::commitFencedLegacyDraft() specifically —
+ * the legacy (non-template) AI draft generator's own fenced commit,
+ * distinct from runExclusive() even though it locks the same row — by
+ * acquiring a lease then immediately committing a single-page batch
+ * through it, holding that commit's OWN row lock open for <holdSeconds>.
  *
  * <holdSeconds> sleeps INSIDE the runExclusive()/beginLease() critical
  * section (for `lease`, the sleep happens AFTER the lease is committed,
@@ -50,6 +58,7 @@ $dbName = match ($mode) {
     'delete-asset' => $argv[5] ?? null,
     'store-gallery' => $argv[5] ?? null,
     'update-page' => $argv[6] ?? null,
+    'legacy-commit' => $argv[4] ?? null,
     default => null,
 };
 
@@ -193,6 +202,24 @@ try {
                 }
             });
             echo 'OK:' . microtime(true) . "\n";
+            break;
+
+        case 'legacy-commit':
+            $website = Website::findOrFail((int) $argv[2]);
+            $holdSeconds = (float) $argv[3];
+
+            $token = $coordinator->beginLease($website);
+            $committed = $coordinator->commitFencedLegacyDraft($website, $token, function (Website $locked) use ($app, $holdSeconds) {
+                signalLocked();
+                $app->make(WebsiteDraftPageService::class)->createPage($locked, [
+                    'title' => 'Home', 'is_home' => true,
+                    'sections' => [['type' => 'hero', 'data' => ['heading' => 'Welcome']]],
+                ]);
+                if ($holdSeconds > 0) {
+                    usleep((int) ($holdSeconds * 1_000_000));
+                }
+            });
+            echo 'OK:' . microtime(true) . ':' . ($committed ? '1' : '0') . "\n";
             break;
 
         default:

@@ -412,4 +412,50 @@ class WebsiteStudioMutationConcurrencyTest extends TestCase
 
         $this->assertSame('Original Title', $page->fresh()->title, 'The page must never be mutated for a refused update.');
     }
+
+    // ----------------------------------------------------------------
+    // Legacy (non-template) AI draft generation's own fenced commit
+    // ----------------------------------------------------------------
+
+    /**
+     * Independent-review correction round 6 — proves
+     * WebsiteGenerationCoordinator::commitFencedLegacyDraft() (the
+     * legacy AI draft generator's own fenced commit, a genuinely
+     * distinct code path from runExclusive() even though it locks the
+     * same Website row) holds that row lock across its ENTIRE commit, so
+     * a concurrent manual asset upload cannot interleave with it: the
+     * upload's own runExclusive() call must genuinely BLOCK on the real
+     * MySQL row lock until the legacy commit's transaction finishes, and
+     * — since the lease itself is still active at that point (release()
+     * is a separate, later call) — the upload must then find the lease
+     * still held and refuse, never slip through in the gap between the
+     * commit finishing and the eventual release().
+     */
+    public function test_legacy_generation_commit_owning_the_row_blocks_a_concurrent_manual_upload_which_then_finds_the_lease_still_active(): void
+    {
+        $website = $this->createMinimalWebsite();
+        $env = $this->childEnvironment();
+
+        $legacyCommit = $this->process(['legacy-commit', (string) $website->id, '1.5'], $env);
+        $mutation = $this->process(['upload-asset', (string) $website->id, '0'], $env);
+
+        $legacyCommit->start();
+        $this->waitForLockedSignal($legacyCommit);
+        $mutation->start();
+        $legacyCommit->wait();
+        $mutation->wait();
+
+        $this->assertSame(0, $legacyCommit->getExitCode(), "Legacy commit process failed: {$legacyCommit->getErrorOutput()}");
+        $this->assertSame(0, $mutation->getExitCode(), "Mutation process failed: {$mutation->getErrorOutput()}");
+
+        $legacyResult = $this->parseLine($legacyCommit->getOutput());
+        $mutationResult = $this->parseLine($mutation->getOutput());
+
+        $this->assertSame('OK', $legacyResult['status'], 'The legacy commit must succeed: ' . $legacyCommit->getOutput());
+        $this->assertStringEndsWith(':1', $legacyResult['raw'], 'The legacy commit must report itself as genuinely committed (not a fenced no-op): ' . $legacyCommit->getOutput());
+        $this->assertSame('BUSY', $mutationResult['status'], 'The manual upload must refuse once it is unblocked, since the legacy generation\'s lease is still active (not yet released): ' . $mutation->getOutput());
+
+        $this->assertSame(1, WebsitePage::where('website_id', $website->id)->count(), 'The legacy-generated page must be committed.');
+        $this->assertSame(0, WebsiteAsset::where('website_id', $website->id)->count(), 'The refused manual upload must never create an asset.');
+    }
 }

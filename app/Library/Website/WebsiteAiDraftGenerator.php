@@ -61,6 +61,42 @@ final class WebsiteAiDraftGenerator
      */
     public function generate(Website $website): bool
     {
+        $pages = $this->generateValidatedPages($website);
+
+        if ($pages === null) {
+            return false;
+        }
+
+        foreach ($pages as $pageData) {
+            $this->draftPages->createPage($website, $pageData);
+        }
+
+        return true;
+    }
+
+    /**
+     * Independent-review correction round 6 — generate() above performs
+     * exactly three things: the precondition check, the AI request/
+     * validation, and committing the resulting pages. This exposes the
+     * first two alone, so a caller that must commit the resulting batch
+     * through its OWN fenced transaction (WebsiteController::generate()'s
+     * legacy, non-template branch, via WebsiteGenerationCoordinator::
+     * commitFencedLegacyDraft()) can do so without this class ever
+     * writing a page itself — the Website-level generation lease must be
+     * the only thing standing between "AI returned a batch" and "that
+     * batch is persisted," never an unguarded loop of createPage() calls.
+     * generate() itself is UNCHANGED in behavior and remains the direct,
+     * self-committing entry point for any caller that does not need
+     * fencing (e.g. the existing unit-level tests of this class).
+     *
+     * @return ?array the validated page batch, or null on any failure
+     *                (same meaning as generate()'s false return — check
+     *                lastRunWasPausedByBudget() to tell which).
+     *
+     * @throws ValidationException only if the Website already has pages
+     */
+    public function generateValidatedPages(Website $website): ?array
+    {
         if ($website->pages()->exists()) {
             throw ValidationException::withMessages([
                 'website' => ['AI generation is only available before any pages exist on this Website.'],
@@ -85,15 +121,7 @@ final class WebsiteAiDraftGenerator
             $pages = $this->requestAndValidate($messages, $business, $actorUserId);
         }
 
-        if ($pages === null) {
-            return false;
-        }
-
-        foreach ($pages as $pageData) {
-            $this->draftPages->createPage($website, $pageData);
-        }
-
-        return true;
+        return $pages;
     }
 
     /**

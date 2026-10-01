@@ -456,26 +456,78 @@ class WebsiteController extends CustomerBaseController
             return $this->runGuidedGeneration($request, $workspaceUid, $businessUid, $business, $website, $template, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION);
         }
 
-        $succeeded = $this->aiGenerator->generate($website);
-
-        if (! $succeeded) {
-            // Correction 6 / §11.4 — a paused allowance and a provider outage
-            // are different facts and only one of them is worth waiting
-            // for. Editing the website by hand is unaffected either way.
-            $message = $this->aiGenerator->lastRunWasPausedByBudget()
-                ? 'AI drafting is paused until ' . $this->aiGenerator->budgetResetsOnLabel() . '. You can keep editing your website.'
-                : 'AI generation is currently unavailable. Please try again later or add pages manually.';
-
+        // Independent-review correction round 6 — the legacy (non-
+        // template) AI draft generator now coordinates through the SAME
+        // Website-level generation lease every other generation path
+        // uses: an active generation refuses here with the identical
+        // friendly, immediate GenerationInProgressException guided
+        // generation produces, never a second, unguarded code path that
+        // could interleave with a template-backed generation/rebuild or
+        // with a Studio/wizard mutation (both of which now coordinate
+        // through this exact same lease via runExclusive()).
+        try {
+            $leaseToken = $this->generationCoordinator->beginLease($website);
+        } catch (GenerationInProgressException $e) {
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => $message,
+                'message' => $e->getMessage(),
             ]);
         }
 
-        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
-            'status' => 'success',
-            'message' => 'Draft content generated. Review and edit before publishing.',
-        ]);
+        try {
+            // The "no pages yet" precondition is re-checked HERE (inside
+            // generateValidatedPages(), called only once the lease is
+            // held) rather than merely trusting whatever was true before
+            // beginLease() returned — every page/media mutation now
+            // coordinates through this same lease (round 5's
+            // runExclusive()), so this check is genuinely stable for the
+            // rest of this lease's lifetime, not merely at the instant it
+            // ran. The AI provider call inside generateValidatedPages()
+            // stays entirely outside any database transaction, exactly
+            // as this generator already documented.
+            $pages = $this->aiGenerator->generateValidatedPages($website);
+
+            if ($pages === null) {
+                // Correction 6 / §11.4 — a paused allowance and a provider
+                // outage are different facts and only one of them is worth
+                // waiting for. Editing the website by hand is unaffected
+                // either way.
+                $message = $this->aiGenerator->lastRunWasPausedByBudget()
+                    ? 'AI drafting is paused until ' . $this->aiGenerator->budgetResetsOnLabel() . '. You can keep editing your website.'
+                    : 'AI generation is currently unavailable. Please try again later or add pages manually.';
+
+                return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                    'status' => 'error',
+                    'message' => $message,
+                ]);
+            }
+
+            // The one canonical fenced commit: locks the Website row,
+            // verifies THIS worker's lease token is still the one on the
+            // row, and only then creates the entire page batch inside
+            // that same transaction — an obsolete worker whose lease was
+            // reclaimed in the meantime writes zero pages, and any
+            // mid-batch failure rolls the whole batch back.
+            $committed = $this->generationCoordinator->commitFencedLegacyDraft($website, $leaseToken, function (Website $locked) use ($pages) {
+                foreach ($pages as $pageData) {
+                    $this->draftPages->createPage($locked, $pageData);
+                }
+            });
+
+            if (! $committed) {
+                return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                    'status' => 'error',
+                    'message' => 'This generation was superseded before it could finish. Please try again.',
+                ]);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+                'status' => 'success',
+                'message' => 'Draft content generated. Review and edit before publishing.',
+            ]);
+        } finally {
+            $this->generationCoordinator->release($website, $leaseToken);
+        }
     }
 
     public function publish(string $workspaceUid, string $businessUid): RedirectResponse
