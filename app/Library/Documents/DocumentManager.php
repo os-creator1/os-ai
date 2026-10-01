@@ -219,6 +219,60 @@ final class DocumentManager
     }
 
     /**
+     * Re-deliver the secure link for the document's CURRENT issued version —
+     * the recovery path when the first email never arrived.
+     *
+     * Contract 17 §7.1/§11.3 resolve a delivery failure by "re-sending, which
+     * rotates the token", but send() consumes an open DRAFT, so before this
+     * method the only way to re-send was to revise the document into a
+     * content-identical version 2. This one changes NO commercial content, no
+     * version, no schedule and no payment: it rotates the link (so every
+     * earlier link dies at once) and queues the same after-commit, encrypted
+     * delivery job send() uses, to the recipient FROZEN at first send.
+     *
+     * It does not emit `DocumentSent` — nothing was sent for the first time —
+     * and it is refused for any document that is not still awaiting the
+     * customer (draft, paid, void, expired), so it can never revive a link the
+     * lifecycle has closed. A sent document whose offer has lapsed is refused
+     * for the same reason send() refuses it.
+     *
+     * The status is re-checked under the document lock, so a resend racing a
+     * void or a final payment loses cleanly instead of re-arming a dead link.
+     */
+    public function resendLink(BusinessDocument $document): BusinessDocument
+    {
+        $plaintextToken = Str::random(64);
+
+        $result = DB::transaction(function () use ($document, $plaintextToken) {
+            $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
+            $this->require(in_array($document->status, [DocumentStatus::Sent, DocumentStatus::Signed], true), 'Only a sent or signed document can be re-sent.');
+            $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'The document offer has already expired.');
+
+            $version = $document->current_version_id === null ? null : BusinessDocumentVersion::where('business_document_id', $document->id)
+                ->whereKey($document->current_version_id)->lockForUpdate()->first();
+            $this->require($version !== null && $version->state === DocumentVersionState::Issued, 'No issued version to re-send.');
+
+            $recipient = $document->recipient_email_snapshot;
+            $this->require(is_string($recipient) && trim($recipient) !== ''
+                && filter_var(trim($recipient), FILTER_VALIDATE_EMAIL) !== false, 'A valid recipient email address is required before sending.');
+
+            $document->access_token_hash = Hash::make($plaintextToken);
+            $document->access_token_expires_at = $document->expires_at
+                ?? now()->addDays((int) config('documents.link_ttl_days'));
+            $document->access_token_rotated_at = now();
+            $document->save();
+
+            return $document->refresh();
+        });
+
+        DB::afterCommit(function () use ($result, $plaintextToken) {
+            SendDocumentLinkEmail::dispatch((int) $result->id, $plaintextToken);
+        });
+
+        return $result;
+    }
+
+    /**
      * Implementation Contract 17 §7.1 REVISE — a new draft version N+1 that
      * COPIES the current issued version's lines and schedule commercial
      * terms into NEW rows.

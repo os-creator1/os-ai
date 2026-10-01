@@ -200,6 +200,10 @@ class PublicDocumentController extends Controller
             // row, no PaymentIntent and no provider call; the Pay action is a
             // separate POST.
             'payment' => $this->payments->paymentState($access),
+            // Only a payment the provider has said is `processing` is "being
+            // confirmed"; a merely `created` attempt means the customer has
+            // not confirmed anything yet.
+            'paymentProcessing' => $access->document->payments()->where('status', 'processing')->exists(),
             'paymentToken' => request()->route('token'),
             // Deliberately NOT named $errors: that would shadow Blade's own
             // ViewErrorBag and change how every shared partial behaves.

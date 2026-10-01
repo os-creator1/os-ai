@@ -5,6 +5,73 @@
 <h4>{{ $document->title }} <small>{{ $document->status->value }}</small></h4>
 <x-flash-alert />
 @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
+@php($statusValue = $document->status->value)
+@php($money = fn ($minor) => number_format(((int) $minor) / 100, 2))
+<p class="text-muted" data-role="document-summary">
+    {{ ucfirst($document->kind->value) }}
+    @if($location) · {{ $location->name }}@endif
+    @if($contact) · {{ $contact->phone }}@endif
+    @if($document->recipient_email_snapshot) · {{ $document->recipient_email_snapshot }}@endif
+</p>
+@if($statusValue === 'paid')
+    <div class="alert alert-success" data-role="paid-confirmation">Paid in full on {{ $document->paid_at?->format('j F Y') }}. This document can no longer be changed.</div>
+@elseif($statusValue === 'void')
+    <div class="alert alert-secondary" data-role="void-notice">Voided on {{ $document->voided_at?->format('j F Y') }}@if($document->void_reason): {{ $document->void_reason }}@endif. The customer's link no longer works.</div>
+@elseif($statusValue === 'expired')
+    <div class="alert alert-secondary" data-role="expired-notice">This offer expired on {{ $document->expired_at?->format('j F Y') }}.</div>
+@elseif(in_array($statusValue, ['sent', 'signed']))
+    <div class="alert alert-info" data-role="awaiting-notice">Sent{{ $document->sent_at ? ' on ' . $document->sent_at->format('j F Y') : '' }} — awaiting {{ $statusValue === 'sent' && $document->requires_signature ? 'signature and payment' : 'payment' }}.</div>
+@endif
+@if($issued)
+<div class="card p-2 mb-2" data-role="issued-version">
+    <h5>Sent version {{ $issued->version_number }} <small class="text-muted">(frozen — this is what the customer sees)</small></h5>
+    @foreach($issued->lineItems->sortBy('position') as $line)
+        <div>{{ $line->name }} — {{ $line->quantity }} × {{ $money($line->unit_price_minor) }} = {{ $money($line->line_total_minor) }} {{ $line->currency_code }}</div>
+    @endforeach
+    <strong>Total: {{ $money($issued->total_minor) }} {{ $issued->currency_code }}</strong>
+    @foreach($issued->paymentScheduleItems->sortBy('sequence') as $term)
+        <div data-role="schedule-item">{{ ucfirst($term->kind->value) }}: {{ $money($term->amount_minor) }} {{ $term->currency_code }} — {{ $term->status->value }}@if($term->paid_at) ({{ $term->paid_at->format('j F Y') }})@endif</div>
+    @endforeach
+</div>
+@endif
+@if($payments->isNotEmpty())
+<div class="card p-2 mb-2" data-role="payments">
+    <h5>Payments and receipts</h5>
+    @foreach($payments as $payment)
+        <div class="mb-1" data-role="payment" data-payment-uid="{{ $payment->uid }}">
+            {{ $money($payment->amount_minor) }} {{ $payment->currency_code }} — <strong>{{ str_replace('_', ' ', $payment->status->value) }}</strong>
+            @if($payment->succeeded_at) · received {{ $payment->succeeded_at->format('j F Y H:i') }}@endif
+            @if($payment->status->value === 'succeeded') · receipt {{ $payment->receipt_sent_at ? 'emailed' : 'pending' }}@endif
+            @foreach($payment->refunds as $refund)
+                <div class="text-muted" data-role="refund">Refund {{ $money($refund->amount_minor) }} {{ $payment->currency_code }} — {{ $refund->status->value }}</div>
+            @endforeach
+            @if(($refundable[$payment->id] ?? 0) > 0)
+                <form method="post" action="{{ route('customer.workspaces.businesses.documents.payments.refund', [$workspaceUid, $businessUid, $document->uid, $payment->uid]) }}">
+                    @csrf
+                    <label>Refund (minor units, up to {{ $refundable[$payment->id] }}) <input type="number" name="amount_minor" min="1" max="{{ $refundable[$payment->id] }}" value="{{ $refundable[$payment->id] }}" required></label>
+                    <label>Reason <input name="reason" maxlength="255"></label>
+                    <label><input type="checkbox" name="confirm" value="1" required> I confirm this returns money to the customer</label>
+                    <button type="submit">Refund</button>
+                </form>
+            @endif
+        </div>
+    @endforeach
+</div>
+@endif
+@if(in_array($statusValue, ['sent', 'signed']))
+<div class="card p-2 mb-2" data-role="link-actions">
+    <form method="post" action="{{ route('customer.workspaces.businesses.documents.resend', [$workspaceUid, $businessUid, $document->uid]) }}">
+        @csrf
+        <button class="btn btn-secondary" type="submit">Re-send payment link</button>
+    </form>
+    @if($statusValue === 'sent' && ! $version && ! $document->signature)
+    <form method="post" action="{{ route('customer.workspaces.businesses.documents.revise', [$workspaceUid, $businessUid, $document->uid]) }}">
+        @csrf
+        <button class="btn btn-secondary" type="submit">Revise (new version)</button>
+    </form>
+    @endif
+</div>
+@endif
 @if($version)
 @php($base = [$workspaceUid, $businessUid, $document->uid])
 <div class="card p-2 mb-2">

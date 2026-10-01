@@ -447,7 +447,7 @@ class PaymentExecutionTest extends TestCase
     // (k)(l) terminal failure, and the status map
     // =================================================================
 
-    public function test_after_a_terminal_failure_exactly_one_new_attempt_is_permitted(): void
+    public function test_after_a_provider_cancellation_exactly_one_new_attempt_is_permitted(): void
     {
         $fixture = $this->payableDocument();
         $this->postJson($this->payUrl($fixture['document'], $fixture['token']))->assertOk();
@@ -457,9 +457,13 @@ class PaymentExecutionTest extends TestCase
             'acct_ready001', 50000, 'USD', (string) $first->local_idempotency_key);
         $this->postWebhook($body, $headers)->assertOk();
 
+        // A decline is NOT the end of the intent: the row keeps the slot and a
+        // second Pay re-drives the SAME attempt (FailedPaymentRetryTest). Only
+        // a provider-confirmed cancellation frees the slot.
         $this->assertSame(BusinessDocumentPaymentStatus::Failed, $first->refresh()->status);
-        $this->assertNull(DB::table('business_document_payments')->where('id', $first->id)->value('active_schedule_item_id'),
-            'A terminal attempt must free the schedule slot.');
+        $this->assertNotNull(DB::table('business_document_payments')->where('id', $first->id)->value('active_schedule_item_id'));
+
+        $this->gateway->setIntentStatus((string) $first->provider_payment_intent_id, BusinessDocumentPaymentStatus::Canceled);
 
         // Exactly one new deliberate attempt.
         $this->postJson($this->payUrl($fixture['document'], $fixture['token']))->assertOk();
@@ -468,6 +472,8 @@ class PaymentExecutionTest extends TestCase
         $second = BusinessDocumentPayment::query()->orderByDesc('id')->first();
         $this->assertNotSame((string) $first->uid, (string) $second->uid);
         $this->assertNotSame((string) $first->local_idempotency_key, (string) $second->local_idempotency_key);
+        $this->assertSame(BusinessDocumentPaymentStatus::Canceled, $first->refresh()->status);
+        $this->assertNull(DB::table('business_document_payments')->where('id', $first->id)->value('active_schedule_item_id'));
     }
 
     // =================================================================

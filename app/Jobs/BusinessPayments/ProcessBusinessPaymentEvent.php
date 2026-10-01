@@ -131,6 +131,10 @@ class ProcessBusinessPaymentEvent extends Base implements ShouldQueue
 
         return match ($disposition) {
             PaymentFinalizer::APPLIED => [BusinessPaymentEventState::Processed, null],
+            // A real capture against a void / expired / paid document: the
+            // money is recorded (so the Business can see and refund it), the
+            // document is untouched, and the reason code is kept for support.
+            PaymentFinalizer::APPLIED_DOCUMENT_TERMINAL => [BusinessPaymentEventState::Processed, $disposition],
             PaymentFinalizer::IGNORED_ALREADY_TERMINAL,
             PaymentFinalizer::IGNORED_NO_CHANGE,
             PaymentFinalizer::IGNORED_DOCUMENT_TERMINAL => [BusinessPaymentEventState::Ignored, $disposition],

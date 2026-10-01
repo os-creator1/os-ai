@@ -727,6 +727,17 @@ class DocumentsSchemaTest extends TestCase
     {
         $this->assertStoredGenerated('business_document_payments', 'active_schedule_item_id', 'schedule_item_id');
         $this->assertUniqueIndex('business_document_payments', 'bdp_active_item_unique', ['active_schedule_item_id']);
+
+        // `failed` is a LIVE status: payment_failed leaves the PaymentIntent
+        // retryable, so a failed row keeps the slot (migration
+        // 2026_10_13_100001). Only succeeded / canceled release it.
+        $expression = (string) $this->informationSchemaColumn('business_document_payments', 'active_schedule_item_id')->expression;
+        foreach (['created', 'requires_action', 'processing', 'failed'] as $live) {
+            $this->assertMatchesRegularExpression("/\b{$live}\b/", $expression);
+        }
+        foreach (['succeeded', 'canceled'] as $final) {
+            $this->assertDoesNotMatchRegularExpression("/\b{$final}\b/", $expression);
+        }
     }
 
     public function test_a_schedule_item_may_hold_only_one_live_payment_attempt(): void
@@ -735,7 +746,7 @@ class DocumentsSchemaTest extends TestCase
 
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'created']);
 
-        foreach (['created', 'requires_action', 'processing'] as $liveStatus) {
+        foreach (['created', 'requires_action', 'processing', 'failed'] as $liveStatus) {
             $this->assertConstraintViolation(
                 fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => $liveStatus]),
                 "A second [{$liveStatus}] attempt must be refused while one is live."
@@ -743,11 +754,11 @@ class DocumentsSchemaTest extends TestCase
         }
     }
 
-    public function test_terminal_attempts_coexist_with_one_live_attempt(): void
+    public function test_final_attempts_coexist_with_one_live_attempt(): void
     {
         $f = $this->paymentFixture();
 
-        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'failed']);
+        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'canceled']);
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'canceled']);
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'succeeded']);
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'requires_action']);
@@ -756,13 +767,22 @@ class DocumentsSchemaTest extends TestCase
         $this->assertSame(1, DB::table('business_document_payments')->where('schedule_item_id', $f['item'])->whereNotNull('active_schedule_item_id')->count());
     }
 
-    public function test_a_terminal_failure_frees_the_slot_for_exactly_one_new_attempt(): void
+    public function test_a_failed_attempt_keeps_the_slot_and_only_a_cancellation_frees_it_for_exactly_one_new_attempt(): void
     {
         $f = $this->paymentFixture();
 
         $first = $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'created']);
 
+        // A decline leaves the provider intent retryable: the slot is KEPT.
         DB::table('business_document_payments')->where('id', $first)->update(['status' => 'failed']);
+        $this->assertSame($f['item'], (int) DB::table('business_document_payments')->where('id', $first)->value('active_schedule_item_id'));
+        $this->assertConstraintViolation(
+            fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'created']),
+            'A retryable failed attempt must block a second row.'
+        );
+
+        // The provider cancels the intent: only now is the item released.
+        DB::table('business_document_payments')->where('id', $first)->update(['status' => 'canceled']);
         $this->assertNull(DB::table('business_document_payments')->where('id', $first)->value('active_schedule_item_id'));
 
         $second = $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'created']);
@@ -770,7 +790,7 @@ class DocumentsSchemaTest extends TestCase
 
         $this->assertConstraintViolation(
             fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'created']),
-            'Only ONE new deliberate attempt may follow a terminal failure.'
+            'Only ONE new attempt may follow a cancelled intent.'
         );
     }
 
@@ -791,13 +811,13 @@ class DocumentsSchemaTest extends TestCase
         $other = $this->paymentFixture();
 
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], [
-            'status' => 'failed',
+            'status' => 'canceled',
             'local_idempotency_key' => 'document-payment:fixed',
         ]);
 
         $this->assertConstraintViolation(
             fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], [
-                'status' => 'failed',
+                'status' => 'canceled',
                 'local_idempotency_key' => 'document-payment:fixed',
             ]),
             'The same key within one Business must be refused.'
@@ -805,7 +825,7 @@ class DocumentsSchemaTest extends TestCase
 
         // Tenant-scoped: another Business may hold the identical string.
         $this->insertPayment($other['business']->id, $other['doc'], $other['item'], $other['conn'], [
-            'status' => 'failed',
+            'status' => 'canceled',
             'local_idempotency_key' => 'document-payment:fixed',
         ]);
 
@@ -816,9 +836,9 @@ class DocumentsSchemaTest extends TestCase
     {
         $f = $this->paymentFixture();
 
-        // Two rows with NULL provider ids coexist (terminal, so no live clash).
-        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'failed']);
-        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'failed']);
+        // Two rows with NULL provider ids coexist (final, so no live clash).
+        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'canceled']);
+        $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], ['status' => 'canceled']);
 
         $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], [
             'status' => 'succeeded',
@@ -828,7 +848,7 @@ class DocumentsSchemaTest extends TestCase
 
         $this->assertConstraintViolation(
             fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], [
-                'status' => 'failed',
+                'status' => 'canceled',
                 'provider_payment_intent_id' => 'pi_1',
             ]),
             'provider_payment_intent_id must be unique when populated.'
@@ -836,7 +856,7 @@ class DocumentsSchemaTest extends TestCase
 
         $this->assertConstraintViolation(
             fn () => $this->insertPayment($f['business']->id, $f['doc'], $f['item'], $f['conn'], [
-                'status' => 'failed',
+                'status' => 'canceled',
                 'provider_charge_id' => 'ch_1',
             ]),
             'provider_charge_id must be unique when populated.'

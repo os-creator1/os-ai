@@ -67,9 +67,18 @@ interface StripeConnectGateway
      * own `local_idempotency_key`, sent as metadata so the finalizer can
      * cross-check operation identity (§8.3).
      *
+     * `$metadata` is the document / Business / Location identity (our own
+     * uids) that makes the provider object traceable in the connected
+     * account's dashboard. It is INFORMATIONAL: the finalizer never takes
+     * authority from it — an inbound event is always re-derived from the
+     * persisted provider intent id, and only `app_operation_id` is
+     * cross-checked. It must be a pure function of the durable row, so a
+     * re-drive under the same idempotency key sends identical parameters.
+     *
      * The returned snapshot carries the transient `client_secret`; it is the
      * ONLY method here that does.
      *
+     * @param  array<string, string>  $metadata
      * @throws StripeConnectException
      */
     public function createPaymentIntent(
@@ -79,6 +88,7 @@ interface StripeConnectGateway
         string $idempotencyKey,
         string $operationId,
         string $description,
+        array $metadata = [],
     ): PaymentIntentSnapshot;
 
     /**

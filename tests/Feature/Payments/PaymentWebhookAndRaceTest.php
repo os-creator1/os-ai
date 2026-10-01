@@ -264,8 +264,11 @@ class PaymentWebhookAndRaceTest extends TestCase
 
         $this->assertSame(DocumentStatus::Void, $started['fixture']['document']->refresh()->status,
             'A void document never moves to paid.');
-        $this->assertSame(BusinessPaymentEventState::Ignored, BusinessPaymentEvent::query()->sole()->state);
-        $this->assertSame('ignored_document_terminal', BusinessPaymentEvent::query()->sole()->last_error);
+        // The document did not move — but the capture is REAL, so it is
+        // recorded on the payment row (visible and refundable) and the event
+        // keeps a reason code. InvoicePaymentCompletionTest proves the money.
+        $this->assertSame(BusinessPaymentEventState::Processed, BusinessPaymentEvent::query()->sole()->state);
+        $this->assertSame('recorded_against_terminal_document', BusinessPaymentEvent::query()->sole()->last_error);
     }
 
     public function test_concurrent_replay_of_one_event_is_claimed_exactly_once(): void
@@ -303,7 +306,10 @@ class PaymentWebhookAndRaceTest extends TestCase
         $this->succeedWebhook($started['payment'])->assertOk();
 
         $this->assertSame(DocumentStatus::Void, $started['fixture']['document']->refresh()->status);
-        $this->assertSame(BusinessDocumentPaymentStatus::Created, $started['payment']->refresh()->status);
+        // The void won the race for the DOCUMENT, but the customer's money was
+        // really captured: the ledger row records it so it can be refunded
+        // rather than being stranded in `created`.
+        $this->assertSame(BusinessDocumentPaymentStatus::Succeeded, $started['payment']->refresh()->status);
     }
 
     public function test_payment_success_versus_resend_and_revision(): void

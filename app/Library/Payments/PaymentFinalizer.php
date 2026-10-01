@@ -6,6 +6,7 @@ use App\Enums\Documents\BusinessDocumentPaymentStatus;
 use App\Enums\Documents\DocumentStatus;
 use App\Enums\Documents\PaymentScheduleItemStatus;
 use App\Events\DocumentFullyPaid;
+use App\Events\DocumentPaymentFailed;
 use App\Events\DocumentPaymentSucceeded;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentPayment;
@@ -35,9 +36,28 @@ use Illuminate\Support\Facades\DB;
  * is resolved UNLOCKED first, then everything is re-read under locks in that
  * order before a single field changes.
  *
- * TERMINAL NEVER MOVES BACKWARD. A succeeded payment, and a paid/void/expired
- * document, accept no inbound transition; a late or replayed event is
- * reported `ignored` with a reason rather than re-applied.
+ * TWO TRUTHS, KEPT APART (Payments & Invoices V1 completion):
+ *
+ *   - THE PAYMENT ROW is the ledger of what the provider did with THIS
+ *     attempt. It records what the provider confirmed, whatever state the
+ *     document is in — a void or expired document must never strand money the
+ *     provider really captured, because a payment that is not recorded cannot
+ *     be refunded and cannot be seen by the Business.
+ *   - THE DOCUMENT AND ITS SCHEDULE move only while the document is still
+ *     live. A late capture against a terminal document is RECORDED (so it is
+ *     visible and refundable) but never reopens, pays or otherwise moves that
+ *     document, and never emits `DocumentFullyPaid`.
+ *
+ * WHICH OBSERVATIONS MAY MOVE A SETTLED ROW. `succeeded` and `canceled` are
+ * final at the provider and never move. `failed` is NOT final at the provider:
+ * `payment_intent.payment_failed` leaves the PaymentIntent alive in
+ * `requires_payment_method`, and the Payment Element lets the same customer
+ * retry the same intent and succeed. A `failed` row is therefore still the
+ * LIVE attempt for its schedule item (it keeps the one-live-attempt slot, in
+ * the application AND in the database — see PaymentManager::liveStatuses()), and
+ * exactly two provider-confirmed observations move it: `succeeded` (the retry
+ * worked) and `canceled` (the intent is dead, which releases the slot for a new
+ * attempt). Every other observation of a `failed` row is a no-op.
  *
  * NO NETWORK HERE. This class only applies an outcome someone else already
  * obtained, so it can safely hold locks.
@@ -45,6 +65,12 @@ use Illuminate\Support\Facades\DB;
 final class PaymentFinalizer
 {
     public const APPLIED = 'applied';
+    /**
+     * The provider confirmed a capture for a document that was already void,
+     * expired or paid. The money is recorded on the payment row (so it can be
+     * refunded) and the document is left exactly as it was.
+     */
+    public const APPLIED_DOCUMENT_TERMINAL = 'recorded_against_terminal_document';
     public const IGNORED_ALREADY_TERMINAL = 'ignored_already_terminal';
     public const IGNORED_NO_CHANGE = 'ignored_no_change';
     public const IGNORED_DOCUMENT_TERMINAL = 'ignored_document_terminal';
@@ -89,7 +115,9 @@ final class PaymentFinalizer
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($this->isTerminal($locked->status)) {
+            $succeeded = $snapshot->status === BusinessDocumentPaymentStatus::Succeeded;
+
+            if ($this->isSettled($locked->status, $snapshot->status)) {
                 // §8.3 — a replay of an already-settled payment changes
                 // nothing, and is not an error.
                 return $locked->status === $snapshot->status
@@ -97,50 +125,71 @@ final class PaymentFinalizer
                     : self::IGNORED_ALREADY_TERMINAL;
             }
 
-            // A terminal DOCUMENT accepts no inbound transition at all.
-            if (in_array($document->status, [DocumentStatus::Paid, DocumentStatus::Void, DocumentStatus::Expired], true)) {
-                return self::IGNORED_DOCUMENT_TERMINAL;
-            }
+            $documentTerminal = in_array($document->status, [DocumentStatus::Paid, DocumentStatus::Void, DocumentStatus::Expired], true);
 
+            // The ledger row records what the provider did, regardless of the
+            // document's state (see the class comment).
             $locked->forceFill([
                 'status' => $snapshot->status->value,
                 'provider_payment_intent_id' => $snapshot->providerPaymentIntentId,
                 'provider_charge_id' => $snapshot->providerChargeId ?? $locked->provider_charge_id,
-                'failure_code' => $snapshot->failureCode === null ? null : mb_substr($snapshot->failureCode, 0, 64),
-                'succeeded_at' => $snapshot->status === BusinessDocumentPaymentStatus::Succeeded ? now() : null,
+                'failure_code' => $succeeded
+                    ? null
+                    : ($snapshot->failureCode === null ? null : mb_substr($snapshot->failureCode, 0, 64)),
+                'succeeded_at' => $succeeded ? now() : null,
             ])->save();
 
-            if ($snapshot->status !== BusinessDocumentPaymentStatus::Succeeded) {
+            if (! $succeeded) {
+                if ($snapshot->status === BusinessDocumentPaymentStatus::Failed && ! $documentTerminal) {
+                    DB::afterCommit(function () use ($locked, $document) {
+                        DocumentPaymentFailed::dispatch(
+                            (int) $document->id,
+                            (int) $locked->id,
+                            (int) $document->business_id,
+                            (int) $document->business_location_id,
+                            (int) $document->contact_id,
+                        );
+                    });
+                }
+
                 return self::APPLIED;
             }
 
             // ---- success advances the schedule, then maybe the document ---
-            if ($item->status === PaymentScheduleItemStatus::Pending) {
-                $item->forceFill([
-                    'status' => PaymentScheduleItemStatus::Paid->value,
-                    'paid_at' => now(),
-                ])->save();
-            }
+            // A TERMINAL document is never advanced. Its schedule is inert
+            // (void pends were voided; a paid document has nothing pending)
+            // and the capture is recorded above purely as money to refund.
+            $allSettled = false;
 
-            // The document becomes `paid` off the CURRENT version's schedule
-            // only. A charge that settles against a since-superseded version
-            // is still recorded — the money is real and must never be lost —
-            // but it can never declare the document paid, because §5.9 makes
-            // the current version's schedule the payable one.
-            $isCurrentVersion = (int) $item->business_document_version_id === (int) $document->current_version_id;
+            if (! $documentTerminal) {
+                if ($item->status === PaymentScheduleItemStatus::Pending) {
+                    $item->forceFill([
+                        'status' => PaymentScheduleItemStatus::Paid->value,
+                        'paid_at' => now(),
+                    ])->save();
+                }
 
-            $allSettled = $isCurrentVersion && ! BusinessDocumentPaymentScheduleItem::query()
-                ->where('business_document_version_id', $document->current_version_id)
-                ->where('status', PaymentScheduleItemStatus::Pending->value)
-                ->exists();
+                // The document becomes `paid` off the CURRENT version's
+                // schedule only. A charge that settles against a
+                // since-superseded version is still recorded — the money is
+                // real and must never be lost — but it can never declare the
+                // document paid, because §5.9 makes the current version's
+                // schedule the payable one.
+                $isCurrentVersion = (int) $item->business_document_version_id === (int) $document->current_version_id;
 
-            // A DEPOSIT succeeding must not mark the whole document paid
-            // while the balance is still outstanding.
-            if ($allSettled) {
-                $document->forceFill([
-                    'status' => DocumentStatus::Paid->value,
-                    'paid_at' => now(),
-                ])->save();
+                $allSettled = $isCurrentVersion && ! BusinessDocumentPaymentScheduleItem::query()
+                    ->where('business_document_version_id', $document->current_version_id)
+                    ->where('status', PaymentScheduleItemStatus::Pending->value)
+                    ->exists();
+
+                // A DEPOSIT succeeding must not mark the whole document paid
+                // while the balance is still outstanding.
+                if ($allSettled) {
+                    $document->forceFill([
+                        'status' => DocumentStatus::Paid->value,
+                        'paid_at' => now(),
+                    ])->save();
+                }
             }
 
             // Blueprint §9 — a payment NEVER advances an Opportunity stage.
@@ -148,14 +197,25 @@ final class PaymentFinalizer
             // tempted to; a test asserts the stage is unchanged.
 
             DB::afterCommit(function () use ($locked, $document, $allSettled) {
-                DocumentPaymentSucceeded::dispatch((int) $document->id, (int) $locked->id);
+                DocumentPaymentSucceeded::dispatch(
+                    (int) $document->id,
+                    (int) $locked->id,
+                    (int) $document->business_id,
+                    (int) $document->business_location_id,
+                    (int) $document->contact_id,
+                );
 
                 if ($allSettled) {
-                    DocumentFullyPaid::dispatch((int) $document->id);
+                    DocumentFullyPaid::dispatch(
+                        (int) $document->id,
+                        (int) $document->business_id,
+                        (int) $document->business_location_id,
+                        (int) $document->contact_id,
+                    );
                 }
             });
 
-            return self::APPLIED;
+            return $documentTerminal ? self::APPLIED_DOCUMENT_TERMINAL : self::APPLIED;
         });
     }
 
@@ -194,12 +254,21 @@ final class PaymentFinalizer
         return null;
     }
 
-    private function isTerminal(BusinessDocumentPaymentStatus $status): bool
+    /**
+     * Whether this observation may NOT move the row. `succeeded` and
+     * `canceled` are final at the provider; `failed` yields only to a
+     * provider-confirmed `succeeded` or `canceled` (see the class comment).
+     */
+    private function isSettled(BusinessDocumentPaymentStatus $status, BusinessDocumentPaymentStatus $observed): bool
     {
-        return in_array($status, [
+        return match ($status) {
             BusinessDocumentPaymentStatus::Succeeded,
-            BusinessDocumentPaymentStatus::Failed,
-            BusinessDocumentPaymentStatus::Canceled,
-        ], true);
+            BusinessDocumentPaymentStatus::Canceled => true,
+            BusinessDocumentPaymentStatus::Failed => ! in_array($observed, [
+                BusinessDocumentPaymentStatus::Succeeded,
+                BusinessDocumentPaymentStatus::Canceled,
+            ], true),
+            default => false,
+        };
     }
 }
