@@ -63,6 +63,16 @@ class TagManager
      * unique index itself — caught here and translated into the SAME
      * customer-safe exception, never a raw `UniqueConstraintViolationException`
      * reaching the caller.
+     *
+     * CORRECTED FURTHER (correction round 2) — `tags` also carries a `uid`
+     * unique constraint (and any future one this class does not yet know
+     * about). Catching `UniqueConstraintViolationException` broadly and
+     * ALWAYS translating it to "a tag named X already exists" would
+     * misreport a completely unrelated collision as a duplicate name. The
+     * catch now re-queries `(business_id, normalized_name)` — the ONE fact
+     * that actually proves a normalized-name race is what lost — and only
+     * translates when that query confirms it; any other cause is rethrown
+     * exactly as the database reported it.
      */
     public function createTag(Business $business, string $name): Tag
     {
@@ -74,8 +84,14 @@ class TagManager
 
         try {
             return DB::transaction(fn () => $this->tags->create($business, $displayName, $normalized));
-        } catch (UniqueConstraintViolationException) {
-            throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+        } catch (UniqueConstraintViolationException $exception) {
+            if ($this->tags->findByNormalizedName($business, $normalized) !== null) {
+                throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+            }
+
+            // Some OTHER unique constraint lost the race (e.g. `uid`) —
+            // never disguised as a duplicate name.
+            throw $exception;
         }
     }
 
@@ -98,13 +114,26 @@ class TagManager
             // additional writes.
             try {
                 return $this->tags->rename($authoritative, $displayName, $normalized);
-            } catch (UniqueConstraintViolationException) {
+            } catch (UniqueConstraintViolationException $exception) {
                 // Correction round 1, §2 — a concurrent create/rename to the
                 // same normalized name won the race between the check above
                 // and this write; the row lock narrows the window to almost
                 // nothing, but "almost" is not "never", so the unique index
-                // is still the real backstop, translated the same way.
-                throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+                // is still the real backstop.
+                //
+                // Correction round 2 — only translate when that is
+                // PROVABLY what happened: re-query the normalized name and
+                // require the collision to belong to some OTHER tag (never
+                // this one). `uid` is also unique on `tags`; an unrelated
+                // violation is rethrown exactly as reported, never
+                // disguised as a duplicate name.
+                $collision = $this->tags->findByNormalizedName($business, $normalized);
+
+                if ($collision !== null && (int) $collision->id !== (int) $authoritative->id) {
+                    throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+                }
+
+                throw $exception;
             }
         });
     }
