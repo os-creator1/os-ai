@@ -65,8 +65,22 @@ final class PlatformFeatureRegistry
         // Core/Growth/Agency packaging was seeded by the original catalog
         // migration; this deploy does not rewrite mutable plan features.
         PlatformFeature::Calendar->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
-        // Unified Business Home and COO Decision Engine contract §17, slice
+        // Forms V1 domain foundation — flipped Planned -> Available, meeting
+        // the exact evidentiary bar every flip above is held to: a real,
+        // executable, Business-scoped, STANDALONE surface now exists
+        // (App\Http\Controllers\Customer\Business\FormsController and
+        // FormSubmissionsController, the public App\Http\Controllers\Public\
+        // PublicFormController, over FormManager, FormSubmissionService and
+        // FormSubmissionReader, with the forms / form_versions /
+        // form_deployments / form_submissions schema). It is authorized by
+        // THIS feature, never by WebsiteGeneration. Plan packaging already
+        // existed for Core, Growth and Agency
+        // (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php) and
+        // is unchanged, as is the usage classification row, so no packaging
+        // migration is needed; an unassigned, inactive, suspended or
+        // override-denied Workspace is still refused by EntitlementManager
+        // exactly as before.
+        PlatformFeature::Forms->value => PlatformFeatureAvailability::Available,        // Unified Business Home and COO Decision Engine contract §17, slice
         // AI-3: flipped Planned -> Available, meeting the same evidentiary
         // bar as every flip above — a real, executable, Business-scoped
         // implementation now exists (App\Jobs\Coo\GenerateCooInsight through

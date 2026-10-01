@@ -117,6 +117,28 @@
             'default'      => true,
         ],
         /*
+         * Forms V1 — the standalone Forms / Questionnaires product. ONE
+         * capability for the whole module, the single-key shape `website` /
+         * `packages_products` use, deliberately not a CRUD matrix.
+         *
+         * It is its OWN key and is never satisfied by `website`: Forms is not
+         * a Website capability, so a customer with Forms but no Website (or the
+         * reverse) is a supported combination.
+         *
+         * Default true, following the `packages_products` precedent, and the
+         * backfill migration grants it to existing customers so the persisted
+         * per-customer list does not refuse a surface their plan entitles them
+         * to. Necessary but NEVER sufficient: the chain is tenancy, THIS
+         * capability, the EntitlementManager decision for
+         * PlatformFeature::Forms, then LocationAccessGuard for anything
+         * Location-scoped (submission visibility, deploying at a Location).
+         */
+        'forms'                         => [
+            'display_name' => 'forms',
+            'category'     => 'Forms',
+            'default'      => true,
+        ],
+        /*
          * Implementation Contract 17 §6.1 — Payments & Contracts (Proposal /
          * Contract / e-signature / Invoice). ONE capability for the whole
          * module, the simple single-key shape `website`/`automations` use —

@@ -40,6 +40,9 @@ class CrmOpportunity extends Model
 
     public const SOURCE_MANUAL = 'manual';
 
+    /** A deal created from a standalone Forms submission (App\Library\Forms\FormSubmissionService). */
+    public const SOURCE_FORM = 'form';
+
     protected $table = 'crm_opportunities';
 
     protected $fillable = [

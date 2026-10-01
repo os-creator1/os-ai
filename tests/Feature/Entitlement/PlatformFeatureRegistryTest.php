@@ -23,12 +23,15 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Calendar->value));
         // Unified Business Home & COO contract §17, slice AI-3.
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::AiCooBasic->value));
+        // Forms V1 domain foundation: the standalone Forms product.
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Forms->value));
     }
 
     public function test_every_other_feature_is_planned_not_available(): void
     {
         $planned = [
-            PlatformFeature::Forms,
+            // (Forms left this list at the Forms V1 domain foundation flip;
+            // tests/Feature/Forms/FormsEntitlementIdentityTest asserts it is Available.)
             PlatformFeature::AdsBasicVisibility,
             PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
@@ -44,7 +47,7 @@ class PlatformFeatureRegistryTest extends TestCase
             // found and documented as a pre-existing, out-of-scope defect.)
         ];
 
-        $this->assertCount(6, $planned);
+        $this->assertCount(5, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(

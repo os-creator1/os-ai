@@ -3,6 +3,7 @@
     namespace App\Repositories\Eloquent;
 
     use App\Enums\Automation\Workflow\ContactCreationSource;
+    use App\Enums\Forms\FormContactResolution;
     use App\Exceptions\GeneralException;
     use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
     use App\Jobs\AutomationJob;
@@ -152,6 +153,120 @@
             $contact->updateFields($fields + ['PHONE' => $phone]);
 
             return $contact;
+        }
+
+        /**
+         * Forms V1's find-or-create seam: resolve a standalone form
+         * submission to a Contact. Identity is LOCATION-LOCAL (Blueprint §10):
+         * Business + the already-resolved Location + phone. The same person at
+         * another Location of the same Business is a separate Contact (no
+         * cross-Location merge in V1), and another Business's Contact is
+         * unreachable because the Business is part of the key.
+         *
+         * $location MUST be the authoritative row (FormDeploymentResolver
+         * re-reads it from persistence); the Business is taken from it, never
+         * from the caller.
+         *
+         * Serialised on the SAME Location+phone lock the booking seam uses
+         * (`booking_contact_identity_locks`), so two simultaneous submissions —
+         * or a submission racing a booking — for one new person cannot create
+         * two Contacts: the second waits, then sees the first's row.
+         *
+         * AMBIGUOUS IDENTITY IS NEVER RESOLVED BY GUESSING: when more than one
+         * Contact already shares this Location+phone (legacy duplicates) no row
+         * is picked or created and the caller records the submission with its
+         * Contact link empty so a person can decide.
+         *
+         * An existing Contact is linked, never modified: an anonymous public
+         * submission must not overwrite a Business's own Contact data. A new
+         * Contact is NOT subscribed and fires no contact-created automation —
+         * submitting a form is an inquiry, never messaging consent.
+         *
+         * @param  array<string, string>  $fields  e.g. ['FIRST_NAME' => ..., 'EMAIL' => ...] — written only to a Contact this call creates
+         * @return array{0: ?Contacts, 1: FormContactResolution}
+         */
+        public function findOrCreateForForm(BusinessLocation $location, string $rawPhone, array $fields): array
+        {
+            $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $rawPhone));
+
+            if ($phone === '') {
+                return [null, FormContactResolution::None];
+            }
+
+            $businessId = (int) $location->business_id;
+
+            // ORDER MATTERS. The lock is taken with a LOCKING (current) read and
+            // BEFORE this transaction has run any plain SELECT. A plain SELECT
+            // fixes the transaction's REPEATABLE READ snapshot at that moment, so
+            // an identity-row `exists()` pre-check issued first would leave the
+            // winner of a race invisible to the match query below once the lock
+            // is finally granted — and the loser would create a second Contact.
+            // Taking the lock first means the first snapshot read happens AFTER
+            // any competing submission has committed. The identity row, once it
+            // exists, is acquired directly (no S->X upgrade); only the very first
+            // submission for a brand-new phone can contend on creating it, and
+            // the caller's deadlock retry converges that case.
+            $key = ['business_location_id' => $location->id, 'normalized_phone' => $phone];
+            $held = DB::table('booking_contact_identity_locks')->where($key)->lockForUpdate()->first();
+            if ($held === null) {
+                DB::table('booking_contact_identity_locks')->insertOrIgnore($key + [
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+                $this->lockBookingIdentity($location, $phone);
+            }
+
+            $matches = Contacts::query()
+                ->where('business_id', $businessId)
+                ->where('location_id', $location->id)
+                ->where('phone', $phone)
+                ->orderBy('id')
+                ->limit(2)
+                ->get();
+
+            if ($matches->count() > 1) {
+                return [null, FormContactResolution::Ambiguous];
+            }
+
+            // Blacklisting is re-checked on every call, not only when a new row
+            // is about to be created — a phone blacklisted AFTER an earlier,
+            // legitimate inquiry must still refuse this one.
+            if ($matches->count() === 1) {
+                $contact = $matches->first();
+
+                if ($contact->isListedInBlacklist()) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                    ]);
+                }
+
+                return [$contact, FormContactResolution::Matched];
+            }
+
+            $contact = new Contacts(['phone' => $phone]);
+            if ($contact->isListedInBlacklist()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'phone' => __('locale.blacklist.phone_was_blacklisted'),
+                ]);
+            }
+
+            $group = ContactGroups::query()->where('business_id', $businessId)->orderBy('id')->first();
+            if ($group === null) {
+                $group = $this->store([
+                    'name' => 'Contacts',
+                    'business_id' => $businessId,
+                    'user_id' => Business::query()->whereKey($businessId)->value('customer_id'),
+                ]);
+            }
+
+            $contact->group_id = $group->id;
+            $contact->customer_id = $group->customer_id;
+            $contact->business_id = $businessId;
+            $contact->location_id = $location->id;
+            $contact->status = Contacts::STATUS_UNSUBSCRIBE;
+            $contact->save();
+            $contact->updateFields($fields + ['PHONE' => $phone]);
+
+            return [$contact, FormContactResolution::Created];
         }
 
         /**
