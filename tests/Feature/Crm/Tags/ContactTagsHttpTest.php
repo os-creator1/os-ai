@@ -96,14 +96,14 @@ class ContactTagsHttpTest extends TestCase
         $this->assertTrue($tag->fresh()->isArchived());
     }
 
-    public function test_the_owner_can_attach_and_detach_a_tag_by_phone(): void
+    public function test_the_owner_can_attach_and_detach_a_tag_by_contact_uid(): void
     {
         [$customer, $business, $workspace] = $this->crmTenant();
         $this->authenticateAs($customer);
         $tag = $this->manager()->createTag($business, 'VIP');
         $contact = $this->crmContact($business, [], '14155551234');
 
-        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['phone' => '+1 (415) 555-1234'])
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['contact_uid' => $contact->uid])
             ->assertRedirect();
 
         $this->assertTrue($this->manager()->tagsForContact($business, $contact)->contains('id', $tag->id));
@@ -112,6 +112,66 @@ class ContactTagsHttpTest extends TestCase
             ->assertRedirect();
 
         $this->assertFalse($this->manager()->tagsForContact($business, $contact)->contains('id', $tag->id));
+    }
+
+    /**
+     * CORRECTED (independent review, correction round 1, §3). Two Contacts
+     * sharing a phone number used to be resolved by `first()` — a silent,
+     * arbitrary choice. Attaching by `contact_uid` instead must always
+     * attach the EXACT Contact named, never the other one sharing the
+     * phone, however the two happen to be ordered in the table.
+     */
+    public function test_two_contacts_sharing_a_phone_can_never_cause_an_arbitrary_attachment(): void
+    {
+        [$customer, $business, $workspace] = $this->crmTenant();
+        $this->authenticateAs($customer);
+        $tag = $this->manager()->createTag($business, 'VIP');
+
+        $sharedPhone = '14155557777';
+        $contactOne = $this->crmContact($business, [], $sharedPhone);
+        $contactTwo = Contacts::create([
+            'customer_id' => $contactOne->customer_id,
+            'business_id' => $business->id,
+            'group_id' => $contactOne->group_id,
+            'phone' => $sharedPhone,
+            'status' => Contacts::STATUS_SUBSCRIBE,
+        ]);
+        $this->assertSame($sharedPhone, (string) $contactTwo->phone, 'Sanity: both Contacts must genuinely share one phone number.');
+
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['contact_uid' => $contactTwo->uid])
+            ->assertRedirect();
+
+        $this->assertTrue($this->manager()->tagsForContact($business, $contactTwo)->contains('id', $tag->id), 'The NAMED contact must be tagged.');
+        $this->assertFalse($this->manager()->tagsForContact($business, $contactOne)->contains('id', $tag->id), 'The OTHER contact sharing the phone must never be tagged instead.');
+    }
+
+    public function test_a_selected_contact_uid_attaches_exactly_that_contact(): void
+    {
+        [$customer, $business, $workspace] = $this->crmTenant();
+        $this->authenticateAs($customer);
+        $tag = $this->manager()->createTag($business, 'VIP');
+        $target = $this->crmContact($business, [], '14155551111');
+        $other = $this->crmContact($business, [], '14155552222');
+
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['contact_uid' => $target->uid])
+            ->assertRedirect();
+
+        $this->assertTrue($this->manager()->tagsForContact($business, $target)->contains('id', $tag->id));
+        $this->assertFalse($this->manager()->tagsForContact($business, $other)->contains('id', $tag->id));
+    }
+
+    public function test_a_foreign_business_contact_uid_is_refused_with_404(): void
+    {
+        [$customerA, $businessA, $workspaceA] = $this->crmTenant('Business A', 'Workspace A');
+        [, $businessB] = $this->crmTenant('Business B', 'Workspace B');
+        $this->authenticateAs($customerA);
+        $tagA = $this->manager()->createTag($businessA, 'VIP');
+        $contactB = $this->crmContact($businessB);
+
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspaceA, $businessA, [$tagA->uid])), ['contact_uid' => $contactB->uid])
+            ->assertNotFound();
+
+        $this->assertSame(0, DB::table('contact_tags')->count());
     }
 
     public function test_a_foreign_business_tag_uid_is_refused_with_404(): void
@@ -139,6 +199,9 @@ class ContactTagsHttpTest extends TestCase
 
     // =================================================================
     // Location ACL
+    //
+    // The next test is also correction round 1 §3's "inaccessible Location
+    // Contact remains unavailable" regression.
     // =================================================================
 
     public function test_selected_scope_staff_without_the_contacts_location_are_refused(): void
@@ -155,7 +218,7 @@ class ContactTagsHttpTest extends TestCase
 
         $this->authenticateAsStaffUser($staff, ['view_contact', 'update_contact']);
 
-        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['phone' => '14155559876'])
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['contact_uid' => $contact->uid])
             ->assertNotFound();
 
         $this->assertFalse($this->manager()->tagsForContact($business, $contact)->contains('id', $tag->id));
@@ -174,7 +237,7 @@ class ContactTagsHttpTest extends TestCase
 
         $this->authenticateAsStaffUser($staff, ['view_contact', 'update_contact']);
 
-        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['phone' => '14155559876'])
+        $this->post(route('customer.workspaces.businesses.tags.attach', $this->routeArgs($workspace, $business, [$tag->uid])), ['contact_uid' => $contact->uid])
             ->assertRedirect();
 
         $this->assertTrue($this->manager()->tagsForContact($business, $contact)->contains('id', $tag->id));

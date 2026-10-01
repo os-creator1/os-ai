@@ -11,6 +11,7 @@ use App\Models\Contacts;
 use App\Models\Tag;
 use App\Repositories\Contracts\ContactTagRepository;
 use App\Repositories\Contracts\TagRepository;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -22,6 +23,27 @@ use Illuminate\Support\Facades\DB;
  * write — mirroring `CrmOpportunityService`'s own exact role in this
  * codebase: tenancy is RE-DERIVED here on every call, never assumed of the
  * caller, and every mutation is one transaction.
+ *
+ * CORRECTED (independent review, correction round 1). The first revision's
+ * tenancy "re-derivation" read `$contact->business_id`/`$tag->business_id`
+ * straight off the MODEL INSTANCE the caller handed in — which is exactly
+ * as trustworthy as that caller's own code, not the database. `contact_tags`
+ * carries no composite `(contact_id, business_id)` FK (only a plain
+ * `contact_id` FK — see the migration's own docblock for why a composite FK
+ * into the shared `contacts` table was judged disproportionate), so nothing
+ * stopped a genuinely real Contact row belonging to Business B, loaded once,
+ * then handed around with its in-memory `business_id` property mutated to
+ * Business A, from reaching `attachTag()`/`detachTag()` and succeeding.
+ *
+ * Every method below that accepts an existing `Contact` or `Tag` now
+ * re-reads that row FRESH, by primary key, from the database — inside the
+ * mutation's own transaction, with a row lock where a concurrent mutation
+ * of the SAME row could otherwise race this check — and compares THAT
+ * freshly loaded row's `business_id` to the given Business. Every
+ * subsequent repository call and event field uses the freshly loaded
+ * AUTHORITATIVE model, never the caller's original instance: a caller
+ * cannot smuggle a stale `location_id` or `name` into an event, because the
+ * event is built from data this class itself just read.
  */
 class TagManager
 {
@@ -31,6 +53,17 @@ class TagManager
     ) {
     }
 
+    /**
+     * CORRECTED (correction round 1, §2) — the pre-write
+     * `findByNormalizedName()` check is a courtesy for the ordinary case
+     * (a fast, friendly `CrmRuleException` instead of a round-trip to the
+     * database), never the actual safety guarantee: `tags_business_normalized
+     * _unique` is. A concurrent create of the same normalized name that
+     * wins the race is let through by that check and then refused by the
+     * unique index itself — caught here and translated into the SAME
+     * customer-safe exception, never a raw `UniqueConstraintViolationException`
+     * reaching the caller.
+     */
     public function createTag(Business $business, string $name): Tag
     {
         [$displayName, $normalized] = $this->normalize($name);
@@ -39,35 +72,53 @@ class TagManager
             throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
         }
 
-        return DB::transaction(fn () => $this->tags->create($business, $displayName, $normalized));
+        try {
+            return DB::transaction(fn () => $this->tags->create($business, $displayName, $normalized));
+        } catch (UniqueConstraintViolationException) {
+            throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+        }
     }
 
     public function renameTag(Business $business, Tag $tag, string $name): Tag
     {
-        $this->assertTagBelongsToBusiness($business, $tag);
         [$displayName, $normalized] = $this->normalize($name);
 
-        $existing = $this->tags->findByNormalizedName($business, $normalized);
+        return DB::transaction(function () use ($business, $tag, $displayName, $normalized): Tag {
+            $authoritative = $this->authoritativeTag($business, $tag, lock: true);
 
-        if ($existing !== null && (int) $existing->id !== (int) $tag->id) {
-            throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
-        }
+            $existing = $this->tags->findByNormalizedName($business, $normalized);
 
-        // Renaming never touches `contact_tags`: every existing membership
-        // row references `tag_id`, not the name, so every Contact already
-        // wearing this tag keeps it, under its new display name, with zero
-        // additional writes.
-        return DB::transaction(fn () => $this->tags->rename($tag, $displayName, $normalized));
+            if ($existing !== null && (int) $existing->id !== (int) $authoritative->id) {
+                throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+            }
+
+            // Renaming never touches `contact_tags`: every existing membership
+            // row references `tag_id`, not the name, so every Contact already
+            // wearing this tag keeps it, under its new display name, with zero
+            // additional writes.
+            try {
+                return $this->tags->rename($authoritative, $displayName, $normalized);
+            } catch (UniqueConstraintViolationException) {
+                // Correction round 1, §2 — a concurrent create/rename to the
+                // same normalized name won the race between the check above
+                // and this write; the row lock narrows the window to almost
+                // nothing, but "almost" is not "never", so the unique index
+                // is still the real backstop, translated the same way.
+                throw new CrmRuleException("A tag named \"{$displayName}\" already exists.");
+            }
+        });
     }
 
     public function archiveTag(Business $business, Tag $tag): Tag
     {
-        $this->assertTagBelongsToBusiness($business, $tag);
+        return DB::transaction(function () use ($business, $tag): Tag {
+            $authoritative = $this->authoritativeTag($business, $tag, lock: true);
 
-        // Archiving never touches `contact_tags` either — see the
-        // `create_tags_table` migration's own docblock. Every existing
-        // membership row is left exactly as it is.
-        return DB::transaction(fn () => $this->tags->archive($tag));
+            // Archiving never touches `contact_tags` — see the
+            // `create_tags_table` migration's own docblock. Every existing
+            // membership row is left exactly as it is.
+            return $this->tags->archive($authoritative);
+        });
     }
 
     /**
@@ -79,15 +130,19 @@ class TagManager
      */
     public function attachTag(Business $business, Contacts $contact, Tag $tag): ?ContactTag
     {
-        $this->assertContactBelongsToBusiness($business, $contact);
-        $this->assertTagBelongsToBusiness($business, $tag);
-
-        if ($tag->isArchived()) {
-            throw new CrmRuleException("The tag \"{$tag->name}\" is archived and cannot be attached to a new contact.");
-        }
-
         return DB::transaction(function () use ($business, $contact, $tag): ?ContactTag {
-            $membership = $this->contactTags->attach($contact, $tag);
+            // Lock order fixed (Contact, then Tag) everywhere both are
+            // locked in this class, so two concurrent attach/detach calls
+            // naming the same pair in either argument order can never
+            // deadlock against each other.
+            $authoritativeContact = $this->authoritativeContact($business, $contact, lock: true);
+            $authoritativeTag = $this->authoritativeTag($business, $tag, lock: true);
+
+            if ($authoritativeTag->isArchived()) {
+                throw new CrmRuleException("The tag \"{$authoritativeTag->name}\" is archived and cannot be attached to a new contact.");
+            }
+
+            $membership = $this->contactTags->attach($authoritativeContact, $authoritativeTag);
 
             if ($membership === null) {
                 return null;
@@ -95,10 +150,10 @@ class TagManager
 
             ContactTagAdded::dispatch(
                 businessId: (int) $business->id,
-                contactId: (int) $contact->id,
-                tagId: (int) $tag->id,
-                tagName: $tag->name,
-                locationId: $contact->location_id !== null ? (int) $contact->location_id : null,
+                contactId: (int) $authoritativeContact->id,
+                tagId: (int) $authoritativeTag->id,
+                tagName: $authoritativeTag->name,
+                locationId: $authoritativeContact->location_id !== null ? (int) $authoritativeContact->location_id : null,
                 membershipId: (int) $membership->id,
             );
 
@@ -113,11 +168,11 @@ class TagManager
      */
     public function detachTag(Business $business, Contacts $contact, Tag $tag): bool
     {
-        $this->assertContactBelongsToBusiness($business, $contact);
-        $this->assertTagBelongsToBusiness($business, $tag);
-
         return DB::transaction(function () use ($business, $contact, $tag): bool {
-            $membershipId = $this->contactTags->detach($contact, $tag);
+            $authoritativeContact = $this->authoritativeContact($business, $contact, lock: true);
+            $authoritativeTag = $this->authoritativeTag($business, $tag, lock: true);
+
+            $membershipId = $this->contactTags->detach($authoritativeContact, $authoritativeTag);
 
             if ($membershipId === null) {
                 return false;
@@ -125,10 +180,10 @@ class TagManager
 
             ContactTagRemoved::dispatch(
                 businessId: (int) $business->id,
-                contactId: (int) $contact->id,
-                tagId: (int) $tag->id,
-                tagName: $tag->name,
-                locationId: $contact->location_id !== null ? (int) $contact->location_id : null,
+                contactId: (int) $authoritativeContact->id,
+                tagId: (int) $authoritativeTag->id,
+                tagName: $authoritativeTag->name,
+                locationId: $authoritativeContact->location_id !== null ? (int) $authoritativeContact->location_id : null,
                 membershipId: $membershipId,
             );
 
@@ -145,9 +200,11 @@ class TagManager
     /** @return Collection<int, Tag> */
     public function tagsForContact(Business $business, Contacts $contact): Collection
     {
-        $this->assertContactBelongsToBusiness($business, $contact);
+        // A read, not a mutation — no row lock is taken, but the Contact is
+        // still re-read fresh rather than trusted from the caller's instance.
+        $authoritative = $this->authoritativeContact($business, $contact);
 
-        return $this->contactTags->tagsForContact($contact);
+        return $this->contactTags->tagsForContact($authoritative);
     }
 
     /** @return array{0: string, 1: string} [display name, normalized name] */
@@ -162,17 +219,49 @@ class TagManager
         return [$displayName, mb_strtolower($displayName)];
     }
 
-    private function assertContactBelongsToBusiness(Business $business, Contacts $contact): void
+    /**
+     * Re-reads the Contact fresh BY PRIMARY KEY and verifies the
+     * AUTHORITATIVE row's own `business_id` — never the caller's possibly
+     * stale or forged in-memory instance. `$lock` takes a row lock for the
+     * duration of the enclosing transaction, for the mutation paths where a
+     * concurrent change to this exact Contact must not interleave with this
+     * decision.
+     */
+    private function authoritativeContact(Business $business, Contacts $contact, bool $lock = false): Contacts
     {
-        if ($contact->business_id === null || (int) $contact->business_id !== (int) $business->id) {
+        $query = Contacts::query()->whereKey($contact->getKey());
+
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        $authoritative = $query->first();
+
+        if ($authoritative === null || $authoritative->business_id === null || (int) $authoritative->business_id !== (int) $business->id) {
             throw new CrmRuleException('This contact does not belong to this business.');
         }
+
+        return $authoritative;
     }
 
-    private function assertTagBelongsToBusiness(Business $business, Tag $tag): void
+    /**
+     * The Tag-side sibling of `authoritativeContact()` — same re-read-by-
+     * primary-key, same never-trust-the-instance discipline.
+     */
+    private function authoritativeTag(Business $business, Tag $tag, bool $lock = false): Tag
     {
-        if ((int) $tag->business_id !== (int) $business->id) {
+        $query = Tag::query()->whereKey($tag->getKey());
+
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        $authoritative = $query->first();
+
+        if ($authoritative === null || (int) $authoritative->business_id !== (int) $business->id) {
             throw new CrmRuleException('This tag does not belong to this business.');
         }
+
+        return $authoritative;
     }
 }
