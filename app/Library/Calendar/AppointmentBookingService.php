@@ -10,6 +10,7 @@ use App\Events\Calendar\AppointmentRescheduled;
 use App\Events\Calendar\AppointmentScheduled;
 use App\Exceptions\Calendar\AppointmentSlotUnavailableException;
 use App\Exceptions\Calendar\AppointmentStaffChangedException;
+use App\Exceptions\Calendar\BookingTypeNotBookableException;
 use App\Exceptions\Calendar\InvalidAppointmentTransitionException;
 use App\Exceptions\Calendar\NoEligibleStaffAvailableException;
 use App\Exceptions\Calendar\StaffNotAvailableException;
@@ -99,6 +100,7 @@ class AppointmentBookingService
         ): Appointment {
             $this->locks->lockAscending([$staffUserId]);
 
+            $this->assertBookingTypeAcceptsBookings($bookingType);
             $this->assertBookable($bookingType, $location, $staffUserId, $startAt, $endAt);
 
             return $this->insert(
@@ -190,6 +192,8 @@ class AppointmentBookingService
 
             // Tier 2 for every candidate, ascending.
             $this->locks->lockAscending($pool);
+
+            $this->assertBookingTypeAcceptsBookings($bookingType);
 
             $contactId = $resolveContactId();
 
@@ -331,6 +335,8 @@ class AppointmentBookingService
         // a re-read after commit, which could already reflect a later change.
         AppointmentRescheduled::dispatch(
             $appointmentId,
+            (int) $location->business_id,
+            (int) $location->id,
             $result['previousStaffUserId'],
             $targetStaffUserId,
             $this->format($result['previousStartAt']),
@@ -348,7 +354,8 @@ class AppointmentBookingService
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::Cancelled, 'cancelled', $cancelledByUserId, $reason);
 
-        AppointmentCancelled::dispatch((int) $fresh->id, (int) $fresh->staff_user_id, $cancelledByUserId, $reason);
+        [$businessId, $locationId] = $this->identityFor($fresh);
+        AppointmentCancelled::dispatch((int) $fresh->id, $businessId, $locationId, (int) $fresh->staff_user_id, $cancelledByUserId, $reason);
 
         return $fresh;
     }
@@ -358,7 +365,8 @@ class AppointmentBookingService
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::Completed, 'completed', $completedByUserId, null);
 
-        AppointmentCompleted::dispatch((int) $fresh->id, (int) $fresh->staff_user_id, $completedByUserId);
+        [$businessId, $locationId] = $this->identityFor($fresh);
+        AppointmentCompleted::dispatch((int) $fresh->id, $businessId, $locationId, (int) $fresh->staff_user_id, $completedByUserId);
 
         return $fresh;
     }
@@ -368,7 +376,8 @@ class AppointmentBookingService
     {
         $fresh = $this->resolveTerminal($appointment, AppointmentStatus::NoShow, 'marked no-show', $markedByUserId, null);
 
-        AppointmentNoShow::dispatch((int) $fresh->id, (int) $fresh->staff_user_id, $markedByUserId);
+        [$businessId, $locationId] = $this->identityFor($fresh);
+        AppointmentNoShow::dispatch((int) $fresh->id, $businessId, $locationId, (int) $fresh->staff_user_id, $markedByUserId);
 
         return $fresh;
     }
@@ -463,6 +472,24 @@ class AppointmentBookingService
                 $this->format($startAt),
                 $this->format($endAt)
             );
+        }
+    }
+
+    /**
+     * A new booking needs a Booking Type that is active NOW, re-read from
+     * persistence with the staff lock(s) held rather than trusted from the
+     * caller's model. The first plain read here pins the transaction's
+     * snapshot, which is why it runs only after the locks (see
+     * ensureRoundRobinState()).
+     *
+     * @throws BookingTypeNotBookableException
+     */
+    private function assertBookingTypeAcceptsBookings(BookingType $bookingType): void
+    {
+        $active = DB::table('booking_types')->where('id', $bookingType->id)->value('is_active');
+
+        if (! (bool) $active) {
+            throw BookingTypeNotBookableException::forBookingType((int) $bookingType->id);
         }
     }
 
@@ -623,9 +650,12 @@ class AppointmentBookingService
 
     private function dispatchScheduled(Appointment $appointment): void
     {
+        [$businessId, $locationId] = $this->identityFor($appointment);
+
         AppointmentScheduled::dispatch(
             (int) $appointment->id,
-            (int) $appointment->business_location_id,
+            $businessId,
+            $locationId,
             (int) $appointment->booking_type_id,
             (int) $appointment->staff_user_id,
             (int) $appointment->contact_id,
@@ -634,6 +664,20 @@ class AppointmentBookingService
             $this->format($appointment->end_at),
             $appointment->created_by_user_id === null ? null : (int) $appointment->created_by_user_id,
         );
+    }
+
+    /**
+     * The stable Business and Location identity every lifecycle event carries.
+     * An Appointment's Location is fixed at creation (Appointment::booted()
+     * refuses a change), so this is the same pair at every transition.
+     *
+     * @return array{0: int, 1: int} [businessId, businessLocationId]
+     */
+    private function identityFor(Appointment $appointment): array
+    {
+        $locationId = (int) $appointment->business_location_id;
+
+        return [(int) BusinessLocation::query()->whereKey($locationId)->value('business_id'), $locationId];
     }
 
     /** Event payloads carry timestamps as UTC strings, never model instances. */

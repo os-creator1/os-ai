@@ -1682,11 +1682,18 @@ New events, one per lifecycle transition named in Blueprint §12 (for
 Automations §13 consumption, per the Blueprint's own "each firing the
 corresponding automation event" line):
 
-- `AppointmentScheduled` — `appointmentId, businessLocationId, bookingTypeId, staffUserId, contactId, crmOpportunityId (nullable), startAt, endAt, createdByUserId (nullable)`
-- `AppointmentRescheduled` — `appointmentId, previousStaffUserId, newStaffUserId, previousStartAt, previousEndAt, newStartAt, newEndAt, rescheduledByUserId (nullable)`
-- `AppointmentCancelled` — `appointmentId, staffUserId, cancelledByUserId (nullable), reason (nullable)`
-- `AppointmentCompleted` — `appointmentId, staffUserId, completedByUserId (nullable)`
-- `AppointmentNoShow` — `appointmentId, staffUserId, markedByUserId (nullable)`
+- `AppointmentScheduled` — `appointmentId, businessId, businessLocationId, bookingTypeId, staffUserId, contactId, crmOpportunityId (nullable), startAt, endAt, createdByUserId (nullable)`
+- `AppointmentRescheduled` — `appointmentId, businessId, businessLocationId, previousStaffUserId, newStaffUserId, previousStartAt, previousEndAt, newStartAt, newEndAt, rescheduledByUserId (nullable)`
+- `AppointmentCancelled` — `appointmentId, businessId, businessLocationId, staffUserId, cancelledByUserId (nullable), reason (nullable)`
+- `AppointmentCompleted` — `appointmentId, businessId, businessLocationId, staffUserId, completedByUserId (nullable)`
+- `AppointmentNoShow` — `appointmentId, businessId, businessLocationId, staffUserId, markedByUserId (nullable)`
+
+**Stable identity on every event (V1 completion).** Every event carries
+`appointmentId`, `businessId` and `businessLocationId`, so a consumer can scope
+and route by Business and Location without a lookup. An Appointment's Location
+is fixed at creation and the model refuses to rewrite it
+(`Appointment::booted()`), so the pair is identical on every transition.
+See `15-CALENDAR-V1-COMPLETION.md` for the consumer seam.
 
 **`AppointmentRescheduled` carries both staff ids, always.** §7.4 lists
 "Reschedule (moving staff)" as a supported mutation and locks **old and

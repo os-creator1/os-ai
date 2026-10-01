@@ -49,6 +49,21 @@ class Appointment extends Model
     ];
 
     /**
+     * An operational Appointment belongs to exactly one Location for its whole
+     * life. The Location is fixed from its Booking Type at creation; a later
+     * Contact move, staff reassignment or Location-grant change must never
+     * rewrite it, so a model-level update that tries is refused outright.
+     */
+    protected static function booted(): void
+    {
+        static::updating(function (self $appointment): void {
+            if ($appointment->isDirty('business_location_id')) {
+                throw new \LogicException('An appointment\'s Location is immutable.');
+            }
+        });
+    }
+
+    /**
      * HasUid's default is uniqid(); this column is a real uuid (§5.1's rule
      * for every Schema A model that uses the trait).
      */

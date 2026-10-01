@@ -69,6 +69,8 @@ class AppointmentBookingConcurrencyTest extends TestCase
 
     private array $createdCustomerUserIds = [];
 
+    private array $createdConnectionIds = [];
+
     public function test_two_concurrent_first_public_contact_bookings_share_one_location_identity(): void
     {
         [$typeId, , $locationId] = $this->scenario();
@@ -432,6 +434,49 @@ class AppointmentBookingConcurrencyTest extends TestCase
             DB::table('booking_type_round_robin_state')->where('booking_type_id', $bookingTypeId)->value('last_assigned_staff_user_id'),
             'A refused round-robin request must not advance the cursor.'
         );
+    }
+
+    /**
+     * V1 completion — the webhook-during-booking race. A provider sync takes the
+     * same tier-2 lock as a booking and commits a busy block while the booking
+     * waits on it. The booking must then see that committed block and refuse:
+     * a known conflict is never permitted by race-prone logic.
+     */
+    public function test_an_external_busy_block_committed_while_a_booking_waits_refuses_the_booking(): void
+    {
+        [$bookingTypeId, $staffUserId, $locationId] = $this->scenario();
+        $childContact = $this->insertContact($locationId);
+        $slot = $this->slot('10:00:00');
+
+        $this->insertStaffLockRow($staffUserId);
+        $connectionId = DB::table('external_calendar_connections')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'user_id' => $staffUserId,
+            'provider' => 'google',
+            'state' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->createdConnectionIds[] = $connectionId;
+
+        $child = $this->raceAgainstHeldLock(
+            ['book', (string) $bookingTypeId, (string) $staffUserId, (string) $childContact, $slot],
+            fn () => DB::table('staff_booking_locks')->where('staff_user_id', $staffUserId)->lockForUpdate()->first(),
+            fn () => DB::table('external_calendar_busy_blocks')->insert([
+                'external_calendar_connection_id' => $connectionId,
+                'provider_event_id' => 'webhook-during-booking',
+                'start_at' => Carbon::parse($slot),
+                'end_at' => Carbon::parse($slot)->addMinutes(60),
+                'busy_type' => 'busy',
+                'synced_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ])
+        );
+
+        $this->assertSame(4, $child['exitCode'], $child['stdout']);
+        $this->assertStringContainsString('AppointmentSlotUnavailableException', $child['stdout']);
+        $this->assertSame(0, DB::table('appointments')->where('staff_user_id', $staffUserId)->count());
     }
 
     /**
@@ -1001,6 +1046,8 @@ class AppointmentBookingConcurrencyTest extends TestCase
 
     private function deleteFixtures(): void
     {
+        DB::table('external_calendar_busy_blocks')->whereIn('external_calendar_connection_id', $this->createdConnectionIds ?: [0])->delete();
+        DB::table('external_calendar_connections')->whereIn('id', $this->createdConnectionIds ?: [0])->delete();
         DB::table('appointments')->whereIn('booking_type_id', $this->createdBookingTypeIds ?: [0])->delete();
         DB::table('booking_type_round_robin_state')->whereIn('booking_type_id', $this->createdBookingTypeIds ?: [0])->delete();
         DB::table('booking_type_staff')->whereIn('booking_type_id', $this->createdBookingTypeIds ?: [0])->delete();
@@ -1017,6 +1064,7 @@ class AppointmentBookingConcurrencyTest extends TestCase
         DB::table('customers')->whereIn('user_id', $this->createdCustomerUserIds ?: [0])->delete();
         DB::table('users')->whereIn('id', $this->createdUserIds ?: [0])->delete();
 
+        $this->createdConnectionIds = [];
         $this->createdBookingTypeIds = [];
         $this->createdContactIds = [];
         $this->createdContactGroupIds = [];

@@ -219,8 +219,18 @@ final class ExternalCalendarConnectionManager
             $update['refresh_token_encrypted'] = Crypt::encryptString($grant->refreshToken);
         }
 
-        DB::table('external_calendar_connections')->where('id', $connection->id)->update($update);
+        // Active-only: a disconnect or revocation that committed while the
+        // refresh exchange was in flight has already destroyed the credential,
+        // and a rotated token must never be written back onto an ended row.
+        DB::table('external_calendar_connections')
+            ->where('id', $connection->id)
+            ->where('state', ExternalCalendarConnectionState::Active->value)
+            ->update($update);
         $connection->refresh();
+
+        if ($connection->state !== ExternalCalendarConnectionState::Active) {
+            throw ExternalCalendarProviderException::invalidGrant();
+        }
 
         return $grant->accessToken;
     }

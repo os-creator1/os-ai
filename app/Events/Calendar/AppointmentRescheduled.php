@@ -25,6 +25,8 @@ class AppointmentRescheduled implements ShouldDispatchAfterCommit
 
     public function __construct(
         public readonly int $appointmentId,
+        public readonly int $businessId,
+        public readonly int $businessLocationId,
         public readonly int $previousStaffUserId,
         public readonly int $newStaffUserId,
         public readonly string $previousStartAt,
