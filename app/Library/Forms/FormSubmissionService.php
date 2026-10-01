@@ -7,11 +7,12 @@ use App\Enums\Forms\FormFieldType;
 use App\Events\Forms\FormSubmissionRecorded;
 use App\Library\Crm\CrmOpportunityService;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\Forms\Exceptions\FormUnavailableException;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\CrmPipeline;
+use App\Models\FormSession;
 use App\Models\FormSubmission;
-use App\Models\FormVersion;
 use App\Repositories\Eloquent\EloquentContactsRepository;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -30,10 +31,20 @@ use Illuminate\Validation\ValidationException;
  *  1. AUTHORITY. FormDeploymentResolver re-reads and mutually proves every row
  *     from persistence; the Location is the DEPLOYMENT's. A posted
  *     `location_uid` may only restate it.
- *  2. OPERATION TOKEN. Must be genuine for this deployment (FormOperationToken).
- *  3. VALIDATION against the form's CURRENT VERSION, producing normalized values
- *     keyed by field key. A refusal here writes nothing and does not consume the
- *     token, so the visitor can correct and resend.
+ *  2. OPERATION TOKEN + PINNED VERSION. The token must be genuine for this
+ *     deployment (FormOperationToken) and names the immutable version the visitor
+ *     SAW; that version is re-read and proven to belong to THIS deployment's Form
+ *     (FormDeploymentResolver::pin()). Everything below uses that pinned version,
+ *     never the form's current one — an owner publishing a newer version cannot
+ *     reinterpret a flow already rendered.
+ *  3. VALIDATION against the pinned version, producing normalized values keyed by
+ *     field key. An ordinary (one-page) form validates everything now. A
+ *     questionnaire validates ONE page per request, keeps it in the server-side
+ *     session (FormSessionStore) and answers with the next page — creating no
+ *     Contact, Opportunity, event or submission — until the LAST page, which
+ *     validates the complete definition from the server-held answers. A refusal
+ *     writes nothing and does not consume the token, so the visitor can correct
+ *     and resend.
  *  4. REPLAY. A row already claiming (deployment, nonce) is returned as-is — no
  *     second row, Contact, Opportunity or event. The same token with a DIFFERENT
  *     body is refused rather than silently answered with the first body.
@@ -42,7 +53,8 @@ use Illuminate\Validation\ValidationException;
  *     twin blocks on it, then loses with a duplicate-key error and converges on
  *     the winner's row. Then resolve the Contact (Location-local, under the
  *     existing identity lock), create the Opportunity if configured, link both
- *     onto the submission, and dispatch FormSubmissionRecorded AFTER COMMIT.
+ *     onto the submission, stamp the questionnaire session as final, and
+ *     dispatch FormSubmissionRecorded AFTER COMMIT.
  *
  * ANYTHING THAT THROWS INSIDE THE TRANSACTION (a blacklisted phone, a database
  * error) rolls the claim back with it: no submission, no Contact, no
@@ -64,6 +76,9 @@ final class FormSubmissionService
 
     public const HONEYPOT_FIELD = 'form_hp';
 
+    /** The key of the questionnaire page a step is submitting. */
+    public const PAGE_FIELD = 'page';
+
     private const TEXT_MAX = 200;
 
     private const TEXTAREA_MAX = 2000;
@@ -84,7 +99,13 @@ final class FormSubmissionService
         private readonly FormDeploymentResolver $resolver,
         private readonly EloquentContactsRepository $contacts,
         private readonly CrmOpportunityService $opportunities,
+        private readonly FormSessionStore $sessions,
     ) {
+    }
+
+    private function expired(): ValidationException
+    {
+        return ValidationException::withMessages(['form' => ['This form has expired. Reload the page and send it again.']]);
     }
 
     /**
@@ -95,14 +116,75 @@ final class FormSubmissionService
      */
     public function submit(string $deploymentUid, array $input): FormSubmissionResult
     {
+        // CURRENT authority first: deployment, Form, Location, Business, account
+        // and entitlement, re-proven on EVERY request, whatever the token says.
         $context = $this->resolver->resolve($deploymentUid);
 
         $this->assertLocationRestated($context, $input[self::LOCATION_FIELD] ?? null);
 
-        $nonce = FormOperationToken::nonce($context->deployment, $input[self::TOKEN_FIELD] ?? null)
-            ?? throw ValidationException::withMessages(['form' => ['This form has expired. Reload the page and send it again.']]);
+        $claims = FormOperationToken::claims($context->deployment, $input[self::TOKEN_FIELD] ?? null)
+            ?? throw $this->expired();
 
-        $values = $this->validated($context->version, $input);
+        // The version the visitor SAW, authenticated by the token and then
+        // re-read from persistence and proven to be a version of THIS Form. A
+        // version of another Form (or one that does not exist) is refused exactly
+        // like a forged token.
+        try {
+            $context = $this->resolver->pin($context, $claims['version_id']);
+        } catch (FormUnavailableException) {
+            throw $this->expired();
+        }
+
+        $nonce = $claims['nonce'];
+
+        // An ordinary form is one page: validated and finished in one request.
+        if (! $context->version->isMultiPage()) {
+            return $this->finish($context, $nonce, $this->validated($context->version->fields, $input), null);
+        }
+
+        return $this->submitStep($context, $nonce, $input);
+    }
+
+    /**
+     * One page of a questionnaire. Validates THIS page against the pinned
+     * version, records it in the server-side session and — unless it is the last
+     * page — answers with the next page to show, having created no Contact,
+     * Opportunity, event or submission. The last page validates the COMPLETE
+     * pinned definition from the server-held answers and finishes through the
+     * same idempotent claim as a one-page form.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    private function submitStep(FormDeploymentContext $context, string $nonce, array $input): FormSubmissionResult
+    {
+        $version = $context->version;
+        $pageKey = trim((string) ($input[self::PAGE_FIELD] ?? ''));
+        $index = $version->pageIndex($pageKey)
+            ?? throw ValidationException::withMessages([self::PAGE_FIELD => ['That page is not part of this form.']]);
+
+        $pageValues = $this->validated($version->fieldsOnPage($pageKey), $input);
+
+        $session = $this->sessions->savePage($context, $nonce, $pageKey, $pageValues);
+
+        if ($index < count($version->pages()) - 1) {
+            return FormSubmissionResult::progress($version->pageKeys()[$index + 1]);
+        }
+
+        // Final page. A finalized session is never mutated, so a replay of this
+        // step is judged on what it posted laid over what was recorded: an
+        // identical replay reproduces the stored hash, a tampered one does not.
+        $answers = $session->isFinalized() ? array_merge($session->answers, $pageValues) : $session->answers;
+
+        return $this->finish($context, $nonce, $this->validated($version->fields, $answers), $session);
+    }
+
+    /**
+     * Replay check, then the claiming transaction.
+     *
+     * @param  array<string, mixed>  $values  normalized answers for the COMPLETE pinned definition
+     */
+    private function finish(FormDeploymentContext $context, string $nonce, array $values, ?FormSession $session): FormSubmissionResult
+    {
         $payloadHash = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         $existing = $this->claimedBy($context, $nonce, false);
@@ -112,7 +194,7 @@ final class FormSubmissionService
 
         try {
             $submission = DB::transaction(
-                fn (): FormSubmission => $this->record($context, $nonce, $values, $payloadHash),
+                fn (): FormSubmission => $this->record($context, $nonce, $values, $payloadHash, $session),
                 self::DEADLOCK_ATTEMPTS
             );
         } catch (UniqueConstraintViolationException $exception) {
@@ -165,7 +247,7 @@ final class FormSubmissionService
     /**
      * @param  array<string, mixed>  $values
      */
-    private function record(FormDeploymentContext $context, string $nonce, array $values, string $payloadHash): FormSubmission
+    private function record(FormDeploymentContext $context, string $nonce, array $values, string $payloadHash, ?FormSession $session): FormSubmission
     {
         $uid = (string) Str::uuid();
 
@@ -193,6 +275,11 @@ final class FormSubmissionService
             : null;
 
         $this->link($submission, $contact, $resolution, $opportunity);
+
+        // The questionnaire session (if any) becomes history in the SAME commit.
+        if ($session !== null) {
+            $this->sessions->finalize($session, $submission);
+        }
 
         FormSubmissionRecorded::dispatch(
             (int) $context->business->id,
@@ -299,16 +386,17 @@ final class FormSubmissionService
      * Normalized answers keyed by field key, in the form's own field order (so
      * the payload hash is stable). Unknown posted keys are ignored, never stored.
      *
+     * @param  list<array<string, mixed>>  $fields  the fields to validate — a page's, or the whole pinned definition's
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
-    private function validated(FormVersion $version, array $input): array
+    private function validated(array $fields, array $input): array
     {
         $rules = [];
         $labels = [];
         $data = [];
 
-        foreach ($version->fields as $field) {
+        foreach ($fields as $field) {
             $key = $field['key'];
             $type = FormFieldType::from($field['type']);
             $required = (bool) $field['required'];
@@ -336,7 +424,7 @@ final class FormSubmissionService
         $validated = Validator::make($data, $rules, [], $labels)->validate();
 
         $values = [];
-        foreach ($version->fields as $field) {
+        foreach ($fields as $field) {
             $key = $field['key'];
             $value = $validated[$key] ?? null;
 

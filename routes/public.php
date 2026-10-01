@@ -19,6 +19,15 @@
     */
     Route::get('forms/{deploymentUid}', 'Public\PublicFormController@show')
         ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.show');
+    // A questionnaire page. The token (nonce.version.hmac) is part of the address:
+    // it is the visitor's bearer for ONE in-progress, version-pinned flow, in the
+    // same two-segment spirit as the secure document link. A stale, skipped or
+    // invented page is a 404.
+    Route::get('forms/{deploymentUid}/s/{token}/{pageKey}', 'Public\PublicFormController@page')
+        ->whereUuid('deploymentUid')
+        ->where('token', '[0-9a-f]{32}\.[1-9][0-9]{0,18}\.[0-9a-f]{64}')
+        ->where('pageKey', '[a-z][a-z0-9_]{0,31}')
+        ->middleware('throttle:60,1')->name('public.forms.page');
     Route::post('forms/{deploymentUid}', 'Public\PublicFormController@submit')
         ->whereUuid('deploymentUid')->middleware('throttle:10,1')->name('public.forms.submit');
     Route::get('forms/{deploymentUid}/thanks', 'Public\PublicFormController@thanks')

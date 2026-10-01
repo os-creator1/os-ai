@@ -511,15 +511,16 @@ class FormSubmissionServiceTest extends TestCase
     {
         $other = $this->deploy($this->business, $this->form, $this->uptown);
         $valid = FormOperationToken::issue($this->deployment);
-        [$nonce, $signature] = explode('.', $valid);
+        [$nonce, $versionId, $signature] = explode('.', $valid);
 
         $tokens = [
             'missing' => null,
             'empty' => '',
             'garbage' => 'garbage',
-            'no signature' => $nonce.'.',
-            'wrong signature' => $nonce.'.'.str_repeat('0', 64),
-            'invented nonce' => str_repeat('a', 32).'.'.$signature,
+            'no signature' => $nonce.'.'.$versionId.'.',
+            'wrong signature' => $nonce.'.'.$versionId.'.'.str_repeat('0', 64),
+            'invented nonce' => str_repeat('a', 32).'.'.$versionId.'.'.$signature,
+            'old two-part shape' => $nonce.'.'.$signature,
             'issued for another deployment' => FormOperationToken::issue($other),
         ];
 

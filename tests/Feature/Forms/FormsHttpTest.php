@@ -517,12 +517,13 @@ class FormsHttpTest extends TestCase
         preg_match('/name="operation_token" value="([^"]+)"/', $page->getContent(), $match);
         $this->assertNotEmpty($match[1] ?? null);
 
-        $this->post(route('public.forms.submit', [$this->atUptown->uid]), $this->submitInput($this->atUptown, [], $match[1]))
-            ->assertRedirect(route('public.forms.thanks', [$this->atUptown->uid]));
+        $this->post(route('public.forms.submit', [$this->atUptown->uid]), $this->submitInput($this->atUptown, [], $match[1]));
 
         $submission = FormSubmission::firstOrFail();
         $this->assertSame((int) $this->uptown->id, (int) $submission->business_location_id);
+        $thanks = route('public.forms.thanks', ['deploymentUid' => $this->atUptown->uid, 's' => $submission->uid]);
         $this->get(route('public.forms.thanks', [$this->atUptown->uid]))->assertOk()->assertSee('Thanks — we will be in touch.');
+        $this->get($thanks)->assertOk()->assertSee('Thanks — we will be in touch.');
     }
 
     public function test_each_render_gets_its_own_token_and_a_double_post_converges(): void

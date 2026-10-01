@@ -10,13 +10,20 @@
         label{display:block;margin:1rem 0 .3rem}input,select,textarea,button{font:inherit;padding:.65rem;border:1px solid #9ba7b4;border-radius:.4rem;box-sizing:border-box}
         input[type=text],input[type=email],input[type=tel],input[type=date],select,textarea{width:100%}
         button{background:#125a9c;color:white;border:0;cursor:pointer;margin-top:1.2rem}.error{color:#a51d24}
+        .back{margin-left:1rem}.step{color:#52606d;margin:.25rem 0 0}
         .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
     </style>
 </head>
 <body>
 <main>
     <h1>{{ $context->form->name }}</h1>
-    @if ($context->version->intro)<p>{!! nl2br(e($context->version->intro)) !!}</p>@endif
+    {{-- Presentation only. $version is the version PINNED by the token: the
+         questions shown here are exactly the ones the answers will be validated
+         against, even if the owner has published a newer version since. --}}
+    @if ($pageCount > 1)
+        <p class="step" data-role="public-form-step">Step {{ $pageNumber }} of {{ $pageCount }}@if($page['title']) — {{ $page['title'] }}@endif</p>
+    @endif
+    @if ($pageNumber === 1 && $version->intro)<p>{!! nl2br(e($version->intro)) !!}</p>@endif
 
     @if ($errors->any())
         <div class="error" role="alert" data-role="public-form-errors">
@@ -27,40 +34,47 @@
     <form method="post" action="{{ route('public.forms.submit', [$context->deployment->uid]) }}" data-role="public-form">
         @csrf
         <input type="hidden" name="{{ $tokenField }}" value="{{ $token }}">
+        @if ($pageCount > 1)
+            <input type="hidden" name="{{ $pageField }}" value="{{ $pageKey }}">
+        @endif
         <div class="hp" aria-hidden="true">
             <label for="{{ $honeypot }}">Leave this empty</label>
             <input type="text" id="{{ $honeypot }}" name="{{ $honeypot }}" value="" tabindex="-1" autocomplete="off">
         </div>
 
-        @foreach ($context->version->fields as $field)
+        @foreach ($fields as $field)
             @php
                 $key = $field['key'];
                 $required = $field['required'] ? 'required' : '';
+                $current = old($key, $answers[$key] ?? null);
             @endphp
             @if ($field['type'] === 'checkbox')
                 <label>
-                    <input type="checkbox" name="{{ $key }}" value="1" @checked(old($key)) {{ $required }}>
+                    <input type="checkbox" name="{{ $key }}" value="1" @checked($current) {{ $required }}>
                     {{ $field['label'] }}@if($field['required']) *@endif
                 </label>
             @else
                 <label for="f-{{ $key }}">{{ $field['label'] }}@if($field['required']) *@endif</label>
                 @if ($field['type'] === 'textarea')
-                    <textarea id="f-{{ $key }}" name="{{ $key }}" rows="5" {{ $required }}>{{ old($key) }}</textarea>
+                    <textarea id="f-{{ $key }}" name="{{ $key }}" rows="5" {{ $required }}>{{ $current }}</textarea>
                 @elseif ($field['type'] === 'select')
                     <select id="f-{{ $key }}" name="{{ $key }}" {{ $required }}>
                         <option value="">Choose…</option>
                         @foreach ($field['options'] as $option)
-                            <option value="{{ $option }}" @selected(old($key) === $option)>{{ $option }}</option>
+                            <option value="{{ $option }}" @selected($current === $option)>{{ $option }}</option>
                         @endforeach
                     </select>
                 @else
                     @php($inputType = ['email' => 'email', 'phone' => 'tel', 'date' => 'date'][$field['type']] ?? 'text')
-                    <input id="f-{{ $key }}" type="{{ $inputType }}" name="{{ $key }}" value="{{ old($key) }}" {{ $required }}>
+                    <input id="f-{{ $key }}" type="{{ $inputType }}" name="{{ $key }}" value="{{ $current }}" {{ $required }}>
                 @endif
             @endif
         @endforeach
 
-        <button type="submit">{{ $context->version->submit_label }}</button>
+        <button type="submit">{{ $isLast ? $version->submit_label : 'Next' }}</button>
+        @if ($backUrl)
+            <a class="back" href="{{ $backUrl }}" data-role="public-form-back">Back</a>
+        @endif
     </form>
 </main>
 </body>

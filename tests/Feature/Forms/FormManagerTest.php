@@ -116,7 +116,7 @@ class FormManagerTest extends TestCase
             'invalid key' => ['fields' => [['key' => 'Bad Key!', 'label' => 'A', 'type' => 'text']]],
             'opportunity without a phone field' => ['create_opportunity' => true, 'fields' => [['label' => 'A', 'type' => 'text']]],
             'blank name' => ['name' => ' '],
-            'too many questions' => ['fields' => array_map(fn ($i) => ['label' => 'Q'.$i, 'type' => 'text'], range(1, FormDefinitionNormalizer::MAX_FIELDS + 1))],
+            'too many questions' => ['fields' => array_map(fn ($i) => ['label' => 'Q'.$i, 'type' => 'text'], range(1, FormDefinitionNormalizer::MAX_FIELDS_PER_PAGE + 1))],
         ];
 
         foreach ($cases as $label => $override) {
@@ -136,8 +136,8 @@ class FormManagerTest extends TestCase
         [, $business] = $this->formsTenant();
         $this->formsPipeline($business);
 
-        $max = array_map(fn ($i) => ['label' => 'Q'.$i, 'type' => 'text'], range(1, FormDefinitionNormalizer::MAX_FIELDS));
-        $this->assertCount(FormDefinitionNormalizer::MAX_FIELDS, $this->manager->create($business, $this->leadFormInput(['fields' => $max]))->currentVersion()->fields);
+        $max = array_map(fn ($i) => ['label' => 'Q'.$i, 'type' => 'text'], range(1, FormDefinitionNormalizer::MAX_FIELDS_PER_PAGE));
+        $this->assertCount(FormDefinitionNormalizer::MAX_FIELDS_PER_PAGE, $this->manager->create($business, $this->leadFormInput(['fields' => $max]))->currentVersion()->fields);
 
         $withDeal = $this->manager->create($business, $this->leadFormInput(['create_opportunity' => true]));
         $this->assertTrue($withDeal->currentVersion()->create_opportunity);

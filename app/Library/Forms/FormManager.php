@@ -225,6 +225,7 @@ final class FormManager
             'intro' => $content['intro'],
             'submit_label' => $content['submit_label'],
             'success_message' => $content['success_message'],
+            'pages' => $content['pages'],
             'fields' => $content['fields'],
             'create_opportunity' => $content['create_opportunity'],
             'opportunity_pipeline_id' => $content['opportunity_pipeline_id'],

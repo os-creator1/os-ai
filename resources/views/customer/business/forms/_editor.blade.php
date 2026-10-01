@@ -14,6 +14,36 @@
     <textarea id="intro" name="intro" class="form-control" rows="3">{{ old('intro', $version->intro ?? '') }}</textarea>
 </div>
 
+<h5 class="mt-2">Pages</h5>
+<p class="text-muted">
+    An ordinary form is one page — leave every question on page 1. To make a questionnaire, put questions on more pages
+    (up to {{ $limits['pages'] }}); visitors move through them in the order below. A page with no questions is ignored.
+</p>
+
+<div class="table-responsive">
+    <table class="table table-sm" data-role="forms-pages">
+        <thead>
+            <tr>
+                <th>Page</th>
+                <th>Title <span class="text-muted">(optional)</span></th>
+                <th>Order</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach ($pageRows as $i => $pageRow)
+                <tr data-page="{{ $pageRow['key'] }}">
+                    <td>
+                        <input type="hidden" name="pages[{{ $i }}][key]" value="{{ $pageRow['key'] }}">
+                        {{ $pageRow['key'] }}
+                    </td>
+                    <td><input type="text" name="pages[{{ $i }}][title]" class="form-control form-control-sm" value="{{ $pageRow['title'] ?? '' }}" aria-label="Title of {{ $pageRow['key'] }}"></td>
+                    <td><input type="number" min="1" max="99" name="pages[{{ $i }}][position]" class="form-control form-control-sm" value="{{ $pageRow['position'] ?? $i + 1 }}" aria-label="Order of {{ $pageRow['key'] }}"></td>
+                </tr>
+            @endforeach
+        </tbody>
+    </table>
+</div>
+
 <h5 class="mt-2">Questions</h5>
 <p class="text-muted">Up to {{ $limits['fields'] }}. Leave a row blank to skip it. A form may have one phone number question — it is how a person is recognized.</p>
 
@@ -22,6 +52,7 @@
         <thead>
             <tr>
                 <th>Question</th>
+                <th>Page</th>
                 <th>Answer type</th>
                 <th>Required</th>
                 <th>Options <span class="text-muted">(one per line, for "Pick one")</span></th>
@@ -34,6 +65,14 @@
                     <td>
                         <input type="hidden" name="fields[{{ $i }}][key]" value="{{ $row['key'] ?? '' }}">
                         <input type="text" name="fields[{{ $i }}][label]" class="form-control form-control-sm" value="{{ $row['label'] ?? '' }}" aria-label="Question {{ $i + 1 }}">
+                    </td>
+                    <td>
+                        @php($selectedPage = $row['page'] ?? $pageRows[0]['key'])
+                        <select name="fields[{{ $i }}][page]" class="form-control form-control-sm" aria-label="Page {{ $i + 1 }}">
+                            @foreach ($pageRows as $pageRow)
+                                <option value="{{ $pageRow['key'] }}" @selected($selectedPage === $pageRow['key'])>{{ ! empty($pageRow['title']) ? $pageRow['title'] : $pageRow['key'] }}</option>
+                            @endforeach
+                        </select>
                     </td>
                     <td>
                         @php($selectedType = $row['type'] ?? 'text')

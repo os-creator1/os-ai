@@ -9,10 +9,15 @@
  * EXPECTED_TEST_DATABASE (a stale bootstrap config cache could otherwise point it
  * at a different database than the parent).
  *
- * Usage: php concurrent_form_submit_runner.php <deploymentUid> <operationToken> <phone>
+ * Usage: php concurrent_form_submit_runner.php <deploymentUid> <operationToken> <phone> [answersJson]
  *
- * Prints one JSON line: {"submission_id", "replayed", "events"} where `events`
- * counts FormSubmissionRecorded events THIS process delivered.
+ * With no answersJson the runner posts a one-page form's name + phone. With one it
+ * posts exactly those answers (a questionnaire step: include the `page` key).
+ *
+ * Prints one JSON line: {"submission_id", "replayed", "events", "progress"} where
+ * `events` counts FormSubmissionRecorded events THIS process delivered, and
+ * `submission_id` is null (with `progress` = the next page) for a non-final
+ * questionnaire step.
  */
 
 require __DIR__.'/../../../../vendor/autoload.php';
@@ -41,6 +46,7 @@ try {
 }
 
 [, $deploymentUid, $token, $phone] = $argv;
+$answersJson = $argv[4] ?? null;
 
 $events = 0;
 Illuminate\Support\Facades\Event::listen(App\Events\Forms\FormSubmissionRecorded::class, function () use (&$events): void {
@@ -48,16 +54,18 @@ Illuminate\Support\Facades\Event::listen(App\Events\Forms\FormSubmissionRecorded
 });
 
 try {
-    $result = $app->make(App\Library\Forms\FormSubmissionService::class)->submit($deploymentUid, [
-        'your_name' => 'Racer Visitor',
-        'phone' => $phone,
-        App\Library\Forms\FormSubmissionService::TOKEN_FIELD => $token,
-    ]);
+    $input = $answersJson === null
+        ? ['your_name' => 'Racer Visitor', 'phone' => $phone]
+        : json_decode($answersJson, true, 512, JSON_THROW_ON_ERROR);
+    $input[App\Library\Forms\FormSubmissionService::TOKEN_FIELD] = $token;
+
+    $result = $app->make(App\Library\Forms\FormSubmissionService::class)->submit($deploymentUid, $input);
 
     fwrite(STDOUT, json_encode([
-        'submission_id' => $result->submission->id,
+        'submission_id' => $result->submission?->id,
         'replayed' => $result->replayed,
         'events' => $events,
+        'progress' => $result->nextPage,
     ])."\n");
     exit(0);
 } catch (Throwable $e) {

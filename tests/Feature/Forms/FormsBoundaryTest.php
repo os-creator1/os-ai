@@ -31,6 +31,7 @@ class FormsBoundaryTest extends TestCase
             'app/Models/FormVersion.php',
             'app/Models/FormDeployment.php',
             'app/Models/FormSubmission.php',
+            'app/Models/FormSession.php',
         ];
 
         foreach ($roots as $root) {
@@ -80,6 +81,7 @@ class FormsBoundaryTest extends TestCase
             'FormVersion::create' => 'app/Library/Forms/FormManager.php',
             'FormDeployment::create' => 'app/Library/Forms/FormManager.php',
             'FormSubmission::create' => 'app/Library/Forms/FormSubmissionService.php',
+            'FormSession::create' => 'app/Library/Forms/FormSessionStore.php',
         ];
 
         foreach ($this->formsFiles() as $file) {

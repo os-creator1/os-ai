@@ -95,6 +95,74 @@ trait CreatesFormsFixtures
         return $activate ? $manager->activate($business, $form) : $form;
     }
 
+    /**
+     * A three-page questionnaire: who they are (name, phone), their event (date,
+     * type) and the details (a REQUIRED message and consent on the LAST page, so a
+     * later-page required field is exercised). Creates an Opportunity.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    protected function questionnaireInput(array $overrides = []): array
+    {
+        return array_merge([
+            'name' => 'Event questionnaire',
+            'intro' => 'A few questions about your event.',
+            'submit_label' => 'Finish',
+            'success_message' => 'Thanks — questionnaire received.',
+            'create_opportunity' => true,
+            'pages' => [
+                ['key' => 'page_1', 'title' => 'About you', 'position' => 1],
+                ['key' => 'page_2', 'title' => 'Your event', 'position' => 2],
+                ['key' => 'page_3', 'title' => 'Details', 'position' => 3],
+            ],
+            'fields' => [
+                ['label' => 'Your name', 'type' => 'text', 'required' => true, 'contact_name' => true, 'page' => 'page_1'],
+                ['label' => 'Phone', 'type' => 'phone', 'required' => true, 'page' => 'page_1'],
+                ['label' => 'Event date', 'type' => 'date', 'required' => true, 'page' => 'page_2'],
+                ['label' => 'Event type', 'type' => 'select', 'required' => false, 'options' => "Wedding
+Corporate", 'page' => 'page_2'],
+                ['label' => 'Message', 'type' => 'textarea', 'required' => true, 'page' => 'page_3'],
+                ['label' => 'I agree', 'type' => 'checkbox', 'required' => true, 'page' => 'page_3'],
+            ],
+        ], $overrides);
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    protected function makeQuestionnaire(Business $business, array $overrides = [], bool $activate = true): Form
+    {
+        $manager = app(FormManager::class);
+        $form = $manager->create($business, $this->questionnaireInput($overrides));
+
+        return $activate ? $manager->activate($business, $form) : $form;
+    }
+
+    /** The answers of each questionnaire page, keyed by page key. @return array<string, array<string, mixed>> */
+    protected function questionnaireAnswers(): array
+    {
+        return [
+            'page_1' => ['your_name' => 'Ada Lovelace', 'phone' => '+1 (415) 555-1234'],
+            'page_2' => ['event_date' => '2027-06-01', 'event_type' => 'Wedding'],
+            'page_3' => ['message' => 'Quote please', 'i_agree' => '1'],
+        ];
+    }
+
+    /**
+     * One step of a questionnaire as the visitor's browser posts it.
+     *
+     * @param  array<string, mixed>|null  $answers  null = the standard answers for that page
+     * @return array<string, mixed>
+     */
+    protected function stepInput(string $token, string $page, ?array $answers = null): array
+    {
+        return array_merge(
+            $answers ?? $this->questionnaireAnswers()[$page],
+            [FormSubmissionService::TOKEN_FIELD => $token, FormSubmissionService::PAGE_FIELD => $page]
+        );
+    }
+
     protected function deploy(Business $business, Form $form, BusinessLocation $location, bool $enabled = true): FormDeployment
     {
         return app(FormManager::class)->setDeployment($business, $form, $location, $enabled)

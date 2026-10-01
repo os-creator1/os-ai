@@ -24,4 +24,10 @@ final class FormDeploymentContext
         public readonly BusinessLocation $location,
     ) {
     }
+
+    /** The same proven rows, with the version replaced by one the caller has already proven. */
+    public function withVersion(FormVersion $version): self
+    {
+        return new self($this->deployment, $this->form, $version, $this->business, $this->location);
+    }
 }

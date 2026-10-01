@@ -163,10 +163,16 @@ class FormsController extends Controller
             'intro' => ['nullable', 'string', 'max:20000'],
             'submit_label' => ['nullable', 'string', 'max:1000'],
             'success_message' => ['nullable', 'string', 'max:5000'],
+            'pages' => ['nullable', 'array', 'max:'.(FormDefinitionNormalizer::MAX_PAGES * 2)],
+            'pages.*' => ['array'],
+            'pages.*.key' => ['nullable', 'string', 'max:64'],
+            'pages.*.title' => ['nullable', 'string', 'max:1000'],
+            'pages.*.position' => ['nullable', 'integer'],
             'fields' => ['required', 'array', 'max:'.(FormDefinitionNormalizer::MAX_FIELDS + 25)],
             'fields.*' => ['array'],
             'fields.*.key' => ['nullable', 'string', 'max:64'],
             'fields.*.label' => ['nullable', 'string', 'max:1000'],
+            'fields.*.page' => ['nullable', 'string', 'max:64'],
             'fields.*.type' => ['nullable', 'string', 'max:32'],
             'fields.*.required' => ['nullable', 'boolean'],
             'fields.*.options' => ['nullable', 'string', 'max:5000'],
@@ -193,6 +199,23 @@ class FormsController extends Controller
         // Spare, unused rows: a blank label is ignored on save.
         $rows = array_pad(array_values($rows), min(count($rows) + 3, FormDefinitionNormalizer::MAX_FIELDS + 3), []);
 
+        // Page SLOTS: the version's pages (in their order), then unused spares up
+        // to the bound. A slot keeps its key wherever it is moved; reordering is
+        // an edit of its position, and a slot nobody uses is dropped on save.
+        $pageRows = old('pages');
+        if (! is_array($pageRows)) {
+            $pageRows = [];
+            foreach ($version?->pages() ?? [['key' => 'page_1', 'title' => null]] as $i => $page) {
+                $pageRows[] = ['key' => $page['key'], 'title' => $page['title'] ?? '', 'position' => $i + 1];
+            }
+            $taken = array_column($pageRows, 'key');
+            for ($n = 1; count($pageRows) < FormDefinitionNormalizer::MAX_PAGES; $n++) {
+                if (! in_array('page_'.$n, $taken, true)) {
+                    $pageRows[] = ['key' => 'page_'.$n, 'title' => '', 'position' => count($pageRows) + 1];
+                }
+            }
+        }
+
         $visible = $form === null ? [] : $this->reader->visibleLocations($business, (int) Auth::id());
 
         return [
@@ -201,6 +224,7 @@ class FormsController extends Controller
             'form' => $form,
             'version' => $version,
             'rows' => $rows,
+            'pageRows' => $pageRows,
             'types' => FormFieldType::cases(),
             'pipelines' => CrmPipeline::query()->forBusiness($business)->active()->orderBy('position')->orderBy('id')->get(['id', 'name']),
             'locations' => $visible,
@@ -214,6 +238,7 @@ class FormsController extends Controller
                     ->keyBy('business_location_id'),
             'limits' => [
                 'fields' => FormDefinitionNormalizer::MAX_FIELDS,
+                'pages' => FormDefinitionNormalizer::MAX_PAGES,
             ],
         ];
     }

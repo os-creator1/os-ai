@@ -4,11 +4,15 @@ namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
 use App\Library\Forms\Exceptions\FormUnavailableException;
+use App\Library\Forms\FormDeploymentContext;
 use App\Library\Forms\FormDeploymentResolver;
 use App\Library\Forms\FormOperationToken;
+use App\Library\Forms\FormSessionStore;
 use App\Library\Forms\FormSubmissionService;
+use App\Models\FormSubmission;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 /**
@@ -21,9 +25,17 @@ use Illuminate\View\View;
  * refusal — unknown link, switched-off form, archived Location, unentitled or
  * locked account — is the same 404, so a visitor learns nothing about why.
  *
- * Each render is issued its OWN operation token, embedded in the page; that
- * token, not the body, is what makes a retry or double-click converge on one
- * submission while two genuine submissions stay separate.
+ * ONE FLOW, ONE VERSION. Starting a form issues ONE operation token, pinned to
+ * the version shown (FormOperationToken). A one-page form is a single GET and
+ * POST. A questionnaire carries the same token through every page: the page URL
+ * embeds it, the server holds the answers in a session (FormSessionStore) rather
+ * than trusting the browser to carry them, and next/back never switch version
+ * even if the owner publishes a newer one meanwhile. Moving between pages creates
+ * no Contact, Opportunity, event or submission — only the final POST does.
+ *
+ * A stale, forged or out-of-order page address is a 404; a token that does not
+ * verify, belongs to another deployment, or names a version that is not a version
+ * of this Form is a 404 on GET and a validation refusal on POST.
  *
  * A filled honeypot is answered exactly like a success and stores nothing: a
  * bot is told nothing it can adapt to, and no row, Contact or event exists to
@@ -34,19 +46,35 @@ class PublicFormController extends Controller
     public function __construct(
         private readonly FormDeploymentResolver $resolver,
         private readonly FormSubmissionService $submissions,
+        private readonly FormSessionStore $sessions,
     ) {
     }
 
+    /** The start of a form or questionnaire: issues the token, shows the FIRST page. */
     public function show(string $deploymentUid): View
     {
         $context = $this->resolveOrNotFound($deploymentUid);
 
-        return view('public.forms.show', [
-            'context' => $context,
-            'token' => FormOperationToken::issue($context->deployment),
-            'honeypot' => FormSubmissionService::HONEYPOT_FIELD,
-            'tokenField' => FormSubmissionService::TOKEN_FIELD,
-        ]);
+        return $this->renderPage($context, FormOperationToken::issue($context->deployment, $context->version), $context->version->pageKeys()[0], []);
+    }
+
+    /** A later (or revisited) page of a questionnaire. */
+    public function page(string $deploymentUid, string $token, string $pageKey): View
+    {
+        $context = $this->pinnedOrNotFound($deploymentUid, $token);
+
+        if (! $context->version->isMultiPage()) {
+            abort(404);
+        }
+
+        $claims = FormOperationToken::claims($context->deployment, $token);
+        $session = $this->sessions->find($context, $claims['nonce']);
+
+        // Opening a page needs every earlier page completed: a stale, skipped or
+        // invented page address fails closed.
+        abort_unless($this->sessions->canOpen($context, $session, $pageKey), 404);
+
+        return $this->renderPage($context, $token, $pageKey, $session?->answers ?? []);
     }
 
     public function submit(Request $request, string $deploymentUid): RedirectResponse
@@ -59,23 +87,80 @@ class PublicFormController extends Controller
         }
 
         try {
-            $this->submissions->submit($deploymentUid, $request->all());
+            $result = $this->submissions->submit($deploymentUid, $request->all());
         } catch (FormUnavailableException) {
             abort(404);
         }
 
-        return redirect()->route('public.forms.thanks', [$deploymentUid]);
+        if (! $result->isFinal()) {
+            return redirect()->route('public.forms.page', [
+                $deploymentUid, (string) $request->input(FormSubmissionService::TOKEN_FIELD), $result->nextPage,
+            ]);
+        }
+
+        return redirect()->route('public.forms.thanks', ['deploymentUid' => $deploymentUid, 's' => $result->submission->uid]);
     }
 
-    public function thanks(string $deploymentUid): View
+    public function thanks(Request $request, string $deploymentUid): View
     {
-        return view('public.forms.thanks', ['context' => $this->resolveOrNotFound($deploymentUid)]);
+        $context = $this->resolveOrNotFound($deploymentUid);
+
+        // Show the thank-you of the version the visitor actually completed, when
+        // the submission is named and genuinely belongs to this deployment.
+        $submitted = $request->query('s');
+        $version = is_string($submitted) && Str::isUuid($submitted)
+            ? FormSubmission::query()->where('uid', $submitted)->where('form_deployment_id', $context->deployment->id)->first()?->version
+            : null;
+
+        return view('public.forms.thanks', ['context' => $context, 'version' => $version ?? $context->version]);
     }
 
-    private function resolveOrNotFound(string $deploymentUid)
+    /**
+     * @param  array<string, mixed>  $answers  the server-held answers to pre-fill
+     */
+    private function renderPage(FormDeploymentContext $context, string $token, string $pageKey, array $answers): View
+    {
+        $version = $context->version;
+        $index = $version->pageIndex($pageKey) ?? abort(404);
+        $pages = $version->pages();
+
+        return view('public.forms.show', [
+            'context' => $context,
+            'version' => $version,
+            'token' => $token,
+            'tokenField' => FormSubmissionService::TOKEN_FIELD,
+            'pageField' => FormSubmissionService::PAGE_FIELD,
+            'honeypot' => FormSubmissionService::HONEYPOT_FIELD,
+            'pageKey' => $pageKey,
+            'page' => $pages[$index],
+            'pageNumber' => $index + 1,
+            'pageCount' => count($pages),
+            'isLast' => $index === count($pages) - 1,
+            'fields' => $version->fieldsOnPage($pageKey),
+            'answers' => $answers,
+            'backUrl' => $index > 0
+                ? route('public.forms.page', [$context->deployment->uid, $token, $pages[$index - 1]['key']])
+                : null,
+        ]);
+    }
+
+    private function resolveOrNotFound(string $deploymentUid): FormDeploymentContext
     {
         try {
             return $this->resolver->resolve($deploymentUid);
+        } catch (FormUnavailableException) {
+            abort(404);
+        }
+    }
+
+    /** Current authority AND a token that verifies for a version of this Form; otherwise 404. */
+    private function pinnedOrNotFound(string $deploymentUid, string $token): FormDeploymentContext
+    {
+        $context = $this->resolveOrNotFound($deploymentUid);
+        $claims = FormOperationToken::claims($context->deployment, $token) ?? abort(404);
+
+        try {
+            return $this->resolver->pin($context, $claims['version_id']);
         } catch (FormUnavailableException) {
             abort(404);
         }

@@ -100,4 +100,30 @@ final class FormDeploymentResolver
 
         return new FormDeploymentContext($deployment, $form, $version, $business, $location);
     }
+
+    /**
+     * Re-reads the version a visitor was SHOWN and proves it is a version of THIS
+     * deployment's Form (a version of another Form or Business is not found), so
+     * the flow can finish against exactly what it displayed even after the owner
+     * published a newer one.
+     *
+     * This is identity only. $context came from resolve(), which has just
+     * re-proven that the deployment, Form, Location, Business and account may
+     * CURRENTLY accept submissions — pinning never bypasses that.
+     *
+     * @throws FormUnavailableException
+     */
+    public function pin(FormDeploymentContext $context, int $versionId): FormDeploymentContext
+    {
+        if ($versionId === (int) $context->version->id) {
+            return $context;
+        }
+
+        $pinned = FormVersion::query()
+            ->where('id', $versionId)
+            ->where('form_id', $context->form->id)
+            ->first() ?? throw new FormUnavailableException('version_not_of_this_form');
+
+        return $context->withVersion($pinned);
+    }
 }

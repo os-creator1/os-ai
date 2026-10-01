@@ -13,9 +13,23 @@ use Illuminate\Support\Str;
  * normalized. Pure rules over the input plus ONE persistence read (the
  * optional Opportunity pipeline, re-proven against the Business).
  *
- * BOUNDED ON PURPOSE: at most MAX_FIELDS fields, one closed type set, at most
- * one phone field (the Contact identity key) and at most one "contact name"
- * field. This is a lead/questionnaire form, not an application builder.
+ * ONE DEFINITION FOR FORMS AND QUESTIONNAIRES. The content is an ordered list of
+ * PAGES and a flat, ordered list of FIELDS, every field carrying the key of the
+ * one page it belongs to. An ordinary form is one page; a questionnaire is two or
+ * more (Blueprint §16). There is deliberately NO branching or conditional engine:
+ * pages are shown in their stored order, always.
+ *
+ * BOUNDED ON PURPOSE: at most MAX_PAGES pages, MAX_FIELDS_PER_PAGE fields on a
+ * page and MAX_FIELDS in total, one closed type set, at most one phone field (the
+ * Contact identity key) and at most one "contact name" field across the WHOLE
+ * definition. This is a lead/questionnaire form, not an application builder.
+ *
+ * Input shape: `pages` is a list of `{key?, title?, position?}`; each field names
+ * its page with `page` (a page key). With no `pages`, every field is on one page.
+ * A page with no field is an unused spare and is dropped; remaining pages are
+ * ordered by `position` (ties keep submitted order), so reordering pages is an
+ * edit of `position`, and a page keeps its key (and its fields' answers keep
+ * their meaning) wherever it moves.
  *
  * The normalized array is also what the content hash is taken over, so two
  * saves with the same meaning always hash the same — key order, blank rows and
@@ -23,15 +37,21 @@ use Illuminate\Support\Str;
  */
 final class FormDefinitionNormalizer
 {
-    public const MAX_FIELDS = 25;
+    public const MAX_PAGES = 8;
 
-    public const MAX_OPTIONS = 20;
+    public const MAX_FIELDS_PER_PAGE = 25;
+
+    public const MAX_FIELDS = 40;
 
     public const NAME_MAX = 120;
 
     public const LABEL_MAX = 120;
 
+    public const PAGE_TITLE_MAX = 120;
+
     public const OPTION_MAX = 80;
+
+    public const MAX_OPTIONS = 20;
 
     public const INTRO_MAX = 1000;
 
@@ -44,7 +64,7 @@ final class FormDefinitionNormalizer
     public const DEFAULT_SUCCESS_MESSAGE = 'Thanks — we got your message and will be in touch.';
 
     /** Request-input names the public form itself uses; a field may never shadow one. */
-    public const RESERVED_KEYS = ['form_hp', 'operation_token', 'location_uid'];
+    public const RESERVED_KEYS = ['form_hp', 'operation_token', 'location_uid', 'page'];
 
     private const KEY_PATTERN = '/^[a-z][a-z0-9_]{0,31}$/';
 
@@ -61,11 +81,11 @@ final class FormDefinitionNormalizer
 
     /**
      * @param  array<string, mixed>  $input
-     * @return array{intro: ?string, submit_label: string, success_message: string, fields: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool}>, create_opportunity: bool, opportunity_pipeline_id: ?int}
+     * @return array{intro: ?string, submit_label: string, success_message: string, pages: list<array{key: string, title: ?string}>, fields: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>, create_opportunity: bool, opportunity_pipeline_id: ?int}
      */
     public function content(Business $business, array $input): array
     {
-        $fields = $this->fields($input['fields'] ?? []);
+        [$pages, $fields] = $this->pagesAndFields($input['pages'] ?? [], $input['fields'] ?? []);
 
         $createOpportunity = (bool) ($input['create_opportunity'] ?? false);
         $pipelineId = null;
@@ -95,6 +115,7 @@ final class FormDefinitionNormalizer
             'intro' => $this->optionalText($input['intro'] ?? null, self::INTRO_MAX, 'The introduction'),
             'submit_label' => $this->boundedText($input['submit_label'] ?? null, self::SUBMIT_LABEL_MAX, self::DEFAULT_SUBMIT_LABEL, 'The button label'),
             'success_message' => $this->boundedText($input['success_message'] ?? null, self::SUCCESS_MESSAGE_MAX, self::DEFAULT_SUCCESS_MESSAGE, 'The thank-you message'),
+            'pages' => $pages,
             'fields' => $fields,
             'create_opportunity' => $createOpportunity,
             'opportunity_pipeline_id' => $pipelineId,
@@ -112,14 +133,121 @@ final class FormDefinitionNormalizer
     }
 
     /**
-     * @return list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool}>
+     * @return array{0: list<array{key: string, title: ?string}>, 1: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>}
      */
-    private function fields(mixed $rawFields): array
+    private function pagesAndFields(mixed $rawPages, mixed $rawFields): array
     {
         if (! is_array($rawFields)) {
             throw new FormRuleException('Add at least one question.');
         }
 
+        $declared = $this->declaredPages($rawPages);
+        $firstKey = array_key_first($declared);
+
+        $fields = $this->fields($rawFields, $declared, $firstKey);
+
+        // Group by page, drop pages nobody uses, order the rest.
+        $byPage = [];
+        foreach ($fields as $field) {
+            $byPage[$field['page']][] = $field;
+        }
+
+        $used = array_filter($declared, fn (array $page, string $key) => isset($byPage[$key]), ARRAY_FILTER_USE_BOTH);
+
+        uasort($used, fn (array $a, array $b) => [$a['position'], $a['order']] <=> [$b['position'], $b['order']]);
+
+        if (count($used) > self::MAX_PAGES) {
+            throw new FormRuleException('A form can have at most '.self::MAX_PAGES.' pages.');
+        }
+
+        $pages = [];
+        $ordered = [];
+        foreach ($used as $key => $page) {
+            if (count($byPage[$key]) > self::MAX_FIELDS_PER_PAGE) {
+                throw new FormRuleException('A page can have at most '.self::MAX_FIELDS_PER_PAGE.' questions.');
+            }
+
+            $pages[] = ['key' => $key, 'title' => $page['title']];
+            array_push($ordered, ...$byPage[$key]);
+        }
+
+        if (count($ordered) > self::MAX_FIELDS) {
+            throw new FormRuleException('A form can have at most '.self::MAX_FIELDS.' questions in total.');
+        }
+
+        if (collect($ordered)->where('type', FormFieldType::Phone->value)->count() > 1) {
+            throw new FormRuleException('A form can have only one phone number question.');
+        }
+
+        if (collect($ordered)->where('contact_name', true)->count() > 1) {
+            throw new FormRuleException('Only one question can be used as the person\'s name.');
+        }
+
+        return [$pages, $ordered];
+    }
+
+    /**
+     * @return array<string, array{key: string, title: ?string, position: int, order: int}> keyed by page key, in submitted order
+     */
+    private function declaredPages(mixed $rawPages): array
+    {
+        $list = is_array($rawPages) ? array_values(array_filter($rawPages, 'is_array')) : [];
+
+        if ($list === []) {
+            $list = [['key' => 'page_1']];
+        }
+
+        // Slots the editor always posts are bounded; anything beyond is refused
+        // outright rather than silently truncated.
+        if (count($list) > self::MAX_PAGES * 2) {
+            throw new FormRuleException('A form can have at most '.self::MAX_PAGES.' pages.');
+        }
+
+        $declared = [];
+
+        foreach ($list as $order => $raw) {
+            $key = trim((string) ($raw['key'] ?? ''));
+            $key = $key === '' ? $this->unusedPageKey($declared) : $key;
+
+            if (preg_match(self::KEY_PATTERN, $key) !== 1) {
+                throw new FormRuleException('A page has an invalid internal key.');
+            }
+
+            if (isset($declared[$key])) {
+                throw new FormRuleException('Two pages share the internal key "'.$key.'".');
+            }
+
+            $title = trim((string) ($raw['title'] ?? ''));
+            if (mb_strlen($title) > self::PAGE_TITLE_MAX) {
+                throw new FormRuleException('A page title can be at most '.self::PAGE_TITLE_MAX.' characters.');
+            }
+
+            $position = isset($raw['position']) && is_numeric($raw['position']) ? (int) $raw['position'] : $order + 1;
+
+            $declared[$key] = ['key' => $key, 'title' => $title === '' ? null : $title, 'position' => $position, 'order' => $order];
+        }
+
+        return $declared;
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $declared
+     */
+    private function unusedPageKey(array $declared): string
+    {
+        for ($n = 1; ; $n++) {
+            if (! isset($declared['page_'.$n])) {
+                return 'page_'.$n;
+            }
+        }
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $declared
+     * @return list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>
+     */
+    private function fields(array $rawFields, array $declared, string $firstPageKey): array
+    {
         $fields = [];
         $seen = [];
 
@@ -156,6 +284,12 @@ final class FormDefinitionNormalizer
             }
             $seen[$key] = true;
 
+            $page = trim((string) ($raw['page'] ?? ''));
+            $page = $page === '' ? $firstPageKey : $page;
+            if (! isset($declared[$page])) {
+                throw new FormRuleException('"'.$label.'" is on a page that does not exist.');
+            }
+
             $contactName = (bool) ($raw['contact_name'] ?? false);
             if ($contactName && $type !== FormFieldType::Text) {
                 throw new FormRuleException('Only a short-text question can be used as the person\'s name.');
@@ -168,23 +302,12 @@ final class FormDefinitionNormalizer
                 'required' => (bool) ($raw['required'] ?? false),
                 'options' => $type === FormFieldType::Select ? $this->options($label, $raw['options'] ?? []) : [],
                 'contact_name' => $contactName,
+                'page' => $page,
             ];
         }
 
         if ($fields === []) {
             throw new FormRuleException('Add at least one question.');
-        }
-
-        if (count($fields) > self::MAX_FIELDS) {
-            throw new FormRuleException('A form can have at most '.self::MAX_FIELDS.' questions.');
-        }
-
-        if (collect($fields)->where('type', FormFieldType::Phone->value)->count() > 1) {
-            throw new FormRuleException('A form can have only one phone number question.');
-        }
-
-        if (collect($fields)->where('contact_name', true)->count() > 1) {
-            throw new FormRuleException('Only one question can be used as the person\'s name.');
         }
 
         return $fields;

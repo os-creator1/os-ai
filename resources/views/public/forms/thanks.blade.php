@@ -9,7 +9,8 @@
 <body style="font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem">
 <main data-role="public-form-thanks">
     <h1>{{ $context->form->name }}</h1>
-    <p>{{ $context->version->success_message }}</p>
+    {{-- The thank-you of the version the visitor completed (see PublicFormController::thanks). --}}
+    <p>{{ $version->success_message }}</p>
 </main>
 </body>
 </html>

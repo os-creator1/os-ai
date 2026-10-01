@@ -23,21 +23,26 @@
                 · form version {{ $submission->version?->version }}
             </p>
 
-            <dl class="row" data-role="forms-answers">
-                @foreach ($fields as $field)
-                    @php($value = $submission->values[$field['key']] ?? null)
-                    <dt class="col-sm-4">{{ $field['label'] }}</dt>
-                    <dd class="col-sm-8">
-                        @if ($field['type'] === 'checkbox')
-                            {{ $value ? 'Yes' : 'No' }}
-                        @elseif ($value === null || $value === '')
-                            <span class="text-muted">—</span>
-                        @else
-                            {!! nl2br(e((string) $value)) !!}
-                        @endif
-                    </dd>
-                @endforeach
-            </dl>
+            @foreach ($submission->version->pages() as $page)
+                @if ($submission->version->isMultiPage())
+                    <h5 class="mt-1" data-role="forms-answers-page">{{ $page['title'] ?: 'Page '.($loop->iteration) }}</h5>
+                @endif
+                <dl class="row" data-role="forms-answers">
+                    @foreach ($submission->version->fieldsOnPage($page['key']) as $field)
+                        @php($value = $submission->values[$field['key']] ?? null)
+                        <dt class="col-sm-4">{{ $field['label'] }}</dt>
+                        <dd class="col-sm-8">
+                            @if ($field['type'] === 'checkbox')
+                                {{ $value ? 'Yes' : 'No' }}
+                            @elseif ($value === null || $value === '')
+                                <span class="text-muted">—</span>
+                            @else
+                                {!! nl2br(e((string) $value)) !!}
+                            @endif
+                        </dd>
+                    @endforeach
+                </dl>
+            @endforeach
 
             <p class="mb-1" data-role="forms-contact">
                 @if ($submission->contact)
