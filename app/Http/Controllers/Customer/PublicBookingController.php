@@ -41,7 +41,7 @@ class PublicBookingController extends Controller
     public function show(Request $request, string $bookingTypeUuid): View
     {
         [$type, $location, $business] = $this->resolve($bookingTypeUuid);
-        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $timezone = $this->timezoneFor($business);
         $date = $request->query('date');
         if ($date !== null) {
             abort_unless(is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date), 404);
@@ -57,16 +57,19 @@ class PublicBookingController extends Controller
 
         $slots = [];
         $staffIds = $this->eligibleStaffIds($type, $location);
-        for ($local = $day->copy()->startOfDay(); $local->isSameDay($day); $local->addMinutes(30)) {
-            $start = $local->copy()->utc();
-            $end = $start->copy()->addMinutes($type->duration_minutes);
-            if ($start->lessThanOrEqualTo(now()->utc())) {
+        // Offer wall-clock labels, not accumulated minutes: on a DST day the
+        // two disagree, and the POST resolves the label the guest picked.
+        foreach (range(0, 47) as $step) {
+            $label = sprintf('%02d:%02d', intdiv($step, 2), ($step % 2) * 30);
+            $start = $this->instantFor($day->toDateString(), $label, $timezone);
+            if ($start === null || $start->lessThanOrEqualTo(now()->utc())) {
                 continue;
             }
+            $end = $start->copy()->addMinutes($type->duration_minutes);
             foreach ($staffIds as $staffId) {
                 if ($this->availability->isAvailable($staffId, $location, $start, $end)
                     && ! $this->conflicts->hasConflict($staffId, $start, $end)) {
-                    $slots[] = $local->format('H:i');
+                    $slots[] = $label;
                     break;
                 }
             }
@@ -86,7 +89,7 @@ class PublicBookingController extends Controller
             'last_name' => ['required', 'string', 'max:120'],
             'phone' => ['required', 'string', 'max:32'],
         ]);
-        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $timezone = $this->timezoneFor($business);
         $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', $data['phone']));
         if ($phone === '' || strlen($phone) > 32 || ! ctype_digit($phone)) {
             throw ValidationException::withMessages(['phone' => 'Enter a valid phone number.']);
@@ -94,8 +97,8 @@ class PublicBookingController extends Controller
         if (! in_array(substr($data['time'], 3), ['00', '30'], true)) {
             throw ValidationException::withMessages(['time' => 'Choose an available time.']);
         }
-        $start = Carbon::createFromFormat('!Y-m-d H:i', $data['date'].' '.$data['time'], $timezone)->utc();
-        if ($start->lessThanOrEqualTo(now()->utc()) || $start->greaterThan(now()->addDays(31)->utc())) {
+        $start = $this->instantFor($data['date'], $data['time'], $timezone);
+        if ($start === null || $start->lessThanOrEqualTo(now()->utc()) || $start->greaterThan(now()->addDays(31)->utc())) {
             return back()->withInput()->withErrors(['time' => 'Choose an available time.']);
         }
 
@@ -149,8 +152,46 @@ class PublicBookingController extends Controller
         )->allowed, 404);
         abort_unless($type->isActive() && (int) $type->business_location_id === (int) $location->id, 404);
         abort_if($this->eligibleStaffIds($type, $location) === [], 404);
+        $this->timezoneFor($business);
 
         return [$type, $location, $business];
+    }
+
+    /** A Business whose stored timezone is not a real zone cannot be scheduled: refuse like every other authority failure. */
+    private function timezoneFor(Business $business): string
+    {
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        try {
+            new \DateTimeZone($timezone);
+        } catch (\Exception) {
+            abort(404);
+        }
+
+        return $timezone;
+    }
+
+    /**
+     * The one UTC instant a guest-visible wall-clock label names, or null when
+     * it names none (the skipped hour of a spring-forward day) or two (the
+     * repeated hour of a fall-back day). A label that cannot be resolved
+     * exactly is never offered and never accepted, so the instant the guest
+     * saw is always the instant that is booked.
+     */
+    private function instantFor(string $date, string $time, string $timezone): ?Carbon
+    {
+        $label = $date.' '.$time;
+        $local = Carbon::createFromFormat('!Y-m-d H:i', $label, $timezone);
+        if ($local === false || $local->format('Y-m-d H:i') !== $label) {
+            return null;
+        }
+        $instant = $local->copy()->utc();
+        foreach ([-3600, -1800, 1800, 3600] as $shift) {
+            if ($instant->copy()->addSeconds($shift)->setTimezone($timezone)->format('Y-m-d H:i') === $label) {
+                return null;
+            }
+        }
+
+        return $instant;
     }
 
     private function eligibleStaffIds(BookingType $type, BusinessLocation $location): array

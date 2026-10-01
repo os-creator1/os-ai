@@ -15,6 +15,8 @@ class AppointmentNoShow implements ShouldDispatchAfterCommit
 
     public function __construct(
         public readonly int $appointmentId,
+        public readonly int $businessId,
+        public readonly int $businessLocationId,
         public readonly int $staffUserId,
         public readonly ?int $markedByUserId,
     ) {

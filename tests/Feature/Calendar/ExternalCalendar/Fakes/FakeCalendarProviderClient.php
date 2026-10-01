@@ -36,6 +36,12 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
     /** @var array<int, ExternalCalendarSyncPage|ExternalCalendarProviderException> */
     public array $incrementalBusyQueue = [];
 
+    /** Runs while a fetch is "in flight", before it returns — simulates the world changing during the provider call. */
+    public ?\Closure $whileFetching = null;
+
+    /** Runs while a refresh exchange is "in flight", before it returns. */
+    public ?\Closure $whileRefreshing = null;
+
     public int $fullBusyCalls = 0;
 
     public int $incrementalBusyCalls = 0;
@@ -106,6 +112,10 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
     {
         $this->refreshExchangeCalls++;
 
+        if ($this->whileRefreshing !== null) {
+            ($this->whileRefreshing)();
+        }
+
         if ($this->throwOnRefreshExchange !== null) {
             throw $this->throwOnRefreshExchange;
         }
@@ -123,6 +133,10 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
         $this->fullBusyCalls++;
         $this->observedAccessTokens[] = $accessToken;
 
+        if ($this->whileFetching !== null) {
+            ($this->whileFetching)();
+        }
+
         return $this->dequeue($this->fullBusyQueue, new ExternalCalendarSyncPage([], null, true));
     }
 
@@ -130,6 +144,10 @@ final class FakeCalendarProviderClient implements CalendarProviderClient
     {
         $this->incrementalBusyCalls++;
         $this->observedAccessTokens[] = $accessToken;
+
+        if ($this->whileFetching !== null) {
+            ($this->whileFetching)();
+        }
 
         return $this->dequeue($this->incrementalBusyQueue, new ExternalCalendarSyncPage([], $cursor, true));
     }

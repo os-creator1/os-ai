@@ -74,28 +74,50 @@ class BookingTypeManager
      */
     public function update(BookingType $bookingType, array $attributes): BookingType
     {
-        $bookingType->fill([
-            'name' => $attributes['name'],
-            'description' => $attributes['description'] ?? null,
-            'duration_minutes' => (int) $attributes['duration_minutes'],
-            'color' => $attributes['color'] ?? null,
-        ]);
+        return $this->mutateUnderBookingLock($bookingType, function (BookingType $locked) use ($attributes): void {
+            $locked->fill([
+                'name' => $attributes['name'],
+                'description' => $attributes['description'] ?? null,
+                'duration_minutes' => (int) $attributes['duration_minutes'],
+                'color' => $attributes['color'] ?? null,
+            ]);
 
-        if (array_key_exists('is_active', $attributes)) {
-            $bookingType->is_active = (bool) $attributes['is_active'];
-        }
-
-        $bookingType->save();
-
-        return $bookingType->refresh();
+            if (array_key_exists('is_active', $attributes)) {
+                $locked->is_active = (bool) $attributes['is_active'];
+            }
+        });
     }
 
     public function setActive(BookingType $bookingType, bool $isActive): BookingType
     {
-        $bookingType->is_active = $isActive;
-        $bookingType->save();
+        return $this->mutateUnderBookingLock($bookingType, function (BookingType $locked) use ($isActive): void {
+            $locked->is_active = $isActive;
+        });
+    }
 
-        return $bookingType->refresh();
+    /**
+     * The ONE write path for a Booking Type's lifecycle (is_active, and the
+     * duration a booking is sized from). It takes the Booking Type row
+     * EXCLUSIVELY — tier 0 of the Calendar lock order, the same row every new
+     * booking holds in SHARED mode (AppointmentBookingService::
+     * lockBookingTypeForBooking()) — and applies the change to the freshly
+     * locked row, never to the caller's possibly stale model.
+     *
+     * Consequences: a deactivation waits for any booking that already owns the
+     * row and commits only after it; a booking that arrives after the
+     * deactivation commits wakes, re-reads and refuses. This holds nothing
+     * besides the one row, so it cannot deadlock with tiers 1-3.
+     */
+    private function mutateUnderBookingLock(BookingType $bookingType, \Closure $apply): BookingType
+    {
+        return DB::transaction(function () use ($bookingType, $apply): BookingType {
+            $locked = BookingType::query()->whereKey($bookingType->getKey())->lockForUpdate()->firstOrFail();
+
+            $apply($locked);
+            $locked->save();
+
+            return $locked->refresh();
+        });
     }
 
     /**

@@ -124,6 +124,18 @@ class ExternalCalendarSyncService
         DB::transaction(function () use ($connection, $page, $isFullSync, $userId, $windowStart, $windowEnd): void {
             $this->locks->lockAscending([$userId]);
 
+            // The connection can end (disconnect / revoke) while the provider
+            // read above was in flight. Ending takes this same tier-2 lock,
+            // so re-checking the state NOW, under it, is race-free: a page
+            // fetched for a connection that has since ended is discarded
+            // rather than resurrecting busy blocks and a cursor that
+            // endConnection() just destroyed.
+            $state = DB::table('external_calendar_connections')->where('id', $connection->id)->value('state');
+
+            if ($state !== ExternalCalendarConnectionState::Active->value) {
+                return;
+            }
+
             $keptProviderEventIds = [];
 
             foreach ($page->events as $event) {

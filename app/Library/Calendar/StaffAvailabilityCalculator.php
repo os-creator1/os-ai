@@ -80,6 +80,14 @@ class StaffAvailabilityCalculator
     ): bool {
         $timezone = $this->timezoneFor($location);
 
+        // A Business whose stored timezone is not a real zone has no local
+        // day to place a window on: nobody is available, rather than a 500.
+        try {
+            new \DateTimeZone($timezone);
+        } catch (\Exception) {
+            return false;
+        }
+
         $localStart = Carbon::instance($startAt->toDateTime())->setTimezone($timezone);
         $localEnd = Carbon::instance($endAt->toDateTime())->setTimezone($timezone);
 
