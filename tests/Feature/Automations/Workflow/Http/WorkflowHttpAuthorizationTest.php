@@ -226,7 +226,7 @@ class WorkflowHttpAuthorizationTest extends TestCase
         [$sibling] = $this->publishWorkflow($tenant['business'], [$this->endStep()], name: 'Sibling');
         $siblingContact = $this->contactFor($tenant['business'], 'Sibling');
         $siblingEnrollment = app(\App\Library\Automation\Workflow\Contracts\EnrollmentService::class)
-            ->enroll($sibling, $siblingContact, (string) $siblingContact->id);
+            ->enroll($sibling, $siblingContact, $siblingContact->location_id, (string) $siblingContact->id);
 
         $this->callJson('GET', $this->routeUrl(
             'enrollments.logs',

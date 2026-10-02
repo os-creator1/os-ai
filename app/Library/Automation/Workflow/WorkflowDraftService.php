@@ -4,6 +4,7 @@ namespace App\Library\Automation\Workflow;
 
 use App\Enums\Automation\Workflow\EnrollmentPolicySource;
 use App\Enums\Automation\Workflow\FailurePolicy;
+use App\Enums\Automation\Workflow\WorkflowLocationScope;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
@@ -185,6 +186,11 @@ class WorkflowDraftService
     {
         return [
             'schema_version' => WorkflowDefinitionValidator::SCHEMA_VERSION,
+            // Location run-scope foundation (lane contract §11): every new
+            // workflow starts "All Locations" — the least surprising default,
+            // and the same value an old document without this key reads as.
+            'location_scope' => WorkflowLocationScope::default()->value,
+            'location_ids' => [],
             'root' => [
                 'key' => (string) Str::uuid(),
                 'type' => WorkflowNodeType::Trigger->value,

@@ -250,7 +250,7 @@ class RuntimeCompletionTest extends TestCase
         $drafts->autosave($draft, $definition, $draft->definition_revision);
         $version = app(WorkflowPublisher::class)->publish($workflow->fresh());
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact->fresh(), (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact->fresh(), $contact->location_id, (string) $contact->id);
 
         // Park the journey ON the if/else node with a claim that was started and
         // never finished — a worker killed mid-evaluation.

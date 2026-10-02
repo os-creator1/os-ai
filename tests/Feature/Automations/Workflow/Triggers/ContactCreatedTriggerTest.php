@@ -397,6 +397,57 @@ class ContactCreatedTriggerTest extends TestCase
         $this->assertSame(0, $this->enrollmentsFor((int) $workflow->getKey()));
     }
 
+    // -----------------------------------------------------------------
+    // Location run-scope foundation (lane contract §9/§17) — contact_created
+    // pins the Contact's OWN Location, and fails closed without one.
+    // -----------------------------------------------------------------
+
+    public function test_the_enrollment_pins_the_contacts_own_location(): void
+    {
+        Bus::fake([AdvanceWorkflowEnrollment::class]);
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->publishContactCreatedWorkflow($business);
+        $group = $this->contactGroup($business);
+        $contact = $this->contact($business, $group, '12025550201');
+
+        $this->assertNotNull($contact->location_id, 'The fixture Business has exactly one Location, so the fixture Contact must have resolved it.');
+        $this->assertSame(1, $this->trigger()->handleContactCreated($contact, ContactCreationSource::Manual));
+
+        $enrollment = AutomationEnrollment::query()->where('workflow_id', $workflow->getKey())->firstOrFail();
+        $this->assertSame((int) $contact->location_id, (int) $enrollment->business_location_id);
+    }
+
+    public function test_a_contact_with_no_location_enrolls_nobody(): void
+    {
+        Bus::fake([AdvanceWorkflowEnrollment::class]);
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->publishContactCreatedWorkflow($business);
+        $group = $this->contactGroup($business);
+        $contact = $this->contact($business, $group, '12025550202');
+        $contact->forceFill(['location_id' => null])->save();
+
+        // No guess, no "first Location" fallback: a Contact whose Location
+        // cannot be proven never starts a run, however clearly a workflow is
+        // listening for its creation.
+        $this->assertSame(0, $this->trigger()->handleContactCreated($contact->fresh(), ContactCreationSource::Manual));
+        $this->assertSame(0, $this->enrollmentsFor((int) $workflow->getKey()));
+    }
+
+    public function test_a_contact_at_an_archived_location_enrolls_nobody(): void
+    {
+        Bus::fake([AdvanceWorkflowEnrollment::class]);
+        [, $business] = $this->entitledTenant();
+        $workflow = $this->publishContactCreatedWorkflow($business);
+        $group = $this->contactGroup($business);
+        $contact = $this->contact($business, $group, '12025550203');
+
+        \App\Models\BusinessLocation::query()->whereKey($contact->location_id)
+            ->update(['lifecycle_state' => \App\Enums\Business\BusinessLocationLifecycleState::Archived->value]);
+
+        $this->assertSame(0, $this->trigger()->handleContactCreated($contact->fresh(), ContactCreationSource::Manual));
+        $this->assertSame(0, $this->enrollmentsFor((int) $workflow->getKey()));
+    }
+
     /** The PHONE field the request-shaped seam validates against. */
     private function phoneField(\App\Models\ContactGroups $group): \App\Models\ContactGroupFields
     {

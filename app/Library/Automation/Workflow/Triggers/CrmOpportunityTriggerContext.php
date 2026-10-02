@@ -39,6 +39,15 @@ final readonly class CrmOpportunityTriggerContext
         public ?int $fromStageId,
         public ?int $toStageId,
         public ?string $outcome,
+        /**
+         * The deal's own Location (lane contract §9) — `crm_opportunities
+         * .location_id`, read from this same history-joined-to-deal row, so
+         * it is the deal's Location AS OF the change this context describes,
+         * never re-derived from wherever the deal sits today. Null when the
+         * deal's own Location was never proven; that enrolls nobody
+         * (EnrollmentService refuses a null Location centrally).
+         */
+        public ?int $locationId = null,
     ) {
     }
 
@@ -62,6 +71,7 @@ final readonly class CrmOpportunityTriggerContext
             'from_stage_id' => $this->fromStageId,
             'to_stage_id' => $this->toStageId,
             'outcome' => $this->outcome,
+            'location_id' => $this->locationId,
         ];
     }
 }

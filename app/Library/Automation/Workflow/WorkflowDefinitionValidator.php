@@ -2,6 +2,7 @@
 
 namespace App\Library\Automation\Workflow;
 
+use App\Enums\Automation\Workflow\WorkflowLocationScope;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 
 /**
@@ -43,6 +44,32 @@ class WorkflowDefinitionValidator
     }
 
     /**
+     * The one place a document's Location scope is read back out, for every
+     * caller that needs it once `validate()` has already proven the shape is
+     * sound (WorkflowCompiler's reference checks, WorkflowPublisher's
+     * denormalisation onto the version). Absent means All (§5A) — this is
+     * the single source of that default, so a caller can never reimplement
+     * it slightly differently.
+     *
+     * @return array{scope: WorkflowLocationScope, ids: list<int>}
+     */
+    public static function locationScopeFrom(array $definition): array
+    {
+        $scope = WorkflowLocationScope::tryFrom((string) ($definition['location_scope'] ?? '')) ?? WorkflowLocationScope::All;
+
+        $rawIds = is_array($definition['location_ids'] ?? null) ? $definition['location_ids'] : [];
+        $ids = [];
+
+        foreach (array_values($rawIds) as $value) {
+            if (is_int($value) || (is_string($value) && ctype_digit($value))) {
+                $ids[] = (int) $value;
+            }
+        }
+
+        return ['scope' => $scope, 'ids' => array_values(array_unique($ids))];
+    }
+
+    /**
      * @return array<string, list<string>> empty when the document is publishable
      */
     public function validate(array $definition): array
@@ -65,6 +92,8 @@ class WorkflowDefinitionValidator
         if (($definition['schema_version'] ?? null) !== self::SCHEMA_VERSION) {
             $errors[self::DOCUMENT_KEY][] = 'This workflow was built by a different version of the editor.';
         }
+
+        $this->validateLocationScopeShape($definition, $errors);
 
         $root = $definition['root'] ?? null;
 
@@ -94,6 +123,72 @@ class WorkflowDefinitionValidator
         }
 
         return $errors;
+    }
+
+    /**
+     * Location run-scope foundation (Blueprint §13, lane contract §5A) —
+     * shape only, no database. Document-level, not trigger-specific:
+     * "location_scope" / "location_ids" sit beside "schema_version" and
+     * "root", exactly like the definition's own policy fields, because
+     * execution scope belongs to the definition, never to one trigger type.
+     *
+     * ABSENT MEANS "all" (backward compatibility, §5A/§11): an existing
+     * document saved before this feature, or a recipe that has not been
+     * touched, carries neither key and must load and save without error,
+     * reading as `WorkflowLocationScope::All`. A PRESENT but malformed value
+     * is refused — that can only be corruption or a client bug, never a
+     * legitimate absence.
+     *
+     * @param array<string, list<string>> $errors
+     */
+    private function validateLocationScopeShape(array $definition, array &$errors): void
+    {
+        if (! array_key_exists('location_scope', $definition)) {
+            // Nothing to validate: starterDefinition() and every recipe may
+            // simply omit it, and it reads as All.
+            return;
+        }
+
+        $rawScope = $definition['location_scope'];
+        $scope = is_string($rawScope) ? WorkflowLocationScope::tryFrom($rawScope) : null;
+
+        if ($scope === null) {
+            $errors[self::DOCUMENT_KEY][] = 'This workflow\'s Location setting is not one this product recognizes.';
+
+            return;
+        }
+
+        $rawIds = $definition['location_ids'] ?? [];
+
+        if (! is_array($rawIds)) {
+            $errors[self::DOCUMENT_KEY][] = 'This workflow\'s selected Locations could not be read.';
+
+            return;
+        }
+
+        $ids = [];
+
+        foreach (array_values($rawIds) as $value) {
+            $isPositiveIntLike = is_int($value) || (is_string($value) && ctype_digit($value));
+
+            if (! $isPositiveIntLike || (int) $value <= 0) {
+                $errors[self::DOCUMENT_KEY][] = 'One of this workflow\'s selected Locations is not valid.';
+
+                return;
+            }
+
+            $ids[] = (int) $value;
+        }
+
+        $uniqueCount = count(array_unique($ids));
+
+        if ($scope === WorkflowLocationScope::One && $uniqueCount !== 1) {
+            $errors[self::DOCUMENT_KEY][] = 'Choose exactly one Location for "One location".';
+        }
+
+        if ($scope === WorkflowLocationScope::Selected && $uniqueCount < 1) {
+            $errors[self::DOCUMENT_KEY][] = 'Choose at least one Location for "Selected locations".';
+        }
     }
 
     /**

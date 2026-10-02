@@ -6,9 +6,11 @@ use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\User;
 use App\Notifications\WorkflowInternalNotification;
@@ -46,12 +48,33 @@ use Throwable;
  * Side-effect class External: an interrupted notification step is failed and
  * never re-run, for the same reason a send is — the outcome is unknown, and a
  * duplicate is worse than a miss.
+ *
+ * LOCATION ACL (independent review, pre-merge finding #3). The predicate
+ * above answers "who may see this BUSINESS" — it says nothing about
+ * Location, so applied alone it can hand a run at Location A's Contact
+ * information to staff authorized only for Location B. Every candidate
+ * recipient is additionally required to be authorized for the run's own
+ * PINNED Location (the enrollment's `business_location_id`, re-derived
+ * fresh here) — never the Contact's current Location, for the same
+ * immutability reason the checkpoint uses the pin (§13). The Business
+ * owner is checked with `LocationAccessGuard::userCanAccessLocation()`
+ * directly — one call, since there is only ever one owner. The staff loop
+ * uses the guard's bounded `membershipsWithLocationAccess()` instead
+ * (correction round 2): calling the per-user method once per candidate
+ * would cost one full Location/Business/Workspace re-derivation PER
+ * STAFF MEMBER, a query count proportional to staff size; the bounded
+ * method costs at most one additional query for the whole recipient list.
+ * The recipients' own User rows are fetched the same way, one `whereIn`
+ * for every passing candidate, rather than one lazy-loaded
+ * `$membership->user` per candidate — so the whole recipient list costs a
+ * small, fixed number of queries however many staff a Business has.
  */
 class InternalNotificationNodeExecutor implements NodeExecutor
 {
     public function __construct(
         private readonly WorkspaceMembershipRepository $memberships,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinesses,
+        private readonly LocationAccessGuard $locationAccessGuard,
     ) {
     }
 
@@ -73,12 +96,23 @@ class InternalNotificationNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::skipped('notification_config_invalid');
         }
 
-        $recipients = $this->recipients($business);
+        $location = $this->pinnedLocation($enrollment, $business);
+
+        if ($location === null) {
+            // The checkpoint (review finding #2) already holds/exits an
+            // enrollment whose pinned Location cannot be proven, so this
+            // should be unreachable in practice. Fail closed anyway rather
+            // than notifying anyone about a run whose Location cannot be
+            // confirmed at all.
+            return NodeExecutionOutcome::skipped('location_unresolved');
+        }
+
+        $recipients = $this->recipients($business, $location);
 
         if ($recipients === []) {
-            // Nobody can see this Business. Not a failure — there is simply no
-            // one to tell, and ending a customer's journey over that would be
-            // the wrong trade.
+            // Nobody can see this Business AT THIS LOCATION. Not a failure —
+            // there is simply no one to tell, and ending a customer's journey
+            // over that would be the wrong trade.
             return NodeExecutionOutcome::skipped('no_notification_recipients');
         }
 
@@ -103,18 +137,42 @@ class InternalNotificationNodeExecutor implements NodeExecutor
     }
 
     /**
-     * The Business owner plus every active member who can see this Business,
-     * each exactly once.
+     * The run's own pinned Location, re-derived fresh and re-verified
+     * against this Business — never trusted from a passed-in model, the
+     * same fail-closed discipline `WorkflowLocationAdmission` and
+     * `LocationAccessGuard` already follow.
+     */
+    private function pinnedLocation(AutomationEnrollment $enrollment, Business $business): ?BusinessLocation
+    {
+        $locationId = $enrollment->business_location_id;
+
+        if ($locationId === null) {
+            return null;
+        }
+
+        $location = BusinessLocation::query()->find($locationId);
+
+        if ($location === null || $location->business_id === null || (int) $location->business_id !== (int) $business->id) {
+            return null;
+        }
+
+        return $location;
+    }
+
+    /**
+     * The Business owner plus every active member who can see this Business
+     * AND is authorized for the run's own pinned Location, each exactly
+     * once.
      *
      * @return array<int, User> keyed by user id, which is what makes it a set
      */
-    private function recipients(Business $business): array
+    private function recipients(Business $business, BusinessLocation $location): array
     {
         $recipients = [];
 
         $owner = User::query()->find((int) $business->customer_id);
 
-        if ($owner instanceof User) {
+        if ($owner instanceof User && $this->locationAccessGuard->userCanAccessLocation((int) $owner->id, $location)) {
             $recipients[(int) $owner->id] = $owner;
         }
 
@@ -123,6 +181,11 @@ class InternalNotificationNodeExecutor implements NodeExecutor
         if ($workspace === null) {
             return $recipients;
         }
+
+        // Pass 1: every active, Business-reachable candidate — the SAME
+        // predicate as before this lane, unchanged. No Location decision
+        // yet, so no per-candidate query is spent on it here.
+        $candidates = [];
 
         foreach ($this->memberships->activeForWorkspace($workspace) as $membership) {
             // Defence in depth: activeForWorkspace() already filters is_active,
@@ -145,7 +208,29 @@ class InternalNotificationNodeExecutor implements NodeExecutor
                 continue;
             }
 
-            $user = $membership->user;
+            $candidates[$userId] = $membership;
+        }
+
+        if ($candidates === []) {
+            return $recipients;
+        }
+
+        // Pass 2: the Location axis for every candidate AT ONCE — bounded,
+        // never one query per candidate (see the class docblock).
+        $locationAccess = $this->locationAccessGuard->membershipsWithLocationAccess($location, $candidates);
+
+        $passingUserIds = array_keys(array_filter($candidates, fn ($_, $userId) => $locationAccess[$userId] ?? false, ARRAY_FILTER_USE_BOTH));
+
+        if ($passingUserIds === []) {
+            return $recipients;
+        }
+
+        // One query for every passing candidate's User row, never one
+        // lazy-loaded `$membership->user` per candidate.
+        $users = User::query()->whereIn('id', $passingUserIds)->get()->keyBy('id');
+
+        foreach ($passingUserIds as $userId) {
+            $user = $users->get($userId);
 
             if ($user instanceof User) {
                 $recipients[$userId] = $user;

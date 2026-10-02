@@ -55,6 +55,20 @@ class EloquentWorkspaceMembershipLocationRepository extends EloquentBaseReposito
         );
     }
 
+    public function membershipIdsAssignedTo(int $businessLocationId, array $membershipIds): array
+    {
+        if ($membershipIds === []) {
+            return [];
+        }
+
+        return $this->query()
+            ->where('business_location_id', $businessLocationId)
+            ->whereIn('workspace_membership_id', $membershipIds)
+            ->pluck('workspace_membership_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
     public function assign(WorkspaceMembership $membership, BusinessLocation $location): WorkspaceMembershipLocation
     {
         $this->guardAssignable($membership, $location);

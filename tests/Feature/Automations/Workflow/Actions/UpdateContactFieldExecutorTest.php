@@ -48,7 +48,7 @@ class UpdateContactFieldExecutorTest extends TestCase
             $this->endStep(),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertSame(EnrollmentStatus::Completed, $enrollment->fresh()->status);
@@ -82,7 +82,7 @@ class UpdateContactFieldExecutorTest extends TestCase
             $this->endStep(),
         ]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         $advancer = app(WorkflowAdvancer::class);
 
         for ($i = 0; $i < 3; $i++) {
@@ -157,7 +157,7 @@ class UpdateContactFieldExecutorTest extends TestCase
             ->where('version_id', $version->id)->where('node_type', 'update_contact_field')
             ->update(['config' => json_encode(['field_id' => (int) $foreignField->id, 'value' => 'tampered'])]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertDatabaseMissing('contacts_custom_field', ['field_id' => $foreignField->id]);
@@ -192,7 +192,7 @@ class UpdateContactFieldExecutorTest extends TestCase
             ->where('version_id', $version->id)->where('node_type', 'update_contact_field')
             ->update(['config' => json_encode(['field_id' => (int) $otherField->id, 'value' => 'wrong group'])]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertDatabaseMissing('contacts_custom_field', ['field_id' => $otherField->id]);
@@ -214,7 +214,7 @@ class UpdateContactFieldExecutorTest extends TestCase
         // Turn the very field the workflow writes into the phone field.
         ContactGroupFields::query()->whereKey($field->id)->update(['is_phone' => true]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertDatabaseMissing('contacts_custom_field', ['field_id' => $field->id]);
@@ -240,7 +240,7 @@ class UpdateContactFieldExecutorTest extends TestCase
             ->where('version_id', $version->id)->where('node_type', 'update_contact_field')
             ->update(['config' => json_encode(['field_id' => 99999999, 'value' => 'nowhere'])]);
 
-        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow->fresh(), $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         $this->assertSame(EnrollmentStatus::Completed, $enrollment->fresh()->status);

@@ -598,15 +598,15 @@ class WorkflowBuilderContractTest extends TestCase
             }
         };
 
-        $compiler = new class (app(WorkflowDefinitionValidator::class), app(NodeTypeRegistry::class), $loader) extends WorkflowCompiler {
+        $compiler = new class (app(WorkflowDefinitionValidator::class), app(NodeTypeRegistry::class), $loader, app(\App\Library\Workspace\LocationAccessGuard::class)) extends WorkflowCompiler {
             /** @var list<WorkflowReferenceCatalog|null> */
             public array $validatedWith = [];
 
-            public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null): array
+            public function validate(AutomationWorkflowVersion $version, ?WorkflowReferenceCatalog $catalog = null, ?int $actingUserId = null): array
             {
                 $this->validatedWith[] = $catalog;
 
-                return parent::validate($version, $catalog);
+                return parent::validate($version, $catalog, $actingUserId);
             }
         };
 

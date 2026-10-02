@@ -90,7 +90,7 @@ class InternalNotificationExecutorTest extends TestCase
 
     private function runWorkflow(\App\Models\AutomationWorkflow $workflow, \App\Models\Contacts $contact): \App\Models\AutomationEnrollment
     {
-        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, (string) $contact->id);
+        $enrollment = app(EnrollmentService::class)->enroll($workflow, $contact, $contact->location_id, (string) $contact->id);
         app(WorkflowAdvancer::class)->advance($enrollment);
 
         return $enrollment->fresh();

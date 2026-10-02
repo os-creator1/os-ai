@@ -95,7 +95,7 @@ class CrmOpportunityTriggerSource implements TriggerSource
         }
 
         foreach ($this->listeningWorkflows($context) as $workflow) {
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $context->occurrenceKey());
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $context->locationId, $context->occurrenceKey());
 
             // Null is EnrollmentService's own refusal: the same change replayed,
             // the contact still part-way through, the workflow paused since.
@@ -154,7 +154,7 @@ class CrmOpportunityTriggerSource implements TriggerSource
             ->where('h.business_id', $businessId)
             ->first([
                 'h.id', 'h.business_id', 'h.opportunity_id', 'h.event', 'h.from_stage_id', 'h.to_stage_id',
-                'h.to_value', 'o.pipeline_id', 'o.contact_id',
+                'h.to_value', 'o.pipeline_id', 'o.contact_id', 'o.location_id',
             ]);
 
         if ($row === null) {
@@ -195,6 +195,7 @@ class CrmOpportunityTriggerSource implements TriggerSource
             fromStageId: $isMove ? $from : null,
             toStageId: $isMove ? $to : null,
             outcome: $isOutcome ? (string) $row->to_value : null,
+            locationId: $row->location_id === null ? null : (int) $row->location_id,
         );
     }
 
