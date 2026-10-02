@@ -3,6 +3,7 @@
 namespace App\Library\Contacts;
 
 use App\Library\Business\Migration\ChatBoxBusinessBackfillV1;
+use App\Library\Crm\CrmLocationScope;
 use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Contacts;
@@ -28,6 +29,13 @@ use Illuminate\Support\Facades\DB;
  * Every read is scoped to the Business — contacts, groups, campaign
  * messages and conversations alike — and the list costs the same fixed
  * number of queries for any page size (no per-row queries).
+ *
+ * LOCATION AUTHORITY. The readers a person works through (the directory, a
+ * profile, the CRM pickers) take the acting user's id: a Contact at a Location
+ * that person may not reach is then simply absent — pushed into SQL, never
+ * filtered after the fact (CrmLocationScope). A Contact with no proven
+ * Location is never denied on its own. Callers that pass no actor (Calendar,
+ * Conversations, SEO, Automations) read exactly as they always did.
  */
 final class ContactDirectory
 {
@@ -39,9 +47,9 @@ final class ContactDirectory
     /**
      * @return LengthAwarePaginator rows: array{uid, name, phone, email, company, group, subscribed, added, last_activity}
      */
-    public function page(Business $business, string $search): LengthAwarePaginator
+    public function page(Business $business, string $search, ?int $actorUserId = null): LengthAwarePaginator
     {
-        $contacts = $this->query($business, $search)
+        $contacts = $this->query($business, $search, $actorUserId)
             ->with('contactGroup:id,business_id,name')
             ->orderByDesc('id')
             ->paginate(self::PER_PAGE, ['id', 'uid', 'group_id', 'business_id', 'phone', 'status', 'created_at'])
@@ -70,9 +78,9 @@ final class ContactDirectory
      *
      * @return list<array{uid: string, name: ?string, phone: string}>
      */
-    public function search(Business $business, string $search, int $limit = 20): array
+    public function search(Business $business, string $search, int $limit = 20, ?int $actorUserId = null): array
     {
-        $contacts = $this->query($business, $search)
+        $contacts = $this->query($business, $search, $actorUserId)
             ->orderByDesc('id')
             ->limit($limit)
             ->get(['id', 'uid', 'phone']);
@@ -89,33 +97,42 @@ final class ContactDirectory
      * @param  list<int>  $contactIds
      * @return array<int, array{uid: string, name: ?string, phone: string}>
      */
-    public function summaries(Business $business, array $contactIds): array
+    public function summaries(Business $business, array $contactIds, ?int $actorUserId = null): array
     {
         if ($contactIds === []) {
             return [];
         }
 
-        return $this->summarize(
-            Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds)->get(['id', 'uid', 'phone'])
-        );
+        $contacts = Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds);
+
+        if ($actorUserId !== null) {
+            app(CrmLocationScope::class)->restrict($contacts, $business, $actorUserId, 'contacts.location_id');
+        }
+
+        return $this->summarize($contacts->get(['id', 'uid', 'phone']));
     }
 
     /**
      * The ids of this Business's contacts matching a search, as a subquery, for
      * lists of other records filtered by their contact (the CRM board search).
      */
-    public function matchingContactIds(Business $business, string $search): Builder
+    public function matchingContactIds(Business $business, string $search, ?int $actorUserId = null): Builder
     {
-        return $this->query($business, $search)->select('contacts.id');
+        return $this->query($business, $search, $actorUserId)->select('contacts.id');
     }
 
-    public function findForBusiness(Business $business, string $contactUid): ?Contacts
+    public function findForBusiness(Business $business, string $contactUid, ?int $actorUserId = null): ?Contacts
     {
-        return Contacts::query()
+        $contact = Contacts::query()
             ->where('business_id', $business->id)
             ->where('uid', $contactUid)
-            ->with('contactGroup:id,uid,business_id,name')
-            ->first();
+            ->with('contactGroup:id,uid,business_id,name');
+
+        if ($actorUserId !== null) {
+            app(CrmLocationScope::class)->restrict($contact, $business, $actorUserId, 'contacts.location_id');
+        }
+
+        return $contact->first();
     }
 
     /**
@@ -240,9 +257,13 @@ final class ContactDirectory
             ->first(fn (ChatBox $box) => ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to) === $phone);
     }
 
-    private function query(Business $business, string $search): Builder
+    private function query(Business $business, string $search, ?int $actorUserId = null): Builder
     {
         $query = Contacts::query()->where('business_id', $business->id);
+
+        if ($actorUserId !== null) {
+            app(CrmLocationScope::class)->restrict($query, $business, $actorUserId, 'contacts.location_id');
+        }
 
         if ($search === '') {
             return $query;

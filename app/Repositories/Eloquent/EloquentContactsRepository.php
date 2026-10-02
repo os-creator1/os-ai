@@ -863,7 +863,14 @@
             $saved_ids = [];
             foreach ($input['fields'] as $item) {
 
-                $field = ContactGroupFields::findByUid($item['uid']);
+                // A field is looked up INSIDE this list. A uid that names another
+                // list's field — another Business's included — or none at all is
+                // treated as a new field of THIS list: knowing a foreign field's uid
+                // never lets a save rewrite, re-home or (below) delete it.
+                $field = ContactGroupFields::query()
+                    ->where('contact_group_id', $contactGroups->id)
+                    ->where('uid', $item['uid'])
+                    ->first();
                 if ( ! $field) {
                     $field                   = new ContactGroupFields();
                     $field->contact_group_id = $contactGroups->id;
@@ -886,6 +893,10 @@
                     }
 
                     $field->fill($item);
+
+                    // `contact_group_id` is mass-assignable: a posted value must never
+                    // move a field into (or out of) a list other than this one.
+                    $field->contact_group_id = $contactGroups->id;
 
                 } else {
                     $field->label         = $item['label'];
@@ -942,7 +953,12 @@
                 }),
             ];
 
-            $validator = Validator::make($input, $rules, $messages);
+            // The number is validated in the form it is stored and matched in
+            // (digits only), so "+1 (415) 555-0151" is the SAME contact as
+            // "14155550151": the per-list unique rule must see the normalized value,
+            // or a re-typed number would slip past it, match the existing row below,
+            // and silently overwrite that contact's details and re-subscribe it.
+            $validator = Validator::make(array_merge($input, ['PHONE' => $phone]), $rules, $messages);
 
 
             $subscriber = $contactGroups->subscribers()->firstOrNew([

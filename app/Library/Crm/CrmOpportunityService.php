@@ -56,7 +56,18 @@ class CrmOpportunityService
             throw new CrmRuleException('That pipeline or contact is not part of this Business.');
         }
 
-        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, null);
+        // The Contact's own proven Location is authoritative: a deal is never
+        // attributed to a Location other than its Contact's (createAtLocation()
+        // enforces the same rule). Only a Contact with no proven Location falls
+        // back to the single-Active-Location rule in persist() — so a Business with
+        // several Locations never leaves a located Contact's deal Business-wide.
+        $contactLocationId = $contact->location_id === null ? null : (int) $contact->location_id;
+
+        if ($contactLocationId !== null && ! BusinessLocation::query()->where('id', $contactLocationId)->where('business_id', $business->id)->exists()) {
+            throw new CrmRuleException('That contact belongs to a different business location.');
+        }
+
+        return $this->persist($business, $pipeline, $contact, $title, $valueMinor, $stage, $actorUserId, $source, $contactLocationId);
     }
 
     /**
@@ -127,7 +138,7 @@ class CrmOpportunityService
      * not depend on how the rows were obtained, then the transaction. Callers
      * have already validated the title and proven tenancy.
      *
-     * @param  ?int  $explicitLocationId  null = the single-Active-Location rule, as create() always applied
+     * @param  ?int  $explicitLocationId  null = the single-Active-Location rule (a Contact with no proven Location)
      */
     private function persist(
         Business $business,
