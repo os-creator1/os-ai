@@ -7,6 +7,8 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Website\Setup\QuestionnaireResolver;
+use App\Library\Website\Setup\WebsiteCreationStage;
+use App\Library\Website\Setup\WebsiteCreationStateResolver;
 use App\Models\Business;
 use App\Models\CatalogItem;
 use App\Models\QuestionnaireResponse;
@@ -40,48 +42,46 @@ class WebsiteStudioController extends CustomerBaseController
 
     private const VALID_TABS = ['website', 'packages', 'forms', 'questionnaires'];
 
-    public function __construct(private readonly QuestionnaireResolver $questionnaireResolver)
-    {
+    public function __construct(
+        private readonly QuestionnaireResolver $questionnaireResolver,
+        private readonly WebsiteCreationStateResolver $creationState,
+    ) {
     }
 
     /**
-     * Independent-review correction round: a Website row exists from the
-     * moment the wizard's template step runs (WebsiteStarterDraftService::
-     * createShellFromTemplate()), long before the questionnaire is
-     * answered or generation ever succeeds — so "a Website row exists"
-     * alone is no longer a safe signal that Studio is the right place to
-     * land. Main Website navigation (this route) now checks for an
-     * active session (a fresh in_progress one, OR a reopened edit_mode
-     * one) FIRST and resumes it at its saved step; only when no session
-     * is active does a Website row's existence route to Studio, and its
-     * absence to the empty state.
+     * The one Website entry point. A Website row exists from the moment the
+     * wizard's template step runs (createShellFromTemplate()), long before
+     * the questionnaire is answered or generation succeeds, so a row alone
+     * never means "created". WebsiteCreationStateResolver decides:
+     * not started -> the "Create my website" landing; in progress -> the
+     * saved question; ready to generate -> the review/generate screen;
+     * generated -> Studio.
      */
     public function show(string $workspaceUid, string $businessUid, string $tab = 'website'): View|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::WebsiteGeneration->value);
 
-        $definition = $this->questionnaireResolver->resolveForBusiness($business);
+        $state = $this->creationState->resolve($business);
 
-        if ($definition !== null) {
-            $activeResponse = QuestionnaireResponse::where('business_id', $business->id)
-                ->where('questionnaire_definition_id', $definition->id)
-                ->where('status', 'in_progress')
-                ->first();
+        // THE ENTRY INVARIANT (WebsiteCreationStateResolver): Studio is
+        // only for a website that actually has generated pages. Every
+        // earlier stage lands on its own step of the one creation journey.
+        switch ($state->stage) {
+            case WebsiteCreationStage::InProgress:
+                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $state->response->current_step_key]);
 
-            if ($activeResponse !== null) {
-                return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $activeResponse->current_step_key]);
-            }
+            case WebsiteCreationStage::ReadyToGenerate:
+                return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+
+            case WebsiteCreationStage::NotStarted:
+                return view('customer.business.website.empty', [
+                    'workspaceUid' => $workspaceUid,
+                    'businessUid' => $businessUid,
+                ]);
         }
 
-        $website = Website::where('business_id', $business->id)->first();
-
-        if ($website === null) {
-            return view('customer.business.website.empty', [
-                'workspaceUid' => $workspaceUid,
-                'businessUid' => $businessUid,
-            ]);
-        }
+        $website = $state->website;
 
         if (! in_array($tab, self::VALID_TABS, true)) {
             $tab = 'website';

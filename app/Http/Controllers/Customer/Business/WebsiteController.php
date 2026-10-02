@@ -78,6 +78,7 @@ class WebsiteController extends CustomerBaseController
         private readonly GuidedGenerationCommitService $guidedGeneration,
         private readonly QuestionnaireResolver $questionnaireResolver,
         private readonly \App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator $generationCoordinator,
+        private readonly \App\Library\Website\Setup\WebsiteCreationStateResolver $creationState,
     ) {
     }
 
@@ -224,11 +225,18 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
-    public function pages(string $workspaceUid, string $businessUid): View|Factory|Application
+    public function pages(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+
+        // A website with no pages has not been created yet — the Pages
+        // management screen (checklist, Preview, Publish...) is for a
+        // generated site only. Send the owner to the one creation journey.
+        if (! $this->creationState->hasGeneratedPages($website)) {
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+        }
 
         $isPhotoBooth = WebsiteStarterDraftService::isPhotoBooth($business);
 
@@ -369,11 +377,15 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
-    public function preview(string $workspaceUid, string $businessUid, ?string $pageUid = null): View|Factory|Application
+    public function preview(string $workspaceUid, string $businessUid, ?string $pageUid = null): View|Factory|Application|RedirectResponse
     {
         $this->authorize('website');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
+
+        if ($pageUid === null && ! $this->creationState->hasGeneratedPages($website)) {
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid]);
+        }
 
         $page = $pageUid !== null
             ? $this->resolvePage($website, $pageUid)
@@ -538,6 +550,16 @@ class WebsiteController extends CustomerBaseController
 
         if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
             return $demo;
+        }
+
+        // Nothing to publish before the website is generated; say so
+        // plainly instead of surfacing a raw validation exception.
+        if (! $website->pages()->exists()) {
+            $message = 'Your website has no pages yet. Create your website first, then publish.';
+
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])
+                ->withErrors(['website' => $message])
+                ->with(['status' => 'error', 'message' => $message]);
         }
 
         $this->publisher->publish($website, (int) Auth::id());

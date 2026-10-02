@@ -374,6 +374,41 @@ final class WebsiteSetupSessionManager
     }
 
     /**
+     * Website creation flow fix — a `completed` response whose website
+     * never actually has pages (generation never succeeded on its behalf,
+     * or every generated page was later deleted) must not strand the
+     * owner: this flips it back to a plain first-time `in_progress`
+     * session (NOT edit_mode — finishing it MUST generate) parked on its
+     * final question, which is exactly where the wizard sends an owner to
+     * the review/generate screen. Never creates a second response or
+     * Website.
+     */
+    public function reopenForGeneration(QuestionnaireResponse $completed): QuestionnaireResponse
+    {
+        if ($completed->status !== QuestionnaireResponseStatus::Completed) {
+            return $completed;
+        }
+
+        return $this->runIfNotGenerating($completed, function (QuestionnaireResponse $locked) {
+            if ($locked->status !== QuestionnaireResponseStatus::Completed) {
+                return $locked;
+            }
+
+            $visible = $this->stepResolver->visibleSteps($locked->version->steps(), $locked->answers ?? []);
+            $lastKey = $visible !== [] ? (string) end($visible)['key'] : (string) $locked->current_step_key;
+
+            $locked->forceFill([
+                'status' => QuestionnaireResponseStatus::InProgress,
+                'edit_mode' => false,
+                'current_step_key' => $lastKey,
+                'completed_at' => null,
+            ])->save();
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
      * The edit-existing counterpart to complete(): reconciliation already
      * ran (WebsiteSetupAnswerApplier::apply()) before this is called, and
      * this never triggers guided generation — manually edited page

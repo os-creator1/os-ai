@@ -89,6 +89,17 @@ class GuidedWebsiteGenerationClient
     }
 
     /**
+     * Was the last call refused because AI is switched off for this
+     * environment (a different fact from a bad response or an exhausted
+     * allowance — and one the owner can do nothing about by editing their
+     * answers, so the screen says so plainly instead of "invalid batch").
+     */
+    public function lastCallWasUnavailable(): bool
+    {
+        return $this->client->lastRefusalReason() === \App\Library\Ai\Enums\AiRefusalReason::AiDisabled;
+    }
+
+    /**
      * @param  array  $plan  WebsitePageStrategy::buildPlan()'s output
      * @return array<int, array{role: string, content: string}>
      */

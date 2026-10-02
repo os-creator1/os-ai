@@ -145,7 +145,15 @@ final class GuidedGenerationCommitService
                 ->whereIn('status', [WebsiteGuidedGenerationAttempt::STATUS_PENDING, WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED])
                 ->orderByDesc('id')
                 ->first();
-            if ($existing !== null) {
+            // A SUCCEEDED attempt only stands in for a new request while its
+            // pages still exist: if every page was since deleted, converging
+            // on it would report success and build nothing (an empty site
+            // the owner could never regenerate). A PENDING one always
+            // converges — it is genuinely in flight.
+            $stale = $existing !== null
+                && $existing->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED
+                && ! $website->pages()->exists();
+            if ($existing !== null && ! $stale) {
                 return $existing;
             }
 
@@ -230,7 +238,9 @@ final class GuidedGenerationCommitService
                 'retry_count' => $retryCount,
                 'failure_reason' => $this->client->lastCallWasBudgetExhausted()
                     ? 'The included AI generation budget is used up for this period.'
-                    : 'Generation did not produce a valid page batch.',
+                    : ($this->client->lastCallWasUnavailable()
+                        ? "Website generation isn't available in this environment right now. Your answers are saved — try again once it is."
+                        : 'Generation did not produce a valid page batch.'),
                 'completed_at' => now(),
             ]);
 

@@ -55,6 +55,7 @@ class WebsiteTenancyTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $website = $this->createWebsite($business);
+        $this->homePage($website); // a website with pages is a created website -> Studio
         $this->authenticateAsCustomer($customer);
 
         $this->get(route('customer.workspaces.businesses.website.show', $this->routeParams($workspace, $business)))
@@ -66,6 +67,7 @@ class WebsiteTenancyTest extends TestCase
     {
         [, $business, $workspace] = $this->entitledTenant();
         $website = $this->createWebsite($business);
+        $this->homePage($website);
 
         $admin = $this->createCustomer()->user;
         $this->addMember($workspace, $admin, WorkspaceMembershipRole::Admin);
@@ -80,6 +82,7 @@ class WebsiteTenancyTest extends TestCase
     {
         [, $business, $workspace] = $this->entitledTenant();
         $website = $this->createWebsite($business);
+        $this->homePage($website);
 
         $staff = $this->createCustomer()->user;
         $this->addMember($workspace, $staff, WorkspaceMembershipRole::Staff);

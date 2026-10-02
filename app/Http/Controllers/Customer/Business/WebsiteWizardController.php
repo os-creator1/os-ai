@@ -18,6 +18,8 @@ use App\Library\Website\Setup\Exceptions\InvalidAnswerException;
 use App\Library\Website\Setup\QuestionnaireAnswerValidator;
 use App\Library\Website\Setup\QuestionnaireResolver;
 use App\Library\Website\Setup\QuestionnaireStepResolver;
+use App\Library\Website\Setup\WebsiteCreationStage;
+use App\Library\Website\Setup\WebsiteCreationStateResolver;
 use App\Library\Website\Setup\WebsiteSetupAnswerApplier;
 use App\Library\Website\Setup\WebsiteSetupSessionManager;
 use App\Library\Website\Setup\WizardPresentationAnswers;
@@ -83,6 +85,7 @@ class WebsiteWizardController extends CustomerBaseController
         private readonly WebsiteAssetAltTextGenerator $altTextGenerator,
         private readonly WebsiteAiGenerationClient $aiClient,
         private readonly WebsiteGenerationCoordinator $generationCoordinator,
+        private readonly WebsiteCreationStateResolver $creationState,
     ) {
     }
 
@@ -96,22 +99,18 @@ class WebsiteWizardController extends CustomerBaseController
             return $this->unavailableView($workspaceUid, $businessUid);
         }
 
-        // An in-progress session always wins (this covers a reopened
-        // edit_mode session too — see class docblock) — resume exactly
-        // where it left off, even if the Website shell row already
-        // exists (it is deliberately created early, at the template
-        // step, so an existing shell alone must never bounce an active
-        // session back to Studio).
-        $response = $this->inProgressResponse($business, $definition);
-        if ($response !== null) {
-            return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
-        }
+        // Website creation flow fix — the destination is decided by the
+        // ONE authoritative creation state, never by "a Website row
+        // exists" (the wizard creates that shell row at the template
+        // step, long before anything is generated).
+        $state = $this->creationState->resolve($business);
 
-        if (Website::where('business_id', $business->id)->exists()) {
-            return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
-        }
-
-        return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]);
+        return match ($state->stage) {
+            WebsiteCreationStage::InProgress => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $state->response->current_step_key]),
+            WebsiteCreationStage::ReadyToGenerate => redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]),
+            WebsiteCreationStage::Generated => redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]),
+            WebsiteCreationStage::NotStarted => redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, self::TEMPLATE_STEP]),
+        };
     }
 
     public function show(string $workspaceUid, string $businessUid, string $stepKey): View|RedirectResponse
@@ -150,15 +149,24 @@ class WebsiteWizardController extends CustomerBaseController
                 ]);
             }
 
-            if (Website::where('business_id', $business->id)->exists()) {
+            $state = $this->creationState->resolve($business);
+
+            if ($state->stage === WebsiteCreationStage::Generated) {
                 return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
             }
 
+            if ($state->stage === WebsiteCreationStage::ReadyToGenerate) {
+                return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+            }
+
+            // NotStarted — including a leftover zero-page Website shell,
+            // which is NOT a created website: offer the picker again,
+            // pre-selecting whatever style the shell already has.
             return view('customer.business.website.wizard.steps.template', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
-                'selectedTemplateKey' => null,
+                'selectedTemplateKey' => $state->website?->template_key,
                 'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
             ]);
         }
@@ -239,11 +247,22 @@ class WebsiteWizardController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $existingResponse->current_step_key]);
         }
 
-        if (Website::where('business_id', $business->id)->exists()) {
+        $state = $this->creationState->resolve($business);
+
+        if ($state->stage === WebsiteCreationStage::Generated) {
             return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid]);
         }
 
-        $website = $this->starterDrafts->createShellFromTemplate($business, $template);
+        if ($state->stage === WebsiteCreationStage::ReadyToGenerate) {
+            return redirect()->route('customer.workspaces.businesses.website.setup.review', [$workspaceUid, $businessUid]);
+        }
+
+        // NotStarted. A leftover zero-page Website shell (never a created
+        // website) is adopted — restyled in place, never duplicated —
+        // rather than bouncing the owner into an empty Studio.
+        $website = $state->website !== null
+            ? $this->starterDrafts->updateShellTemplate($state->website, $template)
+            : $this->starterDrafts->createShellFromTemplate($business, $template);
         $response = $this->sessionManager->start($business, $definition->key, $website->id);
 
         return redirect()->route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, (string) $response->current_step_key]);
@@ -354,16 +373,109 @@ class WebsiteWizardController extends CustomerBaseController
         $definition = $this->questionnaireResolver->resolveForBusiness($business);
         $response = $definition !== null ? $this->inProgressResponse($business, $definition) : null;
 
+        // A `completed` response whose website never got pages is
+        // reopened into the generate/try-again step (see
+        // WebsiteCreationStateResolver) rather than stranding the owner.
+        if ($response === null && $definition !== null) {
+            $state = $this->creationState->resolve($business);
+
+            if ($state->stage === WebsiteCreationStage::ReadyToGenerate && $state->response?->status === QuestionnaireResponseStatus::Completed) {
+                try {
+                    $response = $this->sessionManager->reopenForGeneration($state->response);
+                } catch (GenerationInProgressException $e) {
+                    return redirect()->route('customer.workspaces.businesses.website.studio.show', [$workspaceUid, $businessUid])->with([
+                        'status' => 'error',
+                        'message' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
         if ($response === null || ! $this->stepResolver->isComplete($response->version->steps(), $response->answers ?? [])) {
             return redirect()->route('customer.workspaces.businesses.website.setup.start', [$workspaceUid, $businessUid]);
         }
+
+        $lastAttempt = $response->website?->guidedGenerationAttempts()->latest('id')->first();
 
         return view('customer.business.website.wizard.steps.generating', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'editMode' => $response->edit_mode,
             'answersRevision' => $response->answers_revision,
+            'previousStepKey' => (function () use ($response) {
+                $visible = $this->stepResolver->visibleSteps($response->version->steps(), $response->answers ?? []);
+
+                return $visible !== [] ? (string) end($visible)['key'] : (string) $response->current_step_key;
+            })(),
+            'lastAttemptFailed' => $lastAttempt !== null && $lastAttempt->status === WebsiteGuidedGenerationAttempt::STATUS_FAILED,
+            'generationAvailable' => (bool) config('services.openai.active'),
+            'answerSummary' => $this->answerSummary($response),
         ]);
+    }
+
+    /**
+     * A concise, human review of what the owner answered, one line per
+     * answered question in questionnaire order (hidden/conditional steps
+     * excluded) — shown on the review screen so "Generate my website" is
+     * a confident final click, never a blind one.
+     *
+     * Grouped under three plain headings so a long setup reads as a
+     * summary, not a form dump; select / multi-select answers show their
+     * human labels, never their stored keys.
+     *
+     * @return array<string, array<int, array{prompt: string, value: string}>>  heading => rows (empty groups omitted)
+     */
+    private function answerSummary(QuestionnaireResponse $response): array
+    {
+        $groupOf = [
+            'business' => 'About your business',
+            'business_location' => 'About your business',
+            'knowledge_profile' => 'About your business',
+            'business_service' => 'Services & packages',
+            'catalog_item' => 'Services & packages',
+            'backdrop' => 'Services & packages',
+            'gallery' => 'Website content',
+            'custom_section' => 'Website content',
+            'faq' => 'Website content',
+            'website_form' => 'Contact & other',
+            'answers' => 'Contact & other',
+        ];
+
+        $groups = ['About your business' => [], 'Services & packages' => [], 'Website content' => [], 'Contact & other' => []];
+        $answers = $response->answers ?? [];
+
+        foreach ($this->stepResolver->visibleSteps($response->version->steps(), $answers) as $step) {
+            $value = $answers[$step['key']] ?? null;
+
+            if ($value === null || $value === '' || $value === []) {
+                continue;
+            }
+
+            $options = is_array($step['options'] ?? null) ? $step['options'] : [];
+            $label = fn ($item) => (string) ($options[(string) $item] ?? $item);
+
+            if (is_array($value)) {
+                $parts = array_map(function ($item) use ($label) {
+                    if (is_array($item)) {
+                        return (string) ($item['name'] ?? $item['question'] ?? $item['quote'] ?? '');
+                    }
+
+                    return $label($item);
+                }, $value);
+                $text = implode(', ', array_filter($parts, fn ($p) => $p !== ''));
+            } elseif (is_bool($value)) {
+                $text = $value ? 'Yes' : 'No';
+            } else {
+                $text = $label($value);
+            }
+
+            if ($text !== '') {
+                $heading = $groupOf[$step['target_module'] ?? ''] ?? 'Contact & other';
+                $groups[$heading][] = ['prompt' => (string) $step['prompt'], 'value' => \Illuminate\Support\Str::limit($text, 140)];
+            }
+        }
+
+        return array_filter($groups);
     }
 
     /**
