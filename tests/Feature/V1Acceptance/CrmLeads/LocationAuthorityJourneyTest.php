@@ -274,6 +274,20 @@ class LocationAuthorityJourneyTest extends TestCase
         $this->assertContains('contacts', $domains);
     }
 
+    public function test_the_subscriber_count_honours_location_reach_and_ignores_forged_groups(): void
+    {
+        $url = route('customer.workspaces.businesses.contacts.count_contact', [$this->workspace->uid, $this->business->uid]);
+        $groupId = (int) $this->ana->group_id;
+        [, $rivalBusiness] = $this->crmTenant('Rival Studio', 'Rival');
+        $rivalGroup = $this->personAt($rivalBusiness, null, 'Rita')->group_id;
+
+        $this->authenticateAs($this->owner);
+        $this->assertSame(3, (int) $this->postJson($url, ['contact_group_ids' => [$groupId, $rivalGroup]])->getContent());
+
+        $this->asStaff();
+        $this->assertSame(2, (int) $this->postJson($url, ['contact_group_ids' => [$groupId, $rivalGroup]])->getContent());
+    }
+
     // ------------------------------------------------------------------ bulk
 
     public function test_bulk_actions_never_touch_a_contact_at_a_location_the_actor_cannot_reach(): void

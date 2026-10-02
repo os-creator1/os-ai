@@ -929,6 +929,7 @@
             ContactGroups $contactGroups,
             array $input,
             ContactCreationSource $creationSource = ContactCreationSource::Other,
+            ?int $locationId = null,
         )
         {
             $messages = [];
@@ -948,8 +949,15 @@
             $rules['PHONE'] = [
                 'required',
                 new Phone($phone),
-                Rule::unique('contacts')->where(function ($query) use ($contactGroups) {
-                    return $query->where('group_id', $contactGroups->id);
+                // Identity is Business + Location + normalized phone (Blueprint §10)
+                // when the caller names the Location the Contact is being created at:
+                // the same number in another list of that Location is the same
+                // Contact, and the same number at another Location is a separate one.
+                // A caller that names none keeps the per-list rule.
+                Rule::unique('contacts')->where(function ($query) use ($contactGroups, $locationId) {
+                    return $locationId === null
+                        ? $query->where('group_id', $contactGroups->id)
+                        : $query->where('business_id', $contactGroups->business_id)->where('location_id', $locationId);
                 }),
             ];
 
@@ -961,9 +969,9 @@
             $validator = Validator::make(array_merge($input, ['PHONE' => $phone]), $rules, $messages);
 
 
-            $subscriber = $contactGroups->subscribers()->firstOrNew([
-                'phone' => trim($phone),
-            ]);
+            $subscriber = $contactGroups->subscribers()->firstOrNew(
+                $locationId === null ? ['phone' => trim($phone)] : ['phone' => trim($phone), 'location_id' => $locationId]
+            );
 
             if ($subscriber->isListedInBlacklist()) {
                 $validator->after(function ($validator) {
@@ -987,7 +995,7 @@
                 // Contact, so its Location is resolved now, once, from the
                 // group's own Business. An existing (re-saved) subscriber
                 // keeps whatever location_id it already has.
-                $subscriber->location_id = Contacts::singleActiveLocationIdFor($contactGroups->business_id);
+                $subscriber->location_id = $locationId ?? Contacts::singleActiveLocationIdFor($contactGroups->business_id);
             }
 
             $subscriber->save();

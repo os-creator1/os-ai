@@ -3,6 +3,7 @@
 namespace Tests\Feature\V1Acceptance\CrmLeads;
 
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
@@ -48,7 +49,11 @@ class ContactCreationJourneyTest extends TestCase
         // The real first step: a Business with no list gets its first one.
         $this->post(route('customer.workspaces.businesses.people.first-list', [$this->workspace->uid, $this->business->uid]), ['next' => 'add'])->assertRedirect();
         $this->group = ContactGroups::query()->where('business_id', $this->business->id)->sole();
+        // A Business has its Primary Location from signup; Contacts are Location-bound.
+        $this->primary = $this->location($this->business, 'Primary');
     }
+
+    private BusinessLocation $primary;
 
     private function storeUrl(?ContactGroups $group = null, ?Workspace $workspace = null, ?Business $business = null): string
     {
@@ -71,7 +76,7 @@ class ContactCreationJourneyTest extends TestCase
 
     public function test_the_owner_creates_a_contact_in_the_intended_business_at_its_single_location(): void
     {
-        $location = $this->location($this->business);
+        $location = $this->primary;
 
         $response = $this->post($this->storeUrl(), ['PHONE' => '+1 (415) 555-0111', 'FIRST_NAME' => 'Jordan', 'LAST_NAME' => 'Rivera']);
 
@@ -86,24 +91,67 @@ class ContactCreationJourneyTest extends TestCase
         $this->get($this->peopleUrl($this->workspace, $this->business, $contact->uid))->assertOk()->assertSee('Jordan')->assertSee('Rivera');
     }
 
-    public function test_a_location_is_never_guessed_when_there_is_not_exactly_one(): void
+    public function test_with_several_active_locations_the_actor_must_choose_one_of_theirs(): void
     {
-        // No Location at all.
-        $this->post($this->storeUrl(), ['PHONE' => '14155550121', 'FIRST_NAME' => 'None']);
-        $this->assertNull(Contacts::query()->where('phone', '14155550121')->sole()->location_id);
+        $second = $this->location($this->business, 'Second');
+        $rivalLocation = $this->location($this->rival()[1], 'Rival Downtown');
 
-        // Two Active Locations: V1 has no way to pick one for a manually added
-        // Contact, so none is invented — the Contact stays Business-wide (Contract
-        // 08B), reachable by anyone who reaches the Business.
-        $this->location($this->business, 'One');
-        $this->location($this->business, 'Two');
-        $this->post($this->storeUrl(), ['PHONE' => '14155550122', 'FIRST_NAME' => 'Many']);
-        $this->assertNull(Contacts::query()->where('phone', '14155550122')->sole()->location_id);
+        // Not chosen, forged and foreign: refused, nothing created.
+        $this->post($this->storeUrl(), ['PHONE' => '14155550121', 'FIRST_NAME' => 'None'])->assertSessionHasErrors('location');
+        $this->post($this->storeUrl(), ['PHONE' => '14155550121', 'FIRST_NAME' => 'Forged', 'location' => 'no-such-uid'])->assertSessionHasErrors('location');
+        $this->post($this->storeUrl(), ['PHONE' => '14155550121', 'FIRST_NAME' => 'Foreign', 'location' => $rivalLocation->uid])->assertSessionHasErrors('location');
+        $this->assertSame(0, Contacts::query()->count());
+
+        $this->post($this->storeUrl(), ['PHONE' => '14155550122', 'FIRST_NAME' => 'Chosen', 'location' => $second->uid])->assertRedirect();
+        $this->assertSame((int) $second->id, (int) Contacts::query()->sole()->location_id);
+        $this->get(route('customer.workspaces.businesses.contact.create', [$this->workspace->uid, $this->business->uid, $this->group->uid]))->assertOk()->assertSee('name="location"', false);
     }
 
+    public function test_restricted_staff_can_only_choose_their_own_locations_and_zero_locations_refuses(): void
+    {
+        $second = $this->location($this->business, 'Second');
+        $staff = $this->staffAt($this->workspace, $second);
+        $this->authenticateAs($staff, self::STAFF_PERMISSIONS);
+
+        // Exactly one reachable Location: used automatically; another one is refused.
+        $this->post($this->storeUrl(), ['PHONE' => '14155550123', 'FIRST_NAME' => 'Mine'])->assertRedirect();
+        $this->assertSame((int) $second->id, (int) Contacts::query()->sole()->location_id);
+        $this->post($this->storeUrl(), ['PHONE' => '14155550124', 'FIRST_NAME' => 'Other', 'location' => $this->primary->uid])->assertSessionHasErrors('location');
+        $this->assertSame(1, Contacts::query()->count());
+
+        // No Location at all: no Location-less Contact.
+        [$owner, $bare, $bareWorkspace] = $this->crmTenant('Bare Co', 'Bare');
+        $this->authenticateAs($owner);
+        $this->post(route('customer.workspaces.businesses.people.first-list', [$bareWorkspace->uid, $bare->uid]), ['next' => 'add']);
+        $bareGroup = ContactGroups::query()->where('business_id', $bare->id)->sole();
+        $this->post($this->storeUrl($bareGroup, $bareWorkspace, $bare), ['PHONE' => '14155550125', 'FIRST_NAME' => 'Nowhere'])->assertSessionHasErrors('location');
+        $this->assertSame(0, Contacts::query()->where('business_id', $bare->id)->count());
+    }
+
+    public function test_identity_is_location_local_across_lists_and_formatting(): void
+    {
+        $second = $this->location($this->business, 'Second');
+        $otherList = ContactGroups::create(['customer_id' => $this->business->customer_id, 'business_id' => $this->business->id, 'name' => 'Other list', 'status' => true]);
+
+        $this->post($this->storeUrl(), ['PHONE' => '14155550191', 'FIRST_NAME' => 'First', 'location' => $this->primary->uid])->assertRedirect();
+
+        // Same Location, other list, other formatting: the same Contact, refused.
+        $this->post($this->storeUrl($otherList), ['PHONE' => '+1 (415) 555-0191', 'FIRST_NAME' => 'Dup', 'location' => $this->primary->uid])->assertSessionHasErrors('PHONE');
+        $this->assertSame(1, Contacts::query()->count());
+
+        // Another Location: a separate Contact is valid, even in the same list.
+        $this->post($this->storeUrl(), ['PHONE' => '14155550191', 'FIRST_NAME' => 'Second', 'location' => $second->uid])->assertRedirect();
+        $this->assertSame(2, Contacts::query()->where('phone', '14155550191')->count());
+
+        // Another Business: separate too.
+        [$rivalOwner, $rivalBusiness, $rivalWorkspace, $rivalGroup] = $this->rival();
+        $this->location($rivalBusiness, 'Rival');
+        $this->authenticateAs($rivalOwner);
+        $this->post($this->storeUrl($rivalGroup, $rivalWorkspace, $rivalBusiness), ['PHONE' => '14155550191', 'FIRST_NAME' => 'Rival'])->assertRedirect();
+        $this->assertSame(3, Contacts::query()->where('phone', '14155550191')->count());
+    }
     public function test_forged_business_location_group_and_customer_ids_in_the_request_are_ignored(): void
     {
-        $this->location($this->business);
         [$rivalOwner, $rivalBusiness, $rivalWorkspace, $rivalGroup] = $this->rival();
         $rivalLocation = $this->location($rivalBusiness, 'Rival Downtown');
 

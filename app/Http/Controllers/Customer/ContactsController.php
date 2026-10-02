@@ -227,6 +227,41 @@
         }
 
         /**
+         * The Location a Contact added through the app is created at (Blueprint
+         * §5/§10: a Contact belongs to exactly one Location). One reachable Active
+         * Location is used automatically; several require the actor to choose one of
+         * THEIR reachable ones (`location` = the Location uid); none refuses. A
+         * forged or unreachable Location is refused, never substituted. A legacy
+         * group with no Business has no Location axis.
+         *
+         * @return array{0: ?int, 1: ?string} [location id, error]
+         */
+        private function newContactLocation(ContactGroups $group, Request $request): array
+        {
+            $business = $group->business_id !== null ? Business::find($group->business_id) : null;
+
+            if ($business === null) {
+                return [null, null];
+            }
+
+            $options = app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id());
+
+            if ($options->isEmpty()) {
+                return [null, __('locale.contacts.no_location_available')];
+            }
+
+            if ($options->count() === 1 && ! $request->filled('location')) {
+                return [(int) $options->first()->id, null];
+            }
+
+            $chosen = $options->firstWhere('uid', (string) $request->input('location'));
+
+            return $chosen === null
+                ? [null, __('locale.contacts.choose_a_location')]
+                : [(int) $chosen->id, null];
+        }
+
+        /**
          * Customer Experience Redesign Slice 2B — where "view conversation"
          * goes from a contact list.
          *
@@ -910,7 +945,10 @@
                 ['name' => __('locale.contacts.new_contact')],
             ];
 
-            return view('customer.Contacts.create', compact('breadcrumbs', 'contact'));
+            $business  = $contact->business_id !== null ? Business::find($contact->business_id) : null;
+            $locations = $business !== null ? app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id()) : collect();
+
+            return view('customer.Contacts.create', compact('breadcrumbs', 'contact', 'locations'));
         }
 
         /**
@@ -934,7 +972,13 @@
             // the create_contact permission. It is NOT an opt-in, so it must
             // never match an opt-in-filtered workflow, and the source says so
             // explicitly rather than being inferred downstream.
-            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::Manual);
+            [$locationId, $locationError] = $this->newContactLocation($contact, $request);
+
+            if ($locationError !== null) {
+                return back()->withInput()->withErrors(['location' => $locationError]);
+            }
+
+            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::Manual, $locationId);
 
             if (is_null($subscriber)) {
                 return back()->withInput()->withErrors($validator);
@@ -2358,7 +2402,14 @@
                 ->whereIn('id', $contactGroupIds)
                 ->pluck('id');
 
-            $total = Contacts::whereIn('group_id', $ownedGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
+            $counted = Contacts::whereIn('contacts.group_id', $ownedGroupIds)->where('contacts.status', Contacts::STATUS_SUBSCRIBE);
+
+            // A Business request counts only the Contacts at Locations the actor may reach.
+            if ($business !== null) {
+                app(CrmLocationScope::class)->restrict($counted, $business, (int) Auth::id(), 'contacts.location_id');
+            }
+
+            $total = $counted->count();
 
             if ($total)
                 return $total;

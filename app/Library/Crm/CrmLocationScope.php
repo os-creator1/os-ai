@@ -2,8 +2,11 @@
 
 namespace App\Library\Crm;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
+use App\Models\BusinessLocation;
+use Illuminate\Support\Collection;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
@@ -27,6 +30,28 @@ final class CrmLocationScope
 {
     public function __construct(private readonly LocationAccessGuard $guard)
     {
+    }
+
+    /**
+     * The ACTIVE Locations of the Business the actor may create Location-bound
+     * records at (Contract 02 reach, via the one LocationAccessGuard).
+     *
+     * @return Collection<int, BusinessLocation>
+     */
+    public function selectableLocations(Business $business, int $actorUserId): Collection
+    {
+        $reachable = $this->guard->accessibleLocationIdsForBusiness($actorUserId, $business);
+
+        if ($reachable === []) {
+            return new Collection();
+        }
+
+        return BusinessLocation::query()
+            ->where('business_id', $business->id)
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->whereIn('id', $reachable)
+            ->orderBy('id')
+            ->get(['id', 'uid', 'name']);
     }
 
     /**
