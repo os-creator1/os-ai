@@ -56,6 +56,13 @@ class UsageBillingController extends CustomerBaseController
         $viewModel = $this->presenter->buildDashboardViewModel($business);
         $responsibility = $this->billingProfileManager->billingResponsibilityFor($business, $actorUserId);
 
+        // Restricted staff have no billing (Navigation contract §9.3 #6): the menu hides
+        // this page, and the page itself refuses them — hidden is not authorized. The
+        // gate is the billing authority the managers already use, never a new one.
+        if (! ($responsibility['actor_manages_billing_contact'] || $responsibility['actor_manages_limits'] || $responsibility['actor_manages_responsibility'])) {
+            abort(404);
+        }
+
         $business->loadMissing('workspace');
         $workspaceControls = $responsibility['actor_manages_responsibility'] || $responsibility['actor_is_workspace_owner']
             ? $this->walletManager->workspaceControls($business->workspace, $viewModel->wallet['spend_period_key'] ?? null)

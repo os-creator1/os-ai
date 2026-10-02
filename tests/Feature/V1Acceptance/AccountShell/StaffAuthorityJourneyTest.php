@@ -161,19 +161,13 @@ class StaffAuthorityJourneyTest extends TestCase
         $this->post(route('customer.workspaces.plan.resume', [$this->workspace->uid]))->assertNotFound();
         $this->get(route('customer.workspaces.plan.payment-method', [$this->workspace->uid]))->assertNotFound();
         $this->assertContains($this->get(route('customer.workspaces.team.show', [$this->workspace->uid]))->getStatusCode(), [401, 403, 404]);
-        // Billing: the Business's read-only usage dashboard is viewable by anyone who can
-        // access the Business (UsageBillingController::resolveViewableBusiness), but it is
-        // hidden from staff's menu and offers staff no control, and every billing MUTATION
-        // is refused with nothing changed.
+        // Billing: restricted staff have none — the page is refused and every MUTATION too.
         $walletBefore = (array) DB::table('business_usage_wallets')->where('business_id', $this->business->id)->first();
         $payerBefore = (array) DB::table('business_payer_assignments')->where('business_id', $this->business->id)->first();
 
+        // The page itself is refused, not merely hidden, and renders no financial data.
         $billing = $this->get(route('customer.workspaces.businesses.usage-billing.show', $this->scoped()));
-        if ($billing->getStatusCode() === 200) {
-            foreach (['usage-billing-top-up-form', 'usage-billing-auto-recharge-form', 'data-role="pause-form"', 'data-role="agency-controls-form"'] as $control) {
-                $this->assertStringNotContainsString($control, $billing->getContent(), "Staff must be offered no billing control [{$control}].");
-            }
-        }
+        $billing->assertNotFound();
 
         foreach ([
             'usage-billing.payer' => ['payer_type' => 'workspace'],

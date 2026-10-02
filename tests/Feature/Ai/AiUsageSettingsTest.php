@@ -410,11 +410,10 @@ class AiUsageSettingsTest extends TestCase
         $this->authenticateAs($clientOwner);
         $this->billingPage($workspace, $agencyBusiness)->assertNotFound();
 
+        // Restricted staff have no billing (V1 acceptance 01): the page is refused outright,
+        // so they see no usage at all, AI or otherwise.
         $this->authenticateAs($staff);
-        $this->assertNull(
-            $this->aiUsageSection($this->billingPage($workspace, $agencyBusiness)->assertOk()->getContent()),
-            'Staff may open the page but are outside the billing authority, so see no AI usage.'
-        );
+        $this->billingPage($workspace, $agencyBusiness)->assertNotFound();
     }
 
     // =================================================================

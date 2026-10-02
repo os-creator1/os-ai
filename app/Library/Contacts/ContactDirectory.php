@@ -3,6 +3,7 @@
 namespace App\Library\Contacts;
 
 use App\Library\Business\Migration\ChatBoxBusinessBackfillV1;
+use App\Library\Navigation\CurrentLocation;
 use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\ChatBox;
@@ -44,7 +45,10 @@ final class ContactDirectory
 {
     public const PER_PAGE = 25;
 
-    public function __construct(private readonly LocationAccessGuard $locations)
+    public function __construct(
+        private readonly LocationAccessGuard $locations,
+        private readonly CurrentLocation $currentLocation,
+    )
     {
     }
 
@@ -286,9 +290,30 @@ final class ContactDirectory
         });
     }
 
+    /**
+     * Blueprint §7 — Contacts are Location-bound, so the shell's selected Location
+     * re-scopes the list. It only NARROWS what restrictToAccessibleLocations()
+     * already allowed (the selection is re-validated against the same guard),
+     * and Contacts with no Location stay visible, as above.
+     */
+    private function scopeToSelectedLocation(Builder $query, Business $business): Builder
+    {
+        $actorId = Auth::id();
+        $selected = $actorId === null ? null : $this->currentLocation->selectedFor($business, (int) $actorId);
+
+        if ($selected === null) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $where) use ($selected) {
+            $where->whereNull('contacts.location_id')->orWhere('contacts.location_id', $selected->id);
+        });
+    }
+
     private function query(Business $business, string $search): Builder
     {
         $query = $this->restrictToAccessibleLocations(Contacts::query()->where('business_id', $business->id), $business);
+        $query = $this->scopeToSelectedLocation($query, $business);
 
         if ($search === '') {
             return $query;

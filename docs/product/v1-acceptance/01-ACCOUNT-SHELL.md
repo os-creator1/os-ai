@@ -23,23 +23,33 @@ Everything else cited below is an existing suite that was re-run in this lane.
 | C. Agency: own Workspace+Business+Location, no client Businesses, Agency surfaces, own Business operable | FIXED + ACCEPTED | `agency_gets_its_own…` | |
 | D. Lifecycle: pay, cancel/resume, unpaid/incomplete, retry, grace→locked→recover, resubscribe; no duplicate tenant; no plan while unpaid | ACCEPTED | `SubscriptionLifecycleJourneyTest` (5) | An `incomplete`/`unpaid` provider subscription is "live": resume is refused and recovery is the plan page / Stripe portal (by design, Contract 21). Unassigned Workspace resolves `usable` and can open ungated modules (pre-existing Contract 03 state). Cancelling while trialing shows the resume button, not "Ending at period end". |
 | E. One Business per Workspace, Primary Location, switcher hidden for one Business, second Location via canonical path, identity unchanged, foreign Location refused | ACCEPTED | `WorkspaceBusinessLocationShellTest` (3) | |
-| E. Global **Location switcher** (Blueprint §7) | **UNRESOLVED — not implemented** | no code; `ContextSwitcherPresenter` states a Location is deliberately not a switcher entry; Location-bound surfaces take Location per request | Needs a product decision; building it is new architecture and was not done. |
-| F. Owner reaches all Locations + management; staff-all no owner/billing/admin authority; staff-selected cannot reach Location B by list, direct URL, forged uid (AJAX), search; Agency membership does not widen a client Workspace | FIXED + ACCEPTED | `StaffAuthorityJourneyTest` (4) | Defect 3. Staff can still open the read-only Business Usage & Billing dashboard by direct URL (hidden from their menu; every mutation refused and proven unchanged). Contract §9.3 says restricted staff have "no billing" — owner decision needed whether view should also 404. |
+| E. Global Location switcher (Blueprint §7) | FIXED + ACCEPTED | `LocationSwitcherTest` (5): owner sees all active Locations; hidden for one reachable Location; staff offered only granted Locations; forged/foreign/ungranted Location → 404 and never stored; Workspace/Business unchanged; Contacts directory re-scopes and "All locations" restores | `CurrentLocation` (session, per Business, re-validated against `LocationAccessGuard` on every read) + `SwitchLocationAction` (POST `customer.context.location.switch`, prohibited during View As) + navbar component. Contacts (Location-bound) re-scopes; Business-wide screens are not filtered. Other Location-bound modules keep their per-request Location parameters and can adopt `CurrentLocation::selectedFor()`; not done here. |
+| F. Owner reaches all Locations + management; staff-all no owner/billing/admin authority; staff-selected cannot reach Location B by list, direct URL, forged uid (AJAX), search; Agency membership does not widen a client Workspace | FIXED + ACCEPTED | `StaffAuthorityJourneyTest` (4) | Defect 3. Restricted staff are refused the Business Usage & Billing page itself (404, via the existing `BillingProfileManager::billingResponsibilityFor()` authority) and every mutation. Fixed in the closure pass. |
 | G. View As (enter, actor attribution, shell, prohibited actions, exit, logout); Platform Owner pages unavailable in View As / after login-as | ACCEPTED | existing: `AgencyViewAsTest` 39/39, `PlatformOwnerAuthorityTest` 12/12, `ViewAsRouteBoundaryTest` 10/11 | One existing failure, see below. Admin "login as customer" makes the admin *be* the customer by documented design (Contract 22-PO §7); its audit is DEFERRED there (§10). |
 | H. Account states + recovery + Platform Owner same reason, incl. Agency-composed | ACCEPTED | existing `PlatformOwnerSupportDiagnosticsTest` 10/10 (usable/inactive/suspended/locked/grace vs resolver, gate, admin page) + lifecycle journey (grace/locked/recovery through the real shell) | Agency-composed states: `AgencyViewAsTest` locked/inactive/suspended Agency cases; not re-driven here. |
 | I. Navigation vs PlatformFeatureRegistry; Planned modules not shown; hidden ≠ authorised | ACCEPTED (with 2 existing failures) | signup journeys (exact per-tier entries, guessed-route 404s), `CustomerNavigationTreeTest` 52/54 | |
 | J. Unauthenticated refused (401 page), customer/Agency owner refused Platform Owner pages, cross-Workspace uid refused | ACCEPTED | `PlatformOwnerAuthorityTest`, `CustomerContextSecurityTest` 9/9, journeys | |
 
-## Existing failures seen in this lane (not caused by it)
+## Existing failures — verified baseline on pristine current main 6ac3e19c
 
-Not reproduced on a pristine main worktree (credit rule); attributed by inspection — this lane changed no route and no menu code:
-- `ViewAsRouteBoundaryTest::test_every_authenticated_customer_route_is_classified` — unclassified `calendar-connection.*` and `agency.stripe.connect-existing.callback` routes.
-- `CustomerNavigationTreeTest::test_opportunities_follows_contacts_…` (Forms now sits before Automations) and `…query_count_does_not_grow…` (6 vs 5; listed as a known baseline failure in lane notes).
+Each fails identically on an untouched detached worktree of `origin/main` 6ac3e19c, so none is lane-induced:
+- `ViewAsRouteBoundaryTest::test_every_authenticated_customer_route_is_classified` (unclassified `calendar-connection.*`, `agency.stripe.connect-existing.callback`).
+- `CustomerNavigationTreeTest::test_opportunities_follows_contacts_and_opens_the_selected_business_crm_board` (Forms now sits before Automations).
+- `CustomerNavigationTreeTest::test_the_query_count_does_not_grow_with_the_number_of_features` (6 vs 5).
+- `SettingsHubNavigationTest::test_core_and_growth_get_a_flat_sidebar_with_one_direct_settings_destination` (same menu-order drift).
+
+Not fixed here: the correct classification/order is another lane's decision.
 
 ## Test-environment notes
 
 The copied `.env` has a real mail transport; journeys pin `mail.default=array`. `Helper::app_config('user_registration_notification_email')` reads an AppConfig row unguarded; the journey seeds it as a real install does. Webhooks are delivered with no customer session, as Stripe does.
 
+## Closure-pass changes
+
+4. Global Location switcher implemented (above). 5. Staff billing page refused (above); `AiUsageSettingsTest` staff assertion updated because it had encoded the old "staff may open the page" behaviour. Admin legacy "login as customer" stays DEFERRED under Contract 22-PO §7/§10.
+
 ## Verdict
 
-**Not written as ACCEPTED.** Unresolved in scope: the Blueprint §7 Location switcher (not implemented), plus two owner questions above (staff read-only billing view; the unreproduced existing failures).
+The four baseline failures above are verified on pristine main and are outside this lane's scope; everything in this lane's scope is green.
+
+V1 ACCOUNT/SHELL ACCEPTANCE: ACCEPTED

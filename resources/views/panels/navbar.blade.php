@@ -37,6 +37,7 @@
                         @if(($configData['mainLayoutType'] ?? 'vertical') !== 'vertical')
                             <x-customer-context-switcher variant="navbar" />
                         @endif
+                        <x-customer-location-switcher />
                         @if(config('app.stage') == 'demo')
                             <ul class="nav navbar-nav bookmark-icons d-sm-flex d-none">
 

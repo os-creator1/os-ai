@@ -421,6 +421,9 @@
         ->name('context.business.switch');
     Route::post('context/account', '\\' . \App\Library\Navigation\Actions\SwitchAccountAction::class)
         ->name('context.account.switch');
+    // Blueprint §7 — the shell's Location switcher (re-authorized server-side).
+    Route::post('context/location', '\\' . \App\Library\Navigation\Actions\SwitchLocationAction::class)
+        ->name('context.location.switch');
     Route::post('view-as', '\\' . \App\Library\ViewAs\Actions\StartViewAsAction::class)
         ->name('view-as.start');
     Route::post('view-as/exit', '\\' . \App\Library\ViewAs\Actions\ExitViewAsAction::class)
