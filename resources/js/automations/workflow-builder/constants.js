@@ -8,6 +8,9 @@ export const NODE_TYPES = {
     SEND_SMS: 'send_sms',
     UPDATE_CONTACT_FIELD: 'update_contact_field',
     INTERNAL_NOTIFICATION: 'internal_notification',
+    SEND_EMAIL: 'send_email',
+    ADD_TAG: 'add_tag',
+    REMOVE_TAG: 'remove_tag',
     WAIT: 'wait',
     IF_ELSE: 'if_else',
     END: 'end',
@@ -20,6 +23,9 @@ export const NODE_LABELS = {
     [NODE_TYPES.SEND_SMS]: 'Send text message',
     [NODE_TYPES.UPDATE_CONTACT_FIELD]: 'Update contact field',
     [NODE_TYPES.INTERNAL_NOTIFICATION]: 'Notify your team',
+    [NODE_TYPES.SEND_EMAIL]: 'Send email',
+    [NODE_TYPES.ADD_TAG]: 'Add tag',
+    [NODE_TYPES.REMOVE_TAG]: 'Remove tag',
     [NODE_TYPES.WAIT]: 'Wait',
     [NODE_TYPES.IF_ELSE]: 'If / Else',
     [NODE_TYPES.END]: 'End workflow',
@@ -37,6 +43,13 @@ export const STEP_CATALOG = [
         icon: 'message-square-text',
     },
     {
+        type: NODE_TYPES.SEND_EMAIL,
+        group: 'Messages',
+        description: 'Email the contact from your connected mailbox. Personalise it with their name.',
+        keywords: ['email', 'mail', 'message', 'send', 'follow up', 'confirmation'],
+        icon: 'mail',
+    },
+    {
         type: NODE_TYPES.INTERNAL_NOTIFICATION,
         group: 'Messages',
         description: 'Let your team know something needs their attention.',
@@ -49,6 +62,20 @@ export const STEP_CATALOG = [
         description: 'Save a value on the contact, such as a status or a note.',
         keywords: ['update', 'field', 'contact', 'save', 'set', 'status', 'note'],
         icon: 'user-pen',
+    },
+    {
+        type: NODE_TYPES.ADD_TAG,
+        group: 'Contact',
+        description: 'Tag the contact so you can find, segment or follow up with them later.',
+        keywords: ['tag', 'label', 'add', 'segment', 'mark'],
+        icon: 'tag',
+    },
+    {
+        type: NODE_TYPES.REMOVE_TAG,
+        group: 'Contact',
+        description: 'Take a tag off the contact.',
+        keywords: ['tag', 'label', 'remove', 'untag', 'clear'],
+        icon: 'tag',
     },
     {
         type: NODE_TYPES.WAIT,
@@ -107,6 +134,11 @@ export function defaultConfigFor(type) {
             return { field_id: null, value: '' }
         case NODE_TYPES.INTERNAL_NOTIFICATION:
             return { message: '' }
+        case NODE_TYPES.SEND_EMAIL:
+            return { subject: '', body: '' }
+        case NODE_TYPES.ADD_TAG:
+        case NODE_TYPES.REMOVE_TAG:
+            return { tag_id: null }
         case NODE_TYPES.WAIT:
             return { mode: 'duration', amount: 1, unit: 'days' }
         case NODE_TYPES.IF_ELSE:
@@ -119,7 +151,7 @@ export function defaultConfigFor(type) {
 }
 
 // Triggers with a real producer today (WorkflowTriggerType::isIngestableInThisSlice()).
-// Forms, calendars, payments and tags have none, so none is offered.
+// Payments, documents and proposals have none, so none is offered.
 export const TRIGGER_TYPES = [
     {
         value: 'contact_created',
@@ -177,6 +209,50 @@ export const TRIGGER_TYPES = [
         title: 'Opportunity marked lost',
         description: 'Starts when an opportunity is marked lost.',
         icon: 'circle-x',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    // Contact tags, forms and appointments. Each is its own occurrence: a
+    // contact can be tagged, submit a form or book again.
+    {
+        value: 'contact_tag_added',
+        title: 'Tag added to a contact',
+        description: 'Starts when a tag is added to a contact.',
+        icon: 'tag',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'contact_tag_removed',
+        title: 'Tag removed from a contact',
+        description: 'Starts when a tag is taken off a contact.',
+        icon: 'tag',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'form_submitted',
+        title: 'Form submitted',
+        description: 'Starts when someone finishes and submits one of your forms.',
+        icon: 'clipboard-list',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'appointment_scheduled',
+        title: 'Appointment booked',
+        description: 'Starts when an appointment is booked for a contact.',
+        icon: 'calendar-check',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'appointment_cancelled',
+        title: 'Appointment cancelled',
+        description: 'Starts when an appointment is cancelled.',
+        icon: 'calendar-x',
+        defaultPolicy: 'once_per_occurrence',
+    },
+    {
+        value: 'appointment_rescheduled',
+        title: 'Appointment rescheduled',
+        description: 'Starts when an appointment is moved to another time.',
+        icon: 'calendar-clock',
         defaultPolicy: 'once_per_occurrence',
     },
 ]

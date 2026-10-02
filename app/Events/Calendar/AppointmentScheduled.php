@@ -32,4 +32,10 @@ class AppointmentScheduled implements ShouldDispatchAfterCommit
         public readonly ?int $createdByUserId,
     ) {
     }
+
+    /** An appointment is scheduled exactly once, so its id is the occurrence. */
+    public function occurrenceKey(): string
+    {
+        return 'appointment_scheduled:' . $this->appointmentId;
+    }
 }

@@ -4,6 +4,7 @@ namespace App\Library\Automation\Workflow\Conditions;
 
 use App\Enums\Automation\Workflow\ConditionOperator;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactCustomFieldSubject;
+use App\Library\Automation\Workflow\Conditions\Subjects\ContactHasTagSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactIdentitySubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactInGroupSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactRepliedSinceEnrollmentSubject;
@@ -12,6 +13,7 @@ use App\Library\Automation\Workflow\Contracts\ConditionSubject;
 use App\Models\ContactGroupFields;
 use App\Models\Contacts;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Automations V2 §11 — the single authority on what an If/Else may ask about.
@@ -28,8 +30,12 @@ use Illuminate\Support\Collection;
  * Business's conversation history strictly after the enrollment, and is
  * same-Business only (ContactRepliedSinceEnrollmentSubject).
  *
- * WHAT IS DELIBERATELY ABSENT. Opportunity, Forms, Booking, Payment, Tag and
- * Pipeline subjects are excluded by §10 and are not stubbed here.
+ * `contact.has_tag:{tag_id}` arrived with the Contact Tags integration: a
+ * parameterised boolean ("has tag" / "does not have tag"), read from the
+ * canonical `contact_tags` membership.
+ *
+ * WHAT IS DELIBERATELY ABSENT. Opportunity, Forms, Booking, Payment and Pipeline
+ * subjects are excluded by §10 and are not stubbed here.
  *
  * READS ARE BOUNDED. Evaluating five conditions must not cost five round trips,
  * so the two things every subject needs — the contact's stored values, and the
@@ -65,11 +71,17 @@ class ConditionSubjectRegistry
     /** `contact.custom_field:{field_id}` — the only parameterised subject. */
     public const CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
 
+    /** `contact.has_tag:{tag_id}` — the other parameterised subject (boolean). */
+    public const HAS_TAG_PREFIX = 'contact.has_tag:';
+
     /** §11 — operands are bounded strings. */
     public const MAX_OPERAND_LENGTH = 255;
 
     /** @var array<int, array<int, string>> contact id => field id => value */
     private array $valueCache = [];
+
+    /** @var array<int, list<int>> contact id => tag ids */
+    private array $tagCache = [];
 
     /** @var array<int, Collection<int, ContactGroupFields>> group id => fields */
     private array $groupFieldCache = [];
@@ -99,6 +111,12 @@ class ConditionSubjectRegistry
             return new ContactRepliedSinceEnrollmentSubject();
         }
 
+        $tagId = self::tagId($key);
+
+        if ($tagId !== null) {
+            return new ContactHasTagSubject($tagId, $this);
+        }
+
         $fieldId = self::customFieldId($key);
 
         return $fieldId === null ? null : new ContactCustomFieldSubject($fieldId, $this);
@@ -125,6 +143,7 @@ class ConditionSubjectRegistry
             || $key === self::SUBSCRIBED
             || $key === self::IN_GROUP
             || $key === self::REPLIED_SINCE_ENROLLMENT
+            || self::tagId($key) !== null
             || self::customFieldId($key) !== null;
     }
 
@@ -143,7 +162,7 @@ class ConditionSubjectRegistry
             return ConditionOperator::forText();
         }
 
-        if ($key === self::SUBSCRIBED || $key === self::REPLIED_SINCE_ENROLLMENT) {
+        if ($key === self::SUBSCRIBED || $key === self::REPLIED_SINCE_ENROLLMENT || self::tagId($key) !== null) {
             return ConditionOperator::forBoolean();
         }
 
@@ -166,6 +185,21 @@ class ConditionSubjectRegistry
         }
 
         $raw = substr($key, strlen(self::CUSTOM_FIELD_PREFIX));
+
+        return ctype_digit($raw) && (int) $raw > 0 ? (int) $raw : null;
+    }
+
+    /**
+     * The tag id in a `contact.has_tag:{id}` key, or null if this is not one.
+     * Strict, like customFieldId(): only digits, only a positive id.
+     */
+    public static function tagId(string $key): ?int
+    {
+        if (! str_starts_with($key, self::HAS_TAG_PREFIX)) {
+            return null;
+        }
+
+        $raw = substr($key, strlen(self::HAS_TAG_PREFIX));
 
         return ctype_digit($raw) && (int) $raw > 0 ? (int) $raw : null;
     }
@@ -206,6 +240,32 @@ class ConditionSubjectRegistry
         }
 
         return $this->valueCache[$id];
+    }
+
+    /**
+     * The ids of the tags a contact currently wears, read once per contact.
+     *
+     * Filtered on the contact's own Business, so a membership can only ever name
+     * a tag of that Business.
+     *
+     * @return list<int>
+     */
+    public function tagIdsFor(Contacts $contact): array
+    {
+        $id = (int) $contact->id;
+
+        if (! array_key_exists($id, $this->tagCache)) {
+            $this->tagCache[$id] = $contact->business_id === null
+                ? []
+                : DB::table('contact_tags')
+                    ->where('contact_id', $id)
+                    ->where('business_id', (int) $contact->business_id)
+                    ->pluck('tag_id')
+                    ->map(fn ($tagId): int => (int) $tagId)
+                    ->all();
+        }
+
+        return $this->tagCache[$id];
     }
 
     /**
@@ -252,5 +312,6 @@ class ConditionSubjectRegistry
     {
         $this->valueCache = [];
         $this->groupFieldCache = [];
+        $this->tagCache = [];
     }
 }

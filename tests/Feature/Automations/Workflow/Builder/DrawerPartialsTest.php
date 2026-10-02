@@ -142,7 +142,7 @@ class DrawerPartialsTest extends TestCase
         $this->assertStringNotContainsString('data-field=', $body, 'NodeTypeRegistry::validateEnd() rejects any config at all.');
     }
 
-    /** Trigger vocabulary is exactly the ingestable set — including V2-F's message_received, and no Forms/Calendar/Payment trigger. */
+    /** Trigger vocabulary is exactly the ingestable set — including message_received and the merged foundations' tag, form and appointment triggers, and no Payment/Document trigger. */
     public function test_trigger_drawer_offers_only_ingestable_trigger_types(): void
     {
         $body = $this->templateBody($this->renderBuilder(), 'wf-node-form-trigger');
@@ -157,7 +157,7 @@ class DrawerPartialsTest extends TestCase
         $this->assertEqualsCanonicalizing($ingestable, $offered[1], 'The builder offers exactly the triggers something in the product reports.');
         $this->assertStringContainsString('Customer sends a text', $body, 'message_received is offered in customer words.');
 
-        foreach (['form_submitted', 'appointment', 'payment', 'tag_added'] as $forbidden) {
+        foreach (['payment', 'invoice', 'proposal', 'contract_signed', 'document'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $body);
         }
     }

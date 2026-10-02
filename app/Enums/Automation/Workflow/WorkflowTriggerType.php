@@ -6,10 +6,11 @@ namespace App\Enums\Automation\Workflow;
  * Automations V2 §9/§9.1 — the closed set of v2 triggers, and the
  * trigger-aware enrollment defaults.
  *
- * Only triggers with a real event source in this repository appear here. Forms,
- * appointments, customer payments and tags are deliberately absent: there is
- * nothing in the product for them to listen to yet (§9), and inventing a case
- * for one would let a workflow be published that can never fire.
+ * Only triggers with a real event source in this repository appear here. Customer
+ * payments, documents and proposals are deliberately absent: their integrations
+ * are separate lanes (§9), and inventing a case for one would let a workflow be
+ * published that can never fire. Tags, forms and appointments joined once their
+ * foundations merged and emitted stable after-commit events.
  *
  * `MessageReceived` is declared because V2-F's producer is contracted and its
  * Business-scoping seam now exists (`chat_boxes.business_id`). Until V2-F lands
@@ -35,6 +36,29 @@ enum WorkflowTriggerType: string
     case OpportunityWon = 'opportunity_won';
     case OpportunityLost = 'opportunity_lost';
 
+    /*
+     * Merged-foundation facts. Each value is the owning domain's own after-commit
+     * event, consumed through a queued listener; the domains never call
+     * Automations. Payments, documents, proposals and contracts are deliberately
+     * absent — their integrations are separate lanes.
+     *
+     *   contact_tag_*          App\Events\Crm\ContactTagAdded / ContactTagRemoved
+     *   form_submitted         App\Events\Forms\FormSubmissionRecorded (final only)
+     *   appointment_scheduled  App\Events\Calendar\AppointmentScheduled
+     *   appointment_cancelled  App\Events\Calendar\AppointmentCancelled
+     *   appointment_rescheduled App\Events\Calendar\AppointmentRescheduled
+     *
+     * There is no "confirmed" appointment trigger: the Calendar has no confirmed
+     * state (AppointmentStatus is scheduled / cancelled / completed / no_show), and
+     * inventing a lifecycle state to fill a list is exactly what §9 forbids.
+     */
+    case ContactTagAdded = 'contact_tag_added';
+    case ContactTagRemoved = 'contact_tag_removed';
+    case FormSubmitted = 'form_submitted';
+    case AppointmentScheduled = 'appointment_scheduled';
+    case AppointmentCancelled = 'appointment_cancelled';
+    case AppointmentRescheduled = 'appointment_rescheduled';
+
     /**
      * THE TRIGGER-AWARE DEFAULT (§9.1, owner decision D3).
      *
@@ -52,8 +76,32 @@ enum WorkflowTriggerType: string
             self::OpportunityCreated,
             self::OpportunityStageChanged,
             self::OpportunityWon,
-            self::OpportunityLost => EnrollmentPolicy::OncePerOccurrence,
+            self::OpportunityLost,
+            // A contact can be tagged, submit a form or book again: each time is
+            // its own occurrence, keyed by the owning domain's own identity.
+            self::ContactTagAdded,
+            self::ContactTagRemoved,
+            self::FormSubmitted,
+            self::AppointmentScheduled,
+            self::AppointmentCancelled,
+            self::AppointmentRescheduled => EnrollmentPolicy::OncePerOccurrence,
         };
+    }
+
+    /** The two triggers fed by Contact Tag membership events. */
+    public function isContactTag(): bool
+    {
+        return $this === self::ContactTagAdded || $this === self::ContactTagRemoved;
+    }
+
+    /** The three triggers fed by Calendar appointment lifecycle events. */
+    public function isAppointment(): bool
+    {
+        return in_array($this, [
+            self::AppointmentScheduled,
+            self::AppointmentCancelled,
+            self::AppointmentRescheduled,
+        ], true);
     }
 
     /** The four triggers fed by CRM sales opportunity events. */
@@ -90,6 +138,12 @@ enum WorkflowTriggerType: string
             self::OpportunityStageChanged => 'Opportunity moves stage',
             self::OpportunityWon => 'Opportunity marked won',
             self::OpportunityLost => 'Opportunity marked lost',
+            self::ContactTagAdded => 'A tag is added to a contact',
+            self::ContactTagRemoved => 'A tag is removed from a contact',
+            self::FormSubmitted => 'A form is submitted',
+            self::AppointmentScheduled => 'An appointment is booked',
+            self::AppointmentCancelled => 'An appointment is cancelled',
+            self::AppointmentRescheduled => 'An appointment is rescheduled',
         };
     }
 }

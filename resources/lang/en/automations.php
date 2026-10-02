@@ -123,6 +123,30 @@ return [
                 'title' => 'Opportunity marked lost',
                 'description' => 'Starts when an opportunity is marked lost.',
             ],
+            'contact_tag_added' => [
+                'title' => 'Tag added to a contact',
+                'description' => 'Starts when a tag is added to a contact.',
+            ],
+            'contact_tag_removed' => [
+                'title' => 'Tag removed from a contact',
+                'description' => 'Starts when a tag is taken off a contact.',
+            ],
+            'form_submitted' => [
+                'title' => 'Form submitted',
+                'description' => 'Starts when someone finishes and submits one of your forms.',
+            ],
+            'appointment_scheduled' => [
+                'title' => 'Appointment booked',
+                'description' => 'Starts when an appointment is booked for a contact.',
+            ],
+            'appointment_cancelled' => [
+                'title' => 'Appointment cancelled',
+                'description' => 'Starts when an appointment is cancelled.',
+            ],
+            'appointment_rescheduled' => [
+                'title' => 'Appointment rescheduled',
+                'description' => 'Starts when an appointment is moved to another time.',
+            ],
         ],
         'trigger_form' => [
             'trigger_type' => 'What starts this workflow',
@@ -150,6 +174,32 @@ return [
             'to_stage' => 'Moves to',
             'no_pipelines' => 'This business has no pipelines yet. Set one up in Opportunities to choose stages here.',
             'opportunity_contact_note' => 'The opportunity’s contact enters this workflow. Opportunities without a contact are skipped.',
+            'group_tags' => 'Tags',
+            'group_forms' => 'Forms',
+            'group_appointments' => 'Appointments',
+            'tag_filter' => 'Which tag',
+            'any_tag' => 'Any tag',
+            'no_tags' => 'This business has no tags yet. Create one on a contact to choose it here.',
+            'tag_loop_note' => 'Tags added or removed by another workflow start this one at most a few links down a chain, and never the workflow that made the change.',
+            'form_filter' => 'Which form',
+            'any_form' => 'Any form',
+            'no_forms' => 'This business has no forms yet.',
+            'form_note' => 'Starts once for each finished submission. A questionnaire’s earlier pages do not start it, and a submission that did not produce a contact is skipped.',
+            'appointment_note' => 'The appointment’s contact enters this workflow.',
+        ],
+        'send_email_form' => [
+            'subject' => 'Subject',
+            'subject_placeholder' => 'Thanks for getting in touch',
+            'body' => 'Email',
+            'placeholder' => 'Hi {first_name}, thanks for getting in touch!',
+            'sender_note' => 'The email goes out from your business’s connected mailbox. If none is connected, or the contact has no single email address, this step fails and nothing is sent. Testing the workflow never sends one.',
+        ],
+        'tag_action_form' => [
+            'tag' => 'Tag',
+            'choose_tag' => 'Choose a tag',
+            'no_tags' => 'This business has no tags yet. Create one on a contact to choose it here.',
+            'add_help' => 'A contact who already has the tag is left as they are.',
+            'remove_help' => 'A contact who does not have the tag is left as they are.',
         ],
         'send_sms_form' => [
             'body' => 'Message',
@@ -208,6 +258,7 @@ return [
             'subject_company' => 'Company',
             'subject_subscribed' => 'Subscribed to texts',
             'subject_in_group' => 'Contact group',
+            'group_tags' => 'Tags',
             'replied_help' => 'Whether the contact has texted your business since they entered this workflow.',
         ],
         'recipes' => [

@@ -348,6 +348,9 @@ class WorkflowSimulator
             WorkflowNodeType::SendSms => 'Would send this text message. Nothing is sent while testing.',
             WorkflowNodeType::UpdateContactField => 'Would update this contact field. Nothing is changed while testing.',
             WorkflowNodeType::InternalNotification => 'Would notify the team. Nobody is notified while testing.',
+            WorkflowNodeType::SendEmail => 'Would send this email from your connected mailbox. Nothing is sent while testing.',
+            WorkflowNodeType::AddTag => 'Would add this tag to the contact. Nothing is changed while testing.',
+            WorkflowNodeType::RemoveTag => 'Would remove this tag from the contact. Nothing is changed while testing.',
             default => 'Would run this step. Nothing happens while testing.',
         };
     }

@@ -35,6 +35,13 @@ class TriggerArchitectureTest extends TestCase
         'app/Library/Automation/Workflow/Triggers/MessageReceivedTriggerSource.php',
         // CRM sales opportunity triggers — the same rules again.
         'app/Library/Automation/Workflow/Triggers/CrmOpportunityTriggerSource.php',
+        // Merged foundations (tags, forms, appointments) — the same rules again,
+        // including the shared base every one of them enrolls through.
+        'app/Library/Automation/Workflow/Triggers/FoundationTriggerSource.php',
+        'app/Library/Automation/Workflow/Triggers/ContactTagTriggerSource.php',
+        'app/Library/Automation/Workflow/Triggers/FormSubmittedTriggerSource.php',
+        'app/Library/Automation/Workflow/Triggers/AppointmentTriggerSource.php',
+        'app/Library/Automation/Workflow/Triggers/ListeningWorkflows.php',
     ];
 
     // 22 — every source enrolls through the canonical service
@@ -46,6 +53,9 @@ class TriggerArchitectureTest extends TestCase
             ManualEnrollmentTriggerSource::class,
             \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
             \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+            \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
         ] as $class) {
             $constructor = (new \ReflectionClass($class))->getConstructor();
             $this->assertNotNull($constructor, $class . ' must take its dependencies explicitly.');
@@ -165,6 +175,13 @@ class TriggerArchitectureTest extends TestCase
             WorkflowTriggerType::OpportunityStageChanged->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
             WorkflowTriggerType::OpportunityWon->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
             WorkflowTriggerType::OpportunityLost->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            // Merged foundations — one source class per domain, registered per trigger type.
+            WorkflowTriggerType::ContactTagAdded->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+            WorkflowTriggerType::ContactTagRemoved->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+            WorkflowTriggerType::FormSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            WorkflowTriggerType::AppointmentScheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
+            WorkflowTriggerType::AppointmentCancelled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
+            WorkflowTriggerType::AppointmentRescheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {

@@ -40,6 +40,10 @@ class ExecutorRegistryTest extends TestCase
             // Added by the V2 logic runtime slice.
             WorkflowNodeType::Wait->value => \App\Library\Automation\Workflow\Executors\WaitNodeExecutor::class,
             WorkflowNodeType::IfElse->value => \App\Library\Automation\Workflow\Executors\IfElseNodeExecutor::class,
+            // Merged-foundation actions (Business Email's sender, TagManager).
+            WorkflowNodeType::SendEmail->value => \App\Library\Automation\Workflow\Executors\SendEmailNodeExecutor::class,
+            WorkflowNodeType::AddTag->value => \App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class,
+            WorkflowNodeType::RemoveTag->value => \App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class,
         ];
 
         foreach ($expected as $type => $class) {

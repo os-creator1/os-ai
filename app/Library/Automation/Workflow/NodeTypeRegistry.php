@@ -79,6 +79,8 @@ class NodeTypeRegistry
             WorkflowNodeType::SendSms => $this->validateSendSms($config),
             WorkflowNodeType::UpdateContactField => $this->validateUpdateContactField($config),
             WorkflowNodeType::InternalNotification => $this->validateInternalNotification($config),
+            WorkflowNodeType::SendEmail => $this->validateSendEmail($config),
+            WorkflowNodeType::AddTag, WorkflowNodeType::RemoveTag => $this->validateTagAction($config),
             WorkflowNodeType::Wait => $this->validateWait($config),
             WorkflowNodeType::IfElse => $this->validateIfElse($config),
             WorkflowNodeType::End => $this->validateEnd($config),
@@ -183,6 +185,17 @@ class NodeTypeRegistry
             }
         }
 
+        // Tag triggers may narrow to one tag ("any tag" when absent), and the form
+        // trigger to one form. Each is optional and must be an id when present;
+        // whether it belongs to this Business is the compiler's question.
+        if ($triggerType->isContactTag() && array_key_exists('tag_id', $config) && $config['tag_id'] !== null && ! $this->isPositiveInt($config['tag_id'])) {
+            $errors[] = 'Choose a valid tag, or leave it as any tag.';
+        }
+
+        if ($triggerType === WorkflowTriggerType::FormSubmitted && array_key_exists('form_id', $config) && $config['form_id'] !== null && ! $this->isPositiveInt($config['form_id'])) {
+            $errors[] = 'Choose a valid form, or leave it as any form.';
+        }
+
         if ($triggerType === WorkflowTriggerType::ContactDateReached) {
             if (! $this->isPositiveInt($config['contact_group_id'] ?? null)) {
                 $errors[] = 'A date trigger needs one contact group to watch.';
@@ -217,6 +230,35 @@ class NodeTypeRegistry
         }
 
         return [];
+    }
+
+    private function validateSendEmail(array $config): array
+    {
+        $errors = [];
+        $subject = $config['subject'] ?? null;
+        $body = $config['body'] ?? null;
+
+        $maxSubject = (int) config('business_email.send.max_subject_length', 200);
+        $maxBody = (int) config('business_email.send.max_body_length', 20000);
+
+        if (! is_string($subject) || trim($subject) === '') {
+            $errors[] = 'Write the email subject.';
+        } elseif (mb_strlen($subject) > $maxSubject) {
+            $errors[] = sprintf('That subject is too long. Keep it under %d characters.', $maxSubject);
+        }
+
+        if (! is_string($body) || trim($body) === '') {
+            $errors[] = 'Write the email you want to send.';
+        } elseif (mb_strlen($body) > $maxBody) {
+            $errors[] = sprintf('That email is too long. Keep it under %d characters.', $maxBody);
+        }
+
+        return $errors;
+    }
+
+    private function validateTagAction(array $config): array
+    {
+        return $this->isPositiveInt($config['tag_id'] ?? null) ? [] : ['Choose a tag.'];
     }
 
     private function validateUpdateContactField(array $config): array

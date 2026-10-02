@@ -185,6 +185,8 @@ class AutomationWorkflowsController extends CustomerBaseController
                 // "Opportunity moves stage" pickers — the same read, CRM half.
                 'crmPipelines' => $catalog->pipelines(),
                 'crmStages' => $catalog->stages(),
+                'tags' => $catalog->tags(),
+                'forms' => $catalog->forms(),
             ]);
         });
     }

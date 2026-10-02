@@ -49,6 +49,13 @@ class MessageReceivedCoexistenceTest extends TestCase
             WorkflowTriggerType::OpportunityStageChanged->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
             WorkflowTriggerType::OpportunityWon->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
             WorkflowTriggerType::OpportunityLost->value => \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
+            // Merged foundations — one source class per domain, registered per trigger type.
+            WorkflowTriggerType::ContactTagAdded->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+            WorkflowTriggerType::ContactTagRemoved->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+            WorkflowTriggerType::FormSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            WorkflowTriggerType::AppointmentScheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
+            WorkflowTriggerType::AppointmentCancelled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
+            WorkflowTriggerType::AppointmentRescheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -72,6 +79,10 @@ class MessageReceivedCoexistenceTest extends TestCase
             WorkflowNodeType::SendSms->value => SendSmsNodeExecutor::class,
             WorkflowNodeType::UpdateContactField->value => UpdateContactFieldNodeExecutor::class,
             WorkflowNodeType::InternalNotification->value => InternalNotificationNodeExecutor::class,
+            // Merged-foundation actions (Business Email's sender, TagManager).
+            WorkflowNodeType::SendEmail->value => \App\Library\Automation\Workflow\Executors\SendEmailNodeExecutor::class,
+            WorkflowNodeType::AddTag->value => \App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class,
+            WorkflowNodeType::RemoveTag->value => \App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class,
         ];
 
         foreach ($expected as $type => $class) {

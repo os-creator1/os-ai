@@ -40,6 +40,11 @@ function crmName(rows, id) {
     return row ? row.name : null
 }
 
+/** A tag or form name from the Business catalog, or null when not set or not found. */
+function namedRow(rows, id) {
+    return crmName(rows, id)
+}
+
 function plural(amount, unit) {
     const singular = unit.replace(/s$/, '')
 
@@ -89,6 +94,21 @@ export function summarize(node, catalogs) {
             return config.message && String(config.message).trim() !== ''
                 ? { summary: `“${excerpt(config.message)}”`, incomplete: false }
                 : { summary: 'Write what your team should be told', incomplete: true }
+
+        case NODE_TYPES.SEND_EMAIL:
+            return config.subject && String(config.subject).trim() !== '' && config.body && String(config.body).trim() !== ''
+                ? { summary: `“${excerpt(config.subject)}”`, incomplete: false }
+                : { summary: 'Write the email subject and message', incomplete: true }
+
+        case NODE_TYPES.ADD_TAG:
+        case NODE_TYPES.REMOVE_TAG: {
+            const tag = namedRow(catalogs.tags, config.tag_id)
+            const verb = node.type === NODE_TYPES.ADD_TAG ? 'Add' : 'Remove'
+
+            return tag
+                ? { summary: `${verb} the tag “${tag}”`, incomplete: false }
+                : { summary: 'Choose a tag', incomplete: true }
+        }
 
         case NODE_TYPES.UPDATE_CONTACT_FIELD: {
             const label = fieldLabel(catalogs.writableFields, config.field_id)
@@ -211,6 +231,29 @@ function summarizeTrigger(config, catalogs) {
 
         case 'opportunity_lost':
             return { title: info.title, summary: 'When an opportunity is marked lost', incomplete: false }
+
+        case 'contact_tag_added':
+        case 'contact_tag_removed': {
+            const tag = namedRow(catalogs.tags, config.tag_id)
+            const verb = info.value === 'contact_tag_added' ? 'added to' : 'removed from'
+
+            return { title: info.title, summary: tag ? `When “${tag}” is ${verb} a contact` : `When any tag is ${verb} a contact`, incomplete: false }
+        }
+
+        case 'form_submitted': {
+            const form = namedRow(catalogs.forms, config.form_id)
+
+            return { title: info.title, summary: form ? `When “${form}” is submitted` : 'When any form is submitted', incomplete: false }
+        }
+
+        case 'appointment_scheduled':
+            return { title: info.title, summary: 'When an appointment is booked for a contact', incomplete: false }
+
+        case 'appointment_cancelled':
+            return { title: info.title, summary: 'When an appointment is cancelled', incomplete: false }
+
+        case 'appointment_rescheduled':
+            return { title: info.title, summary: 'When an appointment is moved to another time', incomplete: false }
 
         default:
             return { title: info.title, summary: '', incomplete: false }

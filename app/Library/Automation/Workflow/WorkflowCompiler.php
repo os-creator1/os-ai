@@ -311,6 +311,37 @@ class WorkflowCompiler
                         $errors[$entry['key']][] = $error;
                     }
                 }
+
+                // The optional tag / form a foundation trigger narrows to must be
+                // one of THIS Business's. Foreign and nonexistent read the same.
+                $tagFilter = $this->positiveId($entry['config']['tag_id'] ?? null);
+
+                if ($triggerType !== null && $triggerType->isContactTag() && $tagFilter !== null && $references()->tag($tagFilter) === null) {
+                    $errors[$entry['key']][] = 'That tag does not belong to this business.';
+                }
+
+                $formFilter = $this->positiveId($entry['config']['form_id'] ?? null);
+
+                if ($triggerType === WorkflowTriggerType::FormSubmitted && $formFilter !== null && $references()->form($formFilter) === null) {
+                    $errors[$entry['key']][] = 'That form does not belong to this business.';
+                }
+            }
+        }
+
+        foreach ($flattened as $entry) {
+            if (! in_array($entry['type'], [WorkflowNodeType::AddTag, WorkflowNodeType::RemoveTag], true)) {
+                continue;
+            }
+
+            // The tag a step adds or removes is Business-scoped (and, for Add, must
+            // still be active). Re-derived at execution too: a pinned version
+            // outlives whatever was true when it was published.
+            $tag = $references()->tag($this->positiveId($entry['config']['tag_id'] ?? null) ?? 0);
+
+            if ($tag === null) {
+                $errors[$entry['key']][] = 'That tag does not belong to this business.';
+            } elseif ($tag['archived'] && $entry['type'] === WorkflowNodeType::AddTag) {
+                $errors[$entry['key']][] = 'That tag is archived and cannot be added to a contact. Choose an active tag.';
             }
         }
 
@@ -385,6 +416,16 @@ class WorkflowCompiler
 
                 if ($groupId <= 0 || ! $references()->hasGroup($groupId)) {
                     $errors[] = sprintf('Condition %d checks a contact group that does not belong to this business.', $position);
+                }
+
+                continue;
+            }
+
+            $tagId = ConditionSubjectRegistry::tagId($subject);
+
+            if ($tagId !== null) {
+                if ($references()->tag($tagId) === null) {
+                    $errors[] = sprintf('Condition %d checks a tag that does not belong to this business.', $position);
                 }
 
                 continue;
@@ -493,6 +534,12 @@ class WorkflowCompiler
         }
 
         return $errors;
+    }
+
+    /** A positive id from a node or trigger config, or null for anything else. */
+    private function positiveId(mixed $value): ?int
+    {
+        return (is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value > 0 ? (int) $value : null;
     }
 
     /**

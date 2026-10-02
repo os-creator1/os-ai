@@ -302,6 +302,7 @@ class AppointmentBookingService
             $previousStaffUserId = (int) $locked->staff_user_id;
             $previousStartAt = Carbon::parse($locked->start_at);
             $previousEndAt = Carbon::parse($locked->end_at);
+            $rescheduleCount = (int) $locked->reschedule_count + 1;
 
             // The new staff member — which may be the same one — must clear
             // exactly the checks a fresh booking would face, against the NEW
@@ -330,6 +331,7 @@ class AppointmentBookingService
                 'previousStaffUserId' => $previousStaffUserId,
                 'previousStartAt' => $previousStartAt,
                 'previousEndAt' => $previousEndAt,
+                'rescheduleCount' => $rescheduleCount,
             ];
         }, self::TRANSACTION_ATTEMPTS);
 
@@ -347,7 +349,8 @@ class AppointmentBookingService
             $this->format($result['previousEndAt']),
             $this->format($newStartAt),
             $this->format($newEndAt),
-            $rescheduledByUserId
+            $rescheduledByUserId,
+            $result['rescheduleCount']
         );
 
         return Appointment::query()->findOrFail($appointmentId);

@@ -75,7 +75,7 @@ class ContainerBindingCoexistenceTest extends TestCase
         $this->assertInstanceOf(EloquentOpportunityRepository::class, $opportunities);
 
         $this->assertEqualsCanonicalizing(
-            ['trigger', 'end', 'send_sms', 'update_contact_field', 'internal_notification', 'wait', 'if_else'],
+            ['trigger', 'end', 'send_sms', 'update_contact_field', 'internal_notification', 'wait', 'if_else', 'send_email', 'add_tag', 'remove_tag'],
             $registry->registeredTypes(),
             'The merge must leave the executor registry complete.',
         );

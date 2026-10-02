@@ -340,6 +340,12 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\WaitNodeExecutor::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\IfElseNodeExecutor::class));
 
+                    // Merged-foundation actions: each calls its owning domain's
+                    // canonical seam (Business Email's sender, TagManager).
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendEmailNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class));
+
                     return $registry;
                 },
             );
@@ -371,6 +377,35 @@
                         $registry->register($app->make(
                             \App\Library\Automation\Workflow\Triggers\CrmOpportunityTriggerSource::class,
                             ['triggerType' => $crmTrigger],
+                        ));
+                    }
+
+                    // Merged foundations — Contact Tags, Forms and Calendar
+                    // appointments, one source instance per trigger type so the
+                    // registry and the enum still agree one-to-one.
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::ContactTagAdded,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::ContactTagRemoved,
+                    ] as $tagTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
+                            ['triggerType' => $tagTrigger],
+                        ));
+                    }
+
+                    $registry->register($app->make(
+                        \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+                        ['triggerType' => \App\Enums\Automation\Workflow\WorkflowTriggerType::FormSubmitted],
+                    ));
+
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::AppointmentScheduled,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::AppointmentCancelled,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::AppointmentRescheduled,
+                    ] as $appointmentTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
+                            ['triggerType' => $appointmentTrigger],
                         ));
                     }
 
