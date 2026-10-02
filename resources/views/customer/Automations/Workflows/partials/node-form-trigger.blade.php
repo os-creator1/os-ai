@@ -177,6 +177,17 @@
         </p>
     </div>
 
+    {{-- WHERE IT APPLIES — the whole business, or one Location. Options are this
+         Business's own Locations only (drawer.js, catalogs.locations). A bound
+         workflow only ever starts from facts of that Location; changing it means
+         publishing again, never editing a live version. There is no per-step
+         Location. --}}
+    <div class="wf-field">
+        <label class="wf-field__label">{{ __('automations.v2.trigger_form.location_scope') }}</label>
+        <select class="form-select" data-field="business_location_id" data-role="wf-location-scope-select"></select>
+        <p class="wf-help mb-0">{{ __('automations.v2.trigger_form.location_scope_help') }}</p>
+    </div>
+
     <div class="wf-field">
         <label class="wf-field__label">{{ __('automations.v2.trigger_form.enrollment_policy') }}</label>
         <select class="form-select" data-field="enrollment_policy" data-role="wf-enrollment-policy">

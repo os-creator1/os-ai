@@ -67,6 +67,9 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
             $context->occurrenceKey(),
             // "Any form" when the filter is absent; otherwise exactly that form.
             fn (array $config): bool => ($wanted = self::filterId($config['form_id'] ?? null)) === null || $wanted === $formId,
+            null,
+            // The immutable submission's own Location, read from its row above.
+            $context->locationId,
         );
     }
 

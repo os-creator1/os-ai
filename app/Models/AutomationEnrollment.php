@@ -37,6 +37,7 @@ class AutomationEnrollment extends Model
         'workflow_id',
         'version_id',
         'contact_id',
+        'business_location_id',
         'status',
         'current_node_id',
         'resume_at',
@@ -71,6 +72,17 @@ class AutomationEnrollment extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    /**
+     * THE PINNED RUN LOCATION. Set once, at enrollment, by
+     * WorkflowEnrollmentService::enroll() — the only writer — from the triggering
+     * fact, and never reassigned. Null when the fact had no Location (and the
+     * workflow was Business-wide). Nothing re-derives it from the Contact later.
+     */
+    public function businessLocation(): BelongsTo
+    {
+        return $this->belongsTo(BusinessLocation::class, 'business_location_id');
     }
 
     public function workflow(): BelongsTo

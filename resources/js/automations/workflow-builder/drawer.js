@@ -328,7 +328,24 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         confirmNote.hidden = true
         populateStageFilters(node.config)
         populateTagAndFormFilters(node.config)
+        populateLocationScope(node.config)
         syncVisibility()
+    }
+
+    /**
+     * "Where it applies": the whole business, or one of THIS Business's Locations.
+     * An archived Location stays visible, marked, only where the workflow already
+     * names it, so the validator's message makes sense.
+     */
+    function populateLocationScope(config) {
+        const select = formEl.querySelector('[data-role="wf-location-scope-select"]')
+        const selected = config.business_location_id != null ? String(config.business_location_id) : ''
+        const rows = (catalogs.locations || [])
+            .filter((row) => row.active || String(row.id) === selected)
+            .map((row) => ({ id: row.id, label: `${row.name || 'Unnamed location'}${row.active ? '' : ' (archived)'}` }))
+
+        fillSelect(select, rows, 'id', 'label', 'Whole business')
+        select.value = selected
     }
 
     /**
@@ -638,6 +655,10 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 config[key] = value ? Number(value) : null
             })
         }
+
+        // Location scope applies to every trigger; null = the whole business.
+        const scopeValue = formEl.querySelector('[data-role="wf-location-scope-select"]').value
+        config.business_location_id = scopeValue ? Number(scopeValue) : null
 
         return config
     }

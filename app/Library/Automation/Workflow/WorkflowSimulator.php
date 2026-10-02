@@ -71,6 +71,7 @@ class WorkflowSimulator
     public const REFUSED_NO_BUSINESS = 'version_has_no_business';
     public const REFUSED_FOREIGN_CONTACT = 'contact_belongs_to_another_business';
     public const REFUSED_UNWALKABLE = 'workflow_cannot_be_walked';
+    public const REFUSED_OUTSIDE_LOCATION = 'contact_outside_workflow_location';
 
     /** How a walked path finished. */
     public const ENDED_END_STEP = 'end_step';
@@ -143,6 +144,17 @@ class WorkflowSimulator
 
         if ($business === null) {
             $result['refused'] = self::REFUSED_NO_BUSINESS;
+
+            return $result;
+        }
+
+        // A Location-bound version would never enroll a contact of another
+        // Location (or of none), so a test with one would show a journey that can
+        // not happen. Say so instead.
+        $bound = $version->boundLocationId();
+
+        if ($bound !== null && ($contact->location_id === null || (int) $contact->location_id !== $bound)) {
+            $result['refused'] = self::REFUSED_OUTSIDE_LOCATION;
 
             return $result;
         }
@@ -373,6 +385,9 @@ class WorkflowSimulator
             'version_id' => $version->getKey(),
             'business_id' => $version->business_id,
             'contact_id' => $contact->getKey(),
+            // What a real enrollment would pin: the bound Location, or the
+            // contact's own for a Business-wide test.
+            'business_location_id' => $version->boundLocationId() ?? ($contact->location_id === null ? null : (int) $contact->location_id),
             'step_count' => 0,
         ]);
 

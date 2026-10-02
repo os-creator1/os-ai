@@ -48,6 +48,7 @@ class AutomationWorkflowVersion extends Model
         'enrollment_policy',
         'enrollment_policy_source',
         'failure_policy',
+        'business_location_id',
         'published_at',
         'published_by_user_id',
     ];
@@ -57,6 +58,7 @@ class AutomationWorkflowVersion extends Model
         'definition' => 'array',
         'definition_revision' => 'integer',
         'node_count' => 'integer',
+        'business_location_id' => 'integer',
         'trigger_type' => WorkflowTriggerType::class,
         'enrollment_policy' => EnrollmentPolicy::class,
         'enrollment_policy_source' => EnrollmentPolicySource::class,
@@ -78,6 +80,16 @@ class AutomationWorkflowVersion extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    /**
+     * The Location this version is bound to, or null for a Business-wide one.
+     * Promoted from the trigger node's config at publish, after being proved to
+     * be an active Location of the Business; the runtime reads this column only.
+     */
+    public function boundLocationId(): ?int
+    {
+        return $this->business_location_id === null ? null : (int) $this->business_location_id;
     }
 
     public function nodes(): HasMany

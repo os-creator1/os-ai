@@ -97,6 +97,11 @@ class ContactTagTriggerSource extends FoundationTriggerSource
             // "Any tag" when the filter is absent; otherwise exactly that tag.
             fn (array $config): bool => ($wanted = self::filterId($config['tag_id'] ?? null)) === null || $wanted === $tagId,
             $this->causeOf($event),
+            // The Location is the Contact's AS OF the mutation, which the event
+            // captured under TagManager's row lock — never the tag's (it has none)
+            // and never re-read from the Contact now. A Location-bound workflow
+            // takes only exactly this; a Contact with none enrolls no bound one.
+            $event->locationId,
         );
     }
 

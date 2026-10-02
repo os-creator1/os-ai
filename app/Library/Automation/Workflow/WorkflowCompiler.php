@@ -320,6 +320,22 @@ class WorkflowCompiler
                     $errors[$entry['key']][] = 'That tag does not belong to this business.';
                 }
 
+                // THE WORKFLOW'S LOCATION SCOPE. A bound workflow must name an
+                // ACTIVE Location of THIS Business — a foreign, missing or archived
+                // one cannot publish, so the persisted scope is always one the
+                // runtime can trust. Absent = Business-wide.
+                $scopeId = $this->positiveId($entry['config']['business_location_id'] ?? null);
+
+                if ($scopeId !== null) {
+                    $scope = $references()->location($scopeId);
+
+                    if ($scope === null) {
+                        $errors[$entry['key']][] = 'That location does not belong to this business.';
+                    } elseif (! $scope['active']) {
+                        $errors[$entry['key']][] = 'That location is archived. Choose an active location, or the whole business.';
+                    }
+                }
+
                 $formFilter = $this->positiveId($entry['config']['form_id'] ?? null);
 
                 if ($triggerType === WorkflowTriggerType::FormSubmitted && $formFilter !== null && $references()->form($formFilter) === null) {

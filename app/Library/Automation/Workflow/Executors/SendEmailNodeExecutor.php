@@ -15,6 +15,7 @@ use App\Library\BusinessEmail\BusinessEmailSender;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use Throwable;
 
@@ -93,6 +94,26 @@ class SendEmailNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::failed('email_no_step_identity');
         }
 
+        // THE RUN'S LOCATION. When the journey is pinned to one, that — and not
+        // wherever the Contact lives today — is the Location the email is sent from
+        // and attributed to, handed to the foundation's own explicit-Location seam
+        // (which still requires it to be an active Location of this Business). A
+        // pinned Location that no longer resolves fails closed; it is never swapped
+        // for the Contact's. An unpinned journey (a fact with no Location) leaves
+        // the foundation's own resolution — Contact, then the single active
+        // Location, else refusal — exactly as before.
+        $location = null;
+
+        if ($enrollment->business_location_id !== null) {
+            $location = BusinessLocation::query()
+                ->where('business_id', (int) $business->id)
+                ->find((int) $enrollment->business_location_id);
+
+            if ($location === null) {
+                return NodeExecutionOutcome::failed('email_location_unavailable');
+            }
+        }
+
         try {
             $message = $this->emails->send(new BusinessEmailSendRequest(
                 business: $business,
@@ -101,6 +122,7 @@ class SendEmailNodeExecutor implements NodeExecutor
                 bodyText: ContactMergeFields::render($body, $contact),
                 operationKey: sprintf('automation:%d:%d:email', (int) $enrollment->workflow_id, $stepRunId),
                 source: BusinessEmailSource::Automation,
+                location: $location,
                 automationStepRunId: $stepRunId,
             ));
         } catch (BusinessEmailSendRefusedException $exception) {

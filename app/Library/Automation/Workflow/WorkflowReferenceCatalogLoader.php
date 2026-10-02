@@ -107,9 +107,28 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as child_archived_at'),
             ]);
 
+        // The Business's Locations: one row each. Its lifecycle state rides in
+        // `field_type`, as a form's does.
+        $location = DB::table('business_locations')
+            ->where('business_locations.business_id', $businessId)
+            ->select([
+                DB::raw("'location' as source"),
+                DB::raw('0 as parent_position'),
+                'business_locations.id as parent_id',
+                DB::raw("COALESCE(business_locations.name, '') as parent_name"),
+                DB::raw('null as parent_archived_at'),
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                'business_locations.lifecycle_state as field_type',
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+            ]);
+
         // Contact groups by name (as before); pipelines and their stages in the
-        // order the CRM board shows them; tags and forms by name.
-        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)
+        // order the CRM board shows them; tags, forms and Locations by name.
+        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)->unionAll($location)
             ->orderBy('source')
             ->orderBy('parent_position')
             ->orderBy('parent_name')
@@ -124,9 +143,20 @@ class WorkflowReferenceCatalogLoader
         $stages = [];
         $tags = [];
         $forms = [];
+        $locations = [];
 
         foreach ($rows as $row) {
             $parentId = (int) $row->parent_id;
+
+            if ($row->source === 'location') {
+                $locations[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'active' => (string) $row->field_type === \App\Enums\Business\BusinessLocationLifecycleState::Active->value,
+                ];
+
+                continue;
+            }
 
             if ($row->source === 'tag') {
                 $tags[$parentId] = [
@@ -187,6 +217,6 @@ class WorkflowReferenceCatalogLoader
 
         ksort($fields);
 
-        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms);
+        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms, $locations);
     }
 }

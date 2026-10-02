@@ -15,6 +15,10 @@ use App\Enums\Automation\Workflow\WorkflowTriggerType;
  * enrollment's occurrence key (`crm_opportunity_history:{id}`). No stage or
  * pipeline NAME is carried — names are mutable labels; ids are the identity.
  *
+ * `locationId` is the DEAL's own Location (`crm_opportunities.location_id`), read
+ * from the same history-joined-to-deal row, so a Location-bound workflow takes only
+ * a deal of exactly its Location. Null when the deal has none.
+ *
  *   created        stageId          the stage the deal was created in
  *   stage changed  fromStageId,     where it left and where it arrived (a reopen
  *                  toStageId        that lands the deal in another stage is one)
@@ -39,6 +43,7 @@ final readonly class CrmOpportunityTriggerContext
         public ?int $fromStageId,
         public ?int $toStageId,
         public ?string $outcome,
+        public ?int $locationId = null,
     ) {
     }
 
@@ -62,6 +67,7 @@ final readonly class CrmOpportunityTriggerContext
             'from_stage_id' => $this->fromStageId,
             'to_stage_id' => $this->toStageId,
             'outcome' => $this->outcome,
+            'location_id' => $this->locationId,
         ];
     }
 }

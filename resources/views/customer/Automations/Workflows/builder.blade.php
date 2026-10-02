@@ -41,6 +41,8 @@
                                           each: ->id, ->name, ->archived
       iterable $forms                   optional; this Business's forms,
                                           each: ->id, ->name, ->lifecycle
+      iterable $locations               optional; this Business's Locations (the scope
+                                          picker), each: ->id, ->name, ->active
 --}}
 
 @php
@@ -76,6 +78,7 @@
             'crmStages' => $toArrayList($crmStages ?? [], ['id', 'pipeline_id', 'name', 'archived']),
             'tags' => $toArrayList($tags ?? [], ['id', 'name', 'archived']),
             'forms' => $toArrayList($forms ?? [], ['id', 'name', 'lifecycle']),
+            'locations' => $toArrayList($locations ?? [], ['id', 'name', 'active']),
         ],
         'limits' => [
             'maxNodes' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_NODES_PER_VERSION,

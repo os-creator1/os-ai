@@ -82,8 +82,13 @@ export function summarize(node, catalogs) {
     const config = node.config || {}
 
     switch (node.type) {
-        case NODE_TYPES.TRIGGER:
-            return summarizeTrigger(config, catalogs)
+        case NODE_TYPES.TRIGGER: {
+            const trigger = summarizeTrigger(config, catalogs)
+            const location = namedRow(catalogs.locations, config.business_location_id)
+
+            // "· Downtown" when bound to a Location; nothing for the whole business.
+            return location && trigger.summary ? { ...trigger, summary: `${trigger.summary} · ${location}` } : trigger
+        }
 
         case NODE_TYPES.SEND_SMS:
             return config.body && String(config.body).trim() !== ''

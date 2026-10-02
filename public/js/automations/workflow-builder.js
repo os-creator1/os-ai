@@ -1584,7 +1584,28 @@ function createDrawer(_ref) {
     confirmNote.hidden = true;
     populateStageFilters(node.config);
     populateTagAndFormFilters(node.config);
+    populateLocationScope(node.config);
     syncVisibility();
+  }
+
+  /**
+   * "Where it applies": the whole business, or one of THIS Business's Locations.
+   * An archived Location stays visible, marked, only where the workflow already
+   * names it, so the validator's message makes sense.
+   */
+  function populateLocationScope(config) {
+    var select = formEl.querySelector('[data-role="wf-location-scope-select"]');
+    var selected = config.business_location_id != null ? String(config.business_location_id) : '';
+    var rows = (catalogs.locations || []).filter(function (row) {
+      return row.active || String(row.id) === selected;
+    }).map(function (row) {
+      return {
+        id: row.id,
+        label: "".concat(row.name || 'Unnamed location').concat(row.active ? '' : ' (archived)')
+      };
+    });
+    fillSelect(select, rows, 'id', 'label', 'Whole business');
+    select.value = selected;
   }
 
   /**
@@ -1885,6 +1906,10 @@ function createDrawer(_ref) {
         config[key] = value ? Number(value) : null;
       });
     }
+
+    // Location scope applies to every trigger; null = the whole business.
+    var scopeValue = formEl.querySelector('[data-role="wf-location-scope-select"]').value;
+    config.business_location_id = scopeValue ? Number(scopeValue) : null;
     return config;
   }
   function readIfElse() {
@@ -2369,6 +2394,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
 // Automations V2 (contract §13.1) — what each card SAYS.
 //
 // A card on the canvas is only useful if it tells a person what the step does
@@ -2446,7 +2477,15 @@ function summarize(node, catalogs) {
   var config = node.config || {};
   switch (node.type) {
     case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.TRIGGER:
-      return summarizeTrigger(config, catalogs);
+      {
+        var trigger = summarizeTrigger(config, catalogs);
+        var location = namedRow(catalogs.locations, config.business_location_id);
+
+        // "· Downtown" when bound to a Location; nothing for the whole business.
+        return location && trigger.summary ? _objectSpread(_objectSpread({}, trigger), {}, {
+          summary: "".concat(trigger.summary, " \xB7 ").concat(location)
+        }) : trigger;
+      }
     case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_SMS:
       return config.body && String(config.body).trim() !== '' ? {
         summary: "\u201C".concat(excerpt(config.body), "\u201D"),
@@ -2735,6 +2774,7 @@ var ENDED_WORDS = {
 };
 var REFUSED_WORDS = {
   contact_belongs_to_another_business: 'That contact is not part of this business.',
+  contact_outside_workflow_location: 'That contact is not at this workflow’s location, so it would never run for them.',
   workflow_cannot_be_walked: 'This workflow can’t be tested until the highlighted problems are fixed.',
   version_has_no_business: 'This workflow can’t be tested right now.'
 };

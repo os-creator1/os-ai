@@ -66,6 +66,14 @@ class AutomationWorkflowsController extends CustomerBaseController
                 ->where('business_id', (int) $business->id)
                 ->withExists(['versions as has_open_draft' => fn ($query) => $query
                     ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)])
+                // Where each LIVE version applies, as a subselect on the page query
+                // (no second query, never one per row): the Location it is bound
+                // to, or null for the whole business.
+                ->addSelect(['scope_location_name' => \Illuminate\Support\Facades\DB::table('automation_workflow_versions as sv')
+                    ->join('business_locations as sl', 'sl.id', '=', 'sv.business_location_id')
+                    ->whereColumn('sv.id', 'automation_workflows.published_version_id')
+                    ->selectRaw("COALESCE(NULLIF(sl.name, ''), 'Unnamed location')")
+                    ->limit(1)])
                 ->orderByDesc('updated_at')
                 ->orderByDesc('id')
                 ->paginate(self::PAGE_SIZE);
@@ -187,6 +195,8 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'crmStages' => $catalog->stages(),
                 'tags' => $catalog->tags(),
                 'forms' => $catalog->forms(),
+                // The scope picker — Locations of THIS Business, from the same read.
+                'locations' => $catalog->locations(),
             ]);
         });
     }
@@ -284,6 +294,8 @@ class AutomationWorkflowsController extends CustomerBaseController
             'status' => $workflow->status->value,
             'status_label' => $workflow->status->label(),
             'has_published_version' => $workflow->published_version_id !== null,
+            // Null = the whole business (or not selected by this query).
+            'scope_location_name' => $workflow->getAttribute('scope_location_name'),
             'has_draft' => $hasDraft ?? $workflow->draftVersion() !== null,
             'archived_at' => $workflow->archived_at?->toIso8601String(),
             'updated_at' => $workflow->updated_at?->toIso8601String(),
@@ -305,6 +317,7 @@ class AutomationWorkflowsController extends CustomerBaseController
             'enrollment_policy' => $version->enrollment_policy?->value,
             'enrollment_policy_source' => $version->enrollment_policy_source?->value,
             'failure_policy' => $version->failure_policy?->value,
+            'business_location_id' => $version->boundLocationId(),
             'published_at' => $version->published_at?->toIso8601String(),
         ];
     }

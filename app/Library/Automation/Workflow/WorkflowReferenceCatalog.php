@@ -34,6 +34,7 @@ final class WorkflowReferenceCatalog
      * @param array<int, array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}> $stages CRM stages, keyed by id, in board order
      * @param array<int, array{id: int, name: string, archived: bool}> $tags contact tags, keyed by id, in name order
      * @param array<int, array{id: int, name: string, lifecycle: string}> $forms forms, keyed by id, in name order
+     * @param array<int, array{id: int, name: string, active: bool}> $locations the Business's Locations, keyed by id, in name order
      */
     public function __construct(
         public readonly int $businessId,
@@ -43,6 +44,7 @@ final class WorkflowReferenceCatalog
         private readonly array $stages = [],
         private readonly array $tags = [],
         private readonly array $forms = [],
+        private readonly array $locations = [],
     ) {
     }
 
@@ -110,6 +112,31 @@ final class WorkflowReferenceCatalog
     public function writableFields(): array
     {
         return array_values(array_filter($this->fields, fn (array $field): bool => ! $field['is_phone']));
+    }
+
+    // ---------------------------------------------------------------
+    // Locations — what a workflow can be bound to
+    // ---------------------------------------------------------------
+
+    /**
+     * The Location, when it belongs to this Business — active or archived.
+     * Foreign and nonexistent read the same: absent.
+     *
+     * @return array{id: int, name: string, active: bool}|null
+     */
+    public function location(int $locationId): ?array
+    {
+        return $this->locations[$locationId] ?? null;
+    }
+
+    /**
+     * Every Location of the Business, archived ones flagged, for the scope picker.
+     *
+     * @return list<array{id: int, name: string, active: bool}>
+     */
+    public function locations(): array
+    {
+        return array_values($this->locations);
     }
 
     // ---------------------------------------------------------------

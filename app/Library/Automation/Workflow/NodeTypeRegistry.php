@@ -141,6 +141,16 @@ class NodeTypeRegistry
             $errors[] = 'The failure rule is missing or not recognised.';
         }
 
+        // Location scope, for every trigger: absent / null = the whole Business,
+        // otherwise one Location id. Shape only — whether it is an active Location
+        // of THIS Business is the compiler's question, answered against real rows.
+        if (array_key_exists('business_location_id', $config)
+            && $config['business_location_id'] !== null
+            && $config['business_location_id'] !== ''
+            && ! $this->isPositiveInt($config['business_location_id'])) {
+            $errors[] = 'Choose a valid location, or leave it as the whole business.';
+        }
+
         return [...$errors, ...$this->validateTriggerSpecifics($triggerType, $config)];
     }
 

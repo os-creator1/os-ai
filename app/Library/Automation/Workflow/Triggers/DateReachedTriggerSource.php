@@ -179,6 +179,7 @@ class DateReachedTriggerSource implements TriggerSource
                 $policy,
                 $afterContactId,
                 min($remaining - $enrolled, WorkflowLimits::SWEEP_CHUNK_SIZE),
+                $row->business_location_id === null ? null : (int) $row->business_location_id,
             );
 
             if ($page === []) {
@@ -188,7 +189,12 @@ class DateReachedTriggerSource implements TriggerSource
             foreach ($page as $contact) {
                 $afterContactId = max($afterContactId, (int) $contact->getKey());
 
-                $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceYear);
+                $enrollment = $this->enrollments->enroll(
+                    $workflow,
+                    $contact,
+                    $occurrenceYear,
+                    locationId: $contact->location_id === null ? null : (int) $contact->location_id,
+                );
 
                 if ($enrollment === null) {
                     continue;
@@ -227,6 +233,7 @@ class DateReachedTriggerSource implements TriggerSource
                 'b.timezone',
                 'n.config as trigger_config',
                 'v.enrollment_policy',
+                'v.business_location_id',
             ])
             ->all();
     }
@@ -252,12 +259,17 @@ class DateReachedTriggerSource implements TriggerSource
         EnrollmentPolicy $policy,
         int $afterContactId,
         int $limit,
+        ?int $boundLocationId = null,
     ): array {
         [$keyPrefix, $keySuffix] = $this->keyFragmentsAround($workflow, $policy, $occurrenceYear);
 
         return Contacts::query()
             ->select('contacts.*')
             ->where('contacts.business_id', $workflow->business_id)
+            // A Location-bound workflow only ever considers contacts of its own
+            // Location, in SQL — so a capped run's pages are not spent on contacts
+            // EnrollmentService would only refuse.
+            ->when($boundLocationId !== null, fn ($query) => $query->where('contacts.location_id', $boundLocationId))
             ->where('contacts.group_id', $config['group_id'])
             ->where('contacts.status', Contacts::STATUS_SUBSCRIBE)
             ->where('contacts.id', '>', $afterContactId)

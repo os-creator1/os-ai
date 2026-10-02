@@ -170,12 +170,28 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
             $contacts = Contacts::query()
                 ->where('business_id', (int) $business->id)
                 ->whereIn('uid', $uids)
-                ->get(['id', 'uid']);
+                ->get(['id', 'uid', 'location_id']);
 
             if ($contacts->count() !== count($uids)) {
                 // Unknown and foreign are deliberately indistinguishable, and
                 // nothing has been enqueued yet, so nothing is partly honoured.
                 return $this->notFound();
+            }
+
+            // A Location-bound workflow takes only contacts of its own Location.
+            // EnrollmentService would refuse the others silently, one queued job at
+            // a time; saying so now, before anything is queued, beats a request that
+            // reports "queued" and then quietly enrolls fewer people.
+            $boundLocationId = \App\Models\AutomationWorkflowVersion::query()
+                ->whereKey((int) $workflow->published_version_id)
+                ->where('workflow_id', (int) $workflow->id)
+                ->value('business_location_id');
+
+            if ($boundLocationId !== null
+                && $contacts->contains(fn ($contact): bool => (int) $contact->location_id !== (int) $boundLocationId)) {
+                return response()->json([
+                    'message' => 'This workflow only runs for contacts at its own location. Choose contacts from that location.',
+                ], 422);
             }
 
             // One server-derived identity for this deliberate request. It becomes

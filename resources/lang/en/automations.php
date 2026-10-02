@@ -18,6 +18,8 @@ return [
             'column_name' => 'Name',
             'column_status' => 'Status',
             'column_updated' => 'Last updated',
+            'column_scope' => 'Applies to',
+            'scope_business' => 'Whole business',
             'open' => 'Open',
         ],
         'chooser' => [
@@ -184,6 +186,8 @@ return [
             'form_filter' => 'Which form',
             'any_form' => 'Any form',
             'no_forms' => 'This business has no forms yet.',
+            'location_scope' => 'Where it applies',
+            'location_scope_help' => 'Choose a location to start this workflow only from things that happen there. Changing it takes effect when you publish; people already in the workflow keep the location they started with.',
             'form_note' => 'Starts once for each finished submission. A questionnaire’s earlier pages do not start it, and a submission that did not produce a contact is skipped.',
             'appointment_note' => 'The appointment’s contact enters this workflow.',
         ],

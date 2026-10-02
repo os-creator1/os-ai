@@ -13,6 +13,7 @@ use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
 use App\Models\AutomationWorkflow;
 use App\Models\Business;
+use App\Models\ChatBox;
 use App\Models\Contacts;
 use App\Models\Reports;
 use Illuminate\Support\Carbon;
@@ -125,6 +126,12 @@ class MessageReceivedTriggerSource implements TriggerSource
             return $result;
         }
 
+        // The Location is the CONVERSATION's own (`chat_boxes.location_id`, the one
+        // record the messaging domain treats as authoritative for a thread's
+        // Location), not the Contact's: a message belongs to its thread. Ambiguous
+        // or missing means null, which only Business-wide workflows accept.
+        $locationId = $this->conversationLocationId((int) $business->id, self::normalizePhone((string) $contact->phone));
+
         // One read for the whole fan-out: what was this contact answering?
         [$producerWorkflowId, $producerDepth] = $this->precedingAutomationProducer(
             (int) $business->id,
@@ -147,7 +154,7 @@ class MessageReceivedTriggerSource implements TriggerSource
                 continue;
             }
 
-            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $event->occurrenceKey, $depth);
+            [$enrollment, $reason] = $this->enrollOutsideCooldown($workflow, $contact, $event->occurrenceKey, $depth, $locationId);
 
             if ($enrollment === null) {
                 $result = $this->skip($result, $reason);
@@ -163,6 +170,33 @@ class MessageReceivedTriggerSource implements TriggerSource
         }
 
         return $result;
+    }
+
+    /**
+     * The Location of the ONE conversation this Business has with this number, when
+     * that is unambiguous — the canonical `chat_boxes.location_id` a live writer
+     * already proved when the thread was opened. `(business_id, to)` can match more
+     * than one thread (a contact who wrote to several of the Business's numbers),
+     * and picking one would be a guess, so ambiguity is null.
+     */
+    private function conversationLocationId(int $businessId, string $phone): ?int
+    {
+        if ($phone === '') {
+            return null;
+        }
+
+        $matches = ChatBox::query()
+            ->where('business_id', $businessId)
+            ->where('to', $phone)
+            ->orderBy('id')
+            ->limit(2)
+            ->get(['id', 'location_id']);
+
+        if ($matches->count() !== 1 || $matches->first()->location_id === null) {
+            return null;
+        }
+
+        return (int) $matches->first()->location_id;
     }
 
     /**
@@ -272,15 +306,16 @@ class MessageReceivedTriggerSource implements TriggerSource
         Contacts $contact,
         string $occurrenceKey,
         int $depth,
+        ?int $locationId = null,
     ): array {
-        return DB::transaction(function () use ($workflow, $contact, $occurrenceKey, $depth): array {
+        return DB::transaction(function () use ($workflow, $contact, $occurrenceKey, $depth, $locationId): array {
             Contacts::query()->whereKey($contact->getKey())->lockForUpdate()->first();
 
             if ($this->inCooldown($workflow, $contact)) {
                 return [null, self::SKIPPED_COOLDOWN];
             }
 
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth);
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth, $locationId);
 
             // Null here is EnrollmentService's own refusal: a redelivered
             // message losing its unique key, a contact still part-way through,

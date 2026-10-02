@@ -115,6 +115,10 @@ class WorkflowPublisher
                 'enrollment_policy' => EnrollmentPolicy::from((string) $triggerConfig['enrollment_policy']),
                 'enrollment_policy_source' => EnrollmentPolicySource::from((string) $triggerConfig['enrollment_policy_source']),
                 'failure_policy' => FailurePolicy::from((string) $triggerConfig['failure_policy']),
+                // The Location scope, proved by the compiler above, pinned for the
+                // life of this version. The runtime reads this column, never the
+                // node config it came from.
+                'business_location_id' => $this->boundLocationId($triggerConfig),
                 'published_at' => Carbon::now(),
                 'published_by_user_id' => $publishedByUserId,
             ])->save();
@@ -145,6 +149,14 @@ class WorkflowPublisher
         }
 
         return is_array($root['config'] ?? null) ? $root['config'] : [];
+    }
+
+    /** @param array<string, mixed> $triggerConfig */
+    private function boundLocationId(array $triggerConfig): ?int
+    {
+        $value = $triggerConfig['business_location_id'] ?? null;
+
+        return (is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value > 0 ? (int) $value : null;
     }
 
     private function assertPublishedWorkflowQuota(AutomationWorkflow $workflow): void
