@@ -52,6 +52,33 @@ check runs inside the publisher's transaction against the very draft being promo
 (no TOCTOU); an unattended publish (no actor) skips it. View As is handled by the
 guard itself. Execution has no actor and never comes through here.
 
+### Existing workflows: one gate for every operation
+
+`ResolvesAutomationWorkflows::resolveWorkflow()` — which every customer workflow
+endpoint goes through — now asks `WorkflowLocationAuthority::mayOperate()`: open,
+settings, draft show/autosave/publish/discard, pause, resume, archive, enrollment
+history, enrollment logs, stop-all, manual enrollment, simulate and the test-contact
+picker. (There is no delete.) An actor outside the authority gets what an unknown uid
+gets — **404** — before any contact is queried, any job queued or any run row read, so
+a forged workflow, contact or enrollment id also fails closed (an enrollment is only
+ever resolved inside a workflow the actor already passed).
+
+* **Bound workflow** → the actor must reach its Location.
+* **Business-wide workflow** → the actor must reach every Location, for the same reason
+  only they may publish one.
+* The scope is the **published version's** own column; never inferred from a contact
+  (a contact who has since moved changes nothing), never from node config.
+* A workflow never published has no live scope: a draft bound to a Location needs
+  reach of it; an unscoped draft belongs to its creator (who must be able to open it
+  to choose a Location) and to full-reach actors.
+* The workflow **list** is narrowed in the page query itself (the actor's reach, plus a
+  `NOT EXISTS` for "reaches every Location"), so an unreachable or Business-wide
+  workflow is not even named. Owners and full-reach actors are unchanged.
+
+The Location ACL reads are filed as shared authority (`WorkflowFeatureQueryScope::shared`),
+like tenancy resolution, so the §18 feature-owned budgets (list 2, builder 4) are
+unchanged.
+
 ## 3. Enrollment — the one door
 
 `EnrollmentService::enroll(workflow, contact, key, depth = 0, ?int $locationId = null)`.
@@ -173,9 +200,10 @@ triggers), and "no Location, no bound run".
 
 * Location-aware Send SMS (needs a messaging seam that assigns numbers/identities to
   Locations); bound workflows cannot text until then.
-* Actor Location ACL on the other workflow operations (pause, resume, archive, stop-all,
-  manual enrollment of contacts): only scope, save, publish and Test workflow are
-  covered here.
+* **BLOCKER for the next full Automations V1 completion pass: Location-bound SMS
+  requires a Location-aware messaging sender/number seam.** Until messaging assigns
+  identities and numbers to Locations, a bound workflow cannot text (it fails closed
+  at runtime and publish refuses it).
 * Backfilling a Location onto pre-existing enrollments.
 * A checkpoint that holds a journey whose pinned Location is later archived (see above).
 * Per-node Location overrides and multi-Location fan-out (out of scope by design).

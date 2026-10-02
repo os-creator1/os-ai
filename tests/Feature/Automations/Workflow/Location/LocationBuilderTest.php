@@ -104,6 +104,8 @@ class LocationBuilderTest extends TestCase
         $definition['root']['next'] = [$this->endStep()];
         DB::table('automation_workflow_versions')->where('id', $draft->id)->update(['definition' => json_encode($definition)]);
 
+        // A scope that is not even this Business's can still be opened (and fixed or
+        // discarded) by an actor who reaches every Location, so it is never stranded.
         $shown = $this->callJson('GET', $this->routeUrl('draft.show', $t['workspace'], $t['business'], $workflow))->assertOk()->json();
         $this->assertContains('That location does not belong to this business.', collect($shown['errors'])->flatten()->all());
 

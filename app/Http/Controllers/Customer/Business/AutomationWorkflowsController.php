@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Business;
 use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesAutomationWorkflows;
+use App\Http\Controllers\Customer\Business\Concerns\WorkflowFeatureQueryScope;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Automations\Workflow\StoreWorkflowRequest;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
@@ -64,8 +65,15 @@ class AutomationWorkflowsController extends CustomerBaseController
             // §18 "One query with withCount / latest-run subselect; paginated":
             // whether each row has an open draft is a subselect on the page
             // query itself, not a second query and never one per row.
-            $page = AutomationWorkflow::query()
-                ->where('business_id', (int) $business->id)
+            $visible = AutomationWorkflow::query()->where('business_id', (int) $business->id);
+
+            // Only the workflows this actor may operate (their Location reach), in
+            // the page query itself. Their reach is shared authority, not feature SQL.
+            WorkflowFeatureQueryScope::shared(
+                fn () => $this->locationAuthority->restrictListing($visible, (int) Auth::id(), $business),
+            );
+
+            $page = $visible
                 ->withExists(['versions as has_open_draft' => fn ($query) => $query
                     ->where('state', \App\Enums\Automation\Workflow\WorkflowVersionState::Draft->value)])
                 // Where each LIVE version applies, as a subselect on the page query
@@ -181,7 +189,9 @@ class AutomationWorkflowsController extends CustomerBaseController
 
             // The actor's Location reach, read ONCE (the Business's own Locations are
             // already in the catalog, so "Whole business" costs no further read).
-            $reach = $this->locationAuthority->reachableIds((int) Auth::id(), $business);
+            $reach = WorkflowFeatureQueryScope::shared(
+                fn (): array => $this->locationAuthority->reachableIds((int) Auth::id(), $business),
+            );
 
             return view('customer.Automations.Workflows.builder', [
                 'workspaceUid' => $workspaceUid,

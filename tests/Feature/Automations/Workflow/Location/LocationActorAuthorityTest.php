@@ -75,6 +75,15 @@ class LocationActorAuthorityTest extends TestCase
         return $workflow;
     }
 
+    /** An unscoped, never-published draft created by `$creator` — theirs to open and scope. */
+    private function draftBy(Customer $creator): AutomationWorkflow
+    {
+        $this->as($creator);
+        $created = $this->callJson('POST', $this->routeUrl('store', $this->workspace, $this->business), ['name' => 'Flow ' . uniqid(), 'trigger_type' => 'manual_enrollment'])->assertCreated();
+
+        return AutomationWorkflow::query()->where('uid', $created->json('workflow.uid'))->firstOrFail();
+    }
+
     private function saveScope(AutomationWorkflow $workflow, ?int $locationId): \Illuminate\Testing\TestResponse
     {
         $draft = $this->callJson('GET', $this->routeUrl('draft.show', $this->workspace, $this->business, $workflow))->assertOk()->json();
@@ -123,8 +132,7 @@ class LocationActorAuthorityTest extends TestCase
 
     public function test_selected_location_staff_are_offered_only_their_locations_and_no_whole_business(): void
     {
-        $workflow = $this->ownersDraft(null);
-        $this->as($this->staffDowntown);
+        $workflow = $this->draftBy($this->staffDowntown);
 
         $data = $this->builderData($workflow);
 
@@ -138,8 +146,7 @@ class LocationActorAuthorityTest extends TestCase
 
     public function test_a_forged_location_id_is_never_saved_for_staff_who_cannot_reach_it(): void
     {
-        $workflow = $this->ownersDraft(null);
-        $this->as($this->staffDowntown);
+        $workflow = $this->draftBy($this->staffDowntown);
 
         $this->saveScope($workflow, (int) $this->uptown->id)->assertStatus(422);
         $this->assertNull($this->storedScope($workflow), 'The forged Location did not reach the draft.');
@@ -156,7 +163,17 @@ class LocationActorAuthorityTest extends TestCase
         $workflow = $this->ownersDraft((int) $this->uptown->id);
         $this->as($this->staffDowntown);
 
-        $this->publish($workflow)->assertStatus(422)->assertJsonFragment(['You do not have access to that location.']);
+        // The operation gate refuses the whole workflow first (404, as for an unknown uid)...
+        $this->publish($workflow)->assertStatus(404);
+        $this->assertNull($workflow->fresh()->published_version_id);
+
+        // ...and the publisher itself still refuses it, as defence in depth.
+        try {
+            app(\App\Library\Automation\Workflow\WorkflowPublisher::class)->publish($workflow->fresh(), (int) $this->staffDowntown->user_id);
+            $this->fail('The publisher must refuse an unreachable Location.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertStringContainsString('You do not have access to that location.', json_encode($exception->errors()));
+        }
 
         $this->assertNull($workflow->fresh()->published_version_id);
     }
@@ -171,8 +188,8 @@ class LocationActorAuthorityTest extends TestCase
 
     public function test_selected_location_staff_cannot_publish_a_business_wide_workflow(): void
     {
-        $workflow = $this->ownersDraft(null);
-        $this->as($this->staffDowntown);
+        // Their own unscoped draft: they may open it, but may not publish it Business-wide.
+        $workflow = $this->draftBy($this->staffDowntown);
 
         $this->publish($workflow)->assertStatus(422)->assertJsonFragment([
             'Choose one of your locations. A whole-business workflow runs for every location, so it needs access to all of them.',
@@ -234,7 +251,7 @@ class LocationActorAuthorityTest extends TestCase
 
     public function test_the_test_contact_picker_and_simulate_honour_the_actors_location_reach(): void
     {
-        $workflow = $this->ownersDraft(null);
+        $workflow = $this->draftBy($this->staffDowntown);
         $here = $this->contactAt($this->downtown, '14155553001');
         $there = $this->contactAt($this->uptown, '14155553002');
         $nowhere = $this->contactAt(null, '14155553003');

@@ -261,13 +261,13 @@ class WorkflowBuilderContractTest extends TestCase
     private const FEATURE_LIST_BUDGET = 2;
 
     /**
-     * §18 "workflow Builder ≤ 4", feature-owned — plus ONE read: the actor's Location
-     * reach (LocationAccessGuard), which the scope picker needs and which cannot ride
-     * the catalog statement. The Business's own Locations ride the catalog, so
-     * "Whole business" costs nothing more. Constant in the number of Locations,
-     * references and steps.
+     * §18 "workflow Builder ≤ 4", feature-owned. The actor's Location reach
+     * (LocationAccessGuard) is read for the scope picker and for the per-workflow
+     * authority gate, but it is the platform's shared authority — filed as shared
+     * like tenancy resolution, via WorkflowFeatureQueryScope::shared() — not
+     * workflow-feature SQL, so the budget stays 4.
      */
-    private const FEATURE_BUILDER_BUDGET = 5;
+    private const FEATURE_BUILDER_BUDGET = 4;
 
     /**
      * Every statement one whole request issues, each tagged with the ownership

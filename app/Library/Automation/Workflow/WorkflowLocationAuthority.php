@@ -3,8 +3,11 @@
 namespace App\Library\Automation\Workflow;
 
 use App\Library\Workspace\LocationAccessGuard;
+use App\Models\AutomationWorkflow;
+use App\Models\AutomationWorkflowVersion;
 use App\Models\Business;
 use App\Models\BusinessLocation;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -73,6 +76,121 @@ class WorkflowLocationAuthority
     public function coversAll(array $reachableIds, array $allLocationIds): bool
     {
         return array_diff($allLocationIds, $reachableIds) === [];
+    }
+
+    /**
+     * May this actor operate this EXISTING workflow at all — open, edit, publish,
+     * pause, resume, archive, read its history and logs, stop it, enroll into it,
+     * test it? Fail closed.
+     *
+     * The authority is the workflow's LIVE scope, read from the published version's
+     * own column (never from a contact, never from node config):
+     *   - bound to a Location  → the actor must reach that Location;
+     *   - Business-wide        → the actor must reach every Location, for the same
+     *                            reason only they may publish one.
+     * A workflow never published has no live scope yet, so it is judged on its draft:
+     * a draft bound to a Location needs reach of it; an unscoped draft belongs to its
+     * creator (who must be able to open it to choose a Location) and to actors with
+     * full reach.
+     */
+    public function mayOperate(int $userId, Business $business, AutomationWorkflow $workflow): bool
+    {
+        if ((int) $workflow->business_id !== (int) $business->id) {
+            return false;
+        }
+
+        // The scope normally arrives with the workflow row (resolveWorkflow selects it
+        // as subselects, costing no extra read); a bare model is read here instead.
+        $attributes = $workflow->getAttributes();
+
+        if ($workflow->published_version_id !== null) {
+            $live = array_key_exists('live_location_id', $attributes)
+                ? $attributes['live_location_id']
+                : AutomationWorkflowVersion::query()
+                    ->where('workflow_id', (int) $workflow->id)
+                    ->whereKey((int) $workflow->published_version_id)
+                    ->value('business_location_id');
+
+            return $this->scopeAllows($userId, $business, $live === null ? null : (int) $live);
+        }
+
+        $declared = array_key_exists('draft_location_id', $attributes)
+            ? $attributes['draft_location_id']
+            : ($this->scopeOf((array) ($workflow->draftVersion()?->definition ?? []))[1]);
+        $scope = (is_int($declared) || (is_string($declared) && ctype_digit($declared))) && (int) $declared > 0 ? (int) $declared : null;
+
+        if ($scope !== null) {
+            return $this->scopeAllows($userId, $business, $scope);
+        }
+
+        return ($workflow->created_by_user_id !== null && (int) $workflow->created_by_user_id === $userId)
+            || $this->hasFullReach($userId, $business);
+    }
+
+    /**
+     * Does the actor's reach cover a workflow scope: a Location they reach, or —
+     * for Business-wide, or a Location id that is not even this Business's (a
+     * tampered row nobody could otherwise ever open or fix) — every Location.
+     */
+    private function scopeAllows(int $userId, Business $business, ?int $scope): bool
+    {
+        if ($scope !== null) {
+            $reach = $this->reachableIds($userId, $business);
+
+            if (in_array($scope, $reach, true)) {
+                return true;
+            }
+
+            $ownLocation = BusinessLocation::query()->where('business_id', (int) $business->id)->whereKey($scope)->exists();
+
+            if ($ownLocation) {
+                return false;
+            }
+        }
+
+        return $this->hasFullReach($userId, $business);
+    }
+
+    /**
+     * Narrow the workflow LIST to what the actor may operate, in the page query
+     * itself (no row is fetched and then hidden). One read — the actor's reach — and
+     * the "reaches every Location" test is a NOT EXISTS inside the same statement.
+     * Same rule as mayOperate(), expressed in SQL.
+     */
+    public function restrictListing(EloquentBuilder $query, int $userId, Business $business): void
+    {
+        $reach = array_map('intval', $this->reachableIds($userId, $business));
+        $ids = $reach === [] ? [-1] : $reach;
+        $in = implode(',', $ids);
+
+        $query->where(function (EloquentBuilder $visible) use ($business, $in, $ids, $userId): void {
+            $visible
+                // Reaches every Location the Business has: sees everything.
+                ->whereRaw(
+                    'NOT EXISTS (SELECT 1 FROM business_locations bl WHERE bl.business_id = ? AND bl.id NOT IN (' . $in . '))',
+                    [(int) $business->id],
+                )
+                // Live and bound to a Location they reach.
+                ->orWhereExists(fn ($live) => $live->selectRaw('1')
+                    ->from('automation_workflow_versions as pv')
+                    ->whereColumn('pv.id', 'automation_workflows.published_version_id')
+                    ->whereIn('pv.business_location_id', $ids))
+                // Never published: their own, or a draft bound to a Location they reach.
+                ->orWhere(function (EloquentBuilder $draftOnly) use ($ids, $userId): void {
+                    $draftOnly->whereNull('automation_workflows.published_version_id')
+                        ->where(function (EloquentBuilder $mine) use ($ids, $userId): void {
+                            $mine->where('automation_workflows.created_by_user_id', $userId)
+                                ->orWhereExists(fn ($draft) => $draft->selectRaw('1')
+                                    ->from('automation_workflow_versions as dv')
+                                    ->whereColumn('dv.workflow_id', 'automation_workflows.id')
+                                    ->where('dv.state', 'draft')
+                                    ->whereRaw(
+                                        "CAST(JSON_UNQUOTE(JSON_EXTRACT(dv.definition, '$.root.config.business_location_id')) AS UNSIGNED) IN ("
+                                        . implode(',', $ids) . ')',
+                                    ));
+                        });
+                });
+        });
     }
 
     /**

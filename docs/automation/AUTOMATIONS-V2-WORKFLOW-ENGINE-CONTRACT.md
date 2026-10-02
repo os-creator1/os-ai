@@ -1487,7 +1487,7 @@ the repository's deterministic second-session lock pattern
 | Operation | Budget | How |
 |---|---|---|
 | Workflow list | **≤ 2 V2-E feature-owned queries** for any page size (§18.1) | One query with an `exists` draft subselect, paginated (count + page) |
-| Builder load | **≤ 5 V2-E feature-owned queries** (the four below plus the actor's Location reach, Location run-scope) independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one catalog statement — contact groups joined to fields, `UNION ALL` CRM pipelines joined to stages — read once and used for both the pickers and `WorkflowCompiler::validate()` |
+| Builder load | **≤ 4 V2-E feature-owned queries** independent of node count and of reference count (§18.1) | Workflow by uid inside the Business; the draft's row lock and read; one catalog statement — contact groups joined to fields, `UNION ALL` CRM pipelines joined to stages — read once and used for both the pickers and `WorkflowCompiler::validate()` |
 | Autosave | 2 queries | One conditional `UPDATE` plus the revision read |
 | Publish, 50 nodes | ≤ 20 queries | In-memory compile; two bulk inserts; one transaction |
 | Trigger ingestion | 1 lookup per event | `(business_id, trigger_type, state)` index |
@@ -1514,7 +1514,7 @@ rule as follows.
 | Request | V2-E feature-owned budget |
 |---|---|
 | Workflow list — page and JSON | **≤ 2**, for any page size |
-| Builder load | **≤ 5** (4 + the actor's Location reach), independent of node count and of how many contact groups and fields the draft references |
+| Builder load | **≤ 4**, independent of node count and of how many contact groups and fields the draft references |
 
 **Shared platform request overhead is measured independently and is NOT charged
 against these budgets.** It includes: authentication and the resolved customer
