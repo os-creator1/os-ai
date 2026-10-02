@@ -111,6 +111,43 @@ final class CustomerContext
     }
 
     /**
+     * Whether the actor is standing in their OWN Agency account (not viewing a
+     * client), with the right to stand in its account frame. Only then does the
+     * shell offer the Agency product surface beside the Business modules
+     * (Blueprint §28: the Agency owner is a Business owner too).
+     */
+    public function hasAgencyShell(): bool
+    {
+        $workspace = $this->frameWorkspace();
+
+        return $this->viewAs === null
+            && $workspace !== null
+            && $workspace->isActive
+            && $workspace->hasAccountHome()
+            && $workspace->isAgency();
+    }
+
+    /**
+     * The Agency's own Business — the selected one in the Business frame, else
+     * (account frame) the sole Business the Agency Workspace can enter. Null
+     * outside the Agency shell or when "which one" would be a guess.
+     */
+    public function agencyOwnBusiness(): ?BusinessCandidate
+    {
+        if (! $this->hasAgencyShell()) {
+            return null;
+        }
+
+        if ($this->selectedBusiness !== null) {
+            return $this->selectedBusiness;
+        }
+
+        $selectable = $this->frameWorkspace()->selectableBusinesses();
+
+        return count($selectable) === 1 ? $selectable[0] : null;
+    }
+
+    /**
      * True when the frame Workspace is on the Core or Growth tier: those
      * customers must read "account", never "Workspace", on the account
      * pages (contract §5.3, T-CTX-2). Agency and not-yet-assigned accounts

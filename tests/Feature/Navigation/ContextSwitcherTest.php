@@ -190,7 +190,7 @@ class ContextSwitcherTest extends TestCase
         $this->switchTo($workspace, $clientOne)->assertRedirect(route('user.home'));
         $inClient = $this->home()->assertOk();
         $clientShell = $this->shellHtml($inClient->getContent());
-        $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Client account\s*</', $clientShell);
+        $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Your business\s*</', $clientShell);
         $this->assertSame(1, substr_count($clientShell, 'aria-current="true"'));
         $this->assertStringContainsString('aria-label="Current client account: Client One. Switch client account"', $clientShell);
 

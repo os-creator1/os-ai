@@ -224,18 +224,20 @@ class CustomerNavigationTreeTest extends TestCase
     }
 
     /**
-     * Never in the Agency account frame; offered once the Agency is inside an
-     * authorized client Business, pointing at that client's own board.
+     * The Agency owner is a Business owner too (Blueprint §28): Opportunities
+     * is the Agency's OWN Business board in both frames, never another account's.
      */
-    public function test_an_agency_sees_opportunities_only_inside_a_client_business(): void
+    public function test_an_agency_sees_opportunities_for_its_own_business_in_both_frames(): void
     {
         config(['opportunity.enabled' => true]);
         [$agency, $clientOne, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
 
         $this->switchToAccount($workspace);
-        $this->assertNotContains('opportunities', $this->menuKeys($this->home()->assertOk()->getContent()), 'The Agency account frame has no Opportunities.');
-        $this->assertNotContains('advisor', $this->menuKeys($this->home()->assertOk()->getContent()), 'The account frame cannot open a Business-context Advisor route.');
+        $accountHtml = $this->home()->assertOk()->getContent();
+        $this->assertContains('opportunities', $this->menuKeys($accountHtml), 'The Agency account frame still reaches its own Business Opportunities.');
+        $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $clientOne->uid]), $this->menuLinks($accountHtml));
+        $this->assertNotContains('advisor', $this->menuKeys($accountHtml), 'The account frame cannot open a Business-context Advisor route.');
 
         $this->switchTo($workspace, $clientOne);
         $html = $this->home()->assertOk()->getContent();
@@ -479,12 +481,14 @@ class CustomerNavigationTreeTest extends TestCase
         $this->switchToAccount($workspace);
 
         foreach ([
-            'customer.workspaces.agency.saas.stripe',
-            'customer.workspaces.agency.saas.plans',
-            'customer.workspaces.agency.saas.revenue',
-        ] as $routeName) {
+            'customer.workspaces.agency.saas.stripe' => 'settings',
+            // Plans and revenue are primary Agency entries now (Agency shell), so
+            // they light their own entry instead of the Settings hub's.
+            'customer.workspaces.agency.saas.plans' => 'agency-saas-plans',
+            'customer.workspaces.agency.saas.revenue' => 'agency-saas-revenue',
+        ] as $routeName => $activeKey) {
             $html = $this->get(route($routeName, $workspace->uid))->assertOk()->getContent();
-            $this->assertContains('settings', $this->activeMenuKeys($html), "[{$routeName}] must keep the Settings sidebar entry active.");
+            $this->assertContains($activeKey, $this->activeMenuKeys($html), "[{$routeName}] must keep [{$activeKey}] active.");
         }
     }
 
@@ -618,17 +622,16 @@ class CustomerNavigationTreeTest extends TestCase
     // §13 #9 — the frames never leak into each other
     // =================================================================
 
-    public function test_the_account_frame_offers_no_business_only_entry(): void
+    public function test_the_account_frame_scopes_every_business_entry_to_the_agencys_own_business(): void
     {
-        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        [$agency, $own, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($agency);
         $this->switchToAccount($workspace);
 
-        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+        $html = $this->home()->assertOk()->getContent();
 
-        foreach (self::BUSINESS_ONLY_KEYS as $businessOnly) {
-            $this->assertNotContains($businessOnly, $keys, "[{$businessOnly}] belongs to the Business frame only.");
-        }
+        // No Business module may link anywhere but the Agency's own Business.
+        $this->assertContains(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $own->uid]), $this->menuLinks($html));
     }
 
     /**
@@ -1029,7 +1032,8 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->assertContains('settings', $this->activeMenuKeys($html), 'Settings is active on its screens.');
         $this->assertNotContains('keywords', $this->menuKeys($html), 'The screen itself is a hub module, not a sidebar leaf.');
-        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($html));
+        // The only group is the own Business's SEO entry (Agency shell); no Settings module nests under Settings.
+        $this->assertSame(1, substr_count($this->sidebarHtml($html), 'has-sub'));
     }
 
     // =================================================================

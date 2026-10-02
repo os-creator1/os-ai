@@ -20,8 +20,23 @@
         ? [$item->active ? 'active' : null, $groupOpen ? 'open' : null]
         : ['nav-item', $item->isGroup() ? 'has-sub' : null, $item->active ? 'active' : null, $groupOpen ? 'open sidebar-group-active' : null]));
 @endphp
+@if($item->header)
+<li class="navigation-header" data-nav-key="{{ $item->key }}"><span>{{ $item->label }}</span></li>
+@else
 <li class="{{ $classes }}" data-nav-key="{{ $item->key }}">
-    @if($item->isGroup())
+    @if($item->isPost())
+        {{-- An anchor (so the theme's menu-link styling applies) that submits the CSRF POST form beside it. --}}
+        <a href="javascript:void(0);" role="button" class="d-flex align-items-center transition-fast" onclick="document.getElementById('nav-move-{{ $item->key }}').submit(); return false;">
+            <x-ds-icon :name="$item->icon" aria-hidden="true" />
+            <span class="{{ $nested ? 'menu-item' : 'menu-title' }}">{{ $label }}</span>
+        </a>
+        <form id="nav-move-{{ $item->key }}" method="POST" action="{{ $item->post['url'] }}" class="d-none">
+            @csrf
+            @foreach($item->post['fields'] ?? [] as $name => $value)
+                <input type="hidden" name="{{ $name }}" value="{{ $value }}">
+            @endforeach
+        </form>
+    @elseif($item->isGroup())
         <a href="javascript:void(0);" class="d-flex align-items-center" role="button" aria-haspopup="true" aria-expanded="{{ $groupOpen ? 'true' : 'false' }}">
             <x-ds-icon :name="$item->icon" aria-hidden="true" />
             <span class="{{ $nested ? 'menu-item' : 'menu-title' }}">{{ $label }}</span>
@@ -38,3 +53,4 @@
         </a>
     @endif
 </li>
+@endif

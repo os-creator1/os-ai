@@ -74,6 +74,8 @@
                         Helper::menuData()['customer'] array.
                     --}}
                     @foreach($customerMenu as $item)
+                        {{-- Section headings and frame moves are sidebar-only; the navbar switcher moves frames. --}}
+                        @continue($item->header || $item->isPost())
                         @php
                             $itemLabel = \Illuminate\Support\Facades\Lang::has('locale.menu.' . $item->label) ? __('locale.menu.' . $item->label) : $item->label;
                         @endphp

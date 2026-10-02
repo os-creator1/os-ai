@@ -144,7 +144,10 @@ class BusinessHomeTest extends TestCase
         $this->switchTo($workspace, $clientA)->assertRedirect(route('user.home'));
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Client account home.*Client Alpha.*</h1>#s', $html);
+        // V1 topology: the Business inside the Agency's own Workspace is the Agency's OWN
+        // Business, so its Home is the plain Business home (a managed client is only ever
+        // reached cross-Workspace, through View As).
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*Business home.*Client Alpha.*</h1>#s', $html);
         $this->assertSame('7', $this->headlineFigure($html, 'new_contacts'));
         $this->assertStringNotContainsString('Client Bravo', $this->mainText($html), "A managed Client's own account never bleeds in.");
     }

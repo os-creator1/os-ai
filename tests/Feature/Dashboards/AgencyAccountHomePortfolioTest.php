@@ -500,9 +500,10 @@ class AgencyAccountHomePortfolioTest extends TestCase
             'An Agency-opened client gets the same Business Home bands as its owner would.'
         );
 
-        // The only difference is the Agency framing.
+        // The Agency's own Business has the ordinary Business home label as well (Agency
+        // shell: the Agency owner is a Business owner too).
         $this->assertSame('Business home', $ordinary->frameLabel);
-        $this->assertSame('Client account home', $viaAgency->frameLabel);
+        $this->assertSame('Business home', $viaAgency->frameLabel);
 
         // And no portfolio figure follows the actor in.
         foreach ([DashboardSnapshot::BAND_CROSS_CLIENT, DashboardSnapshot::BAND_CLIENTS, DashboardSnapshot::BAND_PROSPECTING] as $agencyBand) {

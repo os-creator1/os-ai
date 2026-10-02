@@ -156,7 +156,11 @@ class MenuEntitlementsRequestSnapshotTest extends TestCase
         $this->switchToAccount($workspace);
 
         $reads = $this->snapshotReads(fn () => $this->home()->assertOk());
-        $this->assertSame(0, $reads['snapshots'], 'An Account-frame request evaluates no Business.');
+        // An Agency's account frame also lists its OWN Business's modules, so it
+        // asks for that one Business's decisions: one bulk snapshot, the same as
+        // the Business frame. An account frame with no Business in scope (below)
+        // still asks nothing.
+        $this->assertSame(1, $reads['snapshots'], 'The Agency account frame evaluates only its own Business, once.');
 
         $context = $this->accountContext($agency, $workspace->fresh());
         $this->freshRequest();

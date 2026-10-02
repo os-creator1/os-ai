@@ -219,6 +219,10 @@ final class CustomerMenuBuilder
         // the opposite default would make §6.1 unenforceable by accident.
         $this->entitlements = $entitlements ?? MenuEntitlements::none();
 
+        if ($context->hasAgencyShell()) {
+            return $this->agencyShell($context, $user, $current);
+        }
+
         return $context->isBusinessFrame()
             ? $this->businessFrame($context, $user, $current)
             : $this->accountFrame($context, $user, $current);
@@ -232,13 +236,35 @@ final class CustomerMenuBuilder
      */
     private function businessFrame(CustomerContext $context, User $user, string $current): array
     {
-        $workspaceUid = $context->selectedWorkspace?->uid;
-        $businessUid = $context->selectedBusiness?->uid;
-        $scoped = [$workspaceUid, $businessUid];
+        $scoped = [$context->selectedWorkspace?->uid, $context->selectedBusiness?->uid];
 
+        $items = [$this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home'])];
+
+        $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
+
+        // Settings — ONE destination (owner decision). Nothing expands under it
+        // in the sidebar: it opens the Settings hub, a page of cards for the
+        // configuration a Business does not need day to day, each linking to
+        // its own screen. The entry stays active on every one of those screens.
+        if ($this->businessSettingsSections($context, $user, $current) !== []) {
+            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Settings');
+        }
+
+        return array_values(array_filter($items));
+    }
+
+    /**
+     * The Business modules, in order, WITHOUT Home and Settings — the single
+     * definition both the plain Business frame and the Agency shell's own-
+     * Business group render, so the two can never drift (and the entitlement
+     * gates are the same ones).
+     *
+     * @param  array<int, string|null>  $scoped  [workspaceUid, businessUid]
+     * @return array<int, MenuItem|null>
+     */
+    private function businessModuleItems(User $user, array $scoped, string $current): array
+    {
         $items = [];
-
-        $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
 
         // No separate Advisor entry (owner decision): the Business Home already
         // carries the next best move and the way into its recommendations, and
@@ -328,21 +354,22 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',
         ]);
 
-        // Settings — ONE destination (owner decision). Nothing expands under it
-        // in the sidebar: it opens the Settings hub, a page of cards for the
-        // configuration a Business does not need day to day, each linking to
-        // its own screen. The entry stays active on every one of those screens.
-        if ($this->businessSettingsSections($context, $user, $current) !== []) {
-            // An Agency client Business's hub has no Plan or Team (they are the
-            // Agency account's), so those screens do not light it up.
-            $activeRoutes = $context->selectedWorkspace?->isAgency()
-                ? array_values(array_diff(self::BUSINESS_SETTINGS_ROUTES, ['customer.workspaces.plan.', 'customer.workspaces.team.']))
-                : self::BUSINESS_SETTINGS_ROUTES;
+        return $items;
+    }
 
-            $items[] = $this->item($user, 'settings', 'Settings', 'settings', ['access_backend'], 'customer.workspaces.businesses.settings.show', $scoped, $current, $activeRoutes);
-        }
+    /**
+     * The Business's Settings entry. An Agency Business's hub has no Plan or
+     * Team (they are the Agency account's), so those screens do not light it up.
+     *
+     * @param  array<int, string|null>  $scoped
+     */
+    private function businessSettingsItem(CustomerContext $context, User $user, array $scoped, string $current, string $label, string $key = 'settings'): ?MenuItem
+    {
+        $activeRoutes = $context->frameWorkspace()?->isAgency()
+            ? array_values(array_diff(self::BUSINESS_SETTINGS_ROUTES, ['customer.workspaces.plan.', 'customer.workspaces.team.']))
+            : self::BUSINESS_SETTINGS_ROUTES;
 
-        return array_values(array_filter($items));
+        return $this->item($user, $key, $label, 'settings', ['access_backend'], 'customer.workspaces.businesses.settings.show', $scoped, $current, $activeRoutes);
     }
 
     /**
@@ -412,6 +439,110 @@ final class CustomerMenuBuilder
         ]));
 
         return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
+    }
+
+    /**
+     * Agency shell (Blueprint §7 + §28): the Agency owner is a Business owner
+     * too, so the sidebar carries BOTH the own-Business modules and the Agency
+     * management surface, in either frame. The frame only decides which Home is
+     * the page you are on:
+     *
+     *   Business frame: "Business Home" is current; "Agency Home" is a frame move.
+     *   Account frame:  "Agency Home" is current; "Business Home" is a frame move.
+     *
+     * Business entries come from businessModuleItems() — the one definition the
+     * plain Business frame uses, behind the same capability and entitlement
+     * gates; nothing is force-shown. Frame moves are the same CSRF POSTs the
+     * context switcher uses (SwitchAccountAction / SwitchBusinessAction, which
+     * re-authorize every request). Never built while viewing as a client
+     * (CustomerContext::hasAgencyShell()), so the Agency menu cannot leak into a
+     * client's Business.
+     *
+     * Platform Automations (Blueprint §28) has no Agency-level product surface
+     * in code yet, so there is deliberately no entry for it.
+     *
+     * @return array<int, MenuItem>
+     */
+    private function agencyShell(CustomerContext $context, User $user, string $current): array
+    {
+        $agency = $context->frameWorkspace();
+        $own = $context->agencyOwnBusiness();
+        $inBusinessFrame = $context->isBusinessFrame();
+        $items = [];
+
+        if ($own !== null) {
+            $scoped = [$agency->uid, $own->uid];
+
+            $items[] = MenuItem::header('own-business', 'Business');
+            $items[] = $inBusinessFrame
+                ? $this->item($user, 'home', 'Business Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home'])
+                : $this->frameMove($user, 'business-home', 'Business Home', 'home', 'customer.context.business.switch', ['workspace' => $agency->uid, 'business' => $own->uid]);
+
+            $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
+            $items[] = $this->businessSettingsItem($context, $user, $scoped, $current, 'Business settings', 'business-settings');
+
+            $items[] = MenuItem::header('agency', 'Agency');
+        }
+
+        $homeLabel = $own !== null ? 'Agency Home' : 'Home';
+        $items[] = $inBusinessFrame
+            ? $this->frameMove($user, 'agency-home', $homeLabel, 'home', 'customer.context.account.switch', ['workspace' => $agency->uid])
+            : $this->item($user, 'home', $homeLabel, 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+
+        $items[] = $this->item($user, 'accounts', 'Clients', 'briefcase', ['access_backend'], 'customer.workspaces.clients.index', [$agency->uid], $current, [
+            'customer.workspaces.clients.', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
+        ]);
+        $items[] = $this->item($user, 'prospecting', 'Prospecting', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
+            'customer.prospecting.', 'customer.workspaces.prospecting.',
+        ]);
+
+        // Same reading authority as the Settings hub's own SaaS entries
+        // (hasAgencyAuthority()); every write stays owner-only inside the managers.
+        if ($agency->hasAgencyAuthority()) {
+            $items[] = $this->item($user, 'agency-saas-plans', 'SaaS Plans', 'list', ['access_backend'], 'customer.workspaces.agency.saas.plans', [$agency->uid], $current, [
+                'customer.workspaces.agency.saas.plans', 'customer.workspaces.agency.saas.plans.',
+            ]);
+            $items[] = $this->item($user, 'agency-saas-revenue', 'Agency Revenue', 'dollar-sign', ['access_backend'], 'customer.workspaces.agency.saas.revenue', [$agency->uid], $current, [
+                'customer.workspaces.agency.saas.revenue',
+            ]);
+            $items[] = $this->item($user, 'agency-white-label', 'White Label', 'droplet', ['access_backend'], 'customer.workspaces.agency.white-label.show', [$agency->uid], $current, [
+                'customer.workspaces.agency.white-label.',
+            ]);
+        }
+
+        if ($agency->canManage()) {
+            $items[] = $this->teamItem($user, $agency->uid, $current);
+        }
+
+        // Agency settings keeps Stripe, plan & subscription, account details,
+        // blocked numbers and the Advanced group. Plans, revenue, white label
+        // and team are primary entries above, so they no longer light it up.
+        if ($this->accountSettingsSections($context, $agency, $user, $current) !== []) {
+            $settingsRoutes = array_merge(
+                array_diff(self::ACCOUNT_SETTINGS_ROUTES, ['customer.workspaces.agency.saas.', 'customer.workspaces.agency.white-label.', 'customer.workspaces.team.']),
+                ['customer.workspaces.agency.saas.stripe', 'customer.workspaces.agency.saas.stripe.'],
+            );
+
+            $items[] = $this->item($user, 'settings', 'Agency settings', 'settings', ['access_backend'], 'customer.workspaces.settings.show', [$agency->uid], $current, $settingsRoutes);
+        }
+
+        return array_values(array_filter($items));
+    }
+
+    /**
+     * A menu entry that moves the actor to another frame: a POST the server
+     * re-authorizes, shown only when its route is registered and the actor can
+     * use the customer backend. Never active — it is a move, not a place.
+     *
+     * @param  array<string, string>  $fields
+     */
+    private function frameMove(User $user, string $key, string $label, string $icon, string $routeName, array $fields): ?MenuItem
+    {
+        if (! Route::has($routeName) || ! Gate::forUser($user)->any(['access_backend'])) {
+            return null;
+        }
+
+        return new MenuItem($key, $label, null, $icon, false, [], false, ['url' => route($routeName), 'fields' => $fields]);
     }
 
     /**

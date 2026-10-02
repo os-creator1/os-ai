@@ -215,6 +215,16 @@ final class ContextSwitcherPresenter
 
     private function frameLabel(CustomerContext $context): string
     {
+        // Say which of the three places the Agency actor is standing in: a
+        // client's Business (View As), their own Business, or the Agency account.
+        if ($context->isViewingAsClient()) {
+            return 'Client';
+        }
+
+        if ($context->hasAgencyShell() && $context->isBusinessFrame()) {
+            return 'Your business';
+        }
+
         return $context->isBusinessFrame()
             ? $context->businessNoun()
             : ucfirst($context->accountNoun());

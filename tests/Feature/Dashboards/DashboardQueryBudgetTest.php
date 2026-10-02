@@ -101,7 +101,10 @@ class DashboardQueryBudgetTest extends TestCase
      * below re-measure with three times the clients and require the SAME
      * count, and the ceiling stays where it was.
      */
-    private const AGENCY_HOME_DASHBOARD_OWNED = 10;
+    // 10 -> 8 with the Agency shell: the Account frame now also resolves the Agency's own
+    // Business entitlement snapshot in the shell (warmShellEntitlements), and two reads the
+    // Agency Home used to issue for itself are served from what that warm-up already loaded.
+    private const AGENCY_HOME_DASHBOARD_OWNED = 8;
 
     /**
      * Unified Home §3.1 (A-1) — cross-client performance costs exactly one
