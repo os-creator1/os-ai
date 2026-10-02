@@ -235,6 +235,69 @@ class BusinessManager
     }
 
     /**
+     * V1 final acceptance 01 — the self-service counterpart of
+     * activateClientBusiness(): a Business the V1 signup itself provisioned
+     * goes live when its subscription is provider-confirmed.
+     *
+     * WHY THIS EXISTS. createForCustomerInWorkspace() deliberately creates every
+     * Business as Draft, and until now only two things ever made one Active: the
+     * invited-client owner's own confirmation (activateClientBusiness) and a
+     * Platform Owner. Nothing activated the Business a self-service customer had
+     * just signed up and paid for, so that customer reached Home to find the
+     * Account frame — no Opportunities, Contacts or Conversations — and every
+     * Business route refusing them.
+     *
+     * WHAT IT WILL NOT DO. It activates only a Business that has never been
+     * active (`activated_at` is null), so a Business a Platform Owner later
+     * deactivates, or returns to Draft, is never silently re-opened by a
+     * replayed webhook. It never touches an Agency-managed Client Workspace:
+     * that Business stays Draft until its own owner confirms the placeholder
+     * identity (Contract 07 correction — an Agency never activates a client's
+     * Business, and neither does a platform event).
+     *
+     * IDEMPOTENT AND RACE-SAFE: the browser return and the webhook both reach it
+     * through V1SignupManager::activateFromConfirmedSubscription(); the
+     * Workspace-then-Business lock order is the established one.
+     *
+     * @return Business|null the Business this call activated, or null when
+     *                       there was nothing to do
+     */
+    public function activateSelfServiceBusiness(Workspace $workspace): ?Business
+    {
+        $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+
+        return DB::transaction(function () use ($workspace, $workspaceRepository, $relationshipRepository) {
+            $lockedWorkspace = $workspaceRepository->findForUpdate((int) $workspace->id);
+
+            if ($lockedWorkspace === null || ! $lockedWorkspace->is_active) {
+                return null;
+            }
+
+            if ($relationshipRepository->findActiveForClientWorkspace((int) $lockedWorkspace->id) !== null) {
+                return null;
+            }
+
+            $businesses = $workspaceRepository->businessesForWorkspace($lockedWorkspace);
+
+            if ($businesses->count() !== 1) {
+                return null;
+            }
+
+            $locked = $this->businessRepository->findForUpdate((int) $businesses->first()->id);
+
+            if ($locked === null
+                || (int) $locked->customer_id !== (int) $lockedWorkspace->owner_user_id
+                || $locked->status !== BusinessStatus::Draft
+                || $locked->activated_at !== null) {
+                return null;
+            }
+
+            return $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+        });
+    }
+
+    /**
      * Update an already-existing business. Always re-checks ownership.
      */
     public function updateBusiness(Customer $customer, Business $business, array $attributes): Business

@@ -11,6 +11,7 @@ use App\Library\PlatformBilling\PlatformPlanPresenter;
 use App\Library\PlatformBilling\V1SignupManager;
 use App\Models\Customer;
 use App\Models\PlatformSubscription;
+use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\UserRepository;
@@ -208,6 +209,10 @@ class V1SignupController extends Controller
 
         Auth::login($user, true);
 
+        // Sent as soon as the account exists, so it goes out whether or not
+        // Checkout can be opened a moment later.
+        $this->sendVerificationLink($user);
+
         try {
             $session = $this->signup->startSubscription(
                 $customer,
@@ -230,6 +235,35 @@ class V1SignupController extends Controller
         }
 
         return redirect()->away((string) $session->url);
+    }
+
+    /**
+     * V1 final acceptance 01 — the verification email the Home gate depends on.
+     *
+     * `user.home` sits behind Laravel's `verified` middleware, and the
+     * deployment default is `account.verify_account` = true. The legacy
+     * RegisterController sent the verification notification itself, but this
+     * controller deliberately replaced it, so without this a new customer was
+     * redirected from Checkout straight to "check your email for a verification
+     * link" — a link nothing had sent — and had to discover the "request
+     * another link" button.
+     *
+     * It runs AFTER the account is provisioned and checkout is open, and a
+     * delivery failure is reported and swallowed: a mail outage must never
+     * abort a signup that is already paid for or lose the Checkout redirect.
+     * The notice page's resend button remains the recovery.
+     */
+    private function sendVerificationLink(User $user): void
+    {
+        if (! config('account.verify_account') || $user->hasVerifiedEmail()) {
+            return;
+        }
+
+        try {
+            $user->sendEmailVerificationNotification();
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /**

@@ -229,21 +229,27 @@ final class V1SignupManager
             return false;
         }
 
-        if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
-            return true;
+        if ($this->assignments->findByWorkspaceId((int) $workspace->id) === null) {
+            try {
+                $this->subscriptions->assignPlanFromConfirmedSubscription(
+                    $workspace,
+                    $subscription,
+                    $catalog->tier,
+                    (int) $workspace->owner_user_id,
+                );
+            } catch (WorkspacePlanAlreadyAssignedException) {
+                // The other path won the race. One assignment, which is the point.
+            }
         }
 
-        try {
-            $this->subscriptions->assignPlanFromConfirmedSubscription(
-                $workspace,
-                $subscription,
-                $catalog->tier,
-                (int) $workspace->owner_user_id,
-            );
-        } catch (WorkspacePlanAlreadyAssignedException) {
-            // The other path won the race. One assignment, which is the point.
-            return true;
-        }
+        // The Business goes live with the plan. This runs whether THIS call
+        // assigned the plan or the other path did, so a signup that was
+        // interrupted between the assignment and the activation is finished by
+        // the next browser return or webhook replay instead of stranding a
+        // paying customer on a Draft Business. It is idempotent and only ever
+        // moves a never-active Business from Draft; see
+        // BusinessManager::activateSelfServiceBusiness().
+        $this->businesses->activateSelfServiceBusiness($workspace);
 
         return true;
     }

@@ -3,12 +3,14 @@
 namespace App\Library\Contacts;
 
 use App\Library\Business\Migration\ChatBoxBusinessBackfillV1;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Contacts;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -28,10 +30,23 @@ use Illuminate\Support\Facades\DB;
  * Every read is scoped to the Business — contacts, groups, campaign
  * messages and conversations alike — and the list costs the same fixed
  * number of queries for any page size (no per-row queries).
+ *
+ * LOCATION ACL (V1 final acceptance 01). A Contact with a Location is only as
+ * visible as that Location is to the signed-in actor, through the same
+ * LocationAccessGuard every other Location-bound surface uses. That is applied
+ * once, in query()/findForBusiness()/summaries(), so the list, its search, the
+ * profile, the CRM contact picker and the calendar picker can never disagree.
+ * A Contact with NO Location is never guessed and never hidden by this rule
+ * (08B: the actor's Business-level access governs it, as before), and a request
+ * with no signed-in actor (a system context) is unchanged.
  */
 final class ContactDirectory
 {
     public const PER_PAGE = 25;
+
+    public function __construct(private readonly LocationAccessGuard $locations)
+    {
+    }
 
     /** Custom-field tags that identify a person, in display order. */
     private const IDENTITY_TAGS = ['FIRST_NAME', 'LAST_NAME', 'EMAIL', 'COMPANY'];
@@ -96,7 +111,10 @@ final class ContactDirectory
         }
 
         return $this->summarize(
-            Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds)->get(['id', 'uid', 'phone'])
+            $this->restrictToAccessibleLocations(
+                Contacts::query()->where('business_id', $business->id)->whereIn('id', $contactIds),
+                $business,
+            )->get(['id', 'uid', 'phone'])
         );
     }
 
@@ -111,9 +129,12 @@ final class ContactDirectory
 
     public function findForBusiness(Business $business, string $contactUid): ?Contacts
     {
-        return Contacts::query()
-            ->where('business_id', $business->id)
-            ->where('uid', $contactUid)
+        return $this->restrictToAccessibleLocations(
+            Contacts::query()
+                ->where('business_id', $business->id)
+                ->where('uid', $contactUid),
+            $business,
+        )
             ->with('contactGroup:id,uid,business_id,name')
             ->first();
     }
@@ -240,9 +261,34 @@ final class ContactDirectory
             ->first(fn (ChatBox $box) => ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to) === $phone);
     }
 
+    /**
+     * Hides Contacts at a Location the signed-in actor cannot reach. The owner
+     * of the Business reaches every Location by definition, so that common case
+     * costs no extra query; everyone else (staff, View As, Admin) is decided by
+     * LocationAccessGuard, which also answers for an open View As session.
+     */
+    private function restrictToAccessibleLocations(Builder $query, Business $business): Builder
+    {
+        $actorId = Auth::id();
+
+        if ($actorId === null || (int) $business->customer_id === (int) $actorId) {
+            return $query;
+        }
+
+        $accessible = $this->locations->accessibleLocationIdsForBusiness((int) $actorId, $business);
+
+        return $query->where(function (Builder $where) use ($accessible) {
+            $where->whereNull('contacts.location_id');
+
+            if ($accessible !== []) {
+                $where->orWhereIn('contacts.location_id', $accessible);
+            }
+        });
+    }
+
     private function query(Business $business, string $search): Builder
     {
-        $query = Contacts::query()->where('business_id', $business->id);
+        $query = $this->restrictToAccessibleLocations(Contacts::query()->where('business_id', $business->id), $business);
 
         if ($search === '') {
             return $query;
