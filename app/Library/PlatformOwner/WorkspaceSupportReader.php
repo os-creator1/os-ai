@@ -4,6 +4,7 @@ namespace App\Library\PlatformOwner;
 
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Workspace\AgencyClientRelationshipStatus;
+use App\Library\Branding\AgencyWhiteLabelManager;
 use App\Library\Entitlement\CustomerAccountAccessDecision;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
@@ -77,6 +78,7 @@ final class WorkspaceSupportReader
         private readonly AgencyClientWorkspaceRelationshipRepository $relationshipRepository,
         private readonly WorkspaceEntitlementTransitionRepository $transitionRepository,
         private readonly ProviderConnectionStatusReader $providers,
+        private readonly AgencyWhiteLabelManager $whiteLabel,
     ) {
     }
 
@@ -319,11 +321,50 @@ final class WorkspaceSupportReader
             ->where('status', AgencyClientRelationshipStatus::Active->value)
             ->count();
 
-        if ($relationship === null && $managedClients === 0) {
+        // A TERMINATED relationship is history, never "managed". It is read
+        // only to explain a Workspace that used to be Agency-managed, and is
+        // reported separately from the active one so it can never be mistaken
+        // for it (findActiveForClientWorkspace() already excludes it).
+        $previous = null;
+
+        if ($relationship === null) {
+            $previous = $this->relationshipRepository->historyForClientWorkspace((int) $workspace->id)
+                ->filter(fn ($row) => $row->status === AgencyClientRelationshipStatus::Terminated)
+                ->last();
+        }
+
+        if ($relationship === null && $managedClients === 0 && $previous === null) {
             return null;
         }
 
-        $detail = ['relationship' => $relationship, 'agencyWorkspace' => null, 'subscription' => null, 'managedClients' => $managedClients];
+        $detail = [
+            'relationship' => $relationship,
+            'previous' => $previous,
+            'previousAgencyWorkspace' => $previous === null ? null : $this->workspaceRepository->findById((int) $previous->agency_workspace_id),
+            'agencyWorkspace' => null,
+            'subscription' => null,
+            'managedClients' => $managedClients,
+            'whiteLabel' => null,
+        ];
+
+        // White Label belongs to the AGENCY Workspace: the managing Agency for
+        // a client, or this Workspace itself when it manages clients. Read
+        // through the manager's own read-only find()/isEntitled(); nothing is
+        // written and no branding value other than the enabled flag is shown.
+        $brandingAgency = $relationship !== null
+            ? $this->workspaceRepository->findById((int) $relationship->agency_workspace_id)
+            : ($managedClients > 0 ? $workspace : null);
+
+        if ($brandingAgency !== null) {
+            $setting = $this->whiteLabel->find($brandingAgency);
+
+            $detail['whiteLabel'] = [
+                'agencyName' => $brandingAgency->name,
+                'configured' => $setting !== null,
+                'enabled' => (bool) ($setting?->is_enabled),
+                'entitled' => $this->whiteLabel->isEntitled($brandingAgency),
+            ];
+        }
 
         if ($relationship !== null) {
             $detail['agencyWorkspace'] = $this->workspaceRepository->findById((int) $relationship->agency_workspace_id);

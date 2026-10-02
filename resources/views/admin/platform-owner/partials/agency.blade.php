@@ -36,6 +36,27 @@
                 </dd>
             @endif
 
+            @if (! $agency['relationship'] && $agency['previous'])
+                <dt class="col-sm-3">Agency-managed</dt>
+                <dd class="col-sm-9" data-testid="po-agency-terminated">
+                    No — the relationship was terminated.
+                    <span class="text-muted d-block small">
+                        Previously managed by {{ $agency['previousAgencyWorkspace']?->name ?? 'an Agency' }}
+                        · terminated {{ $agency['previous']->terminated_at?->toDateTimeString() ?? '—' }}
+                        @if ($agency['previous']->termination_reason) · {{ $agency['previous']->termination_reason }} @endif
+                    </span>
+                </dd>
+            @endif
+
+            @if ($agency['whiteLabel'])
+                <dt class="col-sm-3">White label</dt>
+                <dd class="col-sm-9" data-testid="po-agency-white-label">
+                    {{ $agency['whiteLabel']['agencyName'] }}:
+                    @if ($agency['whiteLabel']['enabled']) enabled @elseif ($agency['whiteLabel']['configured']) configured, disabled @else not configured @endif
+                    · {{ $agency['whiteLabel']['entitled'] ? 'included in the Agency plan' : 'not included in the Agency plan' }}
+                </dd>
+            @endif
+
             @if ($agency['managedClients'] > 0)
                 <dt class="col-sm-3">Manages</dt>
                 <dd class="col-sm-9">{{ $agency['managedClients'] }} client {{ \Illuminate\Support\Str::plural('Workspace', $agency['managedClients']) }}</dd>
