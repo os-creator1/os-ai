@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Library\PlatformOwner\PlatformOwnerAuthority;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
@@ -26,12 +27,22 @@ use Illuminate\Http\Request;
  */
 class EnsureUserIsAdministrator
 {
+    public function __construct(private readonly PlatformOwnerAuthority $authority)
+    {
+    }
+
     /**
+     * Platform Owner / Admin V1: the account-type rule itself now lives in
+     * PlatformOwnerAuthority, the single place every platform-owner surface
+     * (this middleware, and the write services that re-check it) answers
+     * "is this actor a Platform Owner right now". This middleware stays the
+     * route-level boundary and only delegates.
+     *
      * @throws AuthorizationException
      */
     public function handle(Request $request, Closure $next)
     {
-        if (! $request->user() || ! $request->user()->is_admin) {
+        if (! $this->authority->allowsRequest($request)) {
             throw new AuthorizationException('This area is restricted to administrators.');
         }
 

@@ -202,15 +202,20 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         $filters = Arr::only($filters, ['search', 'status', 'industry']);
         $perPage = max(1, min($perPage, self::MAX_ADMIN_PER_PAGE));
 
-        $query = $this->query()->with(['customer.user']);
+        $query = $this->query()->with(['customer.user', 'workspace:id,uid,name']);
 
         if (filled($filters['search'] ?? null)) {
-            $search = $filters['search'];
+            $search = trim((string) $filters['search']);
+            $contains = '%' . addcslashes($search, '\\%_') . '%';
 
-            $query->where(function ($inner) use ($search) {
-                $inner->where('name', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%")
-                    ->orWhere('canonical_domain', 'like', "%{$search}%");
+            $query->where(function ($inner) use ($search, $contains) {
+                $inner->where('name', 'like', $contains)
+                    ->orWhere('email', 'like', $contains)
+                    ->orWhere('canonical_domain', 'like', $contains)
+                    // Platform Owner / Admin V1 — a Business is also found by
+                    // its exact uid (unique index), the identifier support is
+                    // given on screen.
+                    ->orWhere('uid', $search);
             });
         }
 

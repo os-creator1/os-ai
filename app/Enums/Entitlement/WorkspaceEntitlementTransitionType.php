@@ -47,4 +47,16 @@ enum WorkspaceEntitlementTransitionType: string
     case AccountLocked = 'account_locked';
 
     case AccessRestored = 'access_restored';
+
+    /**
+     * Platform Owner / Admin V1 — a platform administrator changed one
+     * Business's own `status` (draft/active/inactive). Reuses this audit
+     * table rather than introducing a second one: it is the Workspace-scoped,
+     * append-only, actor-and-reason trail the other platform-owner writes
+     * already land in, and Slice 1A set the precedent of recording
+     * Business-scoped facts here. `from_status`/`to_status` are the plan
+     * assignment's own enum, so the Business's before/after status lives in
+     * the JSON `payload` (`business_id`, `business_uid`, `from`, `to`).
+     */
+    case BusinessStatusChanged = 'business_status_changed';
 }

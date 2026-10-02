@@ -560,6 +560,60 @@
                         'access' => 'access backend',
                     ],
                     [
+                        // Platform Owner / Admin V1 — the support surface, kept to
+                        // four entries. 'admin_only' is the same additional
+                        // is_admin boundary the entries below use; every route
+                        // behind it is EnsureUserIsAdministrator-gated and the
+                        // 'access' string alone does not guarantee that. The menu
+                        // is only a convenience: every route re-checks authority
+                        // server-side whether or not the link is shown.
+                        'url'        => '',
+                        'slug'       => '',
+                        'name'       => 'Platform Owner',
+                        'i18n'       => 'Platform Owner',
+                        'icon'       => 'shield',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                        'submenu'    => [
+                            [
+                                'url'        => url(config('app.admin_path') . '/platform-owner'),
+                                'slug'       => config('app.admin_path') . '/platform-owner',
+                                'name'       => 'Overview',
+                                'i18n'       => 'Overview',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'activity',
+                            ],
+                            [
+                                'url'        => url(config('app.admin_path') . '/workspaces'),
+                                'slug'       => config('app.admin_path') . '/workspaces',
+                                'name'       => 'Workspaces',
+                                'i18n'       => 'Workspaces',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'users',
+                            ],
+                            [
+                                'url'        => url(config('app.admin_path') . '/businesses'),
+                                'slug'       => config('app.admin_path') . '/businesses',
+                                'name'       => 'Businesses',
+                                'i18n'       => 'Businesses',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'briefcase',
+                            ],
+                            [
+                                'url'        => url(config('app.admin_path') . '/platform-owner/audit'),
+                                'slug'       => config('app.admin_path') . '/platform-owner/audit',
+                                'name'       => 'Audit',
+                                'i18n'       => 'Audit',
+                                'access'     => 'access backend',
+                                'admin_only' => true,
+                                'icon'       => 'clipboard',
+                            ],
+                        ],
+                    ],
+                    [
                         // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
                         // the Platform Owner's Niche Blueprint authoring surface.
                         // Deliberately a SEPARATE top-level entry from Template

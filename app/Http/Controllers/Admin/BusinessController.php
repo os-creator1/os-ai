@@ -8,11 +8,14 @@ use App\Http\Requests\Business\AdminBusinessIndexRequest;
 use App\Http\Requests\Business\AdminUpdateBusinessRequest;
 use App\Http\Requests\Business\UpdateBusinessStatusRequest;
 use App\Library\Business\BusinessManager;
+use App\Library\PlatformOwner\PlatformOwnerAccountActions;
+use App\Library\PlatformOwner\WorkspaceSupportReader;
 use App\Models\Business;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
 use InvalidArgumentException;
 
 /**
@@ -28,6 +31,8 @@ class BusinessController extends AdminBaseController
         private readonly BusinessRepository $businessRepository,
         private readonly BusinessManager $businessManager,
         private readonly CustomerOnboardingRepository $onboardingRepository,
+        private readonly WorkspaceSupportReader $support,
+        private readonly PlatformOwnerAccountActions $accountActions,
     ) {
     }
 
@@ -68,9 +73,17 @@ class BusinessController extends AdminBaseController
             ? $this->onboardingRepository->findByCustomer($business->customer)
             : null;
 
+        // Platform Owner / Admin V1 — the Business's own Workspace picture
+        // (canonical access decision, plan/subscription, provider status,
+        // recent audit rows) plus its capped Location list.
+        $detail = $this->support->forBusiness($business);
+
         return view('admin.businesses.show', [
             'business' => $business,
             'onboarding' => $onboarding,
+            'locations' => $detail['locations'],
+            'support' => $detail['support'],
+            'actors' => $detail['support'] === null ? [] : $this->support->actorLabels($detail['support']['recentActions']),
             'breadcrumbs' => $this->breadcrumbs($business, 'View'),
         ]);
     }
@@ -117,7 +130,23 @@ class BusinessController extends AdminBaseController
     {
         $this->authorize('edit business');
 
-        $this->businessRepository->updateStatus($business, BusinessStatus::from($request->validated('status')));
+        // Platform Owner / Admin V1 — the same write as before, now through
+        // PlatformOwnerAccountActions: authority re-checked against the
+        // database, the Business re-read under a row lock, a reason required
+        // to deactivate, and one audit row in the same transaction.
+        try {
+            $this->accountActions->changeBusinessStatus(
+                (int) $business->id,
+                BusinessStatus::from($request->validated('status')),
+                (int) Auth::id(),
+                $request->validated('reason'),
+            );
+        } catch (InvalidArgumentException $exception) {
+            return redirect()
+                ->route('admin.businesses.show', $business)
+                ->withInput()
+                ->withErrors(['reason' => $exception->getMessage()]);
+        }
 
         return redirect()->route('admin.businesses.show', $business)->with([
             'status' => 'success',

@@ -4,6 +4,7 @@ namespace App\Repositories\Contracts;
 
 use App\Models\WorkspacePlanAssignment;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Collection;
 
 /**
  * Plain data-access contract — no effective-entitlement, slot-capacity, or
@@ -94,4 +95,51 @@ interface WorkspacePlanAssignmentRepository extends BaseRepository
      * @return array<int, int> workspace ids, ascending
      */
     public function findWorkspaceIdsWithGraceStartedBy(CarbonInterface $cutoff): array;
+
+    /**
+     * Platform Owner / Admin V1 — ONE bounded read of the assignments for a
+     * page of Workspaces, keyed by workspace_id, with the catalog row
+     * eager-loaded. Exists so an admin list never re-reads the assignment
+     * Workspace-by-Workspace. Plain data access: no entitlement decision.
+     *
+     * @param array<int, int> $workspaceIds
+     * @return Collection<int, WorkspacePlanAssignment>
+     */
+    public function findByWorkspaceIds(array $workspaceIds): Collection;
+
+    /**
+     * Platform Owner / Admin V1 — persisted assignment counts by status
+     * (`active`/`inactive`/`suspended`), one aggregate query.
+     *
+     * @return array<string, int>
+     */
+    public function countByStatus(): array;
+
+    /**
+     * Platform Owner / Admin V1 — how many ACTIVE-status assignments carry
+     * each of the three recorded lifecycle timestamps. These are the RECORDED
+     * facts (a Grace window that elapsed but has not been swept yet still
+     * counts as grace here); the customer-facing decision is only ever
+     * CustomerAccountAccessResolver's.
+     *
+     * @return array{trial: int, grace: int, locked: int}
+     */
+    public function countRecordedLifecycle(): array;
+
+    /**
+     * Platform Owner / Admin V1 — persisted assignment counts by catalog tier
+     * (`core`/`growth`/`agency`), one aggregate query.
+     *
+     * @return array<string, int>
+     */
+    public function countByTier(): array;
+
+    /**
+     * Platform Owner / Admin V1 — the most recently touched assignments that
+     * are blocked by persisted state: status not active, or `locked_at` set.
+     * Newest first, capped at `$limit` (never above 50).
+     *
+     * @return Collection<int, WorkspacePlanAssignment>
+     */
+    public function recentBlocked(int $limit): Collection;
 }

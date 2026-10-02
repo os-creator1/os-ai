@@ -22,6 +22,10 @@ class UpdateBusinessStatusRequest extends FormRequest
     {
         return [
             'status' => ['required', new Enum(BusinessStatus::class)],
+            // Platform Owner / Admin V1 — kept in the audit trail. Optional
+            // here; PlatformOwnerAccountActions requires it when the target
+            // status is Inactive (the high-impact move).
+            'reason' => ['nullable', 'string', 'max:1000'],
         ];
     }
 }

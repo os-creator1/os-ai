@@ -3,6 +3,27 @@
 @section('title', $workspace->name)
 
 @section('content')
+    {{-- Platform Owner / Admin V1 — the support cockpit: the canonical access
+         decision first, then the subscription and Agency facts that explain it.
+         A separate section from #admin-workspace-show on purpose: that
+         section is pinned to carry no mutation controls. --}}
+    <section id="admin-workspace-support">
+        <div class="row">
+            <div class="col-12">
+                @if (session('po_flash_success'))
+                    <x-alert variant="success" role="status">{{ session('po_flash_success') }}</x-alert>
+                @endif
+                @if (session('po_flash_error'))
+                    <x-alert variant="danger">{{ session('po_flash_error') }}</x-alert>
+                @endif
+
+                @include('admin.platform-owner.partials.access')
+                @include('admin.platform-owner.partials.subscription')
+                @include('admin.platform-owner.partials.agency')
+            </div>
+        </div>
+    </section>
+
     <section id="admin-workspace-show">
         <div class="row">
             <div class="col-12">
@@ -26,6 +47,16 @@
                         <dt class="col-sm-3">Owner email</dt>
                         <dd class="col-sm-9">{{ $workspace->owner?->email ?? '—' }}</dd>
 
+                        @if ($workspace->owner && $workspace->owner->is_customer && ! $workspace->owner->is_admin)
+                            @can('edit customer')
+                                <dt class="col-sm-3">Support access</dt>
+                                <dd class="col-sm-9">
+                                    <a href="{{ route('admin.customers.login_as', $workspace->owner) }}" data-testid="po-login-as">Open this customer's account</a>
+                                    <span class="text-muted small d-block">Signs you in as the customer through the existing support mechanism. A banner with a return link stays visible; the Platform Owner pages are unavailable until you return.</span>
+                                </dd>
+                            @endcan
+                        @endif
+
                         <dt class="col-sm-3">Created</dt>
                         <dd class="col-sm-9">{{ $workspace->created_at?->toDateTimeString() ?? '—' }}</dd>
 
@@ -36,36 +67,12 @@
             </div>
 
             <div class="col-12">
-                <x-card title="Businesses">
-                    @if ($workspace->businesses->isEmpty())
-                        <x-empty-state icon="inbox" title="No Businesses in this Workspace." />
-                    @else
-                        <x-table :headers="['Name', 'Uid', 'Business owner', 'Status', '']">
-                            @foreach ($workspace->businesses as $business)
-                                <tr>
-                                    <td>{{ $business->name }}</td>
-                                    <td>{{ $business->uid }}</td>
-                                    <td>{{ $business->customer?->user?->displayName() ?? 'Unknown' }}</td>
-                                    <td>{{ $business->status ? ucfirst($business->status->value) : '—' }}</td>
-                                    <td>
-                                        @can('view business')
-                                            <a href="{{ route('admin.businesses.show', $business) }}">View</a>
-                                        @endcan
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </x-table>
-                    @endif
-                </x-card>
-            </div>
-
-            <div class="col-12">
                 <x-card title="Memberships">
-                    @if ($workspace->memberships->isEmpty())
+                    @if ($support['memberships']->isEmpty())
                         <x-empty-state icon="inbox" title="This Workspace has no members." />
                     @else
                         <x-table :headers="['Name', 'Email', 'Role', 'Business access', 'Status']">
-                            @foreach ($workspace->memberships as $membership)
+                            @foreach ($support['memberships'] as $membership)
                                 <tr>
                                     <td>{{ $membership->user?->displayName() ?? 'Unknown' }}</td>
                                     <td>{{ $membership->user?->email ?? '—' }}</td>
@@ -89,8 +96,22 @@
                                 </tr>
                             @endforeach
                         </x-table>
+                        @if ($support['membersTruncated'])
+                            <p class="text-muted mt-2 mb-0">Showing the first {{ \App\Library\PlatformOwner\WorkspaceSupportReader::MAX_MEMBERS }} members.</p>
+                        @endif
                     @endif
                 </x-card>
+            </div>
+        </div>
+    </section>
+
+    {{-- Platform Owner / Admin V1 — Businesses with their Locations, access,
+         payer and provider STATUS, then the recent audit rows. Read-only. --}}
+    <section id="admin-workspace-operations">
+        <div class="row">
+            <div class="col-12">
+                @include('admin.platform-owner.partials.businesses')
+                @include('admin.platform-owner.partials.audit', ['rows' => $support['recentActions'], 'actors' => $actors])
             </div>
         </div>
     </section>

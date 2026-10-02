@@ -72,7 +72,7 @@
                     @can('edit business')
                         <hr>
                         <h5>Change status</h5>
-                        <form method="POST" action="{{ route('admin.businesses.status.update', $business) }}" class="d-flex gap-2">
+                        <form method="POST" action="{{ route('admin.businesses.status.update', $business) }}" class="d-flex flex-wrap gap-2 align-items-start">
                             @csrf
                             @method('PATCH')
                             <x-select
@@ -81,11 +81,63 @@
                                 :options="collect(\App\Enums\Business\BusinessStatus::cases())->mapWithKeys(fn ($status) => [$status->value => ucfirst($status->value)])->all()"
                                 :selected="$business->status->value"
                             />
+                            <input type="text" name="reason" class="form-control w-auto" maxlength="1000" placeholder="Reason (required for Inactive)" value="{{ old('reason') }}" aria-label="Reason">
                             <x-button type="submit" variant="outline">Update status</x-button>
                         </form>
+                        @error('reason') <div class="text-danger mt-1">{{ $message }}</div> @enderror
+                        <p class="text-muted small mt-1 mb-0">Recorded in the audit trail with your name. Deactivating requires a reason.</p>
                     @endcan
                 </x-card>
             </div>
         </div>
     </section>
+
+    {{-- Platform Owner / Admin V1 — the support view of this Business. --}}
+    @if ($support !== null)
+        <section id="admin-business-support">
+            <div class="row">
+                <div class="col-12">
+                    @if (session('po_flash_success'))
+                        <x-alert variant="success" role="status">{{ session('po_flash_success') }}</x-alert>
+                    @endif
+                    @if (session('po_flash_error'))
+                        <x-alert variant="danger">{{ session('po_flash_error') }}</x-alert>
+                    @endif
+
+                    <p class="mb-2">
+                        Workspace:
+                        @can('view workspace')
+                            <a href="{{ route('admin.workspaces.show', $support['workspace']) }}">{{ $support['workspace']->name }}</a>
+                        @else
+                            {{ $support['workspace']->name }}
+                        @endcan
+                    </p>
+
+                    @include('admin.platform-owner.partials.access')
+
+                    <x-card title="Locations">
+                        @if ($locations->isEmpty())
+                            <x-empty-state icon="inbox" title="This Business has no Locations." />
+                        @else
+                            <x-table :headers="['Location', 'Place', 'State']">
+                                @foreach ($locations as $location)
+                                    <tr data-testid="po-location-row">
+                                        <td>{{ $location->name ?? 'Unnamed' }} @if ($location->is_primary) <x-badge variant="accent">Primary</x-badge> @endif</td>
+                                        <td>{{ collect([$location->city, $location->region, $location->country_code])->filter()->implode(', ') ?: '—' }}</td>
+                                        <td>{{ ucfirst($location->lifecycle_state?->value ?? 'active') }}</td>
+                                    </tr>
+                                @endforeach
+                            </x-table>
+                            <p class="text-muted mt-2 mb-0">Up to {{ \App\Library\PlatformOwner\WorkspaceSupportReader::MAX_LOCATIONS_PER_BUSINESS }} Locations are listed.</p>
+                        @endif
+                    </x-card>
+
+                    @include('admin.platform-owner.partials.subscription')
+                    @include('admin.platform-owner.partials.agency')
+                    @include('admin.platform-owner.partials.businesses')
+                    @include('admin.platform-owner.partials.audit', ['rows' => $support['recentActions'], 'actors' => $actors])
+                </div>
+            </div>
+        </section>
+    @endif
 @endsection

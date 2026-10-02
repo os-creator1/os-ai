@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\WorkspaceEntitlementTransition;
 use App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository;
+use Illuminate\Contracts\Pagination\Paginator;
 use Illuminate\Support\Collection;
 
 /**
@@ -37,5 +38,33 @@ class EloquentWorkspaceEntitlementTransitionRepository extends EloquentBaseRepos
     public function findByPaymentIdempotencyKey(string $key): ?WorkspaceEntitlementTransition
     {
         return $this->query()->where('payment_idempotency_key', $key)->first();
+    }
+
+    public function recentForWorkspace(int $workspaceId, int $limit): Collection
+    {
+        return $this->query()
+            ->where('workspace_id', $workspaceId)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit(max(1, min($limit, 100)))
+            ->get();
+    }
+
+    public function paginateAdminActions(int $perPage, ?int $workspaceId = null): Paginator
+    {
+        $query = $this->query()
+            ->whereNotNull('actor_user_id')
+            ->whereIn('actor_user_id', function ($subquery) {
+                $subquery->select('id')->from('users')->where('is_admin', true);
+            });
+
+        if ($workspaceId !== null) {
+            $query->where('workspace_id', $workspaceId);
+        }
+
+        return $query
+            ->with('workspace:id,uid,name')
+            ->orderByDesc('id')
+            ->simplePaginate(max(1, min($perPage, 100)));
     }
 }
