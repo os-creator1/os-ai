@@ -56,6 +56,9 @@ final class AgencyBillingException extends RuntimeException
     /** An Agency may resell capability, never the Agency tier itself (§C3.2). */
     public const TIER_NOT_RESELLABLE = 'tier_not_resellable';
 
+    /** The Agency already holds the most resale plans one account may define. */
+    public const PLAN_LIMIT_REACHED = 'plan_limit_reached';
+
     /**
      * §C5.2 — the Price could not be retrieved from THIS Agency's connected
      * account. Either it does not exist, or it belongs to the platform or to a
@@ -128,6 +131,7 @@ final class AgencyBillingException extends RuntimeException
             self::OAUTH_STATE_MISMATCH => 'That connection request could not be verified. Please try again.',
             self::PLAN_NOT_SELLABLE => 'That plan is not ready to be sold yet.',
             self::TIER_NOT_RESELLABLE => 'That plan level cannot be resold.',
+            self::PLAN_LIMIT_REACHED => 'This agency already has the maximum number of resale plans. Edit or reuse an existing plan instead of adding another.',
             self::PRICE_NOT_RETRIEVABLE => 'That Stripe price could not be found on this agency\'s own Stripe account.',
             self::PRICE_TERMS_MISMATCH => 'That Stripe price does not match the plan terms you entered.',
             self::NO_ACTIVE_RELATIONSHIP => 'This agency does not currently manage that client.',

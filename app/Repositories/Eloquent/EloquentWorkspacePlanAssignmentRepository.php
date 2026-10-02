@@ -33,6 +33,26 @@ class EloquentWorkspacePlanAssignmentRepository extends EloquentBaseRepository i
         );
     }
 
+    public function lifecycleFactsForWorkspaces(array $workspaceIds): array
+    {
+        if ($workspaceIds === []) {
+            return [];
+        }
+
+        $facts = [];
+
+        $rows = $this->query()
+            ->join('workspace_plan_catalog', 'workspace_plan_catalog.id', '=', 'workspace_plan_assignments.workspace_plan_catalog_id')
+            ->whereIn('workspace_plan_assignments.workspace_id', $workspaceIds)
+            ->get(['workspace_plan_assignments.*', 'workspace_plan_catalog.display_name as plan_display_name']);
+
+        foreach ($rows as $row) {
+            $facts[(int) $row->workspace_id] = $row;
+        }
+
+        return $facts;
+    }
+
     public function create(array $attributes): WorkspacePlanAssignment
     {
         /** @var WorkspacePlanAssignment $assignment */

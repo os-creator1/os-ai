@@ -31,7 +31,12 @@
             ? trim((string) $shellContext->contextName())
             : '';
     @endphp
-    <title>@yield('title')@if($shellContextLabel !== '') · {{ $shellContextLabel }}@endif - {{config('app.title')}}</title>
+    @php
+        // Agency V1 completion — a branded client's tab names the Agency, never the platform.
+        $shellAgencyChrome = app(\App\Library\Branding\ClientChromeBrand::class)->current(request());
+        $shellProductTitle = $shellAgencyChrome !== null ? $shellAgencyChrome['name'] : config('app.title');
+    @endphp
+    <title>@yield('title')@if($shellContextLabel !== '') · {{ $shellContextLabel }}@endif - {{ $shellProductTitle }}</title>
     <x-branding-favicon />
     {{-- Design System Contract, Milestone 1, §9 item 36 — Geist Sans is
     self-hosted (resources/scss/base/tokens/_typography.scss), compiled

@@ -38,6 +38,14 @@ final class AgencySaasPlanManager
     ) {
     }
 
+    /**
+     * Agency V1 completion — the resale catalog is bounded. An Agency's plan
+     * list is rendered whole (and scanned for sellable plans on every client
+     * page), so it can never be an unbounded read. create() refuses the plan
+     * that would exceed this, and forAgency() never returns more.
+     */
+    public const MAX_PLANS_PER_AGENCY = 100;
+
     /** @return Collection<int, AgencySaasPlan> */
     public function forAgency(Workspace $agencyWorkspace): Collection
     {
@@ -45,6 +53,7 @@ final class AgencySaasPlanManager
             ->where('agency_workspace_id', $agencyWorkspace->id)
             ->orderByDesc('is_published')
             ->orderBy('name')
+            ->limit(self::MAX_PLANS_PER_AGENCY)
             ->get();
     }
 
@@ -84,6 +93,10 @@ final class AgencySaasPlanManager
     {
         $this->assertAgencyOwner($actorUserId, $agencyWorkspace);
         self::assertResellableTier($data['tier']);
+
+        if (AgencySaasPlan::query()->where('agency_workspace_id', $agencyWorkspace->id)->count() >= self::MAX_PLANS_PER_AGENCY) {
+            throw AgencyBillingException::because(AgencyBillingException::PLAN_LIMIT_REACHED);
+        }
 
         $plan = new AgencySaasPlan([
             'agency_workspace_id' => $agencyWorkspace->id,

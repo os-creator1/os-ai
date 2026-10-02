@@ -7,6 +7,7 @@ use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\WorkspaceCandidate;
 use App\Models\Workspace;
+use Carbon\CarbonInterface;
 use App\Repositories\Contracts\AgencyClientWorkspaceRelationshipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 
@@ -122,15 +123,45 @@ final class CustomerAccountAccessResolver
         // pre-existing state this gate does not touch — onboarding/plan
         // selection owns it, and locking it here would block a brand-new
         // account before it ever reaches a plan.
-        if (! $summary->isAssigned || $summary->status === null) {
+        if (! $summary->isAssigned) {
             return CustomerAccountAccessDecision::usable();
         }
 
-        return match ($summary->status) {
+        return $this->decideFromAssignmentFacts(
+            $summary->status,
+            $summary->trialEndsAt,
+            $summary->graceStartedAt,
+            $summary->lockedAt,
+        );
+    }
+
+    /**
+     * The Contract 03 truth table as a PURE function of one assignment's
+     * facts — no Workspace, no query, no relationship, no Agency. This is
+     * the single place the table lives: resolveOwnWorkspaceDecision() feeds
+     * it from the entitlement summary, and a bulk reader that has already
+     * loaded many assignments in one statement (the Agency Clients list)
+     * feeds it from those rows. Neither can drift from the other because
+     * there is only one table.
+     *
+     * Like the primitive above it is never composed with a managing Agency:
+     * a caller that needs the composed answer uses resolve().
+     */
+    public function decideFromAssignmentFacts(
+        ?WorkspacePlanAssignmentStatus $status,
+        ?CarbonInterface $trialEndsAt,
+        ?CarbonInterface $graceStartedAt,
+        ?CarbonInterface $lockedAt,
+    ): CustomerAccountAccessDecision {
+        if ($status === null) {
+            return CustomerAccountAccessDecision::usable();
+        }
+
+        return match ($status) {
             // Contract 03 §5 — Active is where the lifecycle lives: Trial,
             // Active, Grace and Locked are all derived from this one status
             // plus the assignment's timestamps, never from a fourth status.
-            WorkspacePlanAssignmentStatus::Active => $this->resolveActiveLifecycle($summary),
+            WorkspacePlanAssignmentStatus::Active => $this->resolveActiveLifecycle($trialEndsAt, $graceStartedAt, $lockedAt),
 
             WorkspacePlanAssignmentStatus::Inactive => new CustomerAccountAccessDecision(
                 state: CustomerAccountAccessState::LockedInactive,
@@ -239,14 +270,14 @@ final class CustomerAccountAccessResolver
      * Suspended and Inactive never reach here, which is exactly how an
      * administrative suspension wins over stale Grace/Locked timestamps.
      */
-    private function resolveActiveLifecycle(WorkspaceEntitlementSummary $summary): CustomerAccountAccessDecision
+    private function resolveActiveLifecycle(?CarbonInterface $trialEndsAt, ?CarbonInterface $graceStartedAt, ?CarbonInterface $lockedAt): CustomerAccountAccessDecision
     {
-        if ($summary->lockedAt !== null) {
+        if ($lockedAt !== null) {
             return $this->lockedDecision();
         }
 
-        if ($summary->graceStartedAt !== null) {
-            $graceEndsAt = $summary->graceStartedAt->copy()->addDays(EntitlementManager::GRACE_PERIOD_DAYS);
+        if ($graceStartedAt !== null) {
+            $graceEndsAt = $graceStartedAt->copy()->addDays(EntitlementManager::GRACE_PERIOD_DAYS);
 
             if (! $graceEndsAt->isFuture()) {
                 return $this->lockedDecision();
@@ -263,7 +294,7 @@ final class CustomerAccountAccessResolver
             );
         }
 
-        if ($summary->trialEndsAt !== null) {
+        if ($trialEndsAt !== null) {
             return new CustomerAccountAccessDecision(
                 state: CustomerAccountAccessState::Usable,
                 reason: 'plan_trial',
@@ -271,7 +302,7 @@ final class CustomerAccountAccessResolver
                 message: 'Your trial is running. Add your billing details whenever you are ready — nothing is interrupted until it ends.',
                 recoveryRouteName: 'customer.workspaces.plan.show',
                 recoveryLabel: 'Continue to billing',
-                trialEndsAt: $summary->trialEndsAt,
+                trialEndsAt: $trialEndsAt,
             );
         }
 

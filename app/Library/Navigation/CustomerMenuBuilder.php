@@ -70,6 +70,7 @@ final class CustomerMenuBuilder
         // accountSettingsSections(); the top-level "Settings" sidebar entry
         // must stay active while any of their own pages is open.
         'customer.workspaces.agency.saas.',
+        'customer.workspaces.agency.white-label.',
         'customer.workspaces.agency-plan.',
     ];
 
@@ -92,6 +93,7 @@ final class CustomerMenuBuilder
         'agency-stripe' => 'The Stripe account that receives your clients\' subscription payments.',
         'agency-saas-plans' => 'The plans you resell to your clients, and their prices.',
         'agency-saas-revenue' => 'What your resold plans have earned.',
+        'agency-white-label' => 'The name, logo and colour your clients see instead of the platform\'s.',
         'agency-plan' => 'The plan your agency bills you for — separate from your own subscription and Business billing.',
     ];
 
@@ -194,10 +196,14 @@ final class CustomerMenuBuilder
      */
     private function agencyManagesClientWorkspace(int $workspaceId): bool
     {
+        // Agency V1 completion — the same request-scoped read the signed-in
+        // client chrome (ClientWorkspaceBrandResolver) needs, so a page that
+        // renders both asks the database once. The row (or null) is cached;
+        // this method only reports whether one exists.
         return $this->requestCache->remember(
-            "customer-menu:agency-client-relationship:{$workspaceId}",
-            fn () => $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspaceId) !== null,
-        );
+            \App\Library\Support\RequestScopedCache::ACTIVE_AGENCY_RELATIONSHIP_PREFIX . $workspaceId,
+            fn () => $this->agencyClientRelationshipRepository->findActiveForClientWorkspace($workspaceId),
+        ) !== null;
     }
 
     /**
@@ -646,6 +652,9 @@ final class CustomerMenuBuilder
             ]);
             $accountItems[] = $this->item($user, 'agency-saas-revenue', 'Agency revenue', 'dollar-sign', ['access_backend'], 'customer.workspaces.agency.saas.revenue', [$account->uid], $current, [
                 'customer.workspaces.agency.saas.revenue',
+            ]);
+            $accountItems[] = $this->item($user, 'agency-white-label', 'White label', 'droplet', ['access_backend'], 'customer.workspaces.agency.white-label.show', [$account->uid], $current, [
+                'customer.workspaces.agency.white-label.',
             ]);
         }
 

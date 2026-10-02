@@ -112,6 +112,13 @@ and the `white_label` platform feature is `Planned`
   ships the real signal (Agency white-label settings, contract §9.3 item 3)
   inherits them without re-deriving them.
 
+**Update (Agency V1 completion, Contract 22):** Agency white-label settings and
+the `white_label` feature now exist, but they brand only the *signed-in client
+chrome*, resolved from the persisted management relationship
+(`ClientWorkspaceBrandResolver`) — not this host-keyed seam. `AgencyBrandSource`
+is still unbound: it needs custom-domain mapping and verification that the
+repository does not have, which Contract 22 §4.3 defers.
+
 Never consulted, structurally: query parameters, submitted Workspace uids,
 session values, "the first Workspace", another user's selection, or any
 shared mutable state. The only cache in the branding path is
