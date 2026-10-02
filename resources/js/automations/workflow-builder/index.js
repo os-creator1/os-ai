@@ -115,6 +115,7 @@ function initBuilder(root) {
         catalogs: data.catalogs,
         dateOffsets: data.dateOffsets,
         limits: data.limits,
+        locationScope: data.locationScope,
         onSave(node, config) {
             node.config = config
             onDocumentChanged()

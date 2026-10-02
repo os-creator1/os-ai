@@ -260,8 +260,14 @@ class WorkflowBuilderContractTest extends TestCase
     /** §18 "workflow list ≤ 2", feature-owned. */
     private const FEATURE_LIST_BUDGET = 2;
 
-    /** §18 "workflow Builder ≤ 4", feature-owned. */
-    private const FEATURE_BUILDER_BUDGET = 4;
+    /**
+     * §18 "workflow Builder ≤ 4", feature-owned — plus ONE read: the actor's Location
+     * reach (LocationAccessGuard), which the scope picker needs and which cannot ride
+     * the catalog statement. The Business's own Locations ride the catalog, so
+     * "Whole business" costs nothing more. Constant in the number of Locations,
+     * references and steps.
+     */
+    private const FEATURE_BUILDER_BUDGET = 5;
 
     /**
      * Every statement one whole request issues, each tagged with the ownership

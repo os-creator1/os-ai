@@ -38,7 +38,7 @@ class LocationBuilderTest extends TestCase
         return json_decode(html_entity_decode($match[1]), true);
     }
 
-    private function draftWithScope(array $tenant, mixed $locationId): AutomationWorkflow
+    private function draftWithScope(array $tenant, mixed $locationId, int $expectStatus = 200): AutomationWorkflow
     {
         $created = $this->callJson('POST', $this->routeUrl('store', $tenant['workspace'], $tenant['business']), ['name' => 'Scoped flow', 'trigger_type' => 'manual_enrollment'])->assertCreated();
         $workflow = AutomationWorkflow::query()->where('uid', $created->json('workflow.uid'))->firstOrFail();
@@ -51,7 +51,7 @@ class LocationBuilderTest extends TestCase
         $this->callJson('PUT', $this->routeUrl('draft.autosave', $tenant['workspace'], $tenant['business'], $workflow), [
             'definition' => $definition,
             'definition_revision' => $draft['revision'],
-        ])->assertOk();
+        ])->assertStatus($expectStatus);
 
         return $workflow;
     }
@@ -93,14 +93,21 @@ class LocationBuilderTest extends TestCase
         $other = $this->tenantWithWorkflow();
         $theirs = $this->location($other['business'], 'Their Location');
 
-        $workflow = $this->draftWithScope($t, (int) $theirs->id);
+        // Forged through the route: refused at save, so it never reaches the draft.
+        $workflow = $this->draftWithScope($t, (int) $theirs->id, 422);
+        $this->assertNull($workflow->fresh()->draftVersion()->definition['root']['config']['business_location_id'] ?? null);
 
-        $draft = $this->callJson('GET', $this->routeUrl('draft.show', $t['workspace'], $t['business'], $workflow))->assertOk()->json();
-        $this->assertContains('That location does not belong to this business.', collect($draft['errors'])->flatten()->all());
+        // Forged straight into storage: the compiler still names it, and publish still refuses.
+        $draft = $workflow->fresh()->draftVersion();
+        $definition = $draft->definition;
+        $definition['root']['config']['business_location_id'] = (int) $theirs->id;
+        $definition['root']['next'] = [$this->endStep()];
+        DB::table('automation_workflow_versions')->where('id', $draft->id)->update(['definition' => json_encode($definition)]);
 
-        $this->callJson('POST', $this->routeUrl('publish', $t['workspace'], $t['business'], $workflow))
-            ->assertStatus(422)
-            ->assertJsonFragment(['That location does not belong to this business.']);
+        $shown = $this->callJson('GET', $this->routeUrl('draft.show', $t['workspace'], $t['business'], $workflow))->assertOk()->json();
+        $this->assertContains('That location does not belong to this business.', collect($shown['errors'])->flatten()->all());
+
+        $this->callJson('POST', $this->routeUrl('publish', $t['workspace'], $t['business'], $workflow))->assertStatus(422);
 
         $this->assertNull($workflow->fresh()->published_version_id);
     }

@@ -5,6 +5,7 @@ namespace App\Library\Automation\Workflow\Executors;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
+use App\Library\Automation\Workflow\Runtime\PinnedRunLocation;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
@@ -55,6 +56,15 @@ class UpdateContactFieldNodeExecutor implements NodeExecutor
         Business $business,
         Contacts $contact,
     ): NodeExecutionOutcome {
+        // A Location-bound journey writes only to a contact still at its Location;
+        // one who has moved on is skipped, never written under the old scope and
+        // never re-scoped to wherever they are now. Business-wide: unchanged.
+        $violation = PinnedRunLocation::violation($enrollment, $contact);
+
+        if ($violation !== null) {
+            return NodeExecutionOutcome::skipped($violation);
+        }
+
         $config = is_array($node->config) ? $node->config : [];
 
         $fieldId = $this->positiveInt($config['field_id'] ?? null);

@@ -10,6 +10,7 @@ use App\Http\Requests\Automations\Workflow\StoreWorkflowRequest;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
 use App\Library\Automation\Workflow\WorkflowCompiler;
 use App\Library\Automation\Workflow\WorkflowDraftService;
+use App\Library\Automation\Workflow\WorkflowLocationAuthority;
 use App\Library\Automation\Workflow\WorkflowReferenceCatalogLoader;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
@@ -46,6 +47,7 @@ class AutomationWorkflowsController extends CustomerBaseController
         private readonly WorkflowCompiler $compiler,
         private readonly WorkflowReferenceCatalogLoader $catalogs,
         private readonly WorkflowLifecycle $lifecycle,
+        private readonly WorkflowLocationAuthority $locationAuthority,
     ) {
     }
 
@@ -177,6 +179,10 @@ class AutomationWorkflowsController extends CustomerBaseController
             // both live in the catalog itself (#290), not here.
             $catalog = $this->catalogs->forBusiness($business);
 
+            // The actor's Location reach, read ONCE (the Business's own Locations are
+            // already in the catalog, so "Whole business" costs no further read).
+            $reach = $this->locationAuthority->reachableIds((int) Auth::id(), $business);
+
             return view('customer.Automations.Workflows.builder', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
@@ -195,8 +201,13 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'crmStages' => $catalog->stages(),
                 'tags' => $catalog->tags(),
                 'forms' => $catalog->forms(),
-                // The scope picker — Locations of THIS Business, from the same read.
-                'locations' => $catalog->locations(),
+                // The scope picker — Locations of THIS Business, from the same read,
+                // narrowed to the ones THIS actor may bind to (the platform Location
+                // ACL), and whether they may also choose "Whole business" (only an
+                // actor who reaches every Location). The server re-checks both at
+                // save and publish; this only stops the UI offering what it would refuse.
+                'locations' => $this->locationAuthority->pickerLocations($reach, $catalog->locations()),
+                'locationScope' => ['businessWide' => $this->locationAuthority->coversAll($reach, array_column($catalog->locations(), 'id'))],
             ]);
         });
     }

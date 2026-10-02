@@ -383,6 +383,27 @@ class WorkflowCompiler
             }
         }
 
+        // A Location-bound workflow cannot send texts yet. The messaging
+        // foundation's sending identities and numbers are Business-level, so a
+        // sender cannot be PROVEN to belong to the bound Location, and the
+        // runtime refuses (SendSmsNodeExecutor). Refusing here too tells the author
+        // at publish instead of failing every journey. Business-wide: unchanged.
+        $boundScope = null;
+
+        foreach ($flattened as $entry) {
+            if ($entry['type'] === WorkflowNodeType::Trigger) {
+                $boundScope = $this->positiveId($entry['config']['business_location_id'] ?? null);
+            }
+        }
+
+        if ($boundScope !== null) {
+            foreach ($flattened as $entry) {
+                if ($entry['type'] === WorkflowNodeType::SendSms) {
+                    $errors[$entry['key']][] = 'A workflow limited to one location cannot send text messages yet. Use a whole-business workflow, or send an email instead.';
+                }
+            }
+        }
+
         foreach ($flattened as $entry) {
             if ($entry['type'] !== WorkflowNodeType::IfElse) {
                 continue;

@@ -9,6 +9,7 @@ use App\Http\Requests\Automations\Workflow\AutosaveDraftRequest;
 use App\Http\Requests\Automations\Workflow\SimulateWorkflowRequest;
 use App\Library\Automation\Workflow\WorkflowCompiler;
 use App\Library\Automation\Workflow\WorkflowDraftService;
+use App\Library\Automation\Workflow\WorkflowLocationAuthority;
 use App\Library\Automation\Workflow\WorkflowPublisher;
 use App\Library\Automation\Workflow\WorkflowSimulator;
 use App\Library\Contacts\ContactDirectory;
@@ -52,6 +53,7 @@ class AutomationWorkflowDraftController extends CustomerBaseController
         private readonly WorkflowPublisher $publisher,
         private readonly WorkflowSimulator $simulator,
         private readonly ContactDirectory $directory,
+        private readonly WorkflowLocationAuthority $locationAuthority,
     ) {
     }
 
@@ -83,6 +85,10 @@ class AutomationWorkflowDraftController extends CustomerBaseController
             $this->assertEditable($workflow);
 
             $request = $this->validated(AutosaveDraftRequest::class);
+
+            // A Location the actor cannot reach is never saved, even if forged into
+            // the JSON. (An unscoped draft is allowed; publish applies the full rule.)
+            $this->locationAuthority->assertMayDraft((int) Auth::id(), $business, (array) $request->validated('definition'));
 
             $saved = $this->drafts->autosave(
                 $this->drafts->ensureDraft($workflow),
@@ -157,6 +163,17 @@ class AutomationWorkflowDraftController extends CustomerBaseController
                 ->where('uid', (string) $request->validated('contact_uid'))
                 ->first();
 
+            // An actor who does not reach every Location may test only against a
+            // contact in one they DO reach — a contact elsewhere (or nowhere) reads
+            // exactly like an unknown one. Forging the uid changes nothing.
+            if ($contact !== null && ! $this->locationAuthority->hasFullReach((int) Auth::id(), $business)) {
+                $reach = $this->locationAuthority->reachableIds((int) Auth::id(), $business);
+
+                if ($contact->location_id === null || ! in_array((int) $contact->location_id, $reach, true)) {
+                    $contact = null;
+                }
+            }
+
             if ($contact === null) {
                 return $this->notFound();
             }
@@ -198,13 +215,34 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $search = mb_substr(trim((string) request()->query('q', '')), 0, 100);
 
-            $contacts = collect($this->directory->page($business, $search)->items())
-                ->take(self::TEST_CONTACT_LIMIT)
-                ->map(static fn (array $row): array => [
-                    'uid' => $row['uid'],
-                    'name' => $row['name'],
-                    'phone' => $row['phone'],
-                ])
+            // Same search as the Contacts page, narrowed IN THE QUERY to what this
+            // actor may test with: every contact for one who reaches every
+            // Location, otherwise only contacts in a Location they reach. A bound
+            // workflow's picker additionally offers only that Location's contacts
+            // (the simulator would refuse the rest).
+            $userId = (int) Auth::id();
+            $matching = $this->directory->matchingContactIds($business, $search);
+
+            if (! $this->locationAuthority->hasFullReach($userId, $business)) {
+                $matching->whereIn('contacts.location_id', $this->locationAuthority->reachableIds($userId, $business) ?: [0]);
+            }
+
+            $workflow = $this->resolveWorkflow($business, $workflowUid);
+            $version = $workflow->draftVersion() ?? $this->publishedVersion($workflow);
+            [, $scope] = $version === null ? [null, null] : $this->locationAuthority->scopeOf((array) $version->definition);
+
+            if ($scope !== null) {
+                $matching->where('contacts.location_id', $scope);
+            }
+
+            $ids = $matching->orderByDesc('contacts.id')->limit(self::TEST_CONTACT_LIMIT)->pluck('contacts.id')->map(fn ($id): int => (int) $id)->all();
+            $summaries = $this->directory->summaries($business, $ids);
+
+            $contacts = collect($ids)
+                ->map(static fn (int $id): ?array => isset($summaries[$id])
+                    ? ['uid' => $summaries[$id]['uid'], 'name' => $summaries[$id]['name'], 'phone' => $summaries[$id]['phone']]
+                    : null)
+                ->filter()
                 ->values();
 
             return response()->json(['contacts' => $contacts]);

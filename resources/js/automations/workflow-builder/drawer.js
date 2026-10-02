@@ -69,7 +69,8 @@ function attachCounter(field, counterEl, max) {
     sync()
 }
 
-export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, onDelete, onClose }) {
+export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, locationScope, onSave, onDelete, onClose }) {
+    const data = { locationScope }
     const iconEl = drawerEl.querySelector('[data-role="wf-drawer-icon"]')
     const eyebrowEl = drawerEl.querySelector('[data-role="wf-drawer-eyebrow"]')
     const titleEl = drawerEl.querySelector('[data-role="wf-drawer-title"]')
@@ -344,7 +345,12 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             .filter((row) => row.active || String(row.id) === selected)
             .map((row) => ({ id: row.id, label: `${row.name || 'Unnamed location'}${row.active ? '' : ' (archived)'}` }))
 
-        fillSelect(select, rows, 'id', 'label', 'Whole business')
+        // Only an actor who reaches every Location may choose "Whole business": it
+        // runs for all of them. Everyone else must pick one of their own, and the
+        // server refuses the rest at save and publish.
+        const businessWide = !data || !data.locationScope || data.locationScope.businessWide !== false
+
+        fillSelect(select, rows, 'id', 'label', businessWide ? 'Whole business' : 'Choose a location')
         select.value = selected
     }
 

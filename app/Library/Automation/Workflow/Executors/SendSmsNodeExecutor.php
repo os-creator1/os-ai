@@ -8,6 +8,7 @@ use App\Library\Automation\Workflow\Contracts\NodeExecutor;
 use App\Library\Automation\Workflow\Runtime\AutomationSendContext;
 use App\Library\Automation\Workflow\Runtime\ClaimedStepRun;
 use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
+use App\Library\Automation\Workflow\Runtime\PinnedRunLocation;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
@@ -101,6 +102,26 @@ class SendSmsNodeExecutor implements NodeExecutor
 
         if ($body === '') {
             return NodeExecutionOutcome::skipped('send_config_invalid');
+        }
+
+        // LOCATION. A contact who has left a Location-bound journey's Location is
+        // never texted under it. And a bound journey cannot text at all yet: the
+        // messaging foundation's sending identities and numbers are BUSINESS-level
+        // (BusinessMessagingIdentity, Senderid, PhoneNumbers carry no Location), so
+        // there is no way to PROVE the sender belongs to the pinned Location, and
+        // sending from an unproven Business-wide identity could speak for another
+        // Location. Fail closed until messaging gains a Location-aware sender
+        // seam; publish already refuses such a workflow (WorkflowCompiler), so this
+        // is the backstop for a pinned version that predates or bypasses it.
+        // Business-wide journeys are untouched.
+        $violation = PinnedRunLocation::violation($enrollment, $contact);
+
+        if ($violation !== null) {
+            return NodeExecutionOutcome::skipped($violation);
+        }
+
+        if (PinnedRunLocation::boundTo($enrollment) !== null) {
+            return NodeExecutionOutcome::failed('location_sender_unavailable');
         }
 
         // Consent at the ACTION boundary, never cached from claim time

@@ -41,8 +41,10 @@
                                           each: ->id, ->name, ->archived
       iterable $forms                   optional; this Business's forms,
                                           each: ->id, ->name, ->lifecycle
-      iterable $locations               optional; this Business's Locations (the scope
-                                          picker), each: ->id, ->name, ->active
+      iterable $locations               optional; the Locations THIS actor may bind a workflow
+                                          to (already ACL-filtered), each: ->id, ->name, ->active
+      array    $locationScope           optional; ['businessWide' => bool] — whether this actor
+                                          may also choose "Whole business"
 --}}
 
 @php
@@ -85,6 +87,7 @@
             'maxBranchDepth' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_BRANCH_DEPTH,
             'maxConditionsPerBranch' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_CONDITIONS_PER_BRANCH,
         ],
+        'locationScope' => ['businessWide' => (bool) ($locationScope['businessWide'] ?? true)],
         'dateOffsets' => \App\Library\Automation\Workflow\NodeTypeRegistry::DATE_OFFSET_ALLOWLIST,
         'contactSources' => \App\Library\Automation\Workflow\NodeTypeRegistry::CONTACT_SOURCES,
     ];

@@ -390,8 +390,15 @@ class LocationRuntimeAndActionsTest extends TestCase
 
             $code = preg_replace(['#/\*.*?\*/#s', '#^\s*//.*$#m'], '', file_get_contents($file->getPathname()));
 
-            foreach (['Auth::', 'auth()', 'ViewAs', 'Session::', 'session(', 'LocationAccessGuard', 'request()'] as $forbidden) {
+            foreach (['Auth::', 'auth()', 'ViewAs', 'Session::', 'session(', 'request()'] as $forbidden) {
                 $this->assertStringNotContainsString($forbidden, $code, $file->getFilename() . ' must not consult an actor.');
+            }
+
+            // The Location ACL guard is consulted in exactly two places: authoring
+            // (WorkflowLocationAuthority, which is handed the actor explicitly) and
+            // the notification audience (asked about each RECIPIENT, never an actor).
+            if (! in_array($file->getFilename(), ['WorkflowLocationAuthority.php', 'InternalNotificationNodeExecutor.php'], true)) {
+                $this->assertStringNotContainsString('LocationAccessGuard', $code, $file->getFilename() . ' must not consult the Location ACL.');
             }
         }
 

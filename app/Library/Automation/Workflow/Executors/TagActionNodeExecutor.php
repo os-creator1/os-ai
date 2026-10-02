@@ -5,12 +5,13 @@ namespace App\Library\Automation\Workflow\Executors;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
 use App\Library\Automation\Workflow\Runtime\ClaimedStepRun;
+use App\Library\Automation\Workflow\Runtime\PinnedRunLocation;
 use App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource;
 use App\Library\Crm\Exceptions\CrmRuleException;
 use App\Library\Crm\TagManager;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
-use App\Models\AutomationWorkflowVersion;
+
 use App\Models\Business;
 use App\Models\Contacts;
 use App\Models\Tag;
@@ -71,12 +72,11 @@ abstract class TagActionNodeExecutor implements NodeExecutor
         // contact wherever they are. A workflow BOUND to a Location acts only on a
         // contact who is (still) at that Location and only on a journey pinned to
         // it: a contact who has since moved elsewhere is skipped, never tagged under
-        // a scope they have left. Read from the pinned version, not node config.
-        $bound = AutomationWorkflowVersion::query()->whereKey((int) $enrollment->version_id)->value('business_location_id');
+        // a scope they have left (PinnedRunLocation reads the pinned version).
+        $violation = PinnedRunLocation::violation($enrollment, $contact);
 
-        if ($bound !== null
-            && ((int) $enrollment->business_location_id !== (int) $bound || (int) $contact->location_id !== (int) $bound)) {
-            return NodeExecutionOutcome::skipped('contact_outside_workflow_location');
+        if ($violation !== null) {
+            return NodeExecutionOutcome::skipped($violation);
         }
 
         $tag = Tag::query()->where('business_id', (int) $business->id)->whereKey((int) $tagId)->first();

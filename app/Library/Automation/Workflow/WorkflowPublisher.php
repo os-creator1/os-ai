@@ -11,6 +11,7 @@ use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Enums\Automation\Workflow\WorkflowVersionState;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\Business;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -38,8 +39,10 @@ use Illuminate\Validation\ValidationException;
  */
 class WorkflowPublisher
 {
-    public function __construct(private readonly WorkflowCompiler $compiler)
-    {
+    public function __construct(
+        private readonly WorkflowCompiler $compiler,
+        private readonly WorkflowLocationAuthority $locationAuthority,
+    ) {
     }
 
     /**
@@ -77,6 +80,18 @@ class WorkflowPublisher
                 throw ValidationException::withMessages([
                     WorkflowDefinitionValidator::DOCUMENT_KEY => ['There are no changes to publish.'],
                 ]);
+            }
+
+            // THE ACTOR'S LOCATION AUTHORITY, against the very draft being promoted.
+            // A person with selected Locations cannot publish a workflow bound to one
+            // they cannot reach, nor a Business-wide one (authority over every
+            // Location). A publish with no actor (system, tests) has none to check.
+            if ($publishedByUserId !== null) {
+                $business = Business::query()->find((int) $locked->business_id);
+
+                if ($business !== null) {
+                    $this->locationAuthority->assertMayPublish($publishedByUserId, $business, (array) ($draft->definition ?? []));
+                }
             }
 
             $errors = $this->compiler->validate($draft);
