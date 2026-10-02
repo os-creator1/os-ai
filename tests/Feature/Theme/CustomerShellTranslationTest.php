@@ -169,11 +169,11 @@ class CustomerShellTranslationTest extends TestCase
         $this->assertGreaterThanOrEqual(25, count($labels), 'The inventory covers the whole builder.');
 
         // The labels the builder emits today: Campaigns is gone (Conversations
-        // is the one messaging entry), "Get found" and "Results" replaced the
+        // is the one messaging entry), "Get found" replaced the
         // module names, and Settings is one entry whose hub modules (Billing,
         // Plan & subscription, Team, Text messaging, Messaging provider…) are
         // built by the same builder.
-        foreach (['Website', 'Get found', 'Messaging provider', 'Text messaging', 'Prospecting', 'Conversations', 'Automations', 'Results', 'Billing', 'Client accounts', 'Settings', 'Team', 'Plan & subscription'] as $required) {
+        foreach (['Website', 'Get found', 'Messaging provider', 'Text messaging', 'Prospecting', 'Conversations', 'Automations', 'Billing', 'Client accounts', 'Settings', 'Team', 'Plan & subscription'] as $required) {
             $this->assertContains($required, $labels, "The builder no longer emits {$required}; update the inventory.");
         }
 

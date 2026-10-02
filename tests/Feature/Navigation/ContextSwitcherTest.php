@@ -214,12 +214,12 @@ class ContextSwitcherTest extends TestCase
 
         $this->switchTo($workspace, $clientOne);
         $first = $this->home()->assertOk()->getContent();
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($first));
+        $this->assertContains(route('customer.workspaces.businesses.people.index', [$workspace->uid, $clientOne->uid]), $this->menuLinks($first));
 
         $this->switchTo($second['workspace'], $second['business']);
         $secondPage = $this->home()->assertOk()->getContent();
-        $this->assertContains(route('customer.workspaces.businesses.analytics.overview', [$second['workspace']->uid, $second['business']->uid]), $this->menuLinks($secondPage));
-        $this->assertNotContains(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $clientOne->uid]), $this->menuLinks($secondPage));
+        $this->assertContains(route('customer.workspaces.businesses.people.index', [$second['workspace']->uid, $second['business']->uid]), $this->menuLinks($secondPage));
+        $this->assertNotContains(route('customer.workspaces.businesses.people.index', [$workspace->uid, $clientOne->uid]), $this->menuLinks($secondPage));
     }
 
     public function test_a_filter_appears_only_once_there_are_enough_businesses_to_need_one(): void

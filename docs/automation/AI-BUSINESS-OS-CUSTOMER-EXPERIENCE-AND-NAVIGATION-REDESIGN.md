@@ -1037,6 +1037,12 @@ removes them. Agency outbound prospecting is *Prospecting* in the Agency
 account frame (§8.4), never part of a client Business's Messages; a selected
 Agency client Business gets the same Messages → Inbox as any other Business.
 
+**Superseded ordering (V1 Master Product Blueprint §7, 2026-10-02).** The Business sidebar now reads
+Home, Opportunities, Contacts, Conversations, Calendar, Automations, Website, SEO, Forms,
+Packages & Products, Payments & Contracts, Settings (each entitlement-gated as before).
+*Results* is no longer a sidebar entry: Business Home's "See details" opens it and keeps Home
+lit while the owner is there; its routes and `view_reports` permission are unchanged.
+
 ### 8.3 Core and Growth customer — mobile, below 768px
 
 The sidebar collapses to a bottom tab bar of **five** destinations plus a sheet:

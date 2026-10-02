@@ -84,7 +84,7 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertSame(['home'], $this->activeMenuKeys($home->getContent()));
 
         $analytics = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))->assertOk();
-        $this->assertSame(['analytics'], $this->activeMenuKeys($analytics->getContent()));
+        $this->assertSame(['home'], $this->activeMenuKeys($analytics->getContent()));
 
         // Billing is a Settings screen: the one Settings entry is the current
         // page's place in the menu, and nothing expands.
