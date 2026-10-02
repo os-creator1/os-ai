@@ -209,10 +209,10 @@
         .conversation-context {
             background-color: var(--color-surface);
             border-left: 1px solid var(--color-border-subtle);
-            flex: 0 0 300px;
+            flex: 0 0 280px;
             overflow-y: auto;
             padding: var(--space-5) var(--space-4);
-            width: 300px;
+            width: 280px;
         }
 
         .conversation-context-person {
@@ -292,16 +292,49 @@
          * completely alone.
          */
 
-        .conversations-page-header {
-            margin-bottom: var(--space-4);
+        /*
+         * Open workspace: the inbox is the page, not a card inside it. The
+         * theme boxes .content-area-wrapper (1px border, rounded corners) and
+         * pads .app-content on every side; drop both so the three panes run
+         * edge to edge under the navbar, separated only by hairlines.
+         */
+        .app-content.chat-application {
+            padding: 0 !important;
         }
 
-        .conversations-page-header p {
-            color: var(--color-text-muted);
-        }
-
-        .chat-application .content-area-wrapper {
+        html body .app-content.chat-application .content-area-wrapper {
+            border: 0;
+            border-radius: 0;
             box-shadow: none;
+            height: calc(100vh - var(--conversations-chrome, 7.9rem)) !important;
+            height: calc(var(--vh, 1vh) * 100 - var(--conversations-chrome, 7.9rem)) !important;
+        }
+
+        .chat-application .content-area-wrapper .content-wrapper,
+        .chat-application .content-area-wrapper .content-body {
+            padding: 0;
+        }
+
+        .chat-application .sidebar-content,
+        .conversation-context {
+            background-color: var(--color-surface);
+            border-radius: 0;
+        }
+
+        .chat-application .sidebar-content {
+            height: 100%;
+            border-right: 1px solid var(--color-border-subtle);
+        }
+
+        @media (min-width: 576px) {
+            .chat-application .sidebar-content {
+                width: 320px;
+            }
+        }
+
+        .chat-application .sidebar-content .chat-fixed-search,
+        .chat-application .sidebar-content .chat-user-list-wrapper {
+            width: 100%;
         }
 
         /* Sidebar filter row: one compact segmented control, not four
@@ -503,7 +536,7 @@
 
         .composer-template-select {
             flex: 0 0 auto;
-            width: 160px;
+            width: 140px;
         }
 
         @media (max-width: 575.98px) {
@@ -538,10 +571,8 @@
 
 
 @section('content')
-    <div class="conversations-page-header">
-        <h1 class="h3 mb-0">{{ __('locale.menu.Conversations') }}</h1>
-        <p class="text-caption mb-0">Manage customer conversations and follow up from one place.</p>
-    </div>
+    {{-- The shell shows no page title for the inbox; keep the heading for assistive tech only. --}}
+    <h1 class="visually-hidden">{{ __('locale.menu.Conversations') }}</h1>
     <div class="body-content-overlay"></div>
     <!-- Main chat area -->
     <section class="chat-app-window">
