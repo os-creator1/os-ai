@@ -26,7 +26,7 @@
             {{-- FIX: Use @canany to handle pipe-separated permissions --}}
             @if ($passesAdminOnlyBoundary)
             @canany($permission, auth()->user())
-                <li class="{{ isset($submenu->slug) && str_contains(request()->path(),$submenu->slug) ? 'active' : '' }}">
+                <li class="{{ isset($submenu->active) ? ($submenu->active ? 'active' : '') : (isset($submenu->slug) && str_contains(request()->path(),$submenu->slug) ? 'active' : '') }}">
                     <a href="{{isset($submenu->url) ? url($submenu->url):'javascript:void(0)'}}" class="d-flex align-items-center transition-fast">
                         @if(isset($submenu->icon))
                             <x-ds-icon name="{{ $submenu->icon ?? "" }}" />

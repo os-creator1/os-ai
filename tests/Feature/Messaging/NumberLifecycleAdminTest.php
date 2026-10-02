@@ -402,7 +402,7 @@ class NumberLifecycleAdminTest extends TestCase
      */
     private function usageBillingSubmenu(): array
     {
-        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Usage Billing')['submenu'] ?? [];
+        $submenu = collect(Helper::menuData()['admin'])->firstWhere('name', 'Number Operations')['submenu'] ?? [];
 
         return json_decode(json_encode($submenu));
     }

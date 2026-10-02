@@ -25,7 +25,7 @@
 
             @else
                 <li class="nav-item me-auto">
-                    <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : route('admin.home') }}">
+                    <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : (auth()->user()->is_admin && auth()->user()->active_portal == 'admin' ? route('admin.platform-owner.overview') : route('admin.home')) }}">
                         <div class="brand-logo">
                             <x-branding-logo variant="full" background="light" />
                         </div>
@@ -66,8 +66,12 @@
             @elseif(isset($menuData[0]))
                 {{-- Legacy static menu — admin branch (contract §8.4: the legacy array remains for the admin branch). --}}
                 @php
+                    // Platform Owner shell V1: the admin menu is pruned (account
+                    // type + permission + empty headers) and its single active
+                    // entry resolved by AdminMenuBuilder. The legacy customer
+                    // fallback below keeps its original rendering.
                     if (auth()->user()->active_portal == 'admin'){
-                        $sidebarMenu = $menuData['0']->admin;
+                        $sidebarMenu = app(\App\Library\Navigation\AdminMenuBuilder::class)->build(auth()->user(), request()->path());
                      }else{
                         $sidebarMenu = $menuData['0']->customer;
                      }
@@ -110,7 +114,7 @@
                         @if ($passesAdminOnlyBoundary)
                         @canany($permission, auth()->user())
 
-                            <li class="nav-item {{ isset($menu->slug) &&  str_contains(request()->path(),$menu->slug) ? 'active' : '' }} {{ $custom_classes }}">
+                            <li class="nav-item {{ isset($menu->active) ? ($menu->active ? 'active' : '') : (isset($menu->slug) && str_contains(request()->path(),$menu->slug) ? 'active' : '') }} {{ $custom_classes }}">
                                 <a href="{{ $menu->url }}" class="d-flex align-items-center">
                                     <x-ds-icon name="{{ $menu->icon }}" />
                                     <span class="menu-title text-truncate"

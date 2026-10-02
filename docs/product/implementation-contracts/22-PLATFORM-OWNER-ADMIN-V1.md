@@ -62,9 +62,54 @@ second, independent layer. No new permission string was added.
 
 The `admin.workspaces.*` route-name family is pinned by
 `AdminWorkspaceControllerTest` to the RFC-004 M3 surface, which is why the
-restore route lives under `platform-owner.`. Menu: **Platform Owner →
-Overview, Workspaces, Businesses, Audit** (admin-only; the menu is a
-convenience, every route re-checks authority).
+restore route lives under `platform-owner.`. The sidebar is described in
+§3a (it superseded the original four-entry "Platform Owner" group); the menu is
+a convenience, every route re-checks authority.
+
+## 3a. Platform Owner shell (navigation V1)
+
+The admin sidebar is the static array in `Helper::menuData()['admin']`, resolved
+per user by `App\Library\Navigation\AdminMenuBuilder` (used by the vertical
+sidebar and the horizontal menu). The builder only prunes and marks; it adds no
+route. Rules on a menu entry: `access` (any listed ability), `admin_only`
+(additionally `users.is_admin`), `staff_only` (hidden from Platform Owners),
+`requires_config` (hidden while a feature flag is off), parents with no visible
+child and headers with no visible entry are dropped, and **exactly one** entry
+is active — the longest segment-aware slug match, so Home is not lit on
+`platform-owner/audit` and `dashboard` is not lit on `reports/dashboard`.
+
+Final Platform Owner sidebar (a Platform Owner holding every permission):
+
+| Group | Entries |
+|---|---|
+| (top) | **Home** (`platform-owner` overview; the logo links here too) |
+| Accounts & Operations | Workspaces · Businesses · Opportunities¹ · Customer (Customers, Subscriptions, Announcements) |
+| Product & Configuration | Niche Blueprints · Template Library |
+| Messaging & Infrastructure | Messaging Dashboard² · Sending (servers, sender ID, numbers, keywords, templates) · Number Operations (provisioning incidents, port-out requests, number lifecycle) · Reports |
+| Commercial | Billing & Revenue · Plan Catalog · Plan (SMS plans, currencies, tax) · Invoices · Usage Billing (safety limits, AI usage, provider events, additional slot agreements) |
+| Governance | Audit Logs · Security · Administrator |
+| System | Settings (platform settings, theme presets, language, email templates, terms, privacy policy, maintenance mode) |
+
+¹ Only while `config('opportunity.enabled')` is on; the whole surface is 404 otherwise.
+² The legacy SMS dashboard. Backend staff who are not Platform Owners keep it as
+their top-level **Dashboard** and see none of the owner-only entries.
+
+Newly linked (routed and gated before, but reachable only by typing the URL):
+Billing & Revenue, Plan Catalog, Opportunities, and the Messaging operations
+screens, which moved out of Usage Billing into Number Operations.
+
+The overview (Home) gained a "Go to" shortcut row and a "Recent admin activity"
+card (the five newest rows of the existing audit repository, linking to Audit
+Logs). No new metric or query family.
+
+Conceptual items **not** in the sidebar because no real surface exists (V1
+gaps, deliberately not faked): a dedicated **Agencies** page (Agency state is a
+section of the Workspace/Business support pages), **Platform Automations**,
+**Privacy Requests** (only the Privacy Policy *text* editor exists, under
+Settings), and a **Support / Account recovery** page of its own (recovery is the
+restore-access control on the Workspace page; Home says so). The login
+redirect still lands on the legacy dashboard (`admin.home`), not Home — left
+unchanged as it is an auth-flow change outside this lane.
 
 ## 4. The access diagnostic
 

@@ -88,7 +88,11 @@ class PlatformOwnerOverviewTest extends TestCase
         // Blocked list: the suspended and the locked Workspace, not a healthy one.
         $response->assertSee('Suspended WS')->assertSee('Locked WS');
         $this->assertSame(2, substr_count($html, 'data-testid="po-blocked-row"'));
-        $this->assertStringNotContainsString('Healthy WS', substr($html, strpos($html, 'Recently blocked Workspaces')));
+        // The slice ends where the blocked list does: the next card (recent admin
+        // activity) may legitimately name any Workspace an admin acted on.
+        $blockedCard = substr($html, strpos($html, 'Recently blocked Workspaces'));
+        $blockedCard = substr($blockedCard, 0, strpos($blockedCard, 'Recent admin activity') ?: null);
+        $this->assertStringNotContainsString('Healthy WS', $blockedCard);
     }
 
     public function test_overview_with_nothing_blocked_says_so(): void
@@ -187,17 +191,19 @@ class PlatformOwnerOverviewTest extends TestCase
         $this->assertSame(25, substr_count($html, 'data-testid="po-location-row"'));
     }
 
-    public function test_only_the_four_platform_owner_menu_entries_exist_and_all_are_admin_only(): void
+    public function test_the_four_core_platform_owner_menu_entries_exist_and_all_are_admin_only(): void
     {
         $this->tenant(WorkspacePlanTier::Core);
         $this->actingAsPlatformOwner();
 
-        $group = collect(\App\Helpers\Helper::menuData()['admin'])->firstWhere('name', 'Platform Owner');
+        // Platform Owner shell V1 flattened the old four-entry group into the grouped
+        // sidebar (see PlatformOwnerShellNavigationTest); the four stay top-level and owner-only.
+        $entries = collect(\App\Helpers\Helper::menuData()['admin'])->keyBy('name');
 
-        $this->assertNotNull($group);
-        $this->assertTrue($group['admin_only']);
-        $this->assertSame(['Overview', 'Workspaces', 'Businesses', 'Audit'], collect($group['submenu'])->pluck('name')->all());
-        $this->assertTrue(collect($group['submenu'])->every(fn ($item) => ($item['admin_only'] ?? false) === true));
+        foreach (['Home', 'Workspaces', 'Businesses', 'Audit Logs'] as $name) {
+            $this->assertNotNull($entries->get($name), "{$name} is missing");
+            $this->assertTrue($entries->get($name)['admin_only'] ?? false, "{$name} must be admin only");
+        }
 
         $this->get(route('admin.platform-owner.overview'))->assertOk()->assertSee('Platform Owner');
     }
