@@ -58,6 +58,7 @@ class V1SignupHttpTest extends TestCase
         ], $overrides);
     }
 
+
     // =================================================================
     // The signup page
     // =================================================================
@@ -110,7 +111,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier($tier);
 
-        $response = $this->post(route('register'), $this->form(['tier' => $tier->value]));
+        $response = $this->signUp($this->form(['tier' => $tier->value]));
 
         $subscription = PlatformSubscription::query()->sole();
         $response->assertRedirect('https://checkout.stripe.test/' . $subscription->provider_checkout_session_id);
@@ -121,7 +122,12 @@ class V1SignupHttpTest extends TestCase
         $workspace = Workspace::query()->sole();
         $business = Business::query()->where('workspace_id', $workspace->id)->sole();
         $this->assertSame('Harbor Lane Studios', (string) $business->name);
-        $this->assertSame('photo_booth_service', $business->industry->value, 'The niche survives provisioning.');
+        // The niche survives provisioning — except on the Agency branch,
+        // which never asks for one: its own Workspace Business is "other".
+        $this->assertSame(
+            $tier === WorkspacePlanTier::Agency ? 'other' : 'photo_booth_service',
+            $business->industry->value,
+        );
         $this->assertSame('USD', $business->currency_code, 'The selected currency survives provisioning.');
         $this->assertCount(1, BusinessLocation::query()->where('business_id', $business->id)->get());
 
@@ -151,7 +157,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         foreach (['subscriptions', 'subscription_transactions', 'invoices'] as $table) {
             $this->assertSame(0, DB::table($table)->count(), "No legacy [{$table}] row.");
@@ -162,7 +168,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Agency);
 
-        $this->post(route('register'), $this->form(['tier' => 'agency']));
+        $this->signUp($this->form(['tier' => 'agency']));
 
         $this->assertSame(0, WorkspacePlanAssignment::query()->count(),
             '§3.4 — nothing is assigned before the provider confirms, least of all a free Core.');
@@ -172,13 +178,13 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $form = $this->form();
-        $this->post(route('register'), $form);
+        $this->signUp($form);
 
         // Registration signs the new customer in, and /register is guest-only,
         // so a second anonymous attempt starts from a signed-out session.
         $this->signOut();
 
-        $this->post(route('register'), $form)->assertSessionHasErrors('email');
+        $this->signUp($form)->assertSessionHasErrors('email');
 
         $this->assertSame(1, User::query()->where('email', $form['email'])->count());
     }
@@ -194,8 +200,8 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $this->post(route('register'), $this->form(['tier' => 'agency']))
-            ->assertSessionHasErrors('tier');
+        $this->signUp($this->form(['tier' => 'agency']))
+            ->assertSessionHasErrors('plan');
 
         $this->assertSame(0, PlatformSubscription::query()->count());
         $this->assertSame(0, User::query()->where('is_customer', true)->count());
@@ -205,7 +211,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $this->post(route('register'), $this->form(['password_confirmation' => 'something-else']))
+        $this->signUp($this->form(['password_confirmation' => 'something-else']))
             ->assertSessionHasErrors('password');
 
         $this->assertSame(0, Workspace::query()->count());
@@ -215,15 +221,17 @@ class V1SignupHttpTest extends TestCase
     // Checkout return
     // =================================================================
 
-    public function test_the_success_endpoint_activates_from_provider_truth_and_lands_on_home(): void
+    public function test_the_success_endpoint_activates_from_provider_truth_and_hands_off_to_verification(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 10);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
-        $this->get(route('signup.success'))->assertRedirect(route('user.home'));
+        // The email is not verified yet, so the hand-off after provisioning
+        // is the verification screen (the purchase was never blocked on it).
+        $this->get(route('signup.success'))->assertRedirect(route('verification.notice'));
 
         $workspace = Workspace::query()->sole();
         $assignment = WorkspacePlanAssignment::query()->sole();
@@ -238,7 +246,7 @@ class V1SignupHttpTest extends TestCase
     public function test_the_success_endpoint_does_not_trust_a_success_flag(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         // The customer forges a return WITHOUT ever completing checkout.
         $this->get(route('signup.success') . '?success=true');
@@ -250,7 +258,7 @@ class V1SignupHttpTest extends TestCase
     public function test_repeated_success_visits_activate_exactly_once(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
@@ -264,7 +272,7 @@ class V1SignupHttpTest extends TestCase
     public function test_cancelling_checkout_keeps_a_recoverable_account(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $this->get(route('signup.cancelled'))->assertRedirect(route('signup.plan'));
 
@@ -277,7 +285,7 @@ class V1SignupHttpTest extends TestCase
     public function test_resuming_after_cancelling_creates_no_second_workspace(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $this->get(route('signup.cancelled'));
 
         $this->post(route('signup.resume'), ['tier' => 'growth'])->assertRedirectContains('checkout.stripe.test');
@@ -293,7 +301,7 @@ class V1SignupHttpTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->seedCurrency('EUR', 'Euro');
 
-        $this->post(route('register'), $this->form(['currency_code' => 'EUR']));
+        $this->signUp($this->form(['country_code' => 'DE', 'currency_code' => 'EUR']));
         $this->get(route('signup.cancelled'));
 
         // provision() re-runs on resume, but only creates a Business when
@@ -314,7 +322,7 @@ class V1SignupHttpTest extends TestCase
     public function test_the_webhook_alone_finishes_a_browser_signup(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 12);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $subscription = PlatformSubscription::query()->sole();
         $providerSubscriptionId = $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
@@ -354,7 +362,7 @@ class V1SignupHttpTest extends TestCase
         foreach ([['core', 7], ['growth', 21], ['agency', null]] as [$tier, $expected]) {
             // Each is a separate anonymous visitor.
             $this->signOut();
-            $this->post(route('register'), $this->form(['tier' => $tier, 'email' => $tier . uniqid() . '@example.test']));
+            $this->signUp($this->form(['tier' => $tier, 'email' => $tier . uniqid() . '@example.test']));
 
             $subscription = PlatformSubscription::query()->orderByDesc('id')->firstOrFail();
             $this->assertSame($expected, $subscription->trial_days_snapshot === null ? null : (int) $subscription->trial_days_snapshot,
@@ -368,7 +376,7 @@ class V1SignupHttpTest extends TestCase
     public function test_changing_a_trial_afterwards_does_not_rewrite_an_existing_subscription(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 5);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
         $this->get(route('signup.success'));
@@ -382,13 +390,15 @@ class V1SignupHttpTest extends TestCase
 
     // =================================================================
     // §7 correction — canonical country/timezone selection, not free text
+    // (now the BUSINESS step)
     // =================================================================
 
-    public function test_the_signup_page_renders_country_and_timezone_as_selects(): void
+    public function test_the_business_step_renders_country_and_timezone_as_selects(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->walk($this->form(), 2);
 
-        $response = $this->get(route('register'));
+        $response = $this->get(route('register.business'));
 
         $response->assertOk()
             ->assertSee('<select id="country_code" name="country_code"', false)
@@ -405,7 +415,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $response = $this->post(route('register'), $this->form([
+        $response = $this->signUp($this->form([
             'country_code' => 'NZ',
             'timezone' => 'Pacific/Auckland',
         ]));
@@ -420,7 +430,7 @@ class V1SignupHttpTest extends TestCase
 
         // §7 — the exact forged value the acceptance run persisted before
         // this correction: two characters, `size:2`-valid, not a country.
-        $this->post(route('register'), $this->form(['country_code' => 'Ne']))
+        $this->signUp($this->form(['country_code' => 'Ne']))
             ->assertSessionHasErrors('country_code');
 
         $this->assertSame(0, Workspace::query()->count());
@@ -431,7 +441,7 @@ class V1SignupHttpTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $this->post(route('register'), $this->form(['timezone' => 'Not/A_Real_Zone']))
+        $this->signUp($this->form(['timezone' => 'Not/A_Real_Zone']))
             ->assertSessionHasErrors('timezone');
 
         $this->assertSame(0, Workspace::query()->count());
@@ -440,123 +450,86 @@ class V1SignupHttpTest extends TestCase
     public function test_old_country_and_timezone_values_remain_selected_after_a_validation_failure(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->walk($this->form(), 2);
 
-        // Mismatched password confirmation fails validation; country/timezone
-        // were otherwise valid and must come back selected, not reset.
-        $response = $this->from(route('register'))->post(route('register'), $this->form([
+        // A missing business name fails validation; country/timezone were
+        // otherwise valid and must come back selected, not reset.
+        $this->from(route('register.business'))->post(route('register.business.store'), [
+            'business_name' => '',
+            'industry' => 'photographer',
             'country_code' => 'NZ',
             'timezone' => 'Pacific/Auckland',
-            'password_confirmation' => 'something-else',
-        ]));
+        ])->assertSessionHasErrors('business_name');
 
-        $response->assertSessionHasErrors('password');
-
-        $redirect = $this->get(route('register'));
-        $redirect->assertSee('value="NZ" selected', false)
+        $this->get(route('register.business'))
+            ->assertSee('value="NZ" selected', false)
             ->assertSee('value="Pacific/Auckland" selected', false);
     }
 
     // =================================================================
-    // Business currency — a new self-service Business must receive a
-    // valid currency_code through signup itself, the same canonical,
-    // active-currencies source BusinessLocaleOptions already offers the
-    // Business edit form, so its usage wallet can resolve without an
-    // operator ever touching it.
+    // Business currency — a new self-service Business must still receive a
+    // valid currency_code through signup so its usage wallet resolves
+    // without an operator. The signup no longer ASKS for it: it follows the
+    // country (ICU's single legal tender), falling back to USD, always from
+    // the same canonical active-currencies list BusinessLocaleOptions offers.
     // =================================================================
 
-    public function test_the_signup_page_renders_currency_as_a_select(): void
+    public function test_the_signup_never_asks_for_a_currency(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->seedCurrency('EUR', 'Euro');
+        $this->walk($this->form(), 2);
 
-        $response = $this->get(route('register'));
-
-        $response->assertOk()
-            ->assertSee('<select id="currency_code" name="currency_code"', false)
-            ->assertDontSee('<input id="currency_code"', false)
-            // The canonical option list from BusinessLocaleOptions, not a
-            // hardcoded or inferred value.
-            ->assertSee('value="EUR"', false);
+        $this->get(route('register.business'))
+            ->assertOk()
+            ->assertDontSee('name="currency_code"', false);
     }
 
-    public function test_a_valid_currency_is_accepted_and_persisted_on_the_new_business(): void
+    public function test_the_business_currency_follows_the_country(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->seedCurrency('EUR', 'Euro');
 
-        $response = $this->post(route('register'), $this->form(['currency_code' => 'EUR']));
+        $this->signUp($this->form(['country_code' => 'DE']))
+            ->assertSessionDoesntHaveErrors();
 
-        $response->assertSessionDoesntHaveErrors('currency_code');
-
-        $workspace = Workspace::query()->sole();
-        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $business = Business::query()->where('workspace_id', Workspace::query()->sole()->id)->sole();
         $this->assertSame('EUR', $business->currency_code);
     }
 
-    public function test_a_currency_not_in_the_active_list_is_rejected(): void
+    public function test_a_country_whose_currency_is_not_offered_falls_back_to_usd(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
 
-        // Well-formed (3 letters, real ISO code) but never marked active in
-        // this install's `currencies` table — must still be refused, the
-        // same way an unlisted country or timezone already is.
-        $this->post(route('register'), $this->form(['currency_code' => 'JPY']))
-            ->assertSessionHasErrors('currency_code');
+        // JPY is a real ISO currency but is not active on this install.
+        $this->signUp($this->form(['country_code' => 'JP']))
+            ->assertSessionDoesntHaveErrors();
 
-        $this->assertSame(0, Workspace::query()->count());
-        $this->assertSame(0, User::query()->where('is_customer', true)->count());
-    }
-
-    public function test_a_missing_currency_is_rejected(): void
-    {
-        $this->sellableTier(WorkspacePlanTier::Growth);
-
-        $form = $this->form();
-        unset($form['currency_code']);
-
-        $this->post(route('register'), $form)->assertSessionHasErrors('currency_code');
-        $this->assertSame(0, Workspace::query()->count());
-    }
-
-    public function test_old_currency_value_remains_selected_after_a_validation_failure(): void
-    {
-        $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->seedCurrency('EUR', 'Euro');
-
-        // Mismatched password confirmation fails validation; currency was
-        // otherwise valid and must come back selected, not reset.
-        $response = $this->from(route('register'))->post(route('register'), $this->form([
-            'currency_code' => 'EUR',
-            'password_confirmation' => 'something-else',
-        ]));
-
-        $response->assertSessionHasErrors('password');
-
-        $redirect = $this->get(route('register'));
-        $redirect->assertSee('value="EUR" selected', false);
+        $business = Business::query()->where('workspace_id', Workspace::query()->sole()->id)->sole();
+        $this->assertSame('USD', $business->currency_code);
     }
 
     #[DataProvider('supportedCurrencies')]
-    public function test_different_supported_currencies_retain_their_correct_code(string $code, string $name): void
+    public function test_different_supported_currencies_retain_their_correct_code(string $country, string $code, string $name): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->seedCurrency($code, $name);
 
-        $this->post(route('register'), $this->form(['currency_code' => $code]))
-            ->assertSessionDoesntHaveErrors('currency_code');
+        $this->signUp($this->form(['country_code' => $country]))
+            ->assertSessionDoesntHaveErrors();
 
         $workspace = Workspace::query()->sole();
         $business = Business::query()->where('workspace_id', $workspace->id)->sole();
         $this->assertSame($code, $business->currency_code);
     }
 
-    /** @return array<string, array{0: string, 1: string}> */
+    /** @return array<string, array{0: string, 1: string, 2: string}> */
     public static function supportedCurrencies(): array
     {
         return [
-            'EUR' => ['EUR', 'Euro'],
-            'GBP' => ['GBP', 'British Pound'],
-            'CAD' => ['CAD', 'Canadian Dollar'],
+            'EUR' => ['DE', 'EUR', 'Euro'],
+            'GBP' => ['GB', 'GBP', 'British Pound'],
+            'CAD' => ['CA', 'CAD', 'Canadian Dollar'],
         ];
     }
 
@@ -565,8 +538,8 @@ class V1SignupHttpTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->seedCurrency('EUR', 'Euro');
 
-        $this->post(route('register'), $this->form(['currency_code' => 'EUR']))
-            ->assertSessionDoesntHaveErrors('currency_code');
+        $this->signUp($this->form(['country_code' => 'DE']))
+            ->assertSessionDoesntHaveErrors();
 
         $workspace = Workspace::query()->sole();
         $business = Business::query()->where('workspace_id', $workspace->id)->sole();
@@ -581,6 +554,498 @@ class V1SignupHttpTest extends TestCase
             'business_id' => $business->id,
             'currency_id' => $currencyId,
         ]);
+    }
+
+    // =================================================================
+    // The locked flow: PLAN → ACCOUNT → BUSINESS → PAYMENT → PROVISIONING
+    // → VERIFICATION → Home
+    // =================================================================
+
+    public function test_closed_registration_uses_the_branded_auth_shell(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        config(['account.can_register' => false]);
+
+        $login = $this->get(route('login'))->assertOk()->getContent();
+
+        $response = $this->get(route('register'));
+
+        $response->assertOk()
+            ->assertSee('Create your account')
+            ->assertSee('New registrations are temporarily unavailable.')
+            ->assertSee('Sign in')
+            ->assertSee(route('login'), false)
+            // The SAME shell /login renders: corner identity, brand panel,
+            // form column — and never a bare, unstyled document.
+            ->assertSee('auth-wrapper auth-cover', false)
+            ->assertSee('data-role="auth-brand-panel"', false)
+            ->assertSee('class="brand-logo"', false)
+            ->assertSee('authentication.css', false)
+            ->assertDontSee('<main>', false)
+            ->assertDontSee('<form', false);
+
+        foreach (['auth-wrapper auth-cover', 'data-role="auth-brand-panel"', 'class="brand-logo"'] as $shellMarker) {
+            $this->assertStringContainsString($shellMarker, $login, "/login must carry the shell marker [{$shellMarker}].");
+        }
+    }
+
+    public function test_every_closed_signup_step_keeps_the_branded_shell_and_creates_nothing(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        config(['account.can_register' => false]);
+
+        foreach (['register.plan', 'register.account', 'register.business', 'register.payment'] as $name) {
+            $this->get(route($name))->assertOk()
+                ->assertSee('New registrations are temporarily unavailable.')
+                ->assertSee('auth-wrapper auth-cover', false)
+                ->assertDontSee('<main>', false);
+        }
+
+        $this->post(route('register.payment.start'))->assertOk()
+            ->assertSee('New registrations are temporarily unavailable.');
+
+        $this->assertSame(0, User::query()->where('is_customer', true)->count());
+        $this->assertSame(0, Workspace::query()->count());
+    }
+
+    public function test_signup_with_nothing_sellable_is_the_same_closed_state(): void
+    {
+        // No tier is made sellable.
+        $this->get(route('register'))->assertOk()
+            ->assertSee('New registrations are temporarily unavailable.')
+            ->assertSee('auth-wrapper auth-cover', false)
+            ->assertDontSee('<main>', false);
+    }
+
+    public function test_direct_register_begins_with_plan_selection(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+        $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 14, price: '297.00');
+        $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
+
+        $this->get(route('register'))->assertOk()
+            ->assertSee('Step 1 of 4')
+            ->assertSee('Choose your plan')
+            ->assertSee('Start with Core')
+            ->assertSee('Start with Growth')
+            ->assertSee('Start with Agency')
+            // Prices are the catalog's, not the page's.
+            ->assertSee('97.00')->assertSee('297.00')->assertSee('497.00')
+            ->assertSee('auth-wrapper auth-cover', false)
+            ->assertDontSee('name="first_name"', false);
+    }
+
+    public function test_a_valid_plan_link_pins_the_plan_and_skips_plan_selection(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth, price: '297.00');
+        $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+
+        $this->get(route('register', ['plan' => 'growth']))->assertRedirect(route('register.account'));
+
+        $this->get(route('register.account'))->assertOk()
+            ->assertSee('Step 2 of 4')
+            ->assertSee('name="first_name"', false)
+            ->assertSee('Growth');
+
+        // The pin survives a plain visit to /register: straight back to the
+        // step the customer was on, never back to plan selection.
+        $this->get(route('register'))->assertRedirect(route('register.account'));
+    }
+
+    public function test_a_disabled_or_foreign_plan_cannot_proceed(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        // Real catalog row, but not offered to new signups.
+        $core = $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+        $core->forceFill(['available_for_signup' => false])->save();
+
+        foreach (['core', 'agency', 'enterprise', '<script>'] as $unavailable) {
+            $this->get(route('register', ['plan' => $unavailable]))
+                ->assertOk()
+                ->assertSee('That plan is not available right now')
+                ->assertSee('Start with Growth')
+                ->assertDontSee('name="first_name"', false);
+
+            $this->post(route('register.plan.select'), ['tier' => $unavailable])
+                ->assertRedirect(route('register.plan'))
+                ->assertSessionHasErrors('plan');
+
+            // Nothing was pinned: deeper steps send the customer back.
+            $this->get(route('register.account'))->assertRedirect(route('register.plan'));
+        }
+    }
+
+    public function test_a_plan_that_stops_being_sellable_mid_signup_is_dropped_not_trusted(): void
+    {
+        $growth = $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+        $this->walk($this->form(), 3);
+
+        $growth->forceFill(['available_for_signup' => false])->save();
+
+        $this->get(route('register.payment'))->assertRedirect(route('register.plan'));
+        $this->post(route('register.payment.start'))->assertRedirect(route('register.plan'));
+
+        $this->assertSame(0, User::query()->where('is_customer', true)->count());
+    }
+
+    public function test_the_account_step_validates_its_fields(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+
+        $this->post(route('register.account.store'), [])
+            ->assertRedirect(route('register.account'))
+            ->assertSessionHasErrors(['first_name', 'email', 'password']);
+
+        $this->post(route('register.account.store'), $this->account(['email' => 'not-an-email']))
+            ->assertSessionHasErrors('email');
+        $this->post(route('register.account.store'), $this->account(['password' => 'short', 'password_confirmation' => 'short']))
+            ->assertSessionHasErrors('password');
+        $this->post(route('register.account.store'), $this->account(['password_confirmation' => 'different-password']))
+            ->assertSessionHasErrors('password');
+
+        // Business questions do not belong here.
+        $this->get(route('register.account'))->assertOk()
+            ->assertDontSee('name="business_name"', false)
+            ->assertDontSee('name="country_code"', false);
+
+        $this->post(route('register.account.store'), $this->account())
+            ->assertRedirect(route('register.business'))
+            ->assertSessionDoesntHaveErrors();
+
+        $this->assertSame(0, User::query()->where('is_customer', true)->count(), 'The account step stores nothing durable.');
+    }
+
+    public function test_the_account_step_refuses_an_email_that_is_already_registered(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $existing = $this->form();
+        $this->signUp($existing);
+        $this->signOut();
+
+        $this->post(route('register.plan.select'), ['tier' => 'growth']);
+        $this->post(route('register.account.store'), $this->account(['email' => $existing['email']]))
+            ->assertSessionHasErrors('email');
+    }
+
+    public function test_the_business_step_validates_its_fields_and_asks_only_for_provisioning_facts(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->walk($this->form(), 2);
+
+        $this->post(route('register.business.store'), [])
+            ->assertRedirect(route('register.business'))
+            ->assertSessionHasErrors(['business_name', 'industry', 'country_code', 'timezone']);
+
+        $this->post(route('register.business.store'), $this->business(['industry' => 'not_a_niche']))
+            ->assertSessionHasErrors('industry');
+
+        $page = $this->get(route('register.business'))->assertOk()
+            ->assertSee('Tell us about your business')
+            ->assertSee('Step 3 of 4')
+            ->assertSee('name="business_name"', false)
+            ->assertSee('name="industry"', false)
+            ->assertSee('name="country_code"', false)
+            ->assertSee('name="timezone"', false);
+
+        foreach (['website', 'seo', 'service', 'package', 'phone', 'calendar', 'stripe', 'messaging'] as $notHere) {
+            $page->assertDontSee('name="' . $notHere, false);
+        }
+
+        $this->post(route('register.business.store'), $this->business())
+            ->assertRedirect(route('register.payment'));
+    }
+
+    public function test_refresh_and_back_preserve_progress_without_keeping_the_password_visible(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $form = $this->form();
+        $this->walk($form, 3);
+
+        // Refresh at any step re-renders it with the earlier answers.
+        $account = $this->get(route('register.account'))->assertOk()
+            ->assertSee('value="' . $form['email'] . '"', false)
+            ->assertSee('value="Pat"', false)
+            ->assertDontSee($form['password'], false);
+        $this->assertStringNotContainsString('value="' . $form['password'] . '"', $account->getContent());
+
+        $this->get(route('register.business'))->assertOk()
+            ->assertSee('value="Harbor Lane Studios"', false)
+            ->assertSee('value="photo_booth_service" selected', false);
+
+        // The entry point resumes at the furthest completed step.
+        $this->get(route('register'))->assertRedirect(route('register.payment'));
+        $this->get(route('register.payment'))->assertOk()->assertSee('Step 4 of 4');
+
+        // Nothing durable until the customer commits.
+        $this->assertSame(0, User::query()->where('is_customer', true)->count());
+        $this->assertSame(0, Workspace::query()->count());
+    }
+
+    public function test_the_payment_step_names_the_commercial_state_truthfully(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 14, price: '297.00');
+        $this->walk($this->form(), 3);
+
+        $this->get(route('register.payment'))->assertOk()
+            ->assertSee('Confirm your plan')
+            ->assertSee('297.00')
+            ->assertSee('Start 14-day trial');
+
+        $this->signOut();
+        $this->sellableTier(WorkspacePlanTier::Growth, trialDays: null, price: '297.00');
+        $this->walk($this->form(), 3);
+
+        $this->get(route('register.payment'))->assertOk()
+            ->assertSee('Start Growth')
+            ->assertDontSee('trial');
+    }
+
+    public function test_a_failed_or_cancelled_payment_resumes_on_the_same_plan_without_a_second_tenant(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+        $this->sellableTier(WorkspacePlanTier::Growth, price: '297.00');
+
+        $this->signUp($this->form(['tier' => 'growth']))->assertRedirectContains('checkout.stripe.test');
+        $this->get(route('signup.cancelled'))->assertRedirect(route('signup.plan'));
+
+        // The chosen plan stays selected on the resume screen.
+        $this->get(route('signup.plan'))->assertOk()
+            ->assertSee('Choose a plan')
+            ->assertSee('value="growth"', false)
+            ->assertSeeInOrder(['id="resume_growth"', 'checked'], false);
+
+        $this->post(route('signup.resume'), ['tier' => 'growth'])->assertRedirectContains('checkout.stripe.test');
+
+        $this->assertSame(1, User::query()->where('is_customer', true)->count());
+        $this->assertSame(1, Workspace::query()->count());
+        $this->assertSame(1, Business::query()->count());
+        $this->assertSame(1, BusinessLocation::query()->count());
+        $this->assertSame(0, WorkspacePlanAssignment::query()->count());
+    }
+
+    public function test_replaying_the_payment_submit_never_duplicates_the_account_or_tenant(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->walk($this->form(), 3);
+
+        $first = $this->post(route('register.payment.start'));
+        $first->assertRedirectContains('checkout.stripe.test');
+
+        // Double-click / browser re-POST: the account is now signed in, and a
+        // signed-in actor can never begin another guest signup.
+        $this->post(route('register.payment.start'))->assertRedirect(route('signup.plan'));
+        $this->get(route('register'))->assertRedirect(route('signup.plan'));
+
+        $this->assertSame(1, User::query()->where('is_customer', true)->count());
+        $this->assertSame(1, Workspace::query()->count());
+        $this->assertSame(1, PlatformSubscription::query()->count());
+    }
+
+    public function test_a_successful_payment_provisions_exactly_one_tenant_graph(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 14);
+        $this->signUp($this->form());
+        $subscription = PlatformSubscription::query()->sole();
+        $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+
+        $this->get(route('signup.success'));
+
+        $this->assertSame(1, User::query()->where('is_customer', true)->count());
+        $workspace = Workspace::query()->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $location = BusinessLocation::query()->where('business_id', $business->id)->sole();
+        $this->assertNotNull($location);
+        $this->assertSame(1, PlatformSubscription::query()->count());
+        $assignment = WorkspacePlanAssignment::query()->sole();
+        $this->assertSame((int) $workspace->id, (int) $assignment->workspace_id);
+        $this->assertSame(WorkspacePlanTier::Growth, app(EntitlementManager::class)
+            ->getWorkspaceEntitlementSummary($workspace)->tier);
+        $this->assertDatabaseHas('business_usage_wallets', ['business_id' => $business->id]);
+        $this->assertSame(CustomerAccountAccessState::Usable,
+            app(CustomerAccountAccessResolver::class)->resolve($workspace)->state);
+    }
+
+    public function test_browser_return_replays_and_a_webhook_replay_never_duplicate_the_graph(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 14);
+        $this->signUp($this->form());
+        $subscription = PlatformSubscription::query()->sole();
+        $providerSubscriptionId = $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+
+        $body = json_encode([
+            'id' => 'evt_replay',
+            'type' => 'checkout.session.completed',
+            'created' => now()->getTimestamp(),
+            'data' => ['object' => [
+                'id' => $subscription->provider_checkout_session_id,
+                'object' => 'checkout.session',
+                'client_reference_id' => $subscription->uid,
+                'subscription' => $providerSubscriptionId,
+            ]],
+        ]);
+
+        $this->get(route('signup.success'));
+        $this->postPlatformWebhook($body, ['Stripe-Signature' => $this->stripe->validSignature])->assertOk();
+        $this->get(route('signup.success'));
+        $this->postPlatformWebhook($body, ['Stripe-Signature' => $this->stripe->validSignature])->assertOk();
+        $this->get(route('signup.success'));
+
+        $this->assertSame(1, User::query()->where('is_customer', true)->count());
+        $this->assertSame(1, Workspace::query()->count());
+        $this->assertSame(1, Business::query()->count());
+        $this->assertSame(1, BusinessLocation::query()->count());
+        $this->assertSame(1, PlatformSubscription::query()->count());
+        $this->assertSame(1, WorkspacePlanAssignment::query()->count());
+    }
+
+    public function test_an_unconfirmed_return_shows_the_setting_up_screen_and_assigns_nothing(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->signUp($this->form());
+
+        // Checkout was never completed at the provider.
+        $this->get(route('signup.success'))->assertOk()
+            ->assertSee('Setting up your Business OS')
+            ->assertSee('auth-wrapper auth-cover', false)
+            ->assertSee('http-equiv="refresh"', false);
+
+        $this->assertSame(0, WorkspacePlanAssignment::query()->count());
+    }
+
+    public function test_the_verification_screen_appears_when_required_and_the_link_was_sent(): void
+    {
+        config(['account.verify_account' => true]);
+        \Illuminate\Support\Facades\Notification::fake();
+
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $form = $this->form();
+        $this->signUp($form);
+
+        // Sent when the account was created — payment was never held up for it.
+        $user = User::query()->where('email', $form['email'])->sole();
+        \Illuminate\Support\Facades\Notification::assertSentTo($user, \Illuminate\Auth\Notifications\VerifyEmail::class);
+
+        $subscription = PlatformSubscription::query()->sole();
+        $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+
+        $this->get(route('signup.success'))->assertRedirect(route('verification.notice'));
+
+        $this->get(route('verification.notice'))->assertOk()
+            ->assertSee('Verify your email')
+            ->assertSee('We sent a verification link to ' . $form['email'])
+            ->assertSee(route('verification.send'), false)
+            ->assertSee(route('logout'), false)
+            ->assertSee('auth-wrapper auth-cover', false);
+    }
+
+    public function test_a_verified_customer_reaches_the_product(): void
+    {
+        config(['account.verify_account' => false]);
+
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->signUp($this->form());
+        $subscription = PlatformSubscription::query()->sole();
+        $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+
+        $this->get(route('signup.success'))->assertRedirect(route('user.home'));
+    }
+
+    public function test_a_completed_customer_cannot_begin_a_second_guest_signup(): void
+    {
+        config(['account.verify_account' => false]);
+
+        $this->sellableTier(WorkspacePlanTier::Growth);
+        $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
+        $this->signUp($this->form());
+        $subscription = PlatformSubscription::query()->sole();
+        $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+        $this->get(route('signup.success'));
+
+        $before = [User::query()->count(), Workspace::query()->count(), Business::query()->count()];
+
+        // Every earlier URL and every submit sends a finished customer home.
+        foreach (['register', 'register.plan', 'register.account', 'register.business', 'register.payment', 'signup.plan'] as $name) {
+            $this->get(route($name))->assertRedirect(route('user.home'));
+        }
+
+        $this->post(route('register.payment.start'))->assertRedirect(route('user.home'));
+        $this->post(route('register.account.store'), $this->account(['email' => 'second@example.test']))
+            ->assertRedirect(route('user.home'));
+        $this->post(route('signup.resume'), ['tier' => 'core'])->assertRedirect(route('user.home'));
+
+        $this->assertSame($before, [User::query()->count(), Workspace::query()->count(), Business::query()->count()]);
+        $this->assertSame(1, WorkspacePlanAssignment::query()->count());
+    }
+
+    public function test_the_agency_branch_asks_for_agency_basics_and_fabricates_no_client(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
+        $this->sellableTier(WorkspacePlanTier::Growth, price: '297.00');
+
+        $this->post(route('register.plan.select'), ['tier' => 'agency'])->assertRedirect(route('register.account'));
+        $this->post(route('register.account.store'), $this->account())->assertRedirect(route('register.business'));
+
+        $this->get(route('register.business'))->assertOk()
+            ->assertSee('Tell us about your agency')
+            ->assertSee('Agency name')
+            ->assertSee('Step 3 of 4')
+            ->assertDontSee('name="industry"', false);
+
+        // No niche is asked; the Agency's own workspace basics are enough.
+        $this->post(route('register.business.store'), [
+            'business_name' => 'North Shore Agency',
+            'country_code' => 'US',
+            'timezone' => 'UTC',
+        ])->assertRedirect(route('register.payment'));
+
+        $this->post(route('register.payment.start'))->assertRedirectContains('checkout.stripe.test');
+
+        $workspace = Workspace::query()->sole();
+        $this->assertSame('North Shore Agency', (string) $workspace->name);
+        // The one Business is the Agency's own Workspace Business under the
+        // existing provisioning — not a client — and no client relationship
+        // or client Workspace exists.
+        $this->assertSame(1, Business::query()->count());
+        $this->assertSame('other', Business::query()->sole()->industry->value);
+        $this->assertSame(0, \App\Models\AgencyClientWorkspaceRelationship::query()->count());
+        $this->assertSame(1, Workspace::query()->count());
+    }
+
+    public function test_switching_between_the_agency_and_non_agency_branch_discards_stale_business_answers(): void
+    {
+        $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
+        $this->sellableTier(WorkspacePlanTier::Growth, price: '297.00');
+
+        $this->walk($this->form(['tier' => 'growth']), 3);
+        $this->post(route('register.plan.select'), ['tier' => 'agency']);
+
+        // The earlier (niche-bearing) business answers do not ride across.
+        $this->get(route('register.payment'))->assertRedirect(route('register.business'));
+    }
+
+    /** @return array<string, string> */
+    private function account(array $overrides = []): array
+    {
+        return array_merge([
+            'first_name' => 'Pat',
+            'last_name' => 'Rivera',
+            'email' => 'pat' . uniqid() . '@example.test',
+            'password' => 'correct-horse-battery',
+            'password_confirmation' => 'correct-horse-battery',
+        ], $overrides);
+    }
+
+    /** @return array<string, string> */
+    private function business(array $overrides = []): array
+    {
+        return array_merge([
+            'business_name' => 'Harbor Lane Studios',
+            'industry' => 'photo_booth_service',
+            'country_code' => 'US',
+            'timezone' => 'UTC',
+        ], $overrides);
     }
 
     private function seedCurrency(string $code, string $name): void

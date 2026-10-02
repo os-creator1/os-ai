@@ -3,13 +3,44 @@
     Route::group(
         ['namespace' => 'Auth'],
         function () {
+            /*
+            |------------------------------------------------------------
+            | V1 signup steps: PLAN -> ACCOUNT -> BUSINESS -> PAYMENT
+            |------------------------------------------------------------
+            |
+            | Registered whether or not signup is open, on purpose: when
+            | `account.can_register` is off (or nothing is sellable) every
+            | step renders the branded "registrations are unavailable" auth
+            | screen instead of a bare 404 — see V1SignupController's
+            | guestGate(). The authenticated re-entry routes further down
+            | (Checkout return / resume) stay inside the open-signup block.
+            |
+            | GUEST ONLY. An already-authenticated user POSTing here with
+            | another email would create a second User and silently switch
+            | Auth::login() into it; the controller enforces that boundary
+            | itself as well as via the `guest` middleware.
+            */
+            // Only the steps that write (the account check and the payment
+            // commit) are throttled; plan and business answers are session-only.
+            Route::middleware('guest')->group(function () {
+                Route::get('register', 'V1SignupController@show')->name('register');
+                Route::get('register/plan', 'V1SignupController@planStep')->name('register.plan');
+                Route::post('register/plan', 'V1SignupController@selectPlan')->name('register.plan.select');
+                Route::get('register/account', 'V1SignupController@accountStep')->name('register.account');
+                Route::post('register/account', 'V1SignupController@storeAccount')->middleware('throttle:10,1')->name('register.account.store');
+                Route::get('register/business', 'V1SignupController@businessStep')->name('register.business');
+                Route::post('register/business', 'V1SignupController@storeBusiness')->name('register.business.store');
+                Route::get('register/payment', 'V1SignupController@paymentStep')->name('register.payment');
+                Route::post('register/payment', 'V1SignupController@startPayment')->middleware('throttle:10,1')->name('register.payment.start');
+            });
+
             if (config('account.can_register')) {
                 /*
                 |------------------------------------------------------------
                 | Implementation Contract 21 §7 — THE canonical V1 signup.
                 |------------------------------------------------------------
                 |
-                | `register` now resolves to V1SignupController. The legacy
+                | `register` resolves to V1SignupController. The legacy
                 | RegisterController selects a legacy `Plan` and one of eight
                 | inherited payment gateways, and produces a legacy
                 | `Subscription` plus a FABRICATED complimentary Core
@@ -27,16 +58,9 @@
                 | deliberately NOT part of V1 signup. V1 takes exactly one
                 | payment route: a hosted lane-A Stripe Checkout Session.
                 */
-                // GUEST ONLY. These are the anonymous signup surface: an
-                // already-authenticated user POSTing here with another email
-                // would create a second User and silently switch Auth::login()
-                // into it, abandoning their own account mid-session. The
-                // authenticated re-entry routes below (signup.plan /
-                // signup.resume) are the supported path for someone who is
-                // already signed in.
-                Route::get('register', 'V1SignupController@show')->middleware('guest')->name('register');
-                Route::post('register', 'V1SignupController@store')->middleware(['guest', 'throttle:10,1']);
-
+                // The authenticated re-entry routes (signup.plan / signup.resume)
+                // are the supported path for someone who is already signed in;
+                // the guest steps are registered above.
                 // The Checkout return. `success` trusts provider truth, never a
                 // query flag (§8.5); `cancelled` never deletes the account.
                 Route::get('signup/complete', 'V1SignupController@success')->middleware('auth')->name('signup.success');

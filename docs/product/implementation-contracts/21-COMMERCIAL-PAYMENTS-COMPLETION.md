@@ -269,8 +269,7 @@ Binding rules instead:
 3. **No legacy `Plan` or `Subscription` row may influence any V1 entitlement,
    capability, access or lifecycle decision.** (Already true; now
    structurally asserted.)
-4. **Legacy signup disposition, as implemented.** The `register` route (GET and
-   POST) now resolves to `Auth\V1SignupController`. `Auth\RegisterController`
+4. **Legacy signup disposition, as implemented.** The `register` route now resolves to `Auth\V1SignupController`. `Auth\RegisterController`
    remains **on disk** — deleting it would broaden scope well past payments,
    and inherited installs still reference its views — but it is **no longer
    routed as the customer signup**, so there are not two equally valid signup
@@ -403,10 +402,45 @@ Name / email / password
 
 ### 7.1 As implemented
 
-`Auth\V1SignupController`, routed at `register` (GET/POST) plus
-`signup/complete`, `signup/cancelled`, `signup/plan` and `signup/plan` (POST).
+`Auth\V1SignupController`, routed at `register` plus `signup/complete`,
+`signup/cancelled`, `signup/plan` and `signup/plan` (POST).
 
-**`register` is GUEST ONLY.** An authenticated actor who POSTed there with a
+**The locked screen sequence (V1 signup UX).** Every screen renders inside the
+one auth shell `/login` uses (`layouts/authCover`), and the sequence is fixed:
+
+    PLAN → ACCOUNT → BUSINESS → PAYMENT → PROVISIONING → EMAIL VERIFICATION
+         → first-run onboarding → Home
+
+| Step | Route | Collects |
+|---|---|---|
+| Plan | `register` / `register/plan` | a sellable tier from `PlatformPlanPresenter` (never hard-coded prices). `/register?plan=growth` pins a valid plan and skips this step; an unavailable one returns here with an error. |
+| Account | `register/account` | first/last name, email, password + confirmation (unchanged rules) |
+| Business | `register/business` | business name, niche, country, time zone — and nothing else. Currency is derived from the country (ICU single tender → `USD` → first active currency) from the same canonical list; it is no longer asked. |
+| Payment | `register/payment` | nothing — confirms the plan and is the **one commit**: the button says "Start :plan", or "Start :n-day trial" only when the catalog plan really has a trial |
+| Provisioning | `signup/complete` | shows "Setting up your Business OS…" until provider truth confirms (re-checks every 3 s); then verification or Home |
+| Verification | `verification.notice` | "We sent a verification link to …", Resend, Sign out |
+
+PLAN, ACCOUNT and BUSINESS write only to `V1SignupDraft` (the session; the
+password is held encrypted and discarded at the commit). **Nothing durable
+exists before PAYMENT**, so refresh/Back/abandonment can never create a tenant
+object. The commit is the pre-existing path unchanged: one `User`, then
+`V1SignupManager::startSubscription()` (one Workspace + Business + Primary
+Location + pending lane-A Checkout). A replayed submit meets the signed-in
+guard and lands on `signup.plan`; a finished customer is sent Home from every
+guest URL. The verification email is sent when the account is created (never
+gating the purchase).
+
+**Signup closed.** `register*` is registered whether or not signup is open.
+When `account.can_register` is off, or nothing is sellable, every step renders
+the same branded shell with "New registrations are temporarily unavailable." and
+a "Sign in" action — never bare HTML.
+
+**Agency branch.** Same sequence; the Business step asks for the *agency's* name,
+country and time zone and no niche (stored as `other`), and nothing about a
+client is created. Provisioning is the unchanged Workspace provisioning; the
+first client is added inside the Agency product.
+
+**`register*` is GUEST ONLY.** An authenticated actor who POSTed there with a
 different email would create a second User and be silently switched into it by
 `Auth::login()`, abandoning their own account mid-session. The routes carry the
 `guest` middleware, and the controller ALSO checks explicitly, because this
