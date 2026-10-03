@@ -2,15 +2,15 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ "./resources/js/automations/workflow-builder/api.js":
+/***/ "./resources/js/automations/workflow-builder/api.js"
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/api.js ***!
   \**********************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createApiClient": () => (/* binding */ createApiClient)
+/* harmony export */   createApiClient: () => (/* binding */ createApiClient)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
@@ -134,17 +134,17 @@ function createApiClient(basePath) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/autosave.js":
+/***/ "./resources/js/automations/workflow-builder/autosave.js"
 /*!***************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/autosave.js ***!
   \***************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createAutosave": () => (/* binding */ createAutosave)
+/* harmony export */   createAutosave: () => (/* binding */ createAutosave)
 /* harmony export */ });
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
 function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
@@ -287,17 +287,17 @@ function createAutosave(_ref) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js":
+/***/ "./resources/js/automations/workflow-builder/canvas-renderer.js"
 /*!**********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/canvas-renderer.js ***!
   \**********************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "renderCanvas": () => (/* binding */ renderCanvas)
+/* harmony export */   renderCanvas: () => (/* binding */ renderCanvas)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _summaries_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./summaries.js */ "./resources/js/automations/workflow-builder/summaries.js");
@@ -544,31 +544,36 @@ function renderBranches(node, handlers, state, depth) {
   return split;
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/conditions.js":
+/***/ "./resources/js/automations/workflow-builder/conditions.js"
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/conditions.js ***!
   \*****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "BOOLEAN_SUBJECTS": () => (/* binding */ BOOLEAN_SUBJECTS),
-/* harmony export */   "CUSTOM_FIELD_PREFIX": () => (/* binding */ CUSTOM_FIELD_PREFIX),
-/* harmony export */   "GROUP_SUBJECTS": () => (/* binding */ GROUP_SUBJECTS),
-/* harmony export */   "HAS_TAG_PREFIX": () => (/* binding */ HAS_TAG_PREFIX),
-/* harmony export */   "REPLIED_SUBJECT": () => (/* binding */ REPLIED_SUBJECT),
-/* harmony export */   "SUBJECT_LABELS": () => (/* binding */ SUBJECT_LABELS),
-/* harmony export */   "TEXT_SUBJECTS": () => (/* binding */ TEXT_SUBJECTS),
-/* harmony export */   "customFieldId": () => (/* binding */ customFieldId),
-/* harmony export */   "describeCondition": () => (/* binding */ describeCondition),
-/* harmony export */   "isDateSubject": () => (/* binding */ isDateSubject),
-/* harmony export */   "needsOperand": () => (/* binding */ needsOperand),
-/* harmony export */   "operatorLabel": () => (/* binding */ operatorLabel),
-/* harmony export */   "subjectLabel": () => (/* binding */ subjectLabel),
-/* harmony export */   "subjectOperators": () => (/* binding */ subjectOperators),
-/* harmony export */   "tagId": () => (/* binding */ tagId)
+/* harmony export */   BOOLEAN_SUBJECTS: () => (/* binding */ BOOLEAN_SUBJECTS),
+/* harmony export */   BUSINESS_FIELD_PREFIX: () => (/* binding */ BUSINESS_FIELD_PREFIX),
+/* harmony export */   CUSTOM_FIELD_PREFIX: () => (/* binding */ CUSTOM_FIELD_PREFIX),
+/* harmony export */   GROUP_SUBJECTS: () => (/* binding */ GROUP_SUBJECTS),
+/* harmony export */   HAS_TAG_PREFIX: () => (/* binding */ HAS_TAG_PREFIX),
+/* harmony export */   REPLIED_SUBJECT: () => (/* binding */ REPLIED_SUBJECT),
+/* harmony export */   SUBJECT_LABELS: () => (/* binding */ SUBJECT_LABELS),
+/* harmony export */   TEXT_SUBJECTS: () => (/* binding */ TEXT_SUBJECTS),
+/* harmony export */   businessFieldFor: () => (/* binding */ businessFieldFor),
+/* harmony export */   businessFieldKey: () => (/* binding */ businessFieldKey),
+/* harmony export */   customFieldId: () => (/* binding */ customFieldId),
+/* harmony export */   describeCondition: () => (/* binding */ describeCondition),
+/* harmony export */   isDateSubject: () => (/* binding */ isDateSubject),
+/* harmony export */   isNumberSubject: () => (/* binding */ isNumberSubject),
+/* harmony export */   needsOperand: () => (/* binding */ needsOperand),
+/* harmony export */   operatorLabel: () => (/* binding */ operatorLabel),
+/* harmony export */   optionSubject: () => (/* binding */ optionSubject),
+/* harmony export */   subjectLabel: () => (/* binding */ subjectLabel),
+/* harmony export */   subjectOperators: () => (/* binding */ subjectOperators),
+/* harmony export */   tagId: () => (/* binding */ tagId)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
@@ -589,6 +594,11 @@ function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e 
 
 var REPLIED_SUBJECT = 'contact.replied_since_enrollment';
 var CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
+// A Business-wide Custom Field, by its stable key (same key as {{contact.<key>}}).
+// The only custom-field vocabulary the Builder offers for NEW conditions; the
+// legacy `contact.custom_field:{id}` above is still read and shown for
+// workflows that already use it.
+var BUSINESS_FIELD_PREFIX = 'contact.field:';
 var HAS_TAG_PREFIX = 'contact.has_tag:';
 var TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company'];
 var BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT];
@@ -598,6 +608,9 @@ var TEXT_OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'is_em
 var BOOLEAN_OPERATORS = ['is_true', 'is_false'];
 var REFERENCE_OPERATORS = ['equals', 'not_equals'];
 var DATE_OPERATORS = ['before', 'after', 'on_date', 'is_empty', 'is_not_empty'];
+var NUMBER_OPERATORS = ['equals', 'not_equals', 'greater_than', 'less_than', 'is_empty', 'is_not_empty'];
+var SELECT_OPERATORS = ['equals', 'not_equals', 'is_empty', 'is_not_empty'];
+var MULTI_OPERATORS = ['contains', 'not_contains', 'is_empty', 'is_not_empty'];
 var OPERATOR_LABELS = {
   equals: 'is',
   not_equals: 'is not',
@@ -607,7 +620,9 @@ var OPERATOR_LABELS = {
   is_not_empty: 'is not empty',
   before: 'is before',
   after: 'is after',
-  on_date: 'is on'
+  on_date: 'is on',
+  greater_than: 'is greater than',
+  less_than: 'is less than'
 };
 var BOOLEAN_OPERATOR_LABELS = _defineProperty({
   'contact.subscribed': {
@@ -653,13 +668,60 @@ function fieldFor(subject, catalogs) {
     return Number(field.id) === id;
   }) || null;
 }
+
+/** The key in a `contact.field:{key}` subject, or null when it is not one. */
+function businessFieldKey(subject) {
+  if (typeof subject !== 'string' || !subject.startsWith(BUSINESS_FIELD_PREFIX)) {
+    return null;
+  }
+  var raw = subject.slice(BUSINESS_FIELD_PREFIX.length);
+  return /^[a-z][a-z0-9_]{0,39}$/.test(raw) ? raw : null;
+}
+
+/** The Business-wide Custom Field a subject names, from this page's catalog (or null). */
+function businessFieldFor(subject, catalogs) {
+  var key = businessFieldKey(subject);
+  if (key === null || !catalogs) {
+    return null;
+  }
+  return (catalogs.customFields || []).find(function (field) {
+    return field.key === key;
+  }) || null;
+}
+
+/** family: text | number | date | boolean | select | multi — null for any other subject. */
+function businessFieldFamily(subject, catalogs) {
+  var field = businessFieldFor(subject, catalogs);
+  return field ? field.family : null;
+}
+
+/** A dropdown / multi-select custom field: its operand is one of its own options. */
+function optionSubject(subject, catalogs) {
+  var field = businessFieldFor(subject, catalogs);
+  return field && (field.family === 'select' || field.family === 'multi') ? field : null;
+}
+function isNumberSubject(subject, catalogs) {
+  return businessFieldFamily(subject, catalogs) === 'number';
+}
 function isDateSubject(subject, catalogs) {
+  if (businessFieldFamily(subject, catalogs) === 'date') {
+    return true;
+  }
   var field = fieldFor(subject, catalogs);
   return field !== null && field.type === 'date';
 }
 function subjectOperators(subject, catalogs) {
   if (BOOLEAN_SUBJECTS.includes(subject) || tagId(subject) !== null) {
     return BOOLEAN_OPERATORS;
+  }
+  if (businessFieldKey(subject) !== null) {
+    var family = businessFieldFamily(subject, catalogs);
+    if (family === 'number') return NUMBER_OPERATORS;
+    if (family === 'date') return DATE_OPERATORS;
+    if (family === 'boolean') return BOOLEAN_OPERATORS;
+    if (family === 'select') return SELECT_OPERATORS;
+    if (family === 'multi') return MULTI_OPERATORS;
+    return TEXT_OPERATORS;
   }
   if (GROUP_SUBJECTS.includes(subject)) {
     return REFERENCE_OPERATORS;
@@ -680,10 +742,22 @@ function subjectLabel(subject, catalogs) {
     var tag = tagFor(subject, catalogs);
     return tag ? "Tag \u201C".concat(tag.name, "\u201D") : 'A tag';
   }
+  var businessField = businessFieldFor(subject, catalogs);
+  if (businessField) {
+    return businessField.label;
+  }
   var field = fieldFor(subject, catalogs);
   return field ? field.label : 'A contact field';
 }
-function operatorLabel(subject, operator) {
+function operatorLabel(subject, operator, catalogs) {
+  var family = businessFieldFamily(subject, catalogs);
+  if (family === 'boolean') {
+    return operator === 'is_true' ? 'is Yes' : 'is No';
+  }
+  if (family === 'multi') {
+    if (operator === 'contains') return 'includes';
+    if (operator === 'not_contains') return 'does not include';
+  }
   if (tagId(subject) !== null && (operator === 'is_true' || operator === 'is_false')) {
     return operator === 'is_true' ? 'is on the contact' : 'is not on the contact';
   }
@@ -722,38 +796,46 @@ function describeCondition(condition, catalogs) {
     return operator === 'not_equals' ? "Contact is not in ".concat(groupName(condition.operand, catalogs)) : "Contact is in ".concat(groupName(condition.operand, catalogs));
   }
   var label = subjectLabel(subject, catalogs);
-  var words = operatorLabel(subject, operator);
+  var words = operatorLabel(subject, operator, catalogs);
   if (!needsOperand(operator)) {
     return "".concat(label, " ").concat(words);
   }
   var operand = condition.operand === undefined || condition.operand === null || condition.operand === '' ? '…' : condition.operand;
+  var optionField = optionSubject(subject, catalogs);
+  if (optionField) {
+    // The stored operand is an option's stable id; the sentence shows its name.
+    var option = (optionField.options || []).find(function (row) {
+      return row.id === operand;
+    });
+    operand = option ? option.label : '…';
+  }
   return "".concat(label, " ").concat(words, " \u201C").concat(operand, "\u201D");
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/constants.js":
+/***/ "./resources/js/automations/workflow-builder/constants.js"
 /*!****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/constants.js ***!
   \****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "CONTACT_SOURCE_LABELS": () => (/* binding */ CONTACT_SOURCE_LABELS),
-/* harmony export */   "ENROLLMENT_POLICY_LABELS": () => (/* binding */ ENROLLMENT_POLICY_LABELS),
-/* harmony export */   "INSERTABLE_TYPES": () => (/* binding */ INSERTABLE_TYPES),
-/* harmony export */   "NODE_ICONS": () => (/* binding */ NODE_ICONS),
-/* harmony export */   "NODE_LABELS": () => (/* binding */ NODE_LABELS),
-/* harmony export */   "NODE_TYPES": () => (/* binding */ NODE_TYPES),
-/* harmony export */   "STEP_CATALOG": () => (/* binding */ STEP_CATALOG),
-/* harmony export */   "TRIGGER_TYPES": () => (/* binding */ TRIGGER_TYPES),
-/* harmony export */   "closesSequence": () => (/* binding */ closesSequence),
-/* harmony export */   "defaultConfigFor": () => (/* binding */ defaultConfigFor),
-/* harmony export */   "isBranching": () => (/* binding */ isBranching),
-/* harmony export */   "isTerminal": () => (/* binding */ isTerminal),
-/* harmony export */   "offsetLabel": () => (/* binding */ offsetLabel),
-/* harmony export */   "triggerTypeInfo": () => (/* binding */ triggerTypeInfo)
+/* harmony export */   CONTACT_SOURCE_LABELS: () => (/* binding */ CONTACT_SOURCE_LABELS),
+/* harmony export */   ENROLLMENT_POLICY_LABELS: () => (/* binding */ ENROLLMENT_POLICY_LABELS),
+/* harmony export */   INSERTABLE_TYPES: () => (/* binding */ INSERTABLE_TYPES),
+/* harmony export */   NODE_ICONS: () => (/* binding */ NODE_ICONS),
+/* harmony export */   NODE_LABELS: () => (/* binding */ NODE_LABELS),
+/* harmony export */   NODE_TYPES: () => (/* binding */ NODE_TYPES),
+/* harmony export */   STEP_CATALOG: () => (/* binding */ STEP_CATALOG),
+/* harmony export */   TRIGGER_TYPES: () => (/* binding */ TRIGGER_TYPES),
+/* harmony export */   closesSequence: () => (/* binding */ closesSequence),
+/* harmony export */   defaultConfigFor: () => (/* binding */ defaultConfigFor),
+/* harmony export */   isBranching: () => (/* binding */ isBranching),
+/* harmony export */   isTerminal: () => (/* binding */ isTerminal),
+/* harmony export */   offsetLabel: () => (/* binding */ offsetLabel),
+/* harmony export */   triggerTypeInfo: () => (/* binding */ triggerTypeInfo)
 /* harmony export */ });
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
@@ -1025,24 +1107,24 @@ function offsetLabel(offset) {
   return "".concat(offset, " before");
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/document-model.js":
+/***/ "./resources/js/automations/workflow-builder/document-model.js"
 /*!*********************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/document-model.js ***!
   \*********************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "cloneDocument": () => (/* binding */ cloneDocument),
-/* harmony export */   "countNodes": () => (/* binding */ countNodes),
-/* harmony export */   "insertAt": () => (/* binding */ insertAt),
-/* harmony export */   "insertBranchAt": () => (/* binding */ insertBranchAt),
-/* harmony export */   "moveWithin": () => (/* binding */ moveWithin),
-/* harmony export */   "newNode": () => (/* binding */ newNode),
-/* harmony export */   "removeFrom": () => (/* binding */ removeFrom),
-/* harmony export */   "sequenceDepthOf": () => (/* binding */ sequenceDepthOf)
+/* harmony export */   cloneDocument: () => (/* binding */ cloneDocument),
+/* harmony export */   countNodes: () => (/* binding */ countNodes),
+/* harmony export */   insertAt: () => (/* binding */ insertAt),
+/* harmony export */   insertBranchAt: () => (/* binding */ insertBranchAt),
+/* harmony export */   moveWithin: () => (/* binding */ moveWithin),
+/* harmony export */   newNode: () => (/* binding */ newNode),
+/* harmony export */   removeFrom: () => (/* binding */ removeFrom),
+/* harmony export */   sequenceDepthOf: () => (/* binding */ sequenceDepthOf)
 /* harmony export */ });
 function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
@@ -1216,18 +1298,18 @@ function countNodes(doc) {
   return count;
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/dom.js":
+/***/ "./resources/js/automations/workflow-builder/dom.js"
 /*!**********************************************************!*\
   !*** ./resources/js/automations/workflow-builder/dom.js ***!
   \**********************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "el": () => (/* binding */ el),
-/* harmony export */   "icon": () => (/* binding */ icon)
+/* harmony export */   el: () => (/* binding */ el),
+/* harmony export */   icon: () => (/* binding */ icon)
 /* harmony export */ });
 // Automations V2 (contract §13.1) — the two DOM helpers every builder module
 // shares. Elements are built with textContent, never innerHTML, so nothing a
@@ -1258,17 +1340,17 @@ function icon(name, className) {
   return wrap;
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/drawer.js":
+/***/ "./resources/js/automations/workflow-builder/drawer.js"
 /*!*************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/drawer.js ***!
   \*************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createDrawer": () => (/* binding */ createDrawer)
+/* harmony export */   createDrawer: () => (/* binding */ createDrawer)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
@@ -1383,6 +1465,7 @@ function createDrawer(_ref) {
       formEl.appendChild(template.content.cloneNode(true));
     }
     populate(node);
+    scopeMergeFieldGroups(options.triggerType);
     showErrors(errorMessages || []);
     deleteButton.hidden = node.type === 'trigger' || readOnly;
     saveButton.hidden = readOnly;
@@ -1425,6 +1508,18 @@ function createDrawer(_ref) {
     messages.forEach(function (message) {
       return errorsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('p', 'mb-0', message));
     });
+  }
+
+  // The merge-field picker offers Opportunity / Appointment fields only when
+  // this workflow's trigger can actually supply them (the same rule the server
+  // applies at run time), so a trigger change here is reflected at once.
+  function scopeMergeFieldGroups(triggerType) {
+    var trigger = String(triggerType || '');
+    var family = trigger.startsWith('opportunity_') ? 'opportunity' : trigger.startsWith('appointment_') ? 'appointment' : '';
+    formEl.querySelectorAll('[data-merge-requires]').forEach(function (group) {
+      group.hidden = group.dataset.mergeRequires !== family;
+    });
+    formEl.dispatchEvent(new CustomEvent('merge-fields:rescan'));
   }
   function populate(node) {
     if (node.type === 'trigger') {
@@ -1738,10 +1833,30 @@ function createDrawer(_ref) {
       var operandInput = row.querySelector('[data-role="wf-condition-operand"]');
       var operandGroupWrap = row.querySelector('[data-role="wf-condition-operand-group-wrapper"]');
       var operandGroupSelect = row.querySelector('[data-role="wf-condition-operand-group"]');
-      var help = row.querySelector('[data-role="wf-condition-help"]');
+      var help = row.querySelector('[data-role="wf-condition-help"]')
+
+      // Business-wide Custom Fields, by stable key. An archived one is
+      // offered only while this very condition already uses it.
+;
+      (catalogs.customFields || []).forEach(function (field) {
+        var value = "".concat(_conditions_js__WEBPACK_IMPORTED_MODULE_1__.BUSINESS_FIELD_PREFIX).concat(field.key);
+        if (field.archived && condition.subject !== value) {
+          return;
+        }
+        var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, field.archived ? "".concat(field.label, " (archived)") : field.label);
+        opt.value = value;
+        customGroup.appendChild(opt);
+      });
+
+      // Legacy contact-group fields stay readable for workflows that
+      // already use one, but are no longer offered for new conditions.
       catalogs.writableFields.forEach(function (field) {
+        var value = "contact.custom_field:".concat(field.id);
+        if (condition.subject !== value) {
+          return;
+        }
         var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, field.label);
-        opt.value = "contact.custom_field:".concat(field.id);
+        opt.value = value;
         customGroup.appendChild(opt);
       });
       if (customGroup.children.length === 0) {
@@ -1758,13 +1873,29 @@ function createDrawer(_ref) {
       if (tagGroup.children.length === 0) {
         tagGroup.remove();
       }
-      fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null);
+
+      // The operand select serves two kinds of subject: "in group" (the
+      // Business's groups) and a dropdown / multi-select Custom Field (its
+      // own options, by stable id).
+      function fillOperandSelect(subject) {
+        var field = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.optionSubject)(subject, catalogs);
+        if (field) {
+          fillSelect(operandGroupSelect, field.options || [], 'id', 'label', null);
+          operandGroupSelect.dataset.filledFor = 'option';
+        } else if (operandGroupSelect.dataset.filledFor !== 'group') {
+          fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null);
+          operandGroupSelect.dataset.filledFor = 'group';
+        }
+      }
+      function usesOperandSelect(subject) {
+        return _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject) || (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.optionSubject)(subject, catalogs) !== null;
+      }
       function syncOperators() {
         var subject = subjectSelect.value;
         var previous = operatorSelect.value;
         operatorSelect.innerHTML = '';
         (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.subjectOperators)(subject, catalogs).forEach(function (op) {
-          var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.operatorLabel)(subject, op));
+          var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('option', null, (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.operatorLabel)(subject, op, catalogs));
           opt.value = op;
           operatorSelect.appendChild(opt);
         });
@@ -1778,10 +1909,11 @@ function createDrawer(_ref) {
       function syncOperand() {
         var subject = subjectSelect.value;
         var takesValue = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.needsOperand)(operatorSelect.value);
-        var isGroup = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject);
+        var isGroup = usesOperandSelect(subject);
+        fillOperandSelect(subject);
         operandWrap.hidden = !takesValue || isGroup;
         operandGroupWrap.hidden = !takesValue || !isGroup;
-        operandInput.type = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.isDateSubject)(subject, catalogs) ? 'date' : 'text';
+        operandInput.type = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.isDateSubject)(subject, catalogs) ? 'date' : (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.isNumberSubject)(subject, catalogs) ? 'number' : 'text';
       }
       subjectSelect.addEventListener('change', function () {
         syncOperators();
@@ -1807,7 +1939,7 @@ function createDrawer(_ref) {
         return o.value === condition.operator;
       }) ? condition.operator : operatorSelect.options[0].value;
       syncOperand();
-      if (_conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subjectSelect.value)) {
+      if (usesOperandSelect(subjectSelect.value)) {
         operandGroupSelect.value = condition.operand != null ? String(condition.operand) : '';
       } else {
         operandInput.value = condition.operand != null ? condition.operand : '';
@@ -1897,7 +2029,7 @@ function createDrawer(_ref) {
         operator: operator
       };
       if ((0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.needsOperand)(operator)) {
-        condition.operand = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject) ? row.querySelector('[data-role="wf-condition-operand-group"]').value : row.querySelector('[data-role="wf-condition-operand"]').value;
+        condition.operand = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject) || (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.optionSubject)(subject, catalogs) !== null ? row.querySelector('[data-role="wf-condition-operand-group"]').value : row.querySelector('[data-role="wf-condition-operand"]').value;
       }
       conditions.push(condition);
     });
@@ -1974,17 +2106,17 @@ function createDrawer(_ref) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/history.js":
+/***/ "./resources/js/automations/workflow-builder/history.js"
 /*!**************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/history.js ***!
   \**************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createHistory": () => (/* binding */ createHistory)
+/* harmony export */   createHistory: () => (/* binding */ createHistory)
 /* harmony export */ });
 // Automations V2 (contract §13.1, V2-D) — client-side document-history
 // undo/redo. Bounded to 50 snapshots, exactly as the contract specifies.
@@ -2041,17 +2173,17 @@ function createHistory(initialDocument) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/recipes.js":
+/***/ "./resources/js/automations/workflow-builder/recipes.js"
 /*!**************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/recipes.js ***!
   \**************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "listRecipes": () => (/* binding */ listRecipes)
+/* harmony export */   listRecipes: () => (/* binding */ listRecipes)
 /* harmony export */ });
 /* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
 // Automations V2 (contract §13.3, task requirement, V2-D) — recipe
@@ -2151,17 +2283,17 @@ function listRecipes() {
   }];
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/step-picker.js":
+/***/ "./resources/js/automations/workflow-builder/step-picker.js"
 /*!******************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/step-picker.js ***!
   \******************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createStepPicker": () => (/* binding */ createStepPicker)
+/* harmony export */   createStepPicker: () => (/* binding */ createStepPicker)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
@@ -2355,17 +2487,17 @@ function createStepPicker(hostEl) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/summaries.js":
+/***/ "./resources/js/automations/workflow-builder/summaries.js"
 /*!****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/summaries.js ***!
   \****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "summarize": () => (/* binding */ summarize)
+/* harmony export */   summarize: () => (/* binding */ summarize)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
@@ -2534,7 +2666,8 @@ function summarize(node, catalogs) {
         // custom field keeps the capitals its Business gave its label.
         var sentence = conditions.map(function (condition) {
           var text = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.describeCondition)(condition, catalogs);
-          return (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.customFieldId)(condition && condition.subject) === null ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+          var isFieldCondition = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.customFieldId)(condition && condition.subject) !== null || (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.businessFieldKey)(condition && condition.subject) !== null;
+          return isFieldCondition ? text : text.charAt(0).toLowerCase() + text.slice(1);
         }).join(joiner);
         return {
           summary: "If ".concat(sentence),
@@ -2688,17 +2821,17 @@ function summarizeTrigger(config, catalogs) {
   }
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/test-panel.js":
+/***/ "./resources/js/automations/workflow-builder/test-panel.js"
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/test-panel.js ***!
   \*****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createTestPanel": () => (/* binding */ createTestPanel)
+/* harmony export */   createTestPanel: () => (/* binding */ createTestPanel)
 /* harmony export */ });
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
@@ -2979,20 +3112,20 @@ function createTestPanel(_ref) {
   };
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/validation.js":
+/***/ "./resources/js/automations/workflow-builder/validation.js"
 /*!*****************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/validation.js ***!
   \*****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "DOCUMENT_KEY": () => (/* binding */ DOCUMENT_KEY),
-/* harmony export */   "countIssues": () => (/* binding */ countIssues),
-/* harmony export */   "hasErrors": () => (/* binding */ hasErrors),
-/* harmony export */   "renderDocumentBanner": () => (/* binding */ renderDocumentBanner)
+/* harmony export */   DOCUMENT_KEY: () => (/* binding */ DOCUMENT_KEY),
+/* harmony export */   countIssues: () => (/* binding */ countIssues),
+/* harmony export */   hasErrors: () => (/* binding */ hasErrors),
+/* harmony export */   renderDocumentBanner: () => (/* binding */ renderDocumentBanner)
 /* harmony export */ });
 // Automations V2 (contract §14.4, V2-D) — turning the server's
 // node_key-keyed errors into customer-facing feedback. The server is the
@@ -3031,17 +3164,17 @@ function renderDocumentBanner(bannerEl, errors, messageTemplate) {
   });
 }
 
-/***/ }),
+/***/ },
 
-/***/ "./resources/js/automations/workflow-builder/zoom-pan.js":
+/***/ "./resources/js/automations/workflow-builder/zoom-pan.js"
 /*!***************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/zoom-pan.js ***!
   \***************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "createZoomPan": () => (/* binding */ createZoomPan)
+/* harmony export */   createZoomPan: () => (/* binding */ createZoomPan)
 /* harmony export */ });
 // Automations V2 (contract §13.1, V2-D) — lightweight viewport zoom/pan.
 // No graph library: a CSS transform on one surface element, driven by
@@ -3166,7 +3299,7 @@ function createZoomPan(viewport, surface) {
   };
 }
 
-/***/ })
+/***/ }
 
 /******/ 	});
 /************************************************************************/
@@ -3188,6 +3321,12 @@ function createZoomPan(viewport, surface) {
 /******/ 		};
 /******/
 /******/ 		// Execute the module function
+/******/ 		if (!(moduleId in __webpack_modules__)) {
+/******/ 			delete __webpack_module_cache__[moduleId];
+/******/ 			var e = new Error("Cannot find module '" + moduleId + "'");
+/******/ 			e.code = 'MODULE_NOT_FOUND';
+/******/ 			throw e;
+/******/ 		}
 /******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
 /******/
 /******/ 		// Return the exports of the module
@@ -3225,7 +3364,7 @@ function createZoomPan(viewport, surface) {
 /******/
 /************************************************************************/
 var __webpack_exports__ = {};
-// This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
+// This entry needs to be wrapped in an IIFE because it needs to be isolated against other modules in the chunk.
 (() => {
 /*!************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/index.js ***!
@@ -3409,7 +3548,8 @@ function initBuilder(root) {
     }
     selectedKey = node.key;
     drawer.open(node, errors[node.key] || [], {
-      readOnly: readOnly
+      readOnly: readOnly,
+      triggerType: doc.root && doc.root.config ? doc.root.config.trigger_type : ''
     });
     syncPanels();
     rerender();

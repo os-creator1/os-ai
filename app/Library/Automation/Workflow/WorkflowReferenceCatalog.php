@@ -43,6 +43,7 @@ final class WorkflowReferenceCatalog
         private readonly array $stages = [],
         private readonly array $tags = [],
         private readonly array $forms = [],
+        private readonly array $customFields = [],
     ) {
     }
 
@@ -155,6 +156,31 @@ final class WorkflowReferenceCatalog
     public function forms(): array
     {
         return array_values($this->forms);
+    }
+
+    // ---------------------------------------------------------------
+    // Business-wide Custom Fields (Contact scope)
+    // ---------------------------------------------------------------
+
+    /**
+     * The Business's Custom Field by its stable key — archived included, so an
+     * existing reference keeps resolving. Null for a key of another Business.
+     *
+     * @return array{id: int, key: string, label: string, type: string, archived: bool, options: list<array{id: string, label: string}>}|null
+     */
+    public function customField(string $key): ?array
+    {
+        return $this->customFields[$key] ?? null;
+    }
+
+    /**
+     * Every Custom Field of the Business in configured order, archived ones flagged.
+     *
+     * @return list<array{id: int, key: string, label: string, type: string, archived: bool, options: list<array{id: string, label: string}>}>
+     */
+    public function customFields(): array
+    {
+        return array_values($this->customFields);
     }
 
     // ---------------------------------------------------------------

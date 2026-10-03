@@ -122,7 +122,7 @@ class SettingsHubNavigationTest extends TestCase
             $html = $this->hub($workspace, $business)->getContent();
 
             $this->assertSame([
-                'business-setup' => ['business-details', 'locations'],
+                'business-setup' => ['business-details', 'locations', 'custom-fields'],
                 'communication' => ['text-messaging', 'email'],
                 'billing-team' => ['usage-billing', 'plan', 'team'],
                 'features' => [],
@@ -131,6 +131,7 @@ class SettingsHubNavigationTest extends TestCase
             foreach ([
                 'business-details' => route('customer.business.edit'),
                 'locations' => route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]),
+                'custom-fields' => route('customer.workspaces.businesses.custom-fields.index', [$workspace->uid, $business->uid]),
                 'text-messaging' => route('customer.workspaces.businesses.text-messaging.show', [$workspace->uid, $business->uid]),
                 'email' => route('customer.workspaces.businesses.email.show', [$workspace->uid, $business->uid]),
                 'usage-billing' => route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]),
@@ -340,7 +341,7 @@ class SettingsHubNavigationTest extends TestCase
 
         // Email is offered to an actor holding an email permission (here every
         // permission but view_numbers), exactly as Text messaging would be.
-        $this->assertSame(['business-setup' => ['locations'], 'communication' => ['email']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
+        $this->assertSame(['business-setup' => ['locations', 'custom-fields'], 'communication' => ['email']], $modules, 'No details (not theirs), no texting (no permission), no billing, plan or team, no switches.');
         $this->get(route('customer.workspaces.team.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertNotFound();
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();

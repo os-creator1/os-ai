@@ -78,6 +78,10 @@
                     </x-card>
                 @endif
 
+                @if ($customFields !== null)
+                    @include('customer.people._custom-fields')
+                @endif
+
                 <x-card title="Activity">
                     @if ($profile['conversation'] === null && empty($profile['campaigns']))
                         <p class="text-caption mb-0" data-role="contact-no-activity">No messages with this contact yet.</p>

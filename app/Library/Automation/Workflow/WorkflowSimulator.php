@@ -6,6 +6,7 @@ use App\Enums\Automation\Workflow\NodeSideEffectClass;
 use App\Enums\Automation\Workflow\WorkflowEdgeKind;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
+use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
 use App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
@@ -252,7 +253,7 @@ class WorkflowSimulator
         // executor is even resolved for it, so there is no path by which a
         // simulation can reach a provider, a mailbox or a contact row.
         if ($sideEffect !== NodeSideEffectClass::None) {
-            $step['detail'] = $this->wouldRunDetail($type);
+            $step['detail'] = $this->wouldRunDetail($type) . $this->mergePreview($type, $entry['config'], $enrollment, $business, $contact);
 
             return [$step, $entry['edges'][WorkflowEdgeKind::Next->value] ?? null, null];
         }
@@ -339,6 +340,51 @@ class WorkflowSimulator
         $step['did'] = self::DID_STARTED;
 
         return [$step, $entry['edges'][WorkflowEdgeKind::Next->value] ?? null, null];
+    }
+
+    /**
+     * What the customer would actually read, rendered by the SAME merge engine
+     * the real send uses, for the test contact. Pure reads — nothing is sent —
+     * and an unknown merge field is called out because it would be left blank.
+     * Opportunity / Appointment facts are not part of a test run (no trigger
+     * happened), so those tokens preview blank.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function mergePreview(WorkflowNodeType $type, array $config, AutomationEnrollment $enrollment, Business $business, Contacts $contact): string
+    {
+        $fields = match ($type) {
+            WorkflowNodeType::SendSms => ['Text' => $config['body'] ?? null],
+            WorkflowNodeType::SendEmail => ['Subject' => $config['subject'] ?? null, 'Message' => $config['body'] ?? null],
+            WorkflowNodeType::InternalNotification => ['Message' => $config['message'] ?? null],
+            default => [],
+        };
+
+        $lines = [];
+        $unknown = [];
+        $resolver = app(\App\Library\Merge\MergeFieldResolver::class);
+
+        foreach ($fields as $label => $raw) {
+            if (! is_string($raw) || trim($raw) === '') {
+                continue;
+            }
+
+            $rendered = ContactMergeFields::renderForEnrollment($raw, $contact, $enrollment, $business);
+            $lines[] = sprintf('%s: “%s”', $label, \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', $rendered) ?? ''), 240));
+            array_push($unknown, ...$resolver->unknownTokens($raw, $business));
+        }
+
+        if ($lines === []) {
+            return '';
+        }
+
+        $preview = ' Preview for this contact — ' . implode(' · ', $lines);
+
+        if ($unknown !== []) {
+            $preview .= ' (Unknown merge field ' . implode(', ', array_unique($unknown)) . ' will be left blank.)';
+        }
+
+        return $preview;
     }
 
     /** A plain description of a step a simulation refuses to perform. */

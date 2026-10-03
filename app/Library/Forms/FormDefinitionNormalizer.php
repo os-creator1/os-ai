@@ -3,6 +3,7 @@
 namespace App\Library\Forms;
 
 use App\Enums\Forms\FormFieldType;
+use App\Library\CustomFields\FormFieldMapping;
 use App\Library\Forms\Exceptions\FormRuleException;
 use App\Models\Business;
 use App\Models\CrmPipeline;
@@ -83,9 +84,9 @@ final class FormDefinitionNormalizer
      * @param  array<string, mixed>  $input
      * @return array{intro: ?string, submit_label: string, success_message: string, pages: list<array{key: string, title: ?string}>, fields: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>, create_opportunity: bool, opportunity_pipeline_id: ?int}
      */
-    public function content(Business $business, array $input): array
+    public function content(Business $business, array $input, array $previousFields = []): array
     {
-        [$pages, $fields] = $this->pagesAndFields($input['pages'] ?? [], $input['fields'] ?? []);
+        [$pages, $fields] = $this->pagesAndFields($input['pages'] ?? [], $input['fields'] ?? [], $business, $previousFields);
 
         $createOpportunity = (bool) ($input['create_opportunity'] ?? false);
         $pipelineId = null;
@@ -135,7 +136,7 @@ final class FormDefinitionNormalizer
     /**
      * @return array{0: list<array{key: string, title: ?string}>, 1: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>}
      */
-    private function pagesAndFields(mixed $rawPages, mixed $rawFields): array
+    private function pagesAndFields(mixed $rawPages, mixed $rawFields, Business $business, array $previousFields): array
     {
         if (! is_array($rawFields)) {
             throw new FormRuleException('Add at least one question.');
@@ -144,7 +145,7 @@ final class FormDefinitionNormalizer
         $declared = $this->declaredPages($rawPages);
         $firstKey = array_key_first($declared);
 
-        $fields = $this->fields($rawFields, $declared, $firstKey);
+        $fields = $this->fields($rawFields, $declared, $firstKey, $business, $previousFields);
 
         // Group by page, drop pages nobody uses, order the rest.
         $byPage = [];
@@ -246,10 +247,19 @@ final class FormDefinitionNormalizer
      * @param  array<string, array<string, mixed>>  $declared
      * @return list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>
      */
-    private function fields(array $rawFields, array $declared, string $firstPageKey): array
+    private function fields(array $rawFields, array $declared, string $firstPageKey, Business $business, array $previousFields): array
     {
         $fields = [];
         $seen = [];
+        $mapped = [];
+        $mapper = app(FormFieldMapping::class);
+        $previousMappings = [];
+
+        foreach ($previousFields as $previous) {
+            if (is_array($previous) && ! empty($previous['custom_field_uid'])) {
+                $previousMappings[(string) ($previous['key'] ?? '')] = (string) $previous['custom_field_uid'];
+            }
+        }
 
         foreach (array_values($rawFields) as $raw) {
             if (! is_array($raw)) {
@@ -295,7 +305,7 @@ final class FormDefinitionNormalizer
                 throw new FormRuleException('Only a short-text question can be used as the person\'s name.');
             }
 
-            $fields[] = [
+            $field = [
                 'key' => $key,
                 'label' => $label,
                 'type' => $type->value,
@@ -304,6 +314,27 @@ final class FormDefinitionNormalizer
                 'contact_name' => $contactName,
                 'page' => $page,
             ];
+
+            // EXPLICIT "Save answer to" mapping, by the custom field's stable uid.
+            // Present only when set, so a form without a mapping hashes exactly as
+            // it did before this key existed.
+            $uid = trim((string) ($raw['custom_field_uid'] ?? ''));
+
+            if ($uid !== '') {
+                if (isset($mapped[$uid])) {
+                    throw new FormRuleException('Two questions are set to save to the same contact field.');
+                }
+
+                $mapped[$uid] = true;
+                $field['custom_field_uid'] = $mapper->assertMappable(
+                    $business,
+                    $field,
+                    $uid,
+                    ($previousMappings[$key] ?? null) === $uid,
+                );
+            }
+
+            $fields[] = $field;
         }
 
         if ($fields === []) {

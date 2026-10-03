@@ -6,6 +6,7 @@ use App\Enums\Forms\FormDeploymentSource;
 use App\Enums\Forms\FormFieldType;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Business\Concerns\AuthorizesFormsRequests;
+use App\Library\CustomFields\CustomFieldDefinitionManager;
 use App\Library\Forms\Exceptions\FormRuleException;
 use App\Library\Forms\FormDefinitionNormalizer;
 use App\Library\Forms\FormManager;
@@ -177,6 +178,7 @@ class FormsController extends Controller
             'fields.*.required' => ['nullable', 'boolean'],
             'fields.*.options' => ['nullable', 'string', 'max:5000'],
             'fields.*.contact_name' => ['nullable', 'boolean'],
+            'fields.*.custom_field_uid' => ['nullable', 'string', 'max:64'],
             'create_opportunity' => ['nullable', 'boolean'],
             'opportunity_pipeline_id' => ['nullable', 'integer'],
         ]);
@@ -227,6 +229,7 @@ class FormsController extends Controller
             'pageRows' => $pageRows,
             'types' => FormFieldType::cases(),
             'pipelines' => CrmPipeline::query()->forBusiness($business)->active()->orderBy('position')->orderBy('id')->get(['id', 'name']),
+            'customFields' => $this->mappableCustomFields($business, $version?->fields ?? []),
             'locations' => $visible,
             'deployments' => $form === null
                 ? collect()
@@ -241,6 +244,24 @@ class FormsController extends Controller
                 'pages' => FormDefinitionNormalizer::MAX_PAGES,
             ],
         ];
+    }
+
+    /**
+     * The "Save answer to" choices: every ACTIVE contact custom field, plus an
+     * archived one only while the current version still maps a question to it
+     * (shown so the author sees the mapping; it cannot be chosen anew).
+     *
+     * @param  list<array<string, mixed>>  $currentFields
+     * @return \Illuminate\Support\Collection<int, \App\Models\CustomFieldDefinition>
+     */
+    private function mappableCustomFields($business, array $currentFields)
+    {
+        $mapped = array_filter(array_column($currentFields, 'custom_field_uid'));
+
+        return app(CustomFieldDefinitionManager::class)
+            ->forBusiness($business, true)
+            ->filter(fn ($definition) => ! $definition->isArchived() || in_array($definition->uid, $mapped, true))
+            ->values();
     }
 
     private function refused(FormRuleException $exception): RedirectResponse

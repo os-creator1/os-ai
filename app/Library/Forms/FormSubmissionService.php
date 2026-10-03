@@ -7,6 +7,9 @@ use App\Enums\Forms\FormFieldType;
 use App\Events\Forms\FormSubmissionRecorded;
 use App\Library\Crm\CrmOpportunityService;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\CustomFields\CustomFieldRuleException;
+use App\Library\CustomFields\CustomFieldValueService;
+use App\Library\CustomFields\FormFieldMapping;
 use App\Library\Forms\Exceptions\FormUnavailableException;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
@@ -100,6 +103,8 @@ final class FormSubmissionService
         private readonly EloquentContactsRepository $contacts,
         private readonly CrmOpportunityService $opportunities,
         private readonly FormSessionStore $sessions,
+        private readonly FormFieldMapping $mappings,
+        private readonly CustomFieldValueService $customValues,
     ) {
     }
 
@@ -348,6 +353,8 @@ final class FormSubmissionService
             ? $this->createOpportunity($context, $contact, $values)
             : null;
 
+        $this->applyMappedAnswers($context, $contact, $resolution, $values);
+
         $this->link($submission, $contact, $resolution, $opportunity);
 
         // The questionnaire session (if any) — locked by this very transaction —
@@ -370,6 +377,34 @@ final class FormSubmissionService
         );
 
         return $submission->fresh();
+    }
+
+    /**
+     * Save each EXPLICITLY mapped answer to its Contact custom field.
+     *
+     * Only questions carrying a `custom_field_uid` are touched, and only that one
+     * field per question: never identity, tags, or an unmapped field. A Contact
+     * that was matched (not just created) is updated too — the mapping is the
+     * author's explicit instruction. An Ambiguous match or no phone number means
+     * there is no Contact, so nothing is written. A blank or unusable answer is
+     * skipped and never clears an existing value; the answer itself always
+     * remains on the (write-once) submission.
+     *
+     * @param  array<string, mixed>  $values
+     */
+    private function applyMappedAnswers(FormDeploymentContext $context, ?Contacts $contact, FormContactResolution $resolution, array $values): void
+    {
+        if ($contact === null || ! in_array($resolution, [FormContactResolution::Created, FormContactResolution::Matched], true)) {
+            return;
+        }
+
+        foreach ($this->mappings->answersFor($context->business, $context->version->fields ?? [], $values) as [$definition, $answer]) {
+            try {
+                $this->customValues->applyAnswer($context->business, $contact, $definition, $answer);
+            } catch (CustomFieldRuleException) {
+                // A scope mismatch is refused, not fatal: the submission stands.
+            }
+        }
     }
 
     /**

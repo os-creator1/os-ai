@@ -191,7 +191,7 @@ return [
             'subject' => 'Subject',
             'subject_placeholder' => 'Thanks for getting in touch',
             'body' => 'Email',
-            'placeholder' => 'Hi {first_name}, thanks for getting in touch!',
+            'placeholder' => 'Hi {{contact.first_name}}, thanks for getting in touch!',
             'sender_note' => 'The email goes out from your business’s connected mailbox. If none is connected, or the contact has no single email address, this step fails and nothing is sent. Testing the workflow never sends one.',
         ],
         'tag_action_form' => [
@@ -203,13 +203,9 @@ return [
         ],
         'send_sms_form' => [
             'body' => 'Message',
-            'placeholder' => 'Hi {first_name}, thanks for getting in touch!',
+            'placeholder' => 'Hi {{contact.first_name}}, thanks for getting in touch!',
             'personalise' => 'Personalise',
-            'tag_first_name' => 'First name',
-            'tag_last_name' => 'Last name',
-            'tag_company' => 'Company',
-            'tag_business_name' => 'Business name',
-            'body_hint' => 'Merge tags: {first_name}, {last_name}, {company}, {business_name}.',
+            'body_hint' => 'Use Insert field to add merge fields such as {{contact.first_name}} or {{contact.event_date}}.',
             'testing_note' => 'Texts go out from your business’s number. Testing the workflow never sends one.',
         ],
         'update_contact_field_form' => [
@@ -220,7 +216,7 @@ return [
         ],
         'internal_notification_form' => [
             'message' => 'What should your team be told?',
-            'placeholder' => '{first_name} is ready for a call back.',
+            'placeholder' => '{{contact.first_name}} is ready for a call back.',
             'recipients' => 'The business owner and team members with access are notified.',
         ],
         'wait_form' => [

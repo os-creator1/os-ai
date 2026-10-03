@@ -119,6 +119,13 @@ class SendSmsNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::failed('no_business_sending_path');
         }
 
+        $message = ContactMergeFields::renderForEnrollment($body, $contact, $enrollment, $business);
+
+        if (trim($message) === '') {
+            // Every merge value was missing: nothing meaningful to send.
+            return NodeExecutionOutcome::skipped('rendered_content_empty');
+        }
+
         $phone = $this->resolvePhone($contact);
 
         if ($phone === null) {
@@ -128,7 +135,7 @@ class SendSmsNodeExecutor implements NodeExecutor
         $sendData = [
             'business_id' => (int) $business->id,
             'user_id' => (int) $business->customer_id,
-            'message' => $this->renderBody($body, $contact),
+            'message' => $message,
             'sms_type' => 'plain',
             'originator' => 'sender_id',
             'sender_id' => $path['originator'],
@@ -303,15 +310,6 @@ class SendSmsNodeExecutor implements NodeExecutor
         } catch (NumberParseException) {
             return null;
         }
-    }
-
-    /**
-     * B4's {TAG} substitution, unchanged: plain replacement from the contact's
-     * own group fields, never template evaluation and never arbitrary code.
-     */
-    private function renderBody(string $body, Contacts $contact): string
-    {
-        return ContactMergeFields::render($body, $contact);
     }
 
     private function maskedPhone(Contacts $contact): string

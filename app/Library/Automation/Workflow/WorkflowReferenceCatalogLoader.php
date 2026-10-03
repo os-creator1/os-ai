@@ -107,9 +107,33 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as child_archived_at'),
             ]);
 
+        // Business-wide Custom Fields (Contact scope), archived ones flagged: the
+        // same statement carries them so the Builder's condition picker, the merge
+        // picker and the compiler's reference checks cost no query of their own.
+        // The key rides in `child_name`, the type in `field_type` and the options
+        // (JSON text) in the one free text column, `stage_semantic_key`.
+        $custom = DB::table('custom_field_definitions')
+            ->where('custom_field_definitions.business_id', $businessId)
+            ->where('custom_field_definitions.entity', 'contact')
+            ->select([
+                DB::raw("'custom' as source"),
+                'custom_field_definitions.position as parent_position',
+                'custom_field_definitions.id as parent_id',
+                'custom_field_definitions.label as parent_name',
+                'custom_field_definitions.archived_at as parent_archived_at',
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                'custom_field_definitions.key as child_name',
+                'custom_field_definitions.type as field_type',
+                DB::raw('null as field_is_phone'),
+                DB::raw('CAST(custom_field_definitions.options AS CHAR) as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+            ]);
+
         // Contact groups by name (as before); pipelines and their stages in the
-        // order the CRM board shows them; tags and forms by name.
-        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)
+        // order the CRM board shows them; tags and forms by name; custom fields
+        // in their configured order.
+        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)->unionAll($custom)
             ->orderBy('source')
             ->orderBy('parent_position')
             ->orderBy('parent_name')
@@ -124,9 +148,25 @@ class WorkflowReferenceCatalogLoader
         $stages = [];
         $tags = [];
         $forms = [];
+        $customFields = [];
 
         foreach ($rows as $row) {
             $parentId = (int) $row->parent_id;
+
+            if ($row->source === 'custom') {
+                $options = is_string($row->stage_semantic_key) ? json_decode($row->stage_semantic_key, true) : null;
+
+                $customFields[(string) $row->child_name] = [
+                    'id' => $parentId,
+                    'key' => (string) $row->child_name,
+                    'label' => (string) $row->parent_name,
+                    'type' => (string) $row->field_type,
+                    'archived' => $row->parent_archived_at !== null,
+                    'options' => is_array($options) ? array_values($options) : [],
+                ];
+
+                continue;
+            }
 
             if ($row->source === 'tag') {
                 $tags[$parentId] = [
@@ -187,6 +227,6 @@ class WorkflowReferenceCatalogLoader
 
         ksort($fields);
 
-        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms);
+        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms, $customFields);
     }
 }

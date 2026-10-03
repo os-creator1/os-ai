@@ -46,6 +46,13 @@
 
 <h5 class="mt-2">Questions</h5>
 <p class="text-muted">Up to {{ $limits['fields'] }}. Leave a row blank to skip it. A form may have one phone number question — it is how a person is recognized.</p>
+<p class="text-muted">
+    "Save answer to" stores a question's answer in one of your business's contact fields (for example an event date), so it can be used in messages and automations as <code>@{{contact.field_name}}</code>.
+    A blank answer never overwrites a value the contact already has.
+    @if ($customFields->isEmpty())
+        You have no custom fields yet — add them in Settings → Custom fields.
+    @endif
+</p>
 
 <div class="table-responsive">
     <table class="table table-sm" data-role="forms-fields">
@@ -57,6 +64,7 @@
                 <th>Required</th>
                 <th>Options <span class="text-muted">(one per line, for "Pick one")</span></th>
                 <th>Their name</th>
+                <th>Save answer to <span class="text-muted">(contact field)</span></th>
             </tr>
         </thead>
         <tbody>
@@ -92,6 +100,15 @@
                     <td>
                         <input type="hidden" name="fields[{{ $i }}][contact_name]" value="0">
                         <input type="checkbox" name="fields[{{ $i }}][contact_name]" value="1" @checked(! empty($row['contact_name']) && $row['contact_name'] !== '0') aria-label="Use as their name {{ $i + 1 }}">
+                    </td>
+                    <td>
+                        @php($selectedField = (string) ($row['custom_field_uid'] ?? ''))
+                        <select name="fields[{{ $i }}][custom_field_uid]" class="form-control form-control-sm" aria-label="Save answer to {{ $i + 1 }}" data-role="forms-save-to">
+                            <option value="">Don't save to a contact field</option>
+                            @foreach ($customFields as $customField)
+                                <option value="{{ $customField->uid }}" @selected($selectedField === $customField->uid)>{{ $customField->label }} ({{ \App\Enums\CustomFields\CustomFieldType::from($customField->type)->label() }}){{ $customField->isArchived() ? ' — archived' : '' }}</option>
+                            @endforeach
+                        </select>
                     </td>
                 </tr>
             @endforeach

@@ -72,7 +72,9 @@ final class FormManager
     public function update(Business $business, Form $form, array $input, ?int $actorUserId = null): Form
     {
         $name = $this->definitions->name($input['name'] ?? null);
-        $content = $this->definitions->content($business, $input);
+        // The current version's questions: a mapping it already holds may be kept
+        // even if its custom field has since been archived (never newly added).
+        $content = $this->definitions->content($business, $input, $form->currentVersion()?->fields ?? []);
 
         return DB::transaction(function () use ($business, $form, $name, $content, $actorUserId): Form {
             $locked = $this->lock($business, $form);

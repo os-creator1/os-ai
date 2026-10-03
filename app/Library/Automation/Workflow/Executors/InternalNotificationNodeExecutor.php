@@ -6,6 +6,7 @@ use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Contracts\NodeExecutor;
+use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
@@ -71,6 +72,12 @@ class InternalNotificationNodeExecutor implements NodeExecutor
 
         if ($message === '') {
             return NodeExecutionOutcome::skipped('notification_config_invalid');
+        }
+
+        $message = ContactMergeFields::renderForEnrollment($message, $contact, $enrollment, $business);
+
+        if (trim($message) === '') {
+            return NodeExecutionOutcome::skipped('rendered_content_empty');
         }
 
         $recipients = $this->recipients($business);

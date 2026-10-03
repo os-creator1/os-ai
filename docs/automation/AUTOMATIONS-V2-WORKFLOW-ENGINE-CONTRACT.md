@@ -1285,9 +1285,15 @@ re-derives the Business from the enrollment row.
 * CSRF on every mutation; `throttle` on autosave.
 * The document is validated on every save; an invalid document is still saved
   as a draft with its errors, so work is never lost, but **it cannot publish**.
-* Message bodies are stored as plain text; merge tags are an allowlist
-  (`{first_name}`, `{last_name}`, `{company}`, `{business_name}`) substituted
-  server-side, with no template-language evaluation.
+* Message bodies are stored as plain text; merge fields are the canonical
+  `{{group.key}}` vocabulary (`{{contact.first_name}}`, `{{contact.event_date}}`,
+  `{{business.name}}`, …) substituted server-side by the one shared engine, with
+  no template-language evaluation. **Superseded detail:** the earlier lowercase
+  `{first_name}` allowlist never had a resolver; those saved tokens (and B4's
+  `{TAG}`) are now handled by a compatibility adapter. The If/Else custom-field
+  subject is `contact.field:{key}` (the legacy `contact.custom_field:{id}` still
+  evaluates for published versions). See
+  `docs/product/implementation-contracts/23-CUSTOM-FIELDS-MERGE-FIELDS-V1.md`.
 
 ### 14.5 Permissions (D8 locked)
 

@@ -6,6 +6,7 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Documents\DocumentManager;
+use App\Library\Merge\MergeFieldRegistry;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Payments\PaymentManager;
 use App\Library\Workspace\LocationAccessGuard;
@@ -79,6 +80,15 @@ class DocumentsController extends CustomerBaseController
             'signature' => $document->signature()->first(),
             'versions' => $document->versions()->orderBy('version_number')->get(['uid', 'version_number', 'state', 'issued_at', 'superseded_at']),
             'catalogItems' => CatalogItem::where('business_id', $document->business_id)->where('lifecycle_state', 'active')->orderBy('position')->get(),
+            // The canonical "Insert field" vocabulary: a document is about one
+            // Contact (and optionally one Opportunity), so those groups resolve.
+            'mergeFieldPicker' => app(MergeFieldRegistry::class)->picker(
+                $document->business,
+                array_merge(
+                    [MergeFieldRegistry::GROUP_CONTACT, MergeFieldRegistry::GROUP_CUSTOM, MergeFieldRegistry::GROUP_BUSINESS, MergeFieldRegistry::GROUP_LOCATION],
+                    $document->crm_opportunity_id === null ? [] : [MergeFieldRegistry::GROUP_OPPORTUNITY],
+                ),
+            ),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
         ]);
     }

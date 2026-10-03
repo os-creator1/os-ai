@@ -1513,6 +1513,7 @@
             Route::get('/import', 'Business\ContactDirectoryController@import')->name('import');
             Route::post('/first-list', 'Business\ContactDirectoryController@createFirstList')->name('first-list');
             Route::get('/{contactUid}', 'Business\ContactDirectoryController@show')->name('show');
+            Route::post('/{contactUid}/custom-fields', 'Business\ContactDirectoryController@updateCustomFields')->name('custom-fields.update');
         });
 
         /*
@@ -1561,6 +1562,23 @@
         | group's own static-before-dynamic ordering.
         |----------------------------------------------------------------
         */
+        /*
+        |----------------------------------------------------------------
+        | Business-wide Custom Fields — Settings → Custom fields (the
+        | definitions) and the Contact-details save. Same permissions as
+        | Contact Tags (view_contact / update_contact); the field uid of
+        | another Business is a 404.
+        |----------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/custom-fields')->name('businesses.custom-fields.')->group(function () {
+            Route::get('/', 'Business\CustomFieldsController@list')->name('index');
+            Route::post('/', 'Business\CustomFieldsController@store')->name('store');
+            Route::post('/{fieldUid}', 'Business\CustomFieldsController@update')->name('update');
+            Route::post('/{fieldUid}/archive', 'Business\CustomFieldsController@archive')->name('archive');
+            Route::post('/{fieldUid}/restore', 'Business\CustomFieldsController@restore')->name('restore');
+            Route::post('/{fieldUid}/move', 'Business\CustomFieldsController@move')->name('move');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/tags')->name('businesses.tags.')->group(function () {
             Route::get('/', 'Business\ContactTagsController@list')->name('index');
             Route::post('/', 'Business\ContactTagsController@store')->name('store');

@@ -85,6 +85,13 @@ class SendEmailNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::skipped('send_config_invalid');
         }
 
+        $subject = ContactMergeFields::renderForEnrollment($subject, $contact, $enrollment, $business);
+        $body = ContactMergeFields::renderForEnrollment($body, $contact, $enrollment, $business);
+
+        if (trim($subject) === '' || trim($body) === '') {
+            return NodeExecutionOutcome::skipped('rendered_content_empty');
+        }
+
         $stepRunId = ClaimedStepRun::idFor($node, $enrollment);
 
         if ($stepRunId === null) {
@@ -97,8 +104,8 @@ class SendEmailNodeExecutor implements NodeExecutor
             $message = $this->emails->send(new BusinessEmailSendRequest(
                 business: $business,
                 contact: $contact,
-                subject: ContactMergeFields::render($subject, $contact),
-                bodyText: ContactMergeFields::render($body, $contact),
+                subject: $subject,
+                bodyText: $body,
                 operationKey: sprintf('automation:%d:%d:email', (int) $enrollment->workflow_id, $stepRunId),
                 source: BusinessEmailSource::Automation,
                 automationStepRunId: $stepRunId,
