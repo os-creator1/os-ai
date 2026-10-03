@@ -106,7 +106,8 @@ export function renderProductBlock(block, ctx) {
     }
     foot.push(el('tr', { class: 'doc-total' }, [el('td', { colspan: span, text: 'Total' }), el('td', { class: 'num', 'data-role': 'total', text: commerce.totals.total_formatted }), editable ? el('td') : null]));
 
-    if ((commerce.schedule || []).length === 2) {
+    // A payment-terms block, when present, owns the deposit/balance rows (same rule as the server renderer).
+    if ((commerce.schedule || []).length === 2 && !store.hasType('payment_terms')) {
         commerce.schedule.forEach((item) => {
             foot.push(el('tr', { 'data-role': 'schedule-row', 'data-kind': item.kind }, [
                 el('td', { colspan: span }, [item.kind === 'deposit' ? 'Deposit ' : 'Balance ', el('span', { class: 'doc-muted', text: '— ' + item.due_label })]),

@@ -9,6 +9,7 @@
 --}}
 @include('documents.blocks._styles')
 <div class="doc-blocks" data-role="document-blocks" data-mode="{{ $mode }}">
+@php($hasPaymentTermsBlock = collect($blocks)->contains(fn ($b) => ($b['type'] ?? null) === 'payment_terms'))
 @foreach($blocks as $block)
     @php($data = is_array($block['data'] ?? null) ? $block['data'] : [])
     <div class="doc-block doc-block-{{ $block['type'] }}" data-block-id="{{ $block['id'] ?? '' }}" data-block-type="{{ $block['type'] }}">

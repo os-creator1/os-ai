@@ -250,6 +250,26 @@ class DocumentMergeFieldsAndRendererTest extends TestCase
         $this->assertStringNotContainsString('150000', $html);
     }
 
+    public function test_deposit_and_balance_are_listed_once_whichever_block_owns_them(): void
+    {
+        $schedule = [
+            (object) ['kind' => 'deposit', 'amount_minor' => 45000, 'due_at' => null, 'status' => 'pending'],
+            (object) ['kind' => 'balance', 'amount_minor' => 105000, 'due_at' => null, 'status' => 'pending'],
+        ];
+        $context = [
+            'lines' => [(object) ['name' => 'Booth', 'description' => null, 'quantity' => 1, 'unit_price_minor' => 150000, 'line_total_minor' => 150000]],
+            'schedule' => $schedule, 'subtotal_minor' => 150000, 'total_minor' => 150000, 'currency_code' => 'USD',
+        ];
+
+        $both = (string) $this->renderer()->render($this->blocks([['type' => 'product_list'], ['type' => 'payment_terms']]), 'preview', $context);
+        $this->assertSame(1, substr_count($both, 'USD 450.00'), 'with a payment_terms block the deposit is listed once');
+        $this->assertStringNotContainsString('data-role="schedule-row"', $both);
+
+        $alone = (string) $this->renderer()->render($this->blocks([['type' => 'product_list']]), 'preview', $context);
+        $this->assertSame(1, substr_count($alone, 'USD 450.00'), 'without one, the product block still shows the schedule');
+        $this->assertStringContainsString('data-role="schedule-row"', $alone);
+    }
+
     public function test_balance_without_a_date_reads_after_the_deposit(): void
     {
         $html = (string) $this->renderer()->render($this->blocks([['type' => 'product_list']]), 'preview', [

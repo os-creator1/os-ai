@@ -29,5 +29,6 @@
 .doc-blocks .doc-page-break{break-after:page;page-break-after:always;height:0;margin:0}
 .doc-blocks .doc-signature-slot{margin-top:8px}
 @media (max-width:640px){.doc-blocks{padding:24px 18px}}
+@media (max-width:480px){.doc-blocks{padding:20px 14px}.doc-blocks table.doc-table{font-size:13px}.doc-blocks .doc-table th,.doc-blocks .doc-table td{padding:8px 3px}.doc-blocks .doc-table td.num{white-space:nowrap}}
 @media print{.doc-blocks{max-width:none;padding:0}.doc-blocks .doc-signature-slot form{display:none}}
 </style>

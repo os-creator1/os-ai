@@ -3495,7 +3495,9 @@ function renderProductBlock(block, ctx) {
     'data-role': 'total',
     text: commerce.totals.total_formatted
   }), editable ? (0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('td') : null]));
-  if ((commerce.schedule || []).length === 2) {
+
+  // A payment-terms block, when present, owns the deposit/balance rows (same rule as the server renderer).
+  if ((commerce.schedule || []).length === 2 && !store.hasType('payment_terms')) {
     commerce.schedule.forEach(function (item) {
       foot.push((0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('tr', {
         'data-role': 'schedule-row',

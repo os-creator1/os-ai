@@ -12,6 +12,7 @@ use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentLineItem;
 use App\Models\BusinessDocumentVersion;
 use App\Models\CatalogItem;
+use App\Models\Contacts;
 use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
@@ -156,6 +157,19 @@ final class DocumentEditorService
         $supplied = [];
 
         if ($document->status === DocumentStatus::Draft) {
+            // The editor flow never states a recipient NAME, so the frozen merge values
+            // (`Proposal for {contact.first_name}`) would print blank on the issued
+            // document while the live preview showed the Contact's name. Freeze the
+            // Contact's name into the (empty) snapshot at send, as the preview resolves it.
+            if (trim((string) $document->recipient_name_snapshot) === '' && $document->contact_id !== null) {
+                $contact = Contacts::query()->whereKey($document->contact_id)->where('business_id', $document->business_id)->first();
+                $name = $contact === null ? '' : mb_substr(trim((string) $contact->getFullName('')), 0, 191);
+
+                if ($name !== '') {
+                    $supplied['recipient_name_snapshot'] = $name;
+                }
+            }
+
             if (is_string($email) && trim($email) !== '' && trim((string) $document->recipient_email_snapshot) === '') {
                 $supplied['recipient_email_snapshot'] = trim($email);
             }

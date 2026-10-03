@@ -24,7 +24,8 @@
     @endif
     <title>Signature recorded</title>
     <style>
-        body{font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#17212b}
+        html{color-scheme:light}
+        body{background:#fff;font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#17212b}
         .cta{display:inline-block;margin-top:1rem;padding:.75rem 1.5rem;background:#1d4ed8;color:#fff;border-radius:.5rem;text-decoration:none;font-weight:600}
         .muted{color:#5b6672}
     </style>

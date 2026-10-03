@@ -31,7 +31,8 @@
             <tr><td colspan="{{ $span }}">Subtotal</td><td class="num">{{ $money($subtotalMinor) }}</td></tr>
         @endif
         <tr class="doc-total"><td colspan="{{ $span }}">Total</td><td class="num" data-role="total">{{ $money($totalMinor) }}</td></tr>
-        @if(count($schedule) === 2)
+        {{-- A payment_terms block, when present, owns the deposit/balance rows; never list them twice. --}}
+        @if(count($schedule) === 2 && ! ($hasPaymentTermsBlock ?? false))
             @foreach($schedule as $item)
                 @php($kind = data_get($item, 'kind'))
                 @php($kind = $kind instanceof \BackedEnum ? $kind->value : (string) $kind)

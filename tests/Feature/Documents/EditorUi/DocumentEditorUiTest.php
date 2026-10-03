@@ -267,7 +267,8 @@ class DocumentEditorUiTest extends TestCase
 
         $html = $this->get($this->ed('preview', $tenant, $document))->assertOk()->getContent();
 
-        $this->assertStringContainsString('data-role="schedule-row"', $html);
+        $this->assertStringContainsString('data-role="schedule-item"', $html, 'the payment_terms block owns the deposit and balance rows');
+        $this->assertStringNotContainsString('data-role="schedule-row"', $html);
         $this->assertStringContainsString('USD 250.00', $html);
         $this->assertStringContainsString('USD 750.00', $html);
         $this->assertStringContainsString('Due after the deposit is paid', $html);

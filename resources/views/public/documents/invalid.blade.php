@@ -18,7 +18,8 @@
     <meta name="robots" content="noindex, nofollow">
     <title>Link no longer valid</title>
     <style>
-        body{font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#17212b}
+        html{color-scheme:light}
+        body{background:#fff;font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;color:#17212b}
     </style>
 </head>
 <body>

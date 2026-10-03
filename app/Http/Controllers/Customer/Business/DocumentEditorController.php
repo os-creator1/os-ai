@@ -15,6 +15,7 @@ use App\Library\Contacts\ContactDirectory;
 use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentBlockRenderer;
 use App\Library\Documents\Blocks\DocumentMergeFields;
+use App\Enums\Documents\DocumentKind;
 use App\Enums\Documents\DocumentVersionState;
 use App\Library\Documents\Editor\DocumentEditorToolbox;
 use App\Library\Documents\Editor\DocumentCatalogPicker;
@@ -56,7 +57,21 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
  */
 class DocumentEditorController extends CustomerBaseController
 {
-    use ResolvesBusinessDocuments;
+    use ResolvesBusinessDocuments {
+        document as private resolveBusinessDocument;
+    }
+
+    /**
+     * Contract 17B §1 — only a proposal (a "contract" is a proposal too) is edited in
+     * this builder. An invoice resolves like any foreign / unknown uid: 404.
+     */
+    private function document(string $workspaceUid, string $businessUid, string $documentUid): BusinessDocument
+    {
+        $document = $this->resolveBusinessDocument($workspaceUid, $businessUid, $documentUid);
+        abort_unless($document->kind === DocumentKind::Proposal, 404);
+
+        return $document;
+    }
 
     public function __construct(
         private readonly DocumentEditorService $editor,

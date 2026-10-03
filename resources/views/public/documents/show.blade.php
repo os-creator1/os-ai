@@ -25,7 +25,8 @@
     <meta name="robots" content="noindex, nofollow">
     <title>{{ $document->title }}</title>
     <style>
-        body{font-family:system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;color:#17212b;line-height:1.5}
+        html{color-scheme:light}
+        body{background:#fff;font-family:system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;color:#17212b;line-height:1.5}
         table{width:100%;border-collapse:collapse;margin:1.5rem 0}
         th,td{text-align:left;padding:.55rem .4rem;border-bottom:1px solid #d8dee5}
         td.num,th.num{text-align:right}
@@ -120,7 +121,7 @@
         @include('public.documents._sign_form')
     @endif
 @else
-    <style>body{max-width:860px}</style>
+    <style>body{max-width:860px;background:#eceae5}@media (max-width:640px){body{margin:1rem auto;padding:0 .5rem}}</style>
     {{ $blocksHtml }}
 
     @if($schedule->isNotEmpty())

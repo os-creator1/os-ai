@@ -183,6 +183,26 @@ out, never trusted).
   payment" CTA to the existing Stripe payment UI when a payment is due now;
   otherwise "Signed successfully" plus the next payment due date.
 
+**As built (stage 3b).** `editor.send` (POST `{doc}/editor/send`, throttled) takes
+`channels[]` (email|sms, ≥1), optional `message` (≤320, real link always appended
+server-side), `recipient_email` / `recipient_phone` (only used while the snapshot is
+empty), `expected_lock_version`, and answers `{status, document_status, sent_at,
+lock_version, delivery:{email?,sms?}}` with per-channel `queued|failed` plus a reason
+code. `DocumentManager::send` does ONE Draft→Sent transition with ONE token; a
+`DocumentLinkDispatcher` hands the plaintext token to each channel after commit
+(`SendDocumentLinkEmail`, `SendDocumentLinkSms`). No SMS code lives in
+`DocumentManager`. SMS goes only through `BusinessSmsSendingPath` +
+`CampaignRepository::checkQuickSendValidation/quickSend` (the path extracted from the
+automation SMS action, whose tests are unchanged); an unsendable SMS (contact missing
+or unsubscribed, no/invalid phone, no sending path) records
+`sms_link_delivery_failed_at` and never blocks the email or the Sent transition.
+`send` fills an empty `recipient_name_snapshot` from the Contact so frozen merge
+fields are never blank. The block product block lists deposit/balance rows only when
+the document has no separate `payment_terms` block (that block then owns them).
+The signed page's CTA links to the public page `#pay` section; legacy (non-block)
+pages keep their byte-pinned markup, so the CTA reaches the page without the anchor.
+Editor routes serve proposals only; an invoice is 404 in the builder.
+
 ## 8. Immutability
 
 Only drafts (and sent documents after `revise()` that have an open draft
@@ -253,6 +273,27 @@ draws everything else from the bootstrap JSON.
 ## 9. Deferred / reported gaps
 
 Text, date, checkbox fields; multi-recipient signing; columns; free image upload
-and Business logo block (no media seam / no logo column); hosted Stripe Checkout
-redirect (existing in-page Payment Element is reused); auto-issued balance
-payment request at the due date; PayPal; PDF export (contract 17 §5.6).
+and Business logo block (no media seam / no logo column); platform-template images;
+hosted Stripe Checkout redirect (existing in-page Payment Element is reused);
+auto-issued balance payment request / pay-link email at the due date (`due_at` still
+only drives the existing reminder sweep and display; the token plaintext is
+unrecoverable, so it needs token rotation + a new job); template thumbnails (a text
+snippet is shown); template deletion (archive only); PayPal; PDF export (contract 17
+§5.6).
+
+## 10. Payment-provider seam
+
+V1 execution provider: **Stripe** (existing Connect gateway and in-page Payment
+Element). Post-V1 candidate: **PayPal**. The document stores amount due, due
+timing / date, the schedule and payment state only — `content.payment_plan` and the
+`business_document_payment_schedule_items` rows contain no provider concepts — so a
+second provider can be added behind `PaymentManager` without changing document or
+template semantics. No PayPal UI exists in V1.
+
+## 11. Ownership boundaries
+
+Catalog owns products and prices. `DocumentManager` owns lines, schedule, lifecycle,
+hashing and signing. The editor owns only `content.blocks` and the stored
+`payment_plan` intent. Business-private templates belong to one Business;
+platform templates belong to the Platform Owner and reach Businesses only as
+niche-blueprint recommendations; documents never reference their source template.
