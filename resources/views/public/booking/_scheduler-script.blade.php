@@ -234,7 +234,7 @@
 
     function showConfirmation(b) {
         els.summary.innerHTML = '';
-        [['What', b.type], ['Who', b.business], ['When', b.date], ['Time', b.time], ['Time zone', b.timezone.replace(/_/g, ' ')], ['Where', b.where]]
+        [['What', b.type], ['Who', b.business], ['When', b.date], ['Time', b.time], ['Time zone', b.timezone.replace(/_/g, ' ')], ['Where', b.where], ['Details', b.instructions]]
             .forEach(function (row) {
                 if (!row[1]) { return; }
                 var dt = document.createElement('dt'); dt.textContent = row[0];

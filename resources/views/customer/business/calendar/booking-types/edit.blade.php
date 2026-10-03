@@ -30,33 +30,11 @@
         <p class="text-caption mb-0">At <strong>{{ $location->name ?: 'this location' }}</strong></p>
     </section>
 
-    <x-card title="Details" class="mb-2">
-        <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.booking-types.update', $withType) }}">
-            @csrf
-
-            <div class="form-group">
-                <label for="name">Name</label>
-                <input type="text" id="name" name="name" class="form-control" maxlength="120" value="{{ old('name', $bookingType->name) }}" required>
-            </div>
-
-            <div class="form-group">
-                <label for="duration_minutes">Duration (minutes)</label>
-                <input type="number" id="duration_minutes" name="duration_minutes" class="form-control" min="1" max="1440" value="{{ old('duration_minutes', $bookingType->duration_minutes) }}" required>
-            </div>
-
-            <div class="form-group">
-                <label for="description">Description</label>
-                <textarea id="description" name="description" class="form-control" rows="3">{{ old('description', $bookingType->description) }}</textarea>
-            </div>
-
-            <div class="form-group">
-                <label for="color">Colour</label>
-                <input type="text" id="color" name="color" class="form-control" maxlength="16" value="{{ old('color', $bookingType->color) }}">
-            </div>
-
-            <x-button type="submit" variant="primary" icon="check">Save changes</x-button>
-        </form>
-    </x-card>
+    <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.booking-types.update', $withType) }}">
+        @csrf
+        @include('customer.business.calendar.booking-types._settings-fields', ['bookingType' => $bookingType])
+        <x-button type="submit" variant="primary" icon="check" class="mb-2">Save changes</x-button>
+    </form>
 
     <x-card title="Public booking page" class="mb-2" data-section="public-booking-page">
         @if ($readiness['ready'])
@@ -66,18 +44,23 @@
                 Open booking page
                 <x-ds-icon name="external-link" size="13" aria-hidden="true" />
             </a>
-            <input class="form-control form-control-sm" type="text" readonly
-                   aria-label="Public booking link for {{ $bookingType->name }}"
-                   value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+            <div class="d-flex align-items-center" style="gap: .5rem;">
+                <input class="form-control form-control-sm" type="text" readonly
+                       aria-label="Public booking link for {{ $bookingType->name }}"
+                       value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+                <x-button type="button" variant="secondary" size="sm" data-role="copy-public-link"
+                          data-copy-link="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">Copy link</x-button>
+                <span class="text-caption" data-copy-feedback hidden role="status"></span>
+            </div>
         @else
             <x-alert variant="warning" class="mb-1" data-role="public-page-not-ready">
                 Customers cannot book this yet. {{ $readiness['reason'] }}
             </x-alert>
         @endif
-        <p class="text-caption mt-1 mb-0">
-            Times start every 30 minutes within each person's working hours, from now up to 30 days ahead,
-            and are shown in the customer's time zone. Appointments are held at
-            <strong>{{ $location->name ?: 'this location' }}</strong>.
+        <p class="text-caption mt-1 mb-0" data-role="booking-rules-summary">
+            Customers book {{ $bookingType->minimumNoticeMinutes() > 0 ? 'with at least '.($bookingType->minimumNoticeMinutes() % 60 === 0 ? ($bookingType->minimumNoticeMinutes() / 60).' hour(s)' : $bookingType->minimumNoticeMinutes().' minutes').' notice' : 'with no minimum notice' }},
+            up to {{ $bookingType->windowDays() }} days ahead, starting every {{ $bookingType->slotIntervalMinutes() }} minutes
+            inside each person's working hours. Times are shown in the customer's time zone.
         </p>
     </x-card>
 
@@ -95,7 +78,21 @@
         </form>
     </x-card>
 
-    <x-card title="Who offers this" class="mb-2">
+    <x-card title="Team" class="mb-2" data-section="booking-type-team">
+        <p class="text-caption">
+            <strong>Availability comes from assigned staff working hours.</strong>
+            <a href="{{ route('customer.workspaces.businesses.calendar.availability.index', $scope) }}" data-role="view-staff-availability">View staff availability</a>
+            to set weekly hours and time off.
+        </p>
+        @if ($configuredStaff === [])
+            <x-alert variant="warning" class="mb-2" data-role="no-staff-warning">
+                No one is assigned, so customers cannot book this yet. Tick at least one person below and save.
+            </x-alert>
+        @else
+            <p class="text-label mb-1" data-role="assigned-staff">
+                Assigned: {{ collect($configuredStaff)->map(fn ($row) => $staffName($row['user']))->implode(', ') }}
+            </p>
+        @endif
         <p class="text-caption">
             Only people currently authorized for this location can be added. Removing someone's access elsewhere
             takes effect immediately — a name left here never restores it.
@@ -133,4 +130,8 @@
             <x-button type="submit" variant="primary" class="mt-1" icon="check">Save staff</x-button>
         </form>
     </x-card>
+@endsection
+
+@section('page-script')
+    @include('customer.business.calendar.booking-types._copy-link')
 @endsection

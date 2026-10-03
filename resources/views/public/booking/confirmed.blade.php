@@ -25,6 +25,7 @@
                         <dt>Time</dt><dd>{{ $summary['time'] }}</dd>
                         <dt>Time zone</dt><dd>{{ str_replace('_', ' ', $summary['timezone']) }}</dd>
                         @if ($summary['where'])<dt>Where</dt><dd>{{ $summary['where'] }}</dd>@endif
+                        @if (! empty($summary['instructions']))<dt>Details</dt><dd>{{ $summary['instructions'] }}</dd>@endif
                     </dl>
                 </div>
             @endif

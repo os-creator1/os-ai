@@ -108,11 +108,9 @@ Agency white-label settings are client-chrome only and are not applied.
 
 ## Booking Type settings
 
-Unchanged storage: name, description, duration, colour, active/inactive, one
-Location, assigned staff. Working hours are the staff availability rules.
-The backend has **no** buffer, minimum notice or per-type scheduling window, so
-none is shown or added; the Edit page states the real behaviour (30-minute
-starts inside working hours, up to 30 days ahead, shown in the customer's zone).
+Superseded by `15-BOOKING-TYPE-SETTINGS-V1.md`: window, notice, buffers and start-time
+interval are now Booking Type settings (this lane shipped with fixed values: 30 days,
+no notice or buffers, 30-minute starts).
 
 The 404 cause fixed: a Booking Type that is active but has no eligible staff has
 no public page by design (`eligibleStaffIds() === []` → 404), yet the list

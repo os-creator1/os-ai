@@ -25,4 +25,5 @@
         </li>@endif
     </ul>
     @if ($type->description)<p class="pb-desc">{{ $type->description }}</p>@endif
+    @if ($type->meeting_instructions)<p class="pb-desc" data-role="meeting-instructions" style="margin-top:12px"><strong>Location details:</strong> {{ $type->meeting_instructions }}</p>@endif
 </aside>

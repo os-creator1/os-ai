@@ -63,7 +63,30 @@ class BookingTypeManager
             'color' => $attributes['color'] ?? null,
             'is_active' => (bool) ($attributes['is_active'] ?? true),
             'created_by_user_id' => $actorUserId,
-        ]);
+        ] + $this->schedulingAttributes($attributes));
+    }
+
+    /**
+     * Only the scheduling settings the caller actually submitted: an omitted
+     * key keeps the stored value (or the column default on create), so a
+     * caller that predates these settings never silently resets them.
+     *
+     * @return array<string, int|string|null>
+     */
+    private function schedulingAttributes(array $attributes): array
+    {
+        $out = [];
+        foreach (['booking_window_days', 'minimum_notice_minutes', 'buffer_before_minutes', 'buffer_after_minutes', 'slot_interval_minutes'] as $key) {
+            if (array_key_exists($key, $attributes) && $attributes[$key] !== null && $attributes[$key] !== '') {
+                $out[$key] = (int) $attributes[$key];
+            }
+        }
+        if (array_key_exists('meeting_instructions', $attributes)) {
+            $text = trim((string) $attributes['meeting_instructions']);
+            $out['meeting_instructions'] = $text === '' ? null : $text;
+        }
+
+        return $out;
     }
 
     /**
@@ -81,7 +104,7 @@ class BookingTypeManager
                 'description' => $attributes['description'] ?? null,
                 'duration_minutes' => (int) $attributes['duration_minutes'],
                 'color' => $attributes['color'] ?? null,
-            ]);
+            ] + $this->schedulingAttributes($attributes));
 
             if (array_key_exists('is_active', $attributes)) {
                 $locked->is_active = (bool) $attributes['is_active'];
@@ -203,6 +226,10 @@ class BookingTypeManager
     {
         if (! $bookingType->isActive()) {
             return ['ready' => false, 'reason' => 'Inactive. Activate it to accept bookings.'];
+        }
+
+        if (($problem = $bookingType->schedulingProblem()) !== null) {
+            return ['ready' => false, 'reason' => 'Invalid scheduling settings. '.$problem];
         }
 
         $eligibleIds = collect($this->configuredStaffWithEligibility($bookingType))

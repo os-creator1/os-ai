@@ -68,9 +68,14 @@
                                             Open booking page
                                             <x-ds-icon name="external-link" size="13" aria-hidden="true" />
                                         </a>
-                                        <input class="form-control form-control-sm" type="text" readonly
-                                               aria-label="Public booking link for {{ $bookingType->name }}"
-                                               value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+                                        <div class="d-flex align-items-center" style="gap: .5rem;">
+                                            <input class="form-control form-control-sm" type="text" readonly
+                                                   aria-label="Public booking link for {{ $bookingType->name }}"
+                                                   value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+                                            <x-button type="button" variant="secondary" size="sm" data-role="copy-public-link"
+                                                      data-copy-link="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">Copy</x-button>
+                                            <span class="text-caption" data-copy-feedback hidden role="status"></span>
+                                        </div>
                                     @endif
                                 </td>
                                 <td class="text-right">
@@ -86,4 +91,8 @@
             </div>
         @endif
     </x-card>
+@endsection
+
+@section('page-script')
+    @include('customer.business.calendar.booking-types._copy-link')
 @endsection
