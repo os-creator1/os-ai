@@ -45,6 +45,7 @@ class WebsiteStudioController extends CustomerBaseController
     public function __construct(
         private readonly QuestionnaireResolver $questionnaireResolver,
         private readonly WebsiteCreationStateResolver $creationState,
+        private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences,
     ) {
     }
 
@@ -103,6 +104,7 @@ class WebsiteStudioController extends CustomerBaseController
         return match ($tab) {
             'website' => [
                 'pageCount' => $website->pages()->count(),
+                'catalogSync' => $this->catalogReferences->staleness($website),
                 'mediaWarnings' => $website->guidedGenerationAttempts()->latest('id')->first()?->warnings ?? [],
             ],
             'packages' => [

@@ -33,6 +33,27 @@
     </x-alert>
 @endif
 
+@if (! empty($catalogSync['out_of_sync']))
+    {{--
+        Packages & Products is the one pricing truth. A published revision is
+        immutable, so when the catalog has changed since the last publish the
+        live site is honestly flagged out of sync, with the existing safe sync
+        path (publishing again re-resolves every package from the catalog).
+    --}}
+    <x-alert variant="warning" class="mb-3" data-catalog-sync>
+        Your packages changed after you last published
+        @if (! empty($catalogSync['changed']))
+            (updated: {{ implode(', ', $catalogSync['changed']) }})@endif
+        @if (! empty($catalogSync['removed']))
+            (removed: {{ implode(', ', $catalogSync['removed']) }})@endif.
+        Your live website still shows the older package details.
+        <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
+            @csrf
+            <button type="submit" class="btn btn-sm btn-warning">Publish update</button>
+        </form>
+    </x-alert>
+@endif
+
 @if (! empty($mediaWarnings))
     <x-alert variant="warning" class="mb-3">
         <strong>Missing media checklist:</strong>

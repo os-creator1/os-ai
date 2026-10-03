@@ -76,6 +76,19 @@ final class WebsitePageStrategy
     public const MAX_LOCATION_PAGES = 20;
 
     /**
+     * Service-area pages built from the owner's own chosen areas. Not a
+     * claim about any search engine's preferred number: a deliberately
+     * modest product ceiling ("roughly 5-10 priority areas") so a long
+     * list never becomes dozens of thin, near-identical pages. The owner's
+     * full list stays saved on the primary location; only the first
+     * (highest-priority) areas that fit the page budget get a page now.
+     */
+    public const MAX_AREA_PAGES = 8;
+
+    /** How many of the owner's other areas are given to an area page as "nearby" context. */
+    private const MAX_AREA_NEIGHBORS = 6;
+
+    /**
      * Independent-review correction round 3 — the deterministic ceiling
      * on the TOTAL number of pages one plan may ever contain, regardless
      * of how many individually-bounded categories (service_detail,
@@ -232,9 +245,14 @@ final class WebsitePageStrategy
      *         caller — this class stays free of a Questionnaire model dependency, matching its
      *         own "reads only canonical Business/saved-location/Service/CatalogItem/WebsiteAsset
      *         data" contract), or null when the owner did not add one.
+     * @param  ?array<int, string>  $catalogItemUids  the canonical packages the owner chose to show, in their order;
+     *         null = no explicit choice, every active package is used.
+     * @param  ?array<int, string>  $serviceAreas  the owner's chosen service areas in priority order; null = the
+     *         questionnaire did not collect a list, so no service-area pages are planned. These are SEO/service-area
+     *         targets, never operational saved locations (no location row is created for any of them).
      * @return array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, allowed_section_types: array<int, string>, entity: ?array}>
      */
-    public function buildPlan(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null): array
+    public function buildPlan(Business $business, WebsiteTemplate $template, Website $website, ?array $customSection = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): array
     {
         $manifestByType = collect($template->page_manifest['pages'] ?? [])->keyBy('page_type');
         $allowed = fn (string $type) => $manifestByType->get($type)['allowed_section_types'] ?? [];
@@ -253,7 +271,7 @@ final class WebsitePageStrategy
         ];
 
         $services = $this->eligibleServices($business);
-        $catalogItems = $this->eligibleCatalogItems($business);
+        $catalogItems = $this->selectedCatalogItems($business, $catalogItemUids);
 
         if ($hasType('services_overview') && $services->isNotEmpty()) {
             $plan[] = [
@@ -289,6 +307,15 @@ final class WebsitePageStrategy
         // the total blow past what the AI envelope can afford.
         $remainingPageBudget = max(0, self::MAX_TOTAL_PAGES - count($plan) - $this->fixedPageCount($hasType, $business, $website, $customSection));
 
+        // Service-area pages share the remaining budget with service pages
+        // (up to half of it) so a business with several services still gets
+        // its top areas instead of service_detail pages consuming every
+        // slot. Only the owner's own chosen areas, and only when there is
+        // real service content to localize — never a page for an area with
+        // nothing to say.
+        $areas = $hasType('location') ? $this->plannedAreas($serviceAreas, $services, $catalogItems) : [];
+        $areaBudget = $areas === [] ? 0 : min(count($areas), self::MAX_AREA_PAGES, intdiv($remainingPageBudget + 1, 2));
+
         if ($hasType('service_detail')) {
             // Independent-review correction round 2/3 — bounds the number
             // of AI-authored pages one generation request can ever be
@@ -297,7 +324,7 @@ final class WebsitePageStrategy
             // unbounded in aggregate across steps) repeatable-group
             // answers created. Deterministic and stable: always the
             // first N by this Collection's own existing sort_order.
-            $serviceDetailLimit = min(self::MAX_SERVICE_DETAIL_PAGES, $remainingPageBudget);
+            $serviceDetailLimit = min(self::MAX_SERVICE_DETAIL_PAGES, max(0, $remainingPageBudget - $areaBudget));
 
             foreach ($services->take($serviceDetailLimit) as $service) {
                 $plan[] = [
@@ -392,7 +419,8 @@ final class WebsitePageStrategy
             // now against whatever total-page budget genuinely remains
             // after every fixed page and every service_detail page
             // already placed, not merely its own standalone cap.
-            $locationLimit = min(self::MAX_LOCATION_PAGES, $remainingPageBudget);
+            $locationLimit = min(self::MAX_LOCATION_PAGES, max(0, $remainingPageBudget - $areaBudget));
+            $locationsPlanned = 0;
 
             foreach ($this->eligibleLocations($business)->take($locationLimit) as $location) {
                 $cityLabel = collect([$location->city, $location->region])->filter()->implode(', ');
@@ -406,10 +434,112 @@ final class WebsitePageStrategy
                     'allowed_section_types' => $allowed('location'),
                     'entity' => $this->locationEntity($location),
                 ];
+                $locationsPlanned++;
+            }
+
+            // Service-area pages: the owner's chosen areas, in their priority
+            // order, as many as the budget left allows. Each gets its own
+            // distinct slug/title and its own local facts.
+            $usedSlugs = array_filter(array_column($plan, 'slug'));
+            // The reserve above only guarantees areas are not starved by
+            // service pages; whatever budget genuinely remains after
+            // services and saved locations may all go to areas (still capped).
+            $areaLimit = min(self::MAX_AREA_PAGES, max(0, $remainingPageBudget - $locationsPlanned));
+            $primaryCity = $business->primaryLocation()->first()?->city;
+            $areaPlans = 0;
+
+            foreach ($areas as $area) {
+                if ($areaPlans >= $areaLimit) {
+                    break;
+                }
+
+                $slug = 'serving-' . Str::slug($area);
+
+                if (in_array($slug, $usedSlugs, true)) {
+                    continue; // never two pages at one URL
+                }
+
+                $usedSlugs[] = $slug;
+                $plan[] = [
+                    'page_key' => 'area:' . Str::slug($area),
+                    'page_type' => 'location',
+                    'is_home' => false,
+                    'slug' => $slug,
+                    'title' => 'Serving ' . $area,
+                    'allowed_section_types' => $allowed('location'),
+                    'entity' => $this->areaEntity($area, $areas, $services, $primaryCity),
+                ];
+                $areaPlans++;
             }
         }
 
         return $plan;
+    }
+
+    /**
+     * @param  ?array<int, string>  $uids
+     * @return Collection<int, CatalogItem>
+     */
+    public function selectedCatalogItems(Business $business, ?array $uids): Collection
+    {
+        $items = $this->eligibleCatalogItems($business);
+
+        if ($uids === null) {
+            return $items;
+        }
+
+        $byUid = $items->keyBy('uid');
+
+        return collect($uids)->map(fn ($uid) => $byUid->get($uid))->filter()->values();
+    }
+
+    /**
+     * The owner's chosen service areas that earn a page: distinct URLs,
+     * priority order preserved, capped, and only when the Business has real
+     * service content to write about for them.
+     *
+     * @param  ?array<int, string>  $serviceAreas
+     * @return array<int, string>
+     */
+    private function plannedAreas(?array $serviceAreas, Collection $services, Collection $catalogItems): array
+    {
+        if ($serviceAreas === null || ($services->isEmpty() && $catalogItems->isEmpty())) {
+            return [];
+        }
+
+        $seen = [];
+        $areas = [];
+
+        foreach ($serviceAreas as $area) {
+            $area = trim((string) $area);
+            $slug = Str::slug($area);
+
+            if ($area === '' || $slug === '' || isset($seen[$slug])) {
+                continue;
+            }
+
+            $seen[$slug] = true;
+            $areas[] = $area;
+        }
+
+        return $areas;
+    }
+
+    /**
+     * Only facts the owner actually gave us: the area itself, their other
+     * chosen areas (as "nearby" context) and their real services. Nothing
+     * about the area is invented — no landmarks, distances or statistics.
+     *
+     * @param  array<int, string>  $areas
+     */
+    private function areaEntity(string $area, array $areas, Collection $services, ?string $primaryCity): array
+    {
+        return array_filter([
+            'area' => $area,
+            'business_home_city' => $primaryCity ?: null,
+            'nearby_areas' => array_slice(array_values(array_filter($areas, fn ($other) => $other !== $area)), 0, self::MAX_AREA_NEIGHBORS),
+            'services' => $services->take(8)->pluck('name')->values()->all(),
+        ], fn ($value) => $value !== null && $value !== []);
     }
 
     /**

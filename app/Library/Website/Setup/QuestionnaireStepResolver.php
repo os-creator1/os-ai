@@ -68,11 +68,71 @@ final class QuestionnaireStepResolver
         $keys = array_column($visible, 'key');
         $position = array_search($currentStepKey, $keys, true);
 
-        if ($position === false || ! array_key_exists($position + 1, $keys)) {
+        if ($position === false) {
             return null;
         }
 
-        return $keys[$position + 1];
+        // Screen-aware: the "next" step is the first step of the NEXT
+        // screen, skipping any remaining steps that share the current
+        // step's screen (a step with no `screen` is its own screen, so a
+        // definition without screens behaves exactly as before).
+        $next = $position + 1;
+        $screen = $visible[$position]['screen'] ?? null;
+        while ($screen !== null && isset($visible[$next]) && ($visible[$next]['screen'] ?? null) === $screen) {
+            $next++;
+        }
+
+        return $keys[$next] ?? null;
+    }
+
+    /**
+     * Wizard SCREENS: runs of consecutive visible steps sharing one
+     * `screen` key (a step without one is a screen of its own). A screen is
+     * presentation only — every step in it keeps its own key, answer,
+     * validation and application path.
+     *
+     * @param  array<int, array<string, mixed>>  $steps
+     * @param  array<string, mixed>  $answers
+     * @return array<int, array<int, array<string, mixed>>> screens in order, each a list of its steps
+     */
+    public function screens(array $steps, array $answers): array
+    {
+        $screens = [];
+        $previousScreen = null;
+
+        foreach ($this->visibleSteps($steps, $answers) as $step) {
+            $screen = $step['screen'] ?? null;
+
+            if ($screen !== null && $screen === $previousScreen) {
+                $screens[array_key_last($screens)][] = $step;
+            } else {
+                $screens[] = [$step];
+            }
+
+            $previousScreen = $screen;
+        }
+
+        return $screens;
+    }
+
+    /**
+     * The screen containing a visible step: every step on it, in order
+     * (empty when the step is unknown or hidden). The FIRST entry's key is
+     * the screen's address (current_step_key, URLs, Back/Next).
+     *
+     * @param  array<int, array<string, mixed>>  $steps
+     * @param  array<string, mixed>  $answers
+     * @return array<int, array<string, mixed>>
+     */
+    public function screenFor(array $steps, array $answers, string $stepKey): array
+    {
+        foreach ($this->screens($steps, $answers) as $screen) {
+            if (in_array($stepKey, array_column($screen, 'key'), true)) {
+                return $screen;
+            }
+        }
+
+        return [];
     }
 
     /**
@@ -90,11 +150,28 @@ final class QuestionnaireStepResolver
         $keys = array_column($visible, 'key');
         $position = array_search($currentStepKey, $keys, true);
 
-        if ($position === false || $position === 0) {
+        if ($position === false) {
             return null;
         }
 
-        return $keys[$position - 1];
+        // Screen-aware: step back to the FIRST step of the previous screen.
+        $screenStart = $position;
+        $screen = $visible[$position]['screen'] ?? null;
+        while ($screen !== null && $screenStart > 0 && ($visible[$screenStart - 1]['screen'] ?? null) === $screen) {
+            $screenStart--;
+        }
+
+        if ($screenStart === 0) {
+            return null;
+        }
+
+        $previous = $screenStart - 1;
+        $previousScreen = $visible[$previous]['screen'] ?? null;
+        while ($previousScreen !== null && $previous > 0 && ($visible[$previous - 1]['screen'] ?? null) === $previousScreen) {
+            $previous--;
+        }
+
+        return $keys[$previous];
     }
 
     /**

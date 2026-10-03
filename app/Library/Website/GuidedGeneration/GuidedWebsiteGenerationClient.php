@@ -131,6 +131,15 @@ class GuidedWebsiteGenerationClient
             'Respond with a single JSON object: {"pages": [{"page_key": string, "title": string, "seo_title": string|null, "meta_description": string|null, "sections": [...]}]}.',
         ];
 
+        // Only when the plan actually contains service-area pages (kept out
+        // of every other request so the prompt envelope is unchanged).
+        if (collect($plan)->contains(fn ($page) => is_array($page['entity'] ?? null) && isset($page['entity']['area']))) {
+            array_splice($instructions, -1, 0, [
+                'A plan entry whose entity has an "area" is a service-area page. Write it only for people in THAT area: name the area in the heading and body, and make every area page read genuinely differently from the others (different structure and wording, never the same copy with the area name swapped).',
+                'On a service-area page use only the given facts (the "area", its "nearby_areas", the "services", "business_home_city"). Never invent landmarks, neighborhoods, distances, travel times, local statistics, customers or reviews.',
+            ]);
+        }
+
         return [
             ['role' => 'system', 'content' => implode("\n", $instructions)],
             ['role' => 'user', 'content' => json_encode([

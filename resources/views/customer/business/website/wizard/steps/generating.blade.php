@@ -33,16 +33,43 @@
                     </div>
                 @endif
 
-                @forelse ($answerSummary as $heading => $rows)
+                @forelse ($answerSummary as $heading => $blocks)
                     <div class="card mb-3">
                         <div class="card-body">
-                            <h6 class="mb-2">{{ $heading }}</h6>
-                            <dl class="row mb-0">
-                                @foreach ($rows as $row)
-                                    <dt class="col-sm-5 text-caption fw-normal">{{ $row['prompt'] }}</dt>
-                                    <dd class="col-sm-7">{{ $row['value'] }}</dd>
-                                @endforeach
-                            </dl>
+                            <h6 class="mb-3">{{ $heading }}</h6>
+
+                            @foreach ($blocks as $block)
+                                <div class="mb-3" data-summary-block>
+                                    <div class="d-flex justify-content-between align-items-baseline">
+                                        <div class="text-caption">{{ $block['prompt'] }}</div>
+                                        <a class="text-label" href="{{ route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $block['edit_key']]) }}">Edit</a>
+                                    </div>
+
+                                    @if ($block['kind'] === 'text')
+                                        <div>{{ $block['value'] }}</div>
+                                    @elseif ($block['kind'] === 'photos' || $block['kind'] === 'backdrops')
+                                        <div class="d-flex flex-wrap gap-3 mt-1">
+                                            @foreach ($block['entries'] as $entry)
+                                                <div class="text-center" style="width:96px;">
+                                                    @if ($entry['thumb'])
+                                                        <img src="{{ $entry['thumb'] }}" alt="{{ $entry['label'] }}" class="rounded d-block mb-1" style="width:96px;height:96px;object-fit:cover;">
+                                                    @endif
+                                                    <div class="small">{{ $entry['label'] }}</div>
+                                                    @if ($entry['meta'])
+                                                        <div class="text-caption small">{{ $entry['meta'] }}</div>
+                                                    @endif
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @else
+                                        <ul class="mb-0 ps-3">
+                                            @foreach ($block['entries'] as $entry)
+                                                <li>{{ $entry['label'] }}@if ($entry['meta']) <span class="text-caption">&mdash; {{ $entry['meta'] }}</span>@endif</li>
+                                            @endforeach
+                                        </ul>
+                                    @endif
+                                </div>
+                            @endforeach
                         </div>
                     </div>
                 @empty

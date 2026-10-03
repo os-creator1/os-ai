@@ -170,13 +170,32 @@ final class WebsiteSetupSessionManager
      */
     public function saveAnswer(QuestionnaireResponse $response, string $stepKey, mixed $value, int $expectedRevision): QuestionnaireResponse
     {
-        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($stepKey, $value, $expectedRevision) {
+        return $this->saveAnswers($response, $stepKey, [$stepKey => $value], $expectedRevision);
+    }
+
+    /**
+     * Saves every answer of ONE wizard screen atomically (a screen groups
+     * several atomic steps; the revision check, size cap and step advance
+     * apply once to the whole screen). `$screenKey` is the screen's
+     * address — its first step's key — and the resume position advances to
+     * the next screen.
+     *
+     * @param  array<string, mixed>  $values  step key => validated value
+     *
+     * @throws AnswerRevisionConflictException
+     */
+    public function saveAnswers(QuestionnaireResponse $response, string $screenKey, array $values, int $expectedRevision): QuestionnaireResponse
+    {
+        return $this->runIfNotGenerating($response, function (QuestionnaireResponse $locked) use ($screenKey, $values, $expectedRevision) {
             if ((int) $locked->answers_revision !== $expectedRevision) {
                 throw new AnswerRevisionConflictException((int) $locked->answers_revision);
             }
 
             $answers = $locked->answers ?? [];
-            $answers[$stepKey] = $value;
+            foreach ($values as $key => $value) {
+                $answers[$key] = $value;
+            }
+            $stepKey = $screenKey;
 
             if (strlen((string) json_encode($answers)) > self::MAX_ANSWERS_JSON_BYTES) {
                 throw new DomainException('This answer is too large to save.');

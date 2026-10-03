@@ -895,6 +895,7 @@ final class WebsiteStarterDraftService
         return ['type' => 'services', 'data' => [
             'heading' => 'Packages & products',
             'items' => $catalog->map(fn ($item) => array_filter([
+                'catalog_item_uid' => $item->uid,
                 'name' => Str::limit($item->name, 120, ''),
                 'description' => $item->description ? Str::limit($item->description, $descriptionLength, '') : null,
                 'price_label' => $item->price_minor !== null && $item->currency_code

@@ -77,9 +77,9 @@ final class GuidedGenerationCommitService
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  the owner's optional custom-section questionnaire answer (Website Builder redesign) — see WebsitePageStrategy::buildPlan()
      * @param  ?array<int, array{question: string, answer: string}>  $customerFaq  the owner's own FAQ answers, appended verbatim to the FAQ page's section — never sent to AI to rewrite (independent-review correction round 2)
      */
-    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function generateFull(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_FULL_GENERATION, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas);
     }
 
     /**
@@ -95,9 +95,9 @@ final class GuidedGenerationCommitService
     /**
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection
      */
-    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    public function rebuild(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $idempotencyKey, ?string $fenceToken = null, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
     {
-        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq);
+        return $this->run($business, $website, $template, $actorUserId, $idempotencyKey, WebsiteGuidedGenerationAttempt::MODE_REBUILD, $fenceToken, $customSection, $customerFaq, $catalogItemUids, $serviceAreas);
     }
 
     /**
@@ -123,9 +123,9 @@ final class GuidedGenerationCommitService
             ]);
     }
 
-    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null): WebsiteGuidedGenerationAttempt
+    private function run(Business $business, Website $website, WebsiteTemplate $template, int $actorUserId, string $callerIdempotencyKey, string $mode, ?string $fenceToken, ?array $customSection = null, ?array $customerFaq = null, ?array $catalogItemUids = null, ?array $serviceAreas = null): WebsiteGuidedGenerationAttempt
     {
-        $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection);
+        $plan = $this->pageStrategy->buildPlan($business, $template, $website, $customSection, $catalogItemUids, $serviceAreas);
         $aiPlan = WebsitePageStrategy::withoutAiUnfillableSections($plan);
         $facts = $this->client->canonicalFacts($business);
         $materialBase = $this->materialIdempotencyBase($template, $mode, $plan, $facts, $callerIdempotencyKey);
@@ -391,6 +391,7 @@ final class GuidedGenerationCommitService
                 'is_home' => $planPage['is_home'],
                 'slug' => $planPage['slug'],
                 'title' => $content['title'] ?? $planPage['title'],
+                'entity' => $planPage['entity'] ?? null,
                 'seo_title' => $content['seo_title'] ?? null,
                 'meta_description' => $content['meta_description'] ?? null,
                 'sections' => $content['sections'] ?? [],

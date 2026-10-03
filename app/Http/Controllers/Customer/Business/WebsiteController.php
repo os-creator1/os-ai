@@ -79,6 +79,7 @@ class WebsiteController extends CustomerBaseController
         private readonly QuestionnaireResolver $questionnaireResolver,
         private readonly \App\Library\Website\GuidedGeneration\WebsiteGenerationCoordinator $generationCoordinator,
         private readonly \App\Library\Website\Setup\WebsiteCreationStateResolver $creationState,
+        private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences,
     ) {
     }
 
@@ -424,7 +425,7 @@ class WebsiteController extends CustomerBaseController
                     'noindex' => $page->noindex,
                 ],
             ],
-            'sections' => $page->sections ?? [],
+            'sections' => $this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id),
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => true,
@@ -726,8 +727,8 @@ class WebsiteController extends CustomerBaseController
             $customerFaq = WizardPresentationAnswers::customerFaq($completedResponse);
 
             $attempt = $mode === WebsiteGuidedGenerationAttempt::MODE_REBUILD
-                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq)
-                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq);
+                ? $this->guidedGeneration->rebuild($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse))
+                : $this->guidedGeneration->generateFull($business, $website, $template, (int) Auth::id(), $idempotencyKey, $leaseToken, $customSection, $customerFaq, WizardPresentationAnswers::catalogSelection($completedResponse), WizardPresentationAnswers::serviceAreas($completedResponse));
 
             if ($attempt->status === WebsiteGuidedGenerationAttempt::STATUS_SUCCEEDED) {
                 return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
