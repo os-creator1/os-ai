@@ -98,10 +98,14 @@ class BlockDocumentRenderingAndSchemaTest extends TestCase
     public function test_version_lock_version_and_sms_delivery_columns_exist_with_safe_defaults(): void
     {
         $tenant = $this->sendableTenant();
+        // A brand-new draft starts at 1; every later draft mutation moves it on (17B §5).
+        $fresh = app(DocumentManager::class)->create($tenant['business'], $tenant['location'], $tenant['contact'], null, 'proposal', 'Fresh', $tenant['customer']->user);
+        $this->assertSame(1, BusinessDocumentVersion::where('business_document_id', $fresh->id)->sole()->lock_version);
+
         $document = $this->draftDocument($tenant);
         $version = BusinessDocumentVersion::where('business_document_id', $document->id)->sole();
 
-        $this->assertSame(1, $version->lock_version);
+        $this->assertGreaterThan(1, $version->lock_version);
         $this->assertNull($document->sms_link_delivered_at);
         $this->assertNull($document->sms_link_delivery_failed_at);
 
@@ -229,8 +233,13 @@ class BlockDocumentRenderingAndSchemaTest extends TestCase
     {
         $tenant = $this->sendableTenant();
         $document = $this->draftDocument($tenant);
-        app(DocumentManager::class)->edit($document, ['content' => BlockSchema::document([['type' => 'text', 'data' => ['runs' => [['t' => 'Hello']]]]])]);
+        app(DocumentManager::class)->edit($document, ['content' => BlockSchema::document([['type' => 'text', 'data' => ['runs' => [['t' => 'Hello']]]], ['type' => 'signature', 'data' => []]])]);
         [$document, $token] = $this->sendAndCaptureToken($document->refresh());
+
+        // send() now refuses a block document without its signature block, so a version that
+        // lacks one can only exist from before that rule: model it by rewriting the issued row.
+        $issued = BusinessDocumentVersion::findOrFail($document->current_version_id);
+        DB::table('business_document_versions')->where('id', $issued->id)->update(['content' => json_encode(array_merge($issued->content, ['blocks' => [$issued->content['blocks'][0]]]))]);
 
         $html = $this->get($this->publicUrl($document, $token))->assertOk()->getContent();
 

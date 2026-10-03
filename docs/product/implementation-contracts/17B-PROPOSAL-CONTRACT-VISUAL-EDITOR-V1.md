@@ -139,6 +139,24 @@ version) are editable, through the existing `draft()` guard. Signature still bin
 (blocks, payment_plan, parties); no hashing change other than the extended
 `parties` snapshot.
 
+## 8a. Editor JSON API (stage 3a — implemented)
+
+Routes `customer.workspaces.businesses.documents.editor.*` under the documents
+group, same gate chain as `DocumentsController` (`ResolvesBusinessDocuments`).
+`DocumentEditorController` is a thin adapter over `DocumentEditorService`; every
+write is a `DocumentManager` draft mutation. Every mutating document endpoint
+requires `expected_lock_version`; answers are `200 {status:'ok', lock_version,
+...}`, `409 {status:'conflict', lock_version}`, `422 {status:'invalid', errors}`,
+`404` for any foreign/unknown uid. `DocumentManager` mutations take an optional
+`?int $expectedLockVersion` (null = no precondition) and always bump the open
+draft's `lock_version`; a hand-written `setSchedule()` supersedes the stored
+`content.payment_plan`. `recalculate()` re-applies the plan through
+`DocumentPaymentPlanCompiler`; if `deposit >= total` the schedule stays cleared,
+the intent is kept and the response carries `plan_invalid`. `send()` refuses a
+block document that requires a signature and has no signature block.
+Legacy upgrade (`editor.upgrade`) converts a DRAFT legacy body to blocks once and
+keeps the original `body`.
+
 ## 9. Deferred / reported gaps
 
 Text, date, checkbox fields; multi-recipient signing; columns; free image upload

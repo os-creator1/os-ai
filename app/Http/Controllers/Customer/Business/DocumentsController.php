@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Customer\Business;
 
 use App\Enums\Entitlement\PlatformFeature;
-use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessDocuments;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentBlockRenderer;
@@ -30,7 +30,7 @@ use Illuminate\View\View;
 
 class DocumentsController extends CustomerBaseController
 {
-    use ResolvesBusinessTenancy;
+    use ResolvesBusinessDocuments;
 
     public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments) {}
 
@@ -224,36 +224,5 @@ class DocumentsController extends CustomerBaseController
             return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
         }
         return back()->with(['status' => 'success', 'message' => 'Refund requested.']);
-    }
-
-    private function document(string $workspaceUid, string $businessUid, string $documentUid): BusinessDocument
-    {
-        $business = $this->business($workspaceUid, $businessUid);
-        $document = BusinessDocument::where('business_id', $business->id)->where('uid', $documentUid)->first() ?? abort(404);
-        $location = BusinessLocation::where('business_id', $business->id)->find($document->business_location_id) ?? abort(404);
-        $this->location($location);
-        return $document;
-    }
-
-    private function business(string $workspaceUid, string $businessUid): Business
-    {
-        [$workspace, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
-        $this->authorize('payments_contracts');
-        abort_unless($this->entitlementAllows($workspace, $business), 404);
-        return $business;
-    }
-
-    protected function entitlementAllows(\App\Models\Workspace $workspace, Business $business): bool
-    {
-        return $this->entitlements->decide($workspace, $business, PlatformFeature::PaymentsContracts->value, (int) Auth::id())->allowed;
-    }
-
-    private function location(BusinessLocation $location): void
-    {
-        try {
-            $this->locations->assertUserCanAccessLocation((int) Auth::id(), $location);
-        } catch (LocationAccessDeniedException) {
-            abort(404);
-        }
     }
 }

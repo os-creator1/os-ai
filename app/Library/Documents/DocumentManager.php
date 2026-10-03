@@ -14,6 +14,9 @@ use App\Events\DocumentVoided;
 use App\Jobs\Documents\SendDocumentLinkEmail;
 use App\Jobs\Documents\SendDocumentReminderEmail;
 use App\Library\Catalog\PackageSnapshotService;
+use App\Exceptions\Documents\DocumentDraftConflictException;
+use App\Exceptions\Documents\InvalidDocumentBlocksException;
+use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Models\Business;
 use App\Models\BusinessDocument;
@@ -23,6 +26,7 @@ use App\Models\BusinessDocumentSignature;
 use App\Models\BusinessDocumentVersion;
 use App\Models\BusinessLocation;
 use App\Models\CatalogItem;
+use App\Models\CatalogItemImage;
 use App\Models\Contacts;
 use App\Models\CrmOpportunity;
 use App\Models\User;
@@ -46,10 +50,29 @@ final class DocumentManager
      */
     public const CONSENT_STATEMENT = 'By typing my name below and submitting this form, I agree to the contents of this document as shown on this page, and I intend my typed name to act as my signature.';
 
+    /** Contract 17B §5 — the lock_version the most recent draft mutation of THIS instance left behind. */
+    private ?int $lastLockVersion = null;
+
+    private readonly DocumentPaymentPlanCompiler $plans;
+
     public function __construct(
         private readonly PackageSnapshotService $snapshots,
         private readonly DocumentContentHasher $hasher,
-    ) {}
+        ?DocumentPaymentPlanCompiler $plans = null,
+    ) {
+        $this->plans = $plans ?? new DocumentPaymentPlanCompiler();
+    }
+
+    /**
+     * Contract 17B §5 — the open draft version's lock_version as the last
+     * draft mutation made through this manager committed it (null before any).
+     * Callers use it to hand the new version back to the editor without a
+     * second, racy read.
+     */
+    public function lastLockVersion(): ?int
+    {
+        return $this->lastLockVersion;
+    }
 
     public function create(Business $business, BusinessLocation $location, Contacts $contact, ?CrmOpportunity $opportunity, string $kind, string $title, User $actor): BusinessDocument
     {
@@ -78,10 +101,16 @@ final class DocumentManager
         });
     }
 
-    public function edit(BusinessDocument $document, array $attributes): BusinessDocument
+    /**
+     * `$expectedLockVersion` (Contract 17B §5): null = no precondition (every
+     * pre-17B caller); an int must equal the open draft's lock_version or
+     * DocumentDraftConflictException is thrown. Every successful draft mutation
+     * increments the version either way.
+     */
+    public function edit(BusinessDocument $document, array $attributes, ?int $expectedLockVersion = null): BusinessDocument
     {
-        return DB::transaction(function () use ($document, $attributes) {
-            [$document, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $attributes, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
             if (array_key_exists('title', $attributes)) {
                 $this->require($document->status === DocumentStatus::Draft, 'The title is frozen after send.');
                 $title = trim((string) $attributes['title']);
@@ -90,8 +119,14 @@ final class DocumentManager
             }
             if (array_key_exists('content', $attributes)) {
                 $this->require(is_array($attributes['content']), 'Invalid draft content.');
-                $version->content = $attributes['content'];
-                $version->save();
+                $content = $attributes['content'];
+                if (array_key_exists('blocks', $content)) {
+                    // Contract 17B §2 — the one writer-side authority validates and
+                    // sanitises; images are bound to THIS Business's catalog images.
+                    $content['blocks'] = BlockSchema::normalize($content['blocks'], $this->blockOptions($document));
+                    $content['schema_version'] = BlockSchema::SCHEMA_VERSION;
+                }
+                $version->content = $content;
             }
             // §5.2/§5.3.1 — the recipient snapshot may be prefilled and
             // corrected while the document has never been sent, and is FROZEN
@@ -115,7 +150,66 @@ final class DocumentManager
                 $document->{$field} = $value;
             }
             $document->save();
+            $this->bump($version);
             return $document->refresh();
+        });
+    }
+
+    /**
+     * Contract 17B §2/§5 — the editor's autosave: replace the draft's blocks
+     * (and optionally the title), keeping every other key of the version
+     * content (`payment_plan`, ...) exactly as it is.
+     *
+     * @throws InvalidDocumentBlocksException
+     * @throws DocumentDraftConflictException
+     */
+    public function saveBlocks(BusinessDocument $document, mixed $blocks, ?string $title = null, ?int $expectedLockVersion = null): BusinessDocument
+    {
+        return DB::transaction(function () use ($document, $blocks, $title, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
+            $content = is_array($version->content) ? $version->content : [];
+            $content['blocks'] = $blocks;
+            $attributes = ['content' => $content];
+            if ($title !== null) {
+                $attributes['title'] = $title;
+            }
+
+            // The precondition was just checked on the locked row above.
+            return $this->edit($document, $attributes);
+        });
+    }
+
+    /**
+     * Contract 17B §3 — store the payment INTENT in `content.payment_plan` and
+     * compile it to the canonical schedule. A null plan clears both.
+     *
+     * @param  array<string, mixed>|null  $plan  structure, deposit_minor, full_due, full_due_date, balance_due, balance_due_date
+     * @return array<string, mixed>|null the normalised plan that was stored
+     *
+     * @throws \App\Exceptions\Documents\InvalidDocumentPaymentPlanException
+     * @throws DocumentDraftConflictException
+     */
+    public function setPaymentPlan(BusinessDocument $document, ?array $plan, ?int $expectedLockVersion = null): ?array
+    {
+        return DB::transaction(function () use ($document, $plan, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
+            $content = is_array($version->content) ? $version->content : [];
+
+            if ($plan === null) {
+                unset($content['payment_plan']);
+                $normalised = null;
+            } else {
+                $normalised = $this->plans->normalize($plan, (int) $version->total_minor);
+                $content['payment_plan'] = $normalised;
+            }
+
+            $version->content = $content;
+            $version->save();
+            $version->paymentScheduleItems()->delete();
+            $this->reapplyPlan($document, $version);
+            $this->bump($version);
+
+            return $normalised;
         });
     }
 
@@ -190,6 +284,16 @@ final class DocumentManager
             $recipient = $document->recipient_email_snapshot;
             $this->require(is_string($recipient) && trim($recipient) !== ''
                 && filter_var(trim($recipient), FILTER_VALIDATE_EMAIL) !== false, 'A valid recipient email address is required before sending.');
+
+            // Contract 17B §2 — a block document that must be signed has to say where.
+            // Legacy (no blocks) documents are unaffected.
+            if (BlockSchema::hasBlocks($version->content)) {
+                try {
+                    BlockSchema::assertSendable($version->content['blocks'], (bool) $document->requires_signature);
+                } catch (InvalidDocumentBlocksException $e) {
+                    throw ValidationException::withMessages(['document' => $e->getMessage()]);
+                }
+            }
 
             // §5.3.1 — the previous issued version makes its ONE authorized
             // lifecycle transition. Its commercial content is untouched.
@@ -570,10 +674,10 @@ final class DocumentManager
             && strcasecmp(trim((string) ($evidence['signer_email'] ?? '')), (string) $existing->signer_email) === 0;
     }
 
-    public function addCatalogLine(BusinessDocument $document, CatalogItem $item, int $quantity, User $actor, ?int $explicitPriceMinor = null): BusinessDocumentLineItem
+    public function addCatalogLine(BusinessDocument $document, CatalogItem $item, int $quantity, User $actor, ?int $explicitPriceMinor = null, ?int $expectedLockVersion = null): BusinessDocumentLineItem
     {
-        return DB::transaction(function () use ($document, $item, $quantity, $actor, $explicitPriceMinor) {
-            [$document, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $item, $quantity, $actor, $explicitPriceMinor, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
             $this->validQuantity($quantity);
             $location = BusinessLocation::findOrFail($document->business_location_id);
             $this->require((int) $location->business_id === (int) $document->business_id && $location->isActive(), 'Invalid document Location.');
@@ -585,50 +689,81 @@ final class DocumentManager
             $snapshot = $this->snapshots->snapshotForBusiness($documentBusiness, $item, $location, $actor, $explicitPriceMinor);
             $this->require($snapshot->currency_code_at_snapshot === $document->currency_code, 'Catalog currency differs from document currency.');
             $line = $this->insertLine($version, 'catalog', $snapshot->uid, $snapshot->name_at_snapshot, $snapshot->description_at_snapshot, $quantity, (int) $snapshot->price_minor_at_snapshot, $document->currency_code);
-            $this->recalculate($version);
+            $this->recalculate($document, $version);
+            $this->bump($version);
             return $line;
         });
     }
 
-    public function addCustomLine(BusinessDocument $document, string $name, ?string $description, int $quantity, int $unitPriceMinor): BusinessDocumentLineItem
+    public function addCustomLine(BusinessDocument $document, string $name, ?string $description, int $quantity, int $unitPriceMinor, ?int $expectedLockVersion = null): BusinessDocumentLineItem
     {
-        return DB::transaction(function () use ($document, $name, $description, $quantity, $unitPriceMinor) {
-            [$document, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $name, $description, $quantity, $unitPriceMinor, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
             $this->validQuantity($quantity);
             $this->require(trim($name) !== '' && mb_strlen($name) <= 200 && $unitPriceMinor >= 0, 'Invalid custom line.');
             $line = $this->insertLine($version, 'custom', null, trim($name), $description, $quantity, $unitPriceMinor, $document->currency_code);
-            $this->recalculate($version);
+            $this->recalculate($document, $version);
+            $this->bump($version);
             return $line;
         });
     }
 
-    public function removeLine(BusinessDocument $document, BusinessDocumentLineItem $line): void
+    /**
+     * Contract 17B — change one line's quantity. The unit price is the line's
+     * own (a catalog line's frozen snapshot price is never re-read).
+     */
+    public function updateLineQuantity(BusinessDocument $document, BusinessDocumentLineItem $line, int $quantity, ?int $expectedLockVersion = null): BusinessDocumentLineItem
     {
-        DB::transaction(function () use ($document, $line) {
-            [, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $line, $quantity, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
+            $this->validQuantity($quantity);
             $line = BusinessDocumentLineItem::where('business_document_version_id', $version->id)->findOrFail($line->id);
-            $line->delete();
-            $this->recalculate($version);
+            $unit = (int) $line->unit_price_minor;
+            $this->require($unit >= 0 && $unit <= intdiv(PHP_INT_MAX, $quantity), 'Line total overflow.');
+            $line->quantity = $quantity;
+            $line->line_total_minor = $unit * $quantity;
+            $line->save();
+            $this->recalculate($document, $version);
+            $this->bump($version);
+            return $line->refresh();
         });
     }
 
-    public function reorderLines(BusinessDocument $document, array $lineIds): void
+    public function removeLine(BusinessDocument $document, BusinessDocumentLineItem $line, ?int $expectedLockVersion = null): int
     {
-        DB::transaction(function () use ($document, $lineIds) {
-            [, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $line, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
+            $line = BusinessDocumentLineItem::where('business_document_version_id', $version->id)->findOrFail($line->id);
+            $line->delete();
+            $this->recalculate($document, $version);
+            return $this->bump($version);
+        });
+    }
+
+    public function reorderLines(BusinessDocument $document, array $lineIds, ?int $expectedLockVersion = null): int
+    {
+        return DB::transaction(function () use ($document, $lineIds, $expectedLockVersion) {
+            [, $version] = $this->draft($document, $expectedLockVersion);
             $lines = $version->lineItems()->orderBy('id')->get();
             $this->require(count($lineIds) === $lines->count() && count(array_unique($lineIds)) === count($lineIds)
                 && array_diff($lineIds, $lines->pluck('id')->all()) === [], 'Invalid line order.');
             foreach ($lineIds as $position => $id) {
                 BusinessDocumentLineItem::whereKey($id)->where('business_document_version_id', $version->id)->update(['position' => $position]);
             }
+            return $this->bump($version);
         });
     }
 
-    public function setSchedule(BusinessDocument $document, array $terms): void
+    /**
+     * An explicit schedule. Because it is the Business's own, hand-written
+     * statement of the terms, it supersedes any stored `content.payment_plan`
+     * intent — otherwise a stale intent would silently overwrite it on the next
+     * line change (Contract 17B §3). The editor uses setPaymentPlan() instead.
+     */
+    public function setSchedule(BusinessDocument $document, array $terms, ?int $expectedLockVersion = null): int
     {
-        DB::transaction(function () use ($document, $terms) {
-            [$document, $version] = $this->draft($document);
+        return DB::transaction(function () use ($document, $terms, $expectedLockVersion) {
+            [$document, $version] = $this->draft($document, $expectedLockVersion);
             $this->require(count($terms) === 1 || count($terms) === 2, 'Schedule requires full or deposit and balance.');
             $expected = count($terms) === 1 ? ['full'] : ['deposit', 'balance'];
             $sum = 0;
@@ -640,15 +775,76 @@ final class DocumentManager
                 $sum += $amount;
             }
             $this->require($sum === (int) $version->total_minor, 'Schedule must equal document total.');
-            $version->paymentScheduleItems()->delete();
-            foreach ($terms as $index => $term) {
-                BusinessDocumentPaymentScheduleItem::create([
-                    'business_document_version_id' => $version->id, 'sequence' => $index + 1,
-                    'kind' => $term['kind'], 'amount_minor' => $term['amount_minor'],
-                    'currency_code' => $document->currency_code, 'due_at' => $term['due_at'] ?? null,
-                ]);
+            $this->writeSchedule($document, $version, $terms);
+            $content = is_array($version->content) ? $version->content : [];
+            if (array_key_exists('payment_plan', $content)) {
+                unset($content['payment_plan']);
+                $version->content = $content;
             }
+            return $this->bump($version);
         });
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $terms  already validated against the total
+     */
+    private function writeSchedule(BusinessDocument $document, BusinessDocumentVersion $version, array $terms): void
+    {
+        $version->paymentScheduleItems()->delete();
+        foreach ($terms as $index => $term) {
+            BusinessDocumentPaymentScheduleItem::create([
+                'business_document_version_id' => $version->id, 'sequence' => $index + 1,
+                'kind' => $term['kind'], 'amount_minor' => $term['amount_minor'],
+                'currency_code' => $document->currency_code, 'due_at' => $term['due_at'] ?? null,
+            ]);
+        }
+    }
+
+    /**
+     * Contract 17B §3 — recalculate() wipes the schedule, so a stored payment
+     * INTENT is compiled again straight afterwards. If the new total can no
+     * longer honour it (deposit >= total) the schedule stays cleared and the plan
+     * is kept as intent; the editor reports `plan_invalid` rather than leaving
+     * an inconsistent schedule, and send() refuses without a schedule.
+     */
+    private function reapplyPlan(BusinessDocument $document, BusinessDocumentVersion $version): void
+    {
+        $plan = is_array($version->content) ? ($version->content['payment_plan'] ?? null) : null;
+        $total = (int) $version->total_minor;
+
+        if (! is_array($plan) || $total <= 0 || $this->plans->problem($plan, $total) !== null) {
+            return;
+        }
+
+        $business = Business::find($document->business_id);
+        $terms = $this->plans->compile($plan, $total, (string) $document->currency_code, $business?->timezone);
+        $this->writeSchedule($document, $version, $terms);
+    }
+
+    /**
+     * Contract 17B §5 — one step forward for every successful draft mutation.
+     * The row is already locked by draft(), so a plain save is the conditional
+     * update.
+     */
+    private function bump(BusinessDocumentVersion $version): int
+    {
+        $version->lock_version = (int) $version->lock_version + 1;
+        $version->save();
+
+        return $this->lastLockVersion = (int) $version->lock_version;
+    }
+
+    /**
+     * @return array{image_owned: callable}
+     */
+    private function blockOptions(BusinessDocument $document): array
+    {
+        $businessId = (int) $document->business_id;
+
+        return ['image_owned' => fn (string $uid): bool => CatalogItemImage::query()
+            ->where('uid', $uid)
+            ->whereHas('catalogItem', fn ($query) => $query->where('business_id', $businessId))
+            ->exists()];
     }
 
     public function void(BusinessDocument $document, string $reason): BusinessDocument
@@ -1003,12 +1199,18 @@ final class DocumentManager
         return $offsets;
     }
 
-    private function draft(BusinessDocument $document): array
+    private function draft(BusinessDocument $document, ?int $expectedLockVersion = null): array
     {
         $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
         $this->require(in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Sent], true), 'Only an open draft can be authored.');
         $version = BusinessDocumentVersion::where('business_document_id', $document->id)->where('state', DocumentVersionState::Draft->value)->lockForUpdate()->first();
         $this->require($version !== null, 'No open draft version.');
+        // Contract 17B §5 — the optimistic-concurrency precondition, compared on
+        // the locked row. The existing guards above stay authoritative: a
+        // sent/signed/void document is refused before any version is compared.
+        if ($expectedLockVersion !== null && (int) $version->lock_version !== $expectedLockVersion) {
+            throw new DocumentDraftConflictException((int) $version->lock_version);
+        }
         return [$document, $version];
     }
 
@@ -1035,7 +1237,7 @@ final class DocumentManager
         ]);
     }
 
-    private function recalculate(BusinessDocumentVersion $version): void
+    private function recalculate(BusinessDocument $document, BusinessDocumentVersion $version): void
     {
         $sum = 0;
         foreach ($version->lineItems as $line) {
@@ -1046,6 +1248,7 @@ final class DocumentManager
         $version->total_minor = $sum;
         $version->save();
         $version->paymentScheduleItems()->delete();
+        $this->reapplyPlan($document, $version);
     }
 
     private function validQuantity(int $quantity): void
