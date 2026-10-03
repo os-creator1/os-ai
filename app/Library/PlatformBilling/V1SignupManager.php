@@ -229,20 +229,42 @@ final class V1SignupManager
             return false;
         }
 
-        if ($this->assignments->findByWorkspaceId((int) $workspace->id) !== null) {
-            return true;
+        // THE CANONICAL ASSIGNMENT MUST EXIST BEFORE THE BUSINESS IS
+        // ACTIVATED. workspace_plan_assignments is the V1 entitlement/access
+        // authority (RFC-004 §14); a provider-confirmed subscription is
+        // reason to WRITE that authority, never reason to expose an Active
+        // Business on the strength of provider confirmation alone. Activating
+        // first and assigning second could leave an Active Business with no
+        // assignment behind it if the assignment write then threw — a worse,
+        // silently-inconsistent account than the Draft this fixes. So the
+        // assignment is attempted first, and an unexpected failure here
+        // propagates uncaught, leaving the Business Draft exactly as it was.
+        if ($this->assignments->findByWorkspaceId((int) $workspace->id) === null) {
+            try {
+                $this->subscriptions->assignPlanFromConfirmedSubscription(
+                    $workspace,
+                    $subscription,
+                    $catalog->tier,
+                    (int) $workspace->owner_user_id,
+                );
+            } catch (WorkspacePlanAlreadyAssignedException) {
+                // The other path won the race. One assignment, which is the point.
+            }
         }
 
-        try {
-            $this->subscriptions->assignPlanFromConfirmedSubscription(
-                $workspace,
-                $subscription,
-                $catalog->tier,
-                (int) $workspace->owner_user_id,
-            );
-        } catch (WorkspacePlanAlreadyAssignedException) {
-            // The other path won the race. One assignment, which is the point.
-            return true;
+        // Only reached once the assignment is known to exist — either just
+        // written above, or already present from an earlier call. The
+        // Business this same provisioning step created (Contract 21 §7's
+        // "one Business per Workspace") has been sitting Draft since
+        // provision() — nothing else in the product ever activates a
+        // self-signup Business. Run every time this seam does, not only on a
+        // freshly-made assignment, so a re-delivered webhook or a repeated
+        // Checkout-return visit also repairs an account this defect left
+        // stuck before the fix.
+        $business = Business::query()->where('workspace_id', $workspace->id)->first();
+
+        if ($business !== null) {
+            $this->businesses->activateForConfirmedSignup($business);
         }
 
         return true;
