@@ -212,6 +212,49 @@ class SeoReviewsHttpTest extends TestCase
         $this->assertSame('declined', $second->fresh()->status->value);
     }
 
+    public function test_the_redesigned_page_shows_summary_tiles_status_and_the_right_actions_per_location(): void
+    {
+        [, $business, $workspace, $location] = $this->tenant();
+        $linked = $this->reviewLocation($business, 'Linked Branch');
+        $this->makeReviewLink($business, $linked, 'https://g.page/r/abc/review');
+        $this->makeReviewRequest($business, $linked);
+
+        $html = $this->page($workspace, $business);
+
+        // Summary tiles are derived from the sections already read.
+        foreach (['summary-with-link', 'summary-missing-link', 'summary-requests', 'summary-last-request'] as $tile) {
+            $this->assertStringContainsString('data-role="' . $tile . '"', $html);
+        }
+        $this->assertStringContainsString('jump-to-missing', $html, 'A manager is pointed at the Location that still needs a link.');
+        $this->assertStringContainsString('href="#location-' . $location->uid . '"', $html);
+
+        // One empty state (no link) and one ready state (link) with copy + open.
+        $this->assertSame(1, substr_count($html, 'data-role="review-link-empty"'));
+        $this->assertSame(1, substr_count($html, 'data-role="copy-link"'));
+        $this->assertSame(1, substr_count($html, 'data-role="review-link-url"'));
+        $this->assertStringContainsString('data-copy-link="https://g.page/r/abc/review"', $html);
+        $this->assertSame(2, substr_count($html, 'data-role="review-link-status"'));
+        $this->assertStringContainsString('Needs a review link', $html);
+        $this->assertStringContainsString('Review link ready', $html);
+        // The empty-state Location has no requests yet.
+        $this->assertSame(1, substr_count($html, 'data-role="requests-empty"'));
+    }
+
+    public function test_a_reader_without_manage_seo_sees_state_but_no_forms_or_jump_button(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant(WorkspacePlanTier::Growth);
+        $this->reviewLocation($business, 'Read Only Branch');
+        $this->authenticateAsSeoCustomer($customer, ['view_seo', 'view_google_business_profile', 'website']);
+
+        $html = $this->page($workspace, $business);
+
+        $this->assertStringContainsString('data-role="review-link-none"', $html);
+        $this->assertStringContainsString('Someone who manages SEO can add the link', $html);
+        foreach (['data-role="link-form"', 'data-role="request-form"', 'jump-to-missing'] as $control) {
+            $this->assertStringNotContainsString($control, $html);
+        }
+    }
+
     public function test_the_page_shows_a_plain_count_and_no_target_or_ranking(): void
     {
         [, $business, $workspace, $location] = $this->tenant();

@@ -948,6 +948,15 @@ Website SEO; H = entitlement/nav/integration.
   code); no Google review content stored (schema test: no rating/reviewer/text
   columns); no dead Ratings tab.
 - **Risk:** Low–Medium (Contact linkage).
+- **Page layout (presentation only, no behaviour change):** header, four
+  summary tiles (Locations with / missing a link, requests recorded, awaiting an
+  outcome, last request — all derived from the sections the page reader already
+  returns, no extra query), then one card per Location with a status badge, the
+  link field with Copy link / Open link, in-page `<details>` forms for Add/Change
+  link and Record a request, and empty states. No tabs, no modal `data-bs-*`
+  hooks and no script inside `reviews.blade.php` (the boundary test scans that
+  file); the copy-to-clipboard helper and styles live in the
+  `_reviews-copy` / `_reviews-style` partials and make no network request.
 
 ### Sub-slice G — Technical / Website SEO audit
 
