@@ -124,7 +124,10 @@
     {{ $blocksHtml }}
 
     @if($schedule->isNotEmpty())
-        @include('public.documents._payment')
+        {{-- Contract 17B §7 — the sign-then-pay landing anchor. --}}
+        <div id="pay" data-role="payment-section">
+            @include('public.documents._payment')
+        </div>
     @endif
 
     {{-- The sign form is injected at the signature block; if the version has

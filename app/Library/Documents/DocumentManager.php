@@ -11,7 +11,7 @@ use App\Events\DocumentExpired;
 use App\Events\DocumentSent;
 use App\Events\DocumentSigned;
 use App\Events\DocumentVoided;
-use App\Jobs\Documents\SendDocumentLinkEmail;
+use App\Library\Documents\Delivery\DocumentLinkDispatcher;
 use App\Jobs\Documents\SendDocumentReminderEmail;
 use App\Library\Catalog\PackageSnapshotService;
 use App\Exceptions\Documents\DocumentDraftConflictException;
@@ -55,6 +55,9 @@ final class DocumentManager
 
     private readonly DocumentPaymentPlanCompiler $plans;
 
+    /** Contract 17B §7 — per-channel result of the most recent send / resend through THIS instance. */
+    private array $lastDelivery = [];
+
     public function __construct(
         private readonly PackageSnapshotService $snapshots,
         private readonly DocumentContentHasher $hasher,
@@ -72,6 +75,22 @@ final class DocumentManager
     public function lastLockVersion(): ?int
     {
         return $this->lastLockVersion;
+    }
+
+    /**
+     * Contract 17B §7 — what each requested delivery channel did for the last
+     * send() / resendLink() of this instance (empty for a replay).
+     *
+     * @return array<string, array<string, string>>
+     */
+    public function lastDelivery(): array
+    {
+        return $this->lastDelivery;
+    }
+
+    private function dispatcher(): DocumentLinkDispatcher
+    {
+        return app(DocumentLinkDispatcher::class);
     }
 
     public function create(Business $business, BusinessLocation $location, Contacts $contact, ?CrmOpportunity $opportunity, string $kind, string $title, User $actor): BusinessDocument
@@ -239,12 +258,14 @@ final class DocumentManager
      * `link_delivery_failed_at` and the owner re-sends the link
      * (resendLink()).
      */
-    public function send(BusinessDocument $document): BusinessDocument
+    public function send(BusinessDocument $document, ?array $channels = null, ?string $message = null, ?int $expectedLockVersion = null): BusinessDocument
     {
+        $channels = $this->dispatcher()->normalize($channels);
+        $this->lastDelivery = [];
         $plaintextToken = Str::random(64);
         $replayed = false;
 
-        $result = DB::transaction(function () use ($document, $plaintextToken, &$replayed) {
+        $result = DB::transaction(function () use ($document, $plaintextToken, &$replayed, $channels, $expectedLockVersion) {
             $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
             $this->assertTransition($document, DocumentStatus::Sent, 'Only a draft or sent document can be sent.');
 
@@ -259,6 +280,11 @@ final class DocumentManager
 
             $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'The document offer has already expired.');
             $this->require($version !== null, 'No open draft version.');
+
+            // Contract 17B §5 — the editor's precondition: the draft it is looking at.
+            if ($expectedLockVersion !== null && (int) $version->lock_version !== $expectedLockVersion) {
+                throw new DocumentDraftConflictException((int) $version->lock_version);
+            }
 
             $lines = $version->lineItems()->get();
             $this->require($lines->isNotEmpty(), 'A document needs at least one line before it is sent.');
@@ -281,9 +307,7 @@ final class DocumentManager
             $this->require($sum === (int) $version->total_minor, 'Schedule must equal document total.');
 
             // §5.2 — required and validated before send, then frozen.
-            $recipient = $document->recipient_email_snapshot;
-            $this->require(is_string($recipient) && trim($recipient) !== ''
-                && filter_var(trim($recipient), FILTER_VALIDATE_EMAIL) !== false, 'A valid recipient email address is required before sending.');
+            $this->requireRecipientFor($document, $channels);
 
             // Contract 17B §2 — a block document that must be signed has to say where.
             // Legacy (no blocks) documents are unaffected.
@@ -344,8 +368,8 @@ final class DocumentManager
         // plaintext never to be stored or recoverable — the default queue
         // connection here is `database`, so an unencrypted payload would sit
         // in `jobs`, and in `failed_jobs` indefinitely on any failure.
-        DB::afterCommit(function () use ($result, $version, $plaintextToken) {
-            $this->dispatchLinkEmail($result, $plaintextToken);
+        DB::afterCommit(function () use ($result, $version, $plaintextToken, $channels, $message) {
+            $this->lastDelivery = $this->dispatcher()->dispatch($result, $plaintextToken, $channels, $message);
 
             DocumentSent::dispatch(
                 $result->id,
@@ -387,11 +411,13 @@ final class DocumentManager
      * with neither `link_delivered_at` nor `link_delivery_failed_at`, and a
      * provider failure is contained and recorded rather than thrown.
      */
-    public function resendLink(BusinessDocument $document): BusinessDocument
+    public function resendLink(BusinessDocument $document, ?array $channels = null, ?string $message = null): BusinessDocument
     {
+        $channels = $this->dispatcher()->normalize($channels);
+        $this->lastDelivery = [];
         $plaintextToken = Str::random(64);
 
-        $result = DB::transaction(function () use ($document, $plaintextToken) {
+        $result = DB::transaction(function () use ($document, $plaintextToken, $channels) {
             $document = BusinessDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
             $this->require(in_array($document->status, [DocumentStatus::Sent, DocumentStatus::Signed], true), 'Only a sent or signed document can be re-sent.');
             $this->require($document->expires_at === null || $document->expires_at->isFuture(), 'The document offer has already expired.');
@@ -400,9 +426,7 @@ final class DocumentManager
                 ->whereKey($document->current_version_id)->lockForUpdate()->first();
             $this->require($version !== null && $version->state === DocumentVersionState::Issued, 'No issued version to re-send.');
 
-            $recipient = $document->recipient_email_snapshot;
-            $this->require(is_string($recipient) && trim($recipient) !== ''
-                && filter_var(trim($recipient), FILTER_VALIDATE_EMAIL) !== false, 'A valid recipient email address is required before sending.');
+            $this->requireRecipientFor($document, $channels);
 
             $document->access_token_hash = Hash::make($plaintextToken);
             $document->access_token_expires_at = $document->expires_at
@@ -414,32 +438,30 @@ final class DocumentManager
             return $document->refresh();
         });
 
-        DB::afterCommit(fn () => $this->dispatchLinkEmail($result, $plaintextToken));
+        DB::afterCommit(fn () => $this->lastDelivery = $this->dispatcher()->dispatch($result, $plaintextToken, $channels, $message));
 
         return $result;
     }
 
     /**
-     * Queue the link email and contain every way that can fail. By the time
-     * this runs the document is committed as `sent`: a mail-provider outage
-     * (which a synchronous queue surfaces right here, a real queue inside the
-     * job) must not turn that committed fact into a 500, and must not skip the
-     * DocumentSent event that follows. It is recorded instead — the owner sees
-     * "delivery failed" and re-sends. Only the exception CLASS is logged,
-     * never its message, so the token can never reach a log through it.
+     * The frozen recipient detail each requested channel needs (§5.2). Email
+     * needs a valid address; a text-only send needs a phone number on the
+     * snapshot (whether that number is actually TEXTABLE is a delivery outcome,
+     * not a precondition, and is recorded per channel).
+     *
+     * @param  array<int, string>  $channels
      */
-    private function dispatchLinkEmail(BusinessDocument $document, string $plaintextToken): void
+    private function requireRecipientFor(BusinessDocument $document, array $channels): void
     {
-        try {
-            SendDocumentLinkEmail::dispatch((int) $document->id, $plaintextToken);
-        } catch (Throwable $e) {
-            Log::warning('Document link email could not be delivered.', [
-                'document_id' => (int) $document->id,
-                'exception' => $e::class,
-            ]);
+        if (in_array('email', $channels, true)) {
+            $recipient = $document->recipient_email_snapshot;
+            $this->require(is_string($recipient) && trim($recipient) !== ''
+                && filter_var(trim($recipient), FILTER_VALIDATE_EMAIL) !== false, 'A valid recipient email address is required before sending.');
 
-            SendDocumentLinkEmail::recordOutcome((int) $document->id, $plaintextToken, false);
+            return;
         }
+
+        $this->require(trim((string) $document->recipient_phone_snapshot) !== '', 'A recipient phone number is required to send a text message.');
     }
 
     /**

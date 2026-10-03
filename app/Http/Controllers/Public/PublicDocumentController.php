@@ -126,9 +126,23 @@ class PublicDocumentController extends Controller
             return $this->refusal();
         }
 
+        $document = $access->document->refresh();
+
+        // Contract 17B §7 — signing never ends on a dead page: the signed page
+        // leads on to payment when something is payable now, and otherwise says
+        // what is due next. paymentState() creates nothing and calls no provider.
+        $payment = $this->payments->paymentState($access);
+        $next = $payment['payable_item']
+            ?? $access->version->paymentScheduleItems()->orderBy('sequence')->get()
+                ->first(fn ($row) => $row->status === \App\Enums\Documents\PaymentScheduleItemStatus::Pending);
+
         return response()->view('public.documents.signed', [
-            'document' => $access->document->refresh(),
+            'document' => $document,
             'parties' => $this->parties($access),
+            'payment' => $payment,
+            'payUrl' => route('public.documents.show', ['uid' => $document->uid, 'token' => $token]) . '#pay',
+            'nextItem' => $next,
+            'timezone' => (string) ($access->business->timezone ?: config('app.timezone', 'UTC')),
         ]);
     }
 

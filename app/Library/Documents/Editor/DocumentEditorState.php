@@ -10,6 +10,8 @@ use App\Library\Documents\DocumentPaymentPlanCompiler;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentVersion;
+use App\Models\Contacts;
+use App\Library\Documents\Delivery\DocumentLinkSmsSender;
 use Illuminate\Support\Carbon;
 
 /**
@@ -128,12 +130,41 @@ final class DocumentEditorState
                     'phone' => $document->recipient_phone_snapshot,
                 ],
             ],
+            // Contract 17B §7 — what the send dialog needs to offer its channels.
+            'delivery' => $this->delivery($document),
             'editable' => $editable,
             'is_block_document' => $isBlocks,
             'is_legacy' => ! $isBlocks && $hasBody,
             'can_upgrade' => $editable && ! $isBlocks && $document->status === DocumentStatus::Draft,
             'blocks' => $isBlocks ? $content['blocks'] : [],
         ] + $this->commerce($document);
+    }
+
+    /**
+     * Recipient prefill and channel availability for the send dialog. Additive:
+     * the sender can still type an email / phone into an empty snapshot.
+     *
+     * @return array<string, mixed>
+     */
+    private function delivery(BusinessDocument $document): array
+    {
+        $contact = $document->contact_id === null ? null : Contacts::query()
+            ->whereKey($document->contact_id)->where('business_id', $document->business_id)->first();
+        $reason = app(DocumentLinkSmsSender::class)->preflight($document);
+
+        return [
+            'email' => $document->recipient_email_snapshot,
+            'phone' => $document->recipient_phone_snapshot,
+            'contact_subscribed' => $contact !== null && $contact->status === Contacts::STATUS_SUBSCRIBE,
+            // Null = a text could be sent right now; otherwise the reason code.
+            'sms_unavailable_reason' => $reason,
+            'sms_default_message' => app(DocumentLinkSmsSender::class)->defaultPrefix($document),
+            'sms_max_message' => DocumentLinkSmsSender::MAX_CUSTOM_MESSAGE,
+            'link_delivered_at' => $document->link_delivered_at?->toIso8601String(),
+            'link_delivery_failed_at' => $document->link_delivery_failed_at?->toIso8601String(),
+            'sms_link_delivered_at' => $document->sms_link_delivered_at?->toIso8601String(),
+            'sms_link_delivery_failed_at' => $document->sms_link_delivery_failed_at?->toIso8601String(),
+        ];
     }
 
     /**

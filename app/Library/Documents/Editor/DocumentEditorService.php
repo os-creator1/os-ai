@@ -5,6 +5,7 @@ namespace App\Library\Documents\Editor;
 use App\Exceptions\Documents\InvalidDocumentPaymentPlanException;
 use App\Library\Catalog\CatalogMoney;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
+use App\Enums\Documents\DocumentStatus;
 use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\DocumentManager;
 use App\Models\BusinessDocument;
@@ -139,6 +140,45 @@ final class DocumentEditorService
         $this->manager->reorderLines($document, $ids, $expected);
 
         return $this->done($document);
+    }
+
+    /**
+     * Contract 17B §7 — Send from the editor: one lifecycle transition, one token,
+     * delivered over the chosen channels. A recipient detail typed into the send
+     * dialog is written to the (still unsent) draft's snapshot first, but only
+     * where the snapshot is empty — it never overrides a prefilled one.
+     *
+     * @param  array<int, string>  $channels
+     * @return array<string, mixed>
+     */
+    public function send(BusinessDocument $document, array $channels, ?string $message, ?string $email, ?string $phone, int $expected): array
+    {
+        $supplied = [];
+
+        if ($document->status === DocumentStatus::Draft) {
+            if (is_string($email) && trim($email) !== '' && trim((string) $document->recipient_email_snapshot) === '') {
+                $supplied['recipient_email_snapshot'] = trim($email);
+            }
+
+            if (is_string($phone) && trim($phone) !== '' && trim((string) $document->recipient_phone_snapshot) === '') {
+                $supplied['recipient_phone_snapshot'] = trim($phone);
+            }
+        }
+
+        if ($supplied !== []) {
+            // Same precondition as the send itself; the edit bumps the version.
+            $document = $this->manager->edit($document, $supplied, $expected);
+            $expected = (int) $this->manager->lastLockVersion();
+        }
+
+        $sent = $this->manager->send($document, $channels, $message, $expected);
+
+        return [
+            'document_status' => $sent->status->value,
+            'sent_at' => $sent->sent_at?->toIso8601String(),
+            'delivery' => $this->manager->lastDelivery(),
+            'lock_version' => $expected,
+        ];
     }
 
     /**

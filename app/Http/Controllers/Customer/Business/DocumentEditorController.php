@@ -14,6 +14,7 @@ use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\Editor\DocumentCatalogPicker;
 use App\Library\Documents\Editor\DocumentContactDates;
+use App\Library\Documents\Delivery\DocumentLinkSmsSender;
 use App\Library\Documents\Editor\DocumentEditorService;
 use App\Library\Documents\Editor\DocumentEditorState;
 use App\Library\Documents\Editor\DocumentLegacyUpgrader;
@@ -89,6 +90,7 @@ class DocumentEditorController extends CustomerBaseController
                     'catalog_store' => $route('editor.catalog.store', [$documentUid]),
                     'contact_dates' => $route('editor.contact.dates', [$documentUid]),
                     'upgrade' => $route('editor.upgrade', [$documentUid]),
+                    'send' => $route('editor.send', [$documentUid]),
                     'contacts_search' => $route('editor.contacts.search'),
                 ],
             ],
@@ -258,6 +260,35 @@ class DocumentEditorController extends CustomerBaseController
             $data = $this->validated($request, ['expected_lock_version' => 'required|integer|min:1']);
 
             return $this->upgrader->upgrade($document, (int) $data['expected_lock_version']);
+        });
+    }
+
+    /**
+     * Contract 17B §7 — the send dialog. ONE Draft->Sent transition delivered over
+     * the chosen channels (see DocumentEditorService::send). Per-channel results
+     * come back in `delivery`; a channel that could not be attempted never blocks
+     * the send or the other channel.
+     *
+     *   channels[]               required, >= 1 of email|sms
+     *   message                  optional text-message wording (the link is always appended)
+     *   recipient_email/_phone   only used while the document's snapshot is still empty
+     *   expected_lock_version    required
+     */
+    public function send(Request $request, string $workspaceUid, string $businessUid, string $documentUid): JsonResponse
+    {
+        $document = $this->document($workspaceUid, $businessUid, $documentUid);
+
+        return $this->respond(function () use ($request, $document) {
+            $data = $this->validated($request, [
+                'channels' => 'required|array|min:1',
+                'channels.*' => 'required|string|in:email,sms',
+                'message' => 'nullable|string|max:' . DocumentLinkSmsSender::MAX_CUSTOM_MESSAGE,
+                'recipient_email' => 'nullable|email|max:255',
+                'recipient_phone' => 'nullable|string|max:32',
+                'expected_lock_version' => 'required|integer|min:1',
+            ]);
+
+            return $this->editor->send($document, array_values($data['channels']), $data['message'] ?? null, $data['recipient_email'] ?? null, $data['recipient_phone'] ?? null, (int) $data['expected_lock_version']);
         });
     }
 

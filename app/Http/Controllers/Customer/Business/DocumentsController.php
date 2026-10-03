@@ -32,6 +32,13 @@ class DocumentsController extends CustomerBaseController
 {
     use ResolvesBusinessDocuments;
 
+    /** Contract 17B §7 — the delivery choice shared by send and resend. */
+    private const DELIVERY_RULES = [
+        'channels' => 'sometimes|array|min:1',
+        'channels.*' => 'required|string|in:email,sms',
+        'message' => 'nullable|string|max:320',
+    ];
+
     public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments) {}
 
     public function listing(string $workspaceUid, string $businessUid): View
@@ -111,9 +118,11 @@ class DocumentsController extends CustomerBaseController
      * §7.1 SEND — freezes the draft version, mints the secure link and, only
      * after commit, emails it to the frozen recipient snapshot.
      */
-    public function send(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
+    public function send(Request $request, string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
     {
-        $this->manager->send($this->document($workspaceUid, $businessUid, $documentUid));
+        // Contract 17B §7 — optional channels (omitted = email, the pre-17B behaviour).
+        $data = $request->validate(self::DELIVERY_RULES);
+        $this->manager->send($this->document($workspaceUid, $businessUid, $documentUid), $data['channels'] ?? null, $data['message'] ?? null);
         return back()->with(['status' => 'success', 'message' => 'Document sent.']);
     }
 
@@ -122,9 +131,10 @@ class DocumentsController extends CustomerBaseController
      * path when the first email never arrived). Rotates the link; changes no
      * commercial content and no payment state.
      */
-    public function resend(string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
+    public function resend(Request $request, string $workspaceUid, string $businessUid, string $documentUid): RedirectResponse
     {
-        $this->manager->resendLink($this->document($workspaceUid, $businessUid, $documentUid));
+        $data = $request->validate(self::DELIVERY_RULES);
+        $this->manager->resendLink($this->document($workspaceUid, $businessUid, $documentUid), $data['channels'] ?? null, $data['message'] ?? null);
         return back()->with(['status' => 'success', 'message' => 'The payment link was re-sent. Earlier links no longer work.']);
     }
 

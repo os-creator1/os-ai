@@ -1301,6 +1301,7 @@
             Route::post('{documentUid}/editor/catalog', 'Business\DocumentEditorController@catalogStore')->middleware('throttle:30,1')->name('editor.catalog.store');
             Route::get('{documentUid}/editor/contact-dates', 'Business\DocumentEditorController@contactDates')->middleware('throttle:60,1')->name('editor.contact.dates');
             Route::post('{documentUid}/editor/upgrade', 'Business\DocumentEditorController@upgrade')->middleware('throttle:30,1')->name('editor.upgrade');
+            Route::post('{documentUid}/editor/send', 'Business\DocumentEditorController@send')->middleware('throttle:30,1')->name('editor.send');
         });
 
         /*
