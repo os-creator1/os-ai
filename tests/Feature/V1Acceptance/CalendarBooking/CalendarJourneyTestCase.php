@@ -140,7 +140,7 @@ abstract class CalendarJourneyTestCase extends TestCase
     {
         return array_merge([
             'date' => '2027-03-01', 'time' => '10:00',
-            'first_name' => 'Ada', 'last_name' => 'Lovelace', 'phone' => '+1 (415) 555-1234',
+            'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => 'ada@example.test', 'phone' => '+1 (415) 555-1234',
         ], $overrides);
     }
 

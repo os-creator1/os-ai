@@ -4,6 +4,7 @@ namespace App\Library\Calendar;
 
 use App\Models\BookingType;
 use App\Models\BusinessLocation;
+use App\Models\StaffAvailabilityRule;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -186,5 +187,40 @@ class BookingTypeManager
                 'eligible' => $location !== null && $this->locations->isEligible((int) $user->id, $location),
             ])
             ->all();
+    }
+
+    /**
+     * Would a guest holding this Booking Type's public link actually reach a
+     * working page? The public route refuses (404, by design and without
+     * saying why) a type that is inactive or has nobody currently eligible; this
+     * is the same question asked for the Business owner, with the reason, so
+     * the list never offers a link that leads nowhere. Presentation only: the
+     * public page still re-runs every check itself.
+     *
+     * @return array{ready: bool, reason: ?string}
+     */
+    public function publicBookingReadiness(BookingType $bookingType): array
+    {
+        if (! $bookingType->isActive()) {
+            return ['ready' => false, 'reason' => 'Inactive. Activate it to accept bookings.'];
+        }
+
+        $eligibleIds = collect($this->configuredStaffWithEligibility($bookingType))
+            ->where('eligible', true)
+            ->pluck('user.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+        if ($eligibleIds === []) {
+            return ['ready' => false, 'reason' => 'No one is assigned. Add staff under "Who offers this".'];
+        }
+
+        $hasHours = StaffAvailabilityRule::query()
+            ->where('business_location_id', $bookingType->business_location_id)
+            ->whereIn('staff_user_id', $eligibleIds)
+            ->exists();
+
+        return $hasHours
+            ? ['ready' => true, 'reason' => null]
+            : ['ready' => false, 'reason' => 'No working hours are set for the assigned staff, so no times can be offered.'];
     }
 }

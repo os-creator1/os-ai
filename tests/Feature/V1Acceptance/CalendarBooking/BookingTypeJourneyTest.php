@@ -70,12 +70,24 @@ class BookingTypeJourneyTest extends CalendarJourneyTestCase
             'business_location_id' => $this->locationA->id,
         ]);
 
-        // Listed at A with its public link; absent from B.
+        // Listed at A. Nobody serves it yet, so the public page would 404: the
+        // list says so instead of offering that link ...
         $this->get($this->cal('booking-types.index', $this->locationA))
             ->assertOk()
             ->assertSee('Initial consultation (long)')
             ->assertSee('90 min')
+            ->assertSee('Not bookable yet')
+            ->assertDontSee(route('public.booking.show', [$type->public_booking_uuid]));
+
+        // ... and shows the link once someone with working hours is assigned.
+        $type->staff()->attach($this->bookableStaff()->id);
+        $this->get($this->cal('booking-types.index', $this->locationA))
+            ->assertOk()
+            ->assertDontSee('Not bookable yet')
             ->assertSee(route('public.booking.show', [$type->public_booking_uuid]));
+        $this->get($this->cal('booking-types.edit', $this->locationA, [$type->uid]))
+            ->assertOk()
+            ->assertSee('data-role="open-public-page"', false);
         $this->get($this->cal('booking-types.index', $this->locationB))
             ->assertOk()
             ->assertDontSee('Initial consultation (long)');

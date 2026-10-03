@@ -2,6 +2,12 @@
 
     Route::get('book/{bookingTypeUuid}', 'Customer\PublicBookingController@show')
         ->whereUuid('bookingTypeUuid')->name('public.booking.show');
+    // The scheduler's two read-only questions while a guest browses. Sized for a
+    // real visitor paging months and trying days, far above the 10/minute write.
+    Route::get('book/{bookingTypeUuid}/dates', 'Customer\PublicBookingController@dates')
+        ->whereUuid('bookingTypeUuid')->middleware('throttle:60,1')->name('public.booking.dates');
+    Route::get('book/{bookingTypeUuid}/slots', 'Customer\PublicBookingController@slots')
+        ->whereUuid('bookingTypeUuid')->middleware('throttle:60,1')->name('public.booking.slots');
     // Public mutation: 10 attempts per minute matches the lower end of the
     // existing customer write limits while allowing a real guest to retry a slot.
     Route::post('book/{bookingTypeUuid}', 'Customer\PublicBookingController@store')

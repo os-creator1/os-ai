@@ -52,11 +52,16 @@ class BookingTypesController extends Controller
     {
         [$workspace, $business, $location] = $this->scope($workspaceUid, $businessUid, $locationUid);
 
+        $bookingTypes = $this->bookingTypes->forLocation($location);
+
         return view('customer.business.calendar.booking-types.index', [
             'workspace' => $workspace,
             'business' => $business,
             'location' => $location,
-            'bookingTypes' => $this->bookingTypes->forLocation($location),
+            'bookingTypes' => $bookingTypes,
+            'readiness' => $bookingTypes->mapWithKeys(fn (BookingType $type): array => [
+                $type->id => $this->bookingTypes->publicBookingReadiness($type),
+            ]),
         ]);
     }
 
@@ -95,6 +100,7 @@ class BookingTypesController extends Controller
             'location' => $location,
             'bookingType' => $bookingType,
             'configuredStaff' => $this->bookingTypes->configuredStaffWithEligibility($bookingType),
+            'readiness' => $this->bookingTypes->publicBookingReadiness($bookingType),
             'eligibleStaff' => $this->locations->eligibleStaff($workspace, $business, $location),
         ]);
     }
