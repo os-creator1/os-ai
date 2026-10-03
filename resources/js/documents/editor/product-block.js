@@ -22,6 +22,15 @@ export function renderProductBlock(block, ctx) {
     const { store, ops } = ctx;
     const commerce = store.commerce;
     const editable = store.editable;
+
+    // A template holds the product AREA only: a generic placeholder, no wizard, no lines (17B §6).
+    if (store.isTemplate) {
+        return el('div', { class: 'de-product', 'data-role': 'product-block' }, [
+            el('div', { class: 'doc-placeholder', 'data-role': 'product-placeholder' }, [
+                el('div', { text: 'Product / pricing block \u2014 you choose the package when you use this template.' }),
+            ]),
+        ]);
+    }
     const data = block.data || {};
     const lines = commerce.lines || [];
     const wrap = el('div', { class: 'de-product', 'data-role': 'product-block' });
@@ -128,6 +137,12 @@ export function renderProductBlock(block, ctx) {
 /** The canonical schedule, as the server draws it. */
 export function renderPaymentTerms(block, ctx) {
     const { store, ops } = ctx;
+
+    if (store.isTemplate) {
+        return el('div', { class: 'doc-placeholder', 'data-role': 'payment-placeholder' }, [
+            el('div', { text: 'Payment terms \u2014 the deposit, balance and due dates are set when you use this template.' }),
+        ]);
+    }
     const schedule = store.commerce.schedule || [];
 
     if (schedule.length === 0) {

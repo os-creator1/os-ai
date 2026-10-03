@@ -2,7 +2,7 @@
 // framework. The lock version lives here and is the ONLY source every request
 // reads (api.js), so two operations in one tab can never send a stale one.
 
-import { currencyExponent, formatMinor } from './money';
+import { currencyExponent, formatMinor } from './money.js';
 
 export function createStore(boot) {
     const listeners = [];
@@ -10,8 +10,16 @@ export function createStore(boot) {
     const currency = boot.currency_code || document_.currency_code || 'USD';
     const locale = (typeof navigator !== 'undefined' && navigator.language) || 'en';
 
+    // Contract 17B §6 — one editor, three modes: a document, a Business template, (next stage) a platform template.
+    const mode = boot.mode || 'document';
+    const template = boot.template || null;
+
     const store = {
         boot,
+        mode,
+        isTemplate: mode !== 'document',
+        templateType: template ? template.type : null,
+        mergeSamples: boot.merge_samples || {},
         urls: boot.urls || {},
         toolbox: boot.toolbox || {},
         images: boot.images || [],
@@ -93,6 +101,10 @@ export function createStore(boot) {
         },
 
         mergePreview(token) {
+            // A template has no Contact: chips resolve to sample data.
+            if (store.isTemplate) {
+                return store.mergeSamples[token] || '';
+            }
             const name = (store.contact.name || '').trim();
             switch (token) {
                 case 'contact.full_name': return name;

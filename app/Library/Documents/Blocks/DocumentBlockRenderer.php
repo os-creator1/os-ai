@@ -80,7 +80,7 @@ final class DocumentBlockRenderer
             'totalMinor' => $options['total_minor'] ?? null,
             'currency' => $currency,
             'signatureHtml' => $signatureHtml,
-            'images' => $isTemplate ? [] : $this->images($blocks, $options['business_id'] ?? null),
+            'images' => $this->images($blocks, $options['business_id'] ?? null), // template_preview: only when the caller scopes a Business (its own template); platform templates pass none
             'runs' => fn ($runs): HtmlString => $this->runs(is_array($runs) ? $runs : [], $mode, $merge),
             'mergeValue' => fn (string $token): string => DocumentMergeFields::resolve($token, $merge),
             'money' => fn ($minor): string => CatalogMoney::format($minor === null ? null : (int) $minor, $currency),

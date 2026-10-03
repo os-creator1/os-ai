@@ -218,8 +218,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   createAutosave: () => (/* binding */ createAutosave)
 /* harmony export */ });
-/* harmony import */ var _api__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./api */ "./resources/js/documents/editor/api.js");
-/* harmony import */ var _blocks__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./blocks */ "./resources/js/documents/editor/blocks.js");
+/* harmony import */ var _api_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./api.js */ "./resources/js/documents/editor/api.js");
+/* harmony import */ var _blocks_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./blocks.js */ "./resources/js/documents/editor/blocks.js");
 function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
 function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
 function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
@@ -267,8 +267,14 @@ function createAutosave(store, api) {
               }
               store.dirty = false;
               store.setSave('saving');
-              return {
-                blocks: (0,_blocks__WEBPACK_IMPORTED_MODULE_1__.savePayload)(store.blocks),
+
+              // A template saves its name and type beside the blocks; a document saves its title.
+              return store.isTemplate ? {
+                blocks: (0,_blocks_js__WEBPACK_IMPORTED_MODULE_1__.savePayload)(store.blocks),
+                name: store.title,
+                template_type: store.templateType
+              } : {
+                blocks: (0,_blocks_js__WEBPACK_IMPORTED_MODULE_1__.savePayload)(store.blocks),
                 title: store.title
               };
             });
@@ -305,7 +311,7 @@ function createAutosave(store, api) {
               store.setSave('error', 'Could not save. Retrying...');
               retryTimer = setTimeout(save, RETRY);
             } else {
-              store.setSave('error', (0,_api__WEBPACK_IMPORTED_MODULE_0__.errorMessage)(result, 'This change could not be saved.'));
+              store.setSave('error', (0,_api_js__WEBPACK_IMPORTED_MODULE_0__.errorMessage)(result, 'This change could not be saved.'));
             }
           case 6:
             return _context2.a(2);
@@ -379,7 +385,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   newBlock: () => (/* binding */ newBlock),
 /* harmony export */   savePayload: () => (/* binding */ savePayload)
 /* harmony export */ });
-/* harmony import */ var _dom__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./dom */ "./resources/js/documents/editor/dom.js");
+/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./dom.js */ "./resources/js/documents/editor/dom.js");
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
@@ -516,12 +522,12 @@ var FACTORIES = {
 function newBlock(toolId) {
   var make = FACTORIES[toolId];
   return make ? _objectSpread({
-    id: (0,_dom__WEBPACK_IMPORTED_MODULE_0__.uuid)()
+    id: (0,_dom_js__WEBPACK_IMPORTED_MODULE_0__.uuid)()
   }, make()) : null;
 }
 function cloneBlock(block) {
   return {
-    id: (0,_dom__WEBPACK_IMPORTED_MODULE_0__.uuid)(),
+    id: (0,_dom_js__WEBPACK_IMPORTED_MODULE_0__.uuid)(),
     type: block.type,
     data: JSON.parse(JSON.stringify(block.data || {}))
   };
@@ -1230,9 +1236,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _line_modal__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./line-modal */ "./resources/js/documents/editor/line-modal.js");
 /* harmony import */ var _modal__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./modal */ "./resources/js/documents/editor/modal.js");
 /* harmony import */ var _product_wizard__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./product-wizard */ "./resources/js/documents/editor/product-wizard.js");
-/* harmony import */ var _send_dialog__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./send-dialog */ "./resources/js/documents/editor/send-dialog.js");
-/* harmony import */ var _state__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./state */ "./resources/js/documents/editor/state.js");
-/* harmony import */ var _toolbox__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./toolbox */ "./resources/js/documents/editor/toolbox.js");
+/* harmony import */ var _save_template__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./save-template */ "./resources/js/documents/editor/save-template.js");
+/* harmony import */ var _send_dialog__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./send-dialog */ "./resources/js/documents/editor/send-dialog.js");
+/* harmony import */ var _state__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./state */ "./resources/js/documents/editor/state.js");
+/* harmony import */ var _toolbox__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(/*! ./toolbox */ "./resources/js/documents/editor/toolbox.js");
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
@@ -1279,6 +1286,7 @@ function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
 
 
 
+
 var SAVE_TEXT = {
   saved: 'All changes saved',
   dirty: 'Unsaved changes',
@@ -1293,7 +1301,7 @@ function init(root) {
   if (!bootNode) {
     return;
   }
-  var store = (0,_state__WEBPACK_IMPORTED_MODULE_11__.createStore)(JSON.parse(bootNode.textContent));
+  var store = (0,_state__WEBPACK_IMPORTED_MODULE_12__.createStore)(JSON.parse(bootNode.textContent));
   var api = (0,_api__WEBPACK_IMPORTED_MODULE_0__.createApi)(store);
   var banners = root.querySelector('[data-role="editor-banners"]');
   var modalRoot = root.querySelector('[data-role="modal-root"]');
@@ -1305,16 +1313,23 @@ function init(root) {
     'aria-live': 'polite'
   });
   root.appendChild(toasts);
-  function notify(message, kind) {
+  function notify(message, kind, link) {
     var toast = (0,_dom__WEBPACK_IMPORTED_MODULE_3__.el)('div', {
       "class": 'de-toast de-toast--' + (kind || 'info'),
-      role: 'status',
-      text: message
-    });
+      role: 'status'
+    }, [message]);
+    if (link && link.href) {
+      toast.appendChild(document.createTextNode(' '));
+      toast.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_3__.el)('a', {
+        href: link.href,
+        'data-role': 'toast-link',
+        text: link.text || 'Open'
+      }));
+    }
     toasts.appendChild(toast);
     setTimeout(function () {
       return toast.remove();
-    }, kind === 'error' ? 7000 : 3500);
+    }, link ? 9000 : kind === 'error' ? 7000 : 3500);
   }
 
   // ---- legacy: only the upgrade prompt ----------------------------------------
@@ -1340,7 +1355,7 @@ function init(root) {
   };
   ctx.inline = (0,_inline_text__WEBPACK_IMPORTED_MODULE_5__.createInline)(ctx);
   ctx.canvas = (0,_canvas__WEBPACK_IMPORTED_MODULE_2__.createCanvas)(ctx);
-  ctx.toolbox = (0,_toolbox__WEBPACK_IMPORTED_MODULE_12__.createToolbox)(ctx);
+  ctx.toolbox = (0,_toolbox__WEBPACK_IMPORTED_MODULE_13__.createToolbox)(ctx);
   ctx.inspector = (0,_inspector__WEBPACK_IMPORTED_MODULE_6__.createInspector)(ctx);
   var actions = ctx.actions,
     canvas = ctx.canvas;
@@ -1397,13 +1412,18 @@ function init(root) {
     }
     switch (toolId) {
       case 'product':
-        if (ensureProductBlock(index)) {
-          ctx.productOps.addProduct();
-        }
-        return;
       case 'custom_line':
+        // A template holds only the generic product area: no wizard, no catalog, no lines (17B §6).
+        if (store.isTemplate) {
+          ensureProductBlock(index);
+          return;
+        }
         if (ensureProductBlock(index)) {
-          ctx.productOps.customLine();
+          if (toolId === 'product') {
+            ctx.productOps.addProduct();
+          } else {
+            ctx.productOps.customLine();
+          }
         }
         return;
       case 'signature':
@@ -1778,7 +1798,7 @@ function init(root) {
         "class": 'de-banner de-banner--danger',
         'data-role': 'conflict-banner'
       }, [(0,_dom__WEBPACK_IMPORTED_MODULE_3__.el)('span', {
-        text: 'This document was changed in another tab. Your recent edits here were not saved. '
+        text: 'This ' + (store.isTemplate ? 'template' : 'document') + ' was changed in another tab. Your recent edits here were not saved. '
       }), (0,_dom__WEBPACK_IMPORTED_MODULE_3__.el)('button', {
         type: 'button',
         "class": 'de-btn de-btn--sm',
@@ -1834,6 +1854,25 @@ function init(root) {
         event.preventDefault();
         titleInput.blur();
       }
+    });
+  }
+
+  // Template mode: the type select beside the name (Proposal / Contract).
+  var typeSelect = root.querySelector('[data-role="template-type"]');
+  if (typeSelect && store.isTemplate) {
+    typeSelect.value = store.templateType || 'proposal';
+    typeSelect.disabled = !store.editable;
+    typeSelect.addEventListener('change', function () {
+      store.templateType = typeSelect.value;
+      autosave.markDirty();
+    });
+  }
+
+  // Document mode: save this layout as a template (the product and contact are never saved).
+  var saveTemplateButton = root.querySelector('[data-role="action-save-template"]');
+  if (saveTemplateButton && !store.isTemplate) {
+    saveTemplateButton.addEventListener('click', function () {
+      return (0,_save_template__WEBPACK_IMPORTED_MODULE_10__.openSaveTemplateDialog)(ctx);
     });
   }
   var saveButton = root.querySelector('[data-role="action-save"]');
@@ -1910,7 +1949,7 @@ function init(root) {
   var sendButton = root.querySelector('[data-role="action-send"]');
   if (sendButton) {
     sendButton.addEventListener('click', function () {
-      return (0,_send_dialog__WEBPACK_IMPORTED_MODULE_10__.openSendDialog)(ctx);
+      return (0,_send_dialog__WEBPACK_IMPORTED_MODULE_11__.openSendDialog)(ctx);
     });
   }
   var moreButton = root.querySelector('[data-role="action-more"]');
@@ -3256,6 +3295,19 @@ function renderProductBlock(block, ctx) {
     ops = ctx.ops;
   var commerce = store.commerce;
   var editable = store.editable;
+
+  // A template holds the product AREA only: a generic placeholder, no wizard, no lines (17B §6).
+  if (store.isTemplate) {
+    return (0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
+      "class": 'de-product',
+      'data-role': 'product-block'
+    }, [(0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
+      "class": 'doc-placeholder',
+      'data-role': 'product-placeholder'
+    }, [(0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
+      text: "Product / pricing block \u2014 you choose the package when you use this template."
+    })])]);
+  }
   var data = block.data || {};
   var lines = commerce.lines || [];
   var wrap = (0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
@@ -3464,6 +3516,14 @@ function renderProductBlock(block, ctx) {
 function renderPaymentTerms(block, ctx) {
   var store = ctx.store,
     ops = ctx.ops;
+  if (store.isTemplate) {
+    return (0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
+      "class": 'doc-placeholder',
+      'data-role': 'payment-placeholder'
+    }, [(0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
+      text: "Payment terms \u2014 the deposit, balance and due dates are set when you use this template."
+    })]);
+  }
   var schedule = store.commerce.schedule || [];
   if (schedule.length === 0) {
     return (0,_dom__WEBPACK_IMPORTED_MODULE_0__.el)('div', {
@@ -4427,6 +4487,193 @@ function openProductWizard(ctx, options) {
 
 /***/ },
 
+/***/ "./resources/js/documents/editor/save-template.js"
+/*!********************************************************!*\
+  !*** ./resources/js/documents/editor/save-template.js ***!
+  \********************************************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   openSaveTemplateDialog: () => (/* binding */ openSaveTemplateDialog)
+/* harmony export */ });
+/* harmony import */ var _api__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./api */ "./resources/js/documents/editor/api.js");
+/* harmony import */ var _dom__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom */ "./resources/js/documents/editor/dom.js");
+/* harmony import */ var _modal__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./modal */ "./resources/js/documents/editor/modal.js");
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+// Contract 17B §6 — the "Save as template" dialog (document mode only).
+//
+// A template saves the LAYOUT: text, headings, your images, merge fields, where
+// the signature goes and a generic product area. It never saves the product,
+// the contact, prices, payment terms or anything about sending / signing. The
+// server builds the template from the document's saved blocks only
+// (DocumentTemplateService::saveFromDocument); this just collects a name, a
+// type and an optional description.
+
+
+
+
+function openSaveTemplateDialog(ctx) {
+  var store = ctx.store,
+    api = ctx.api,
+    autosave = ctx.autosave,
+    modalRoot = ctx.modalRoot,
+    notify = ctx.notify;
+  var modal = (0,_modal__WEBPACK_IMPORTED_MODULE_2__.openModal)(modalRoot, {
+    title: 'Save as template',
+    size: 'sm',
+    className: 'de-save-template'
+  });
+  var name = (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('input', {
+    "class": 'de-input',
+    type: 'text',
+    maxlength: '191',
+    required: true,
+    value: store.title,
+    'data-role': 'template-name',
+    'aria-label': 'Template name'
+  });
+  var type = (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('select', {
+    "class": 'de-input',
+    'data-role': 'template-type-select',
+    'aria-label': 'Template type'
+  }, [(0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('option', {
+    value: 'proposal',
+    text: 'Proposal'
+  }), (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('option', {
+    value: 'contract',
+    text: 'Contract'
+  })]);
+  var description = (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('textarea', {
+    "class": 'de-input',
+    rows: '2',
+    maxlength: '1000',
+    'data-role': 'template-description',
+    'aria-label': 'Description (optional)',
+    placeholder: 'Optional: when to use this template'
+  });
+  var error = (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('p', {
+    "class": 'de-field__error',
+    role: 'alert',
+    hidden: true,
+    'data-role': 'template-error'
+  });
+  modal.body.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('p', {
+    "class": 'de-muted',
+    'data-role': 'template-explainer',
+    text: 'This saves the layout, not the product or contact. When you use the template you choose the contact and add the product again.'
+  }));
+  modal.body.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('label', {
+    "class": 'de-field'
+  }, [(0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('span', {
+    "class": 'de-field__label',
+    text: 'Template name'
+  }), name]));
+  modal.body.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('label', {
+    "class": 'de-field'
+  }, [(0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('span', {
+    "class": 'de-field__label',
+    text: 'Type'
+  }), type]));
+  modal.body.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('label', {
+    "class": 'de-field'
+  }, [(0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('span', {
+    "class": 'de-field__label',
+    text: 'Description (optional)'
+  }), description]));
+  modal.body.appendChild(error);
+  var save = (0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('button', {
+    type: 'button',
+    "class": 'de-btn de-btn--primary',
+    'data-role': 'template-save',
+    text: 'Save template'
+  });
+  modal.footer.appendChild((0,_dom__WEBPACK_IMPORTED_MODULE_1__.el)('button', {
+    type: 'button',
+    "class": 'de-btn',
+    text: 'Cancel',
+    onclick: function onclick() {
+      return modal.close();
+    }
+  }));
+  modal.footer.appendChild(save);
+  var show = function show(text) {
+    error.textContent = text || '';
+    error.hidden = !text;
+  };
+  var busy = false;
+  save.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
+    var saved, result;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.p = _context.n) {
+        case 0:
+          if (!busy) {
+            _context.n = 1;
+            break;
+          }
+          return _context.a(2);
+        case 1:
+          if (!(name.value.trim() === '')) {
+            _context.n = 2;
+            break;
+          }
+          show('Give the template a name.');
+          name.focus();
+          return _context.a(2);
+        case 2:
+          busy = true;
+          save.disabled = true;
+          show('');
+          _context.p = 3;
+          _context.n = 4;
+          return autosave.flush();
+        case 4:
+          saved = _context.v;
+          if (!(!saved && store.editable)) {
+            _context.n = 5;
+            break;
+          }
+          show(store.save.state === 'conflict' ? 'This document was changed in another tab. Reload before saving a template.' : 'Your latest changes could not be saved, so the template was not created.');
+          return _context.a(2);
+        case 5:
+          _context.n = 6;
+          return api.post(store.urls.save_template, {
+            name: name.value.trim(),
+            template_type: type.value,
+            description: description.value.trim() === '' ? null : description.value.trim()
+          });
+        case 6:
+          result = _context.v;
+          if (result.ok) {
+            _context.n = 7;
+            break;
+          }
+          show((0,_api__WEBPACK_IMPORTED_MODULE_0__.errorMessage)(result, 'The template could not be saved.'));
+          return _context.a(2);
+        case 7:
+          modal.close();
+          notify('Template saved.', 'success', {
+            href: result.json.library_url || store.urls.template_library,
+            text: 'Open template library'
+          });
+        case 8:
+          _context.p = 8;
+          busy = false;
+          save.disabled = false;
+          return _context.f(8);
+        case 9:
+          return _context.a(2);
+      }
+    }, _callee, null, [[3,, 8, 9]]);
+  })));
+  return modal;
+}
+
+/***/ },
+
 /***/ "./resources/js/documents/editor/send-dialog.js"
 /*!******************************************************!*\
   !*** ./resources/js/documents/editor/send-dialog.js ***!
@@ -5099,7 +5346,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   createStore: () => (/* binding */ createStore)
 /* harmony export */ });
-/* harmony import */ var _money__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./money */ "./resources/js/documents/editor/money.js");
+/* harmony import */ var _money_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./money.js */ "./resources/js/documents/editor/money.js");
 // Contract 17B — the editor's single store. Plain object + subscribers; no
 // framework. The lock version lives here and is the ONLY source every request
 // reads (api.js), so two operations in one tab can never send a stale one.
@@ -5110,8 +5357,16 @@ function createStore(boot) {
   var document_ = boot.document || {};
   var currency = boot.currency_code || document_.currency_code || 'USD';
   var locale = typeof navigator !== 'undefined' && navigator.language || 'en';
+
+  // Contract 17B §6 — one editor, three modes: a document, a Business template, (next stage) a platform template.
+  var mode = boot.mode || 'document';
+  var template = boot.template || null;
   var store = {
     boot: boot,
+    mode: mode,
+    isTemplate: mode !== 'document',
+    templateType: template ? template.type : null,
+    mergeSamples: boot.merge_samples || {},
     urls: boot.urls || {},
     toolbox: boot.toolbox || {},
     images: boot.images || [],
@@ -5142,7 +5397,7 @@ function createStore(boot) {
     },
     currency: currency,
     locale: locale,
-    exponent: (0,_money__WEBPACK_IMPORTED_MODULE_0__.currencyExponent)(currency, locale),
+    exponent: (0,_money_js__WEBPACK_IMPORTED_MODULE_0__.currencyExponent)(currency, locale),
     selectedId: null,
     // saved | dirty | saving | error | conflict
     save: {
@@ -5151,7 +5406,7 @@ function createStore(boot) {
     },
     dirty: false,
     money: function money(minor) {
-      return (0,_money__WEBPACK_IMPORTED_MODULE_0__.formatMinor)(minor, currency, locale);
+      return (0,_money_js__WEBPACK_IMPORTED_MODULE_0__.formatMinor)(minor, currency, locale);
     },
     subscribe: function subscribe(fn) {
       listeners.push(fn);
@@ -5204,6 +5459,10 @@ function createStore(boot) {
       return found ? found.label : token;
     },
     mergePreview: function mergePreview(token) {
+      // A template has no Contact: chips resolve to sample data.
+      if (store.isTemplate) {
+        return store.mergeSamples[token] || '';
+      }
       var name = (store.contact.name || '').trim();
       switch (token) {
         case 'contact.full_name':

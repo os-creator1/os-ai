@@ -315,6 +315,8 @@ class DocumentsRemainInertTest extends TestCase
             foreach ($needles as $needle) {
                 if ((str_contains($uri, $needle) || str_contains($name, $needle))
                     && ! str_contains($name, 'businesses.documents.')
+                    // 17B §6: the Business's authenticated template library / template editor.
+                    && ! str_contains($name, 'businesses.document-templates.')
                     // Sub-slice D's owner-only Stripe Connect onboarding.
                     && ! str_contains($name, 'businesses.payments.connect.')
                     // Sub-slice C's secure link plus Sub-slice E's payment

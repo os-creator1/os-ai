@@ -15,9 +15,10 @@
      drives it. Invoices keep their existing form, unchanged. --}}
 <div class="mb-2 d-flex flex-wrap gap-1" data-role="new-document-actions">
     <button type="button" class="btn btn-primary" data-role="new-proposal-open">New proposal</button>
+    <a class="btn btn-outline-secondary" href="{{ route('customer.workspaces.businesses.document-templates.index', [$workspaceUid, $businessUid]) }}" data-role="templates-link">Templates</a>
 </div>
 
-<div class="de-newdoc" data-role="new-proposal" data-search-url="{{ route('customer.workspaces.businesses.documents.editor.contacts.search', [$workspaceUid, $businessUid]) }}">
+<div class="de-newdoc" data-role="new-proposal" data-use-template="{{ $useTemplateUid }}" data-search-url="{{ route('customer.workspaces.businesses.documents.editor.contacts.search', [$workspaceUid, $businessUid]) }}">
     <div class="de-modal" data-role="new-proposal-modal" hidden>
         <form class="de-modal__dialog de-modal__dialog--md" method="post" action="{{ route('customer.workspaces.businesses.documents.store', [$workspaceUid, $businessUid]) }}" data-role="new-proposal-form" role="dialog" aria-modal="true" aria-labelledby="np-title">
             @csrf
@@ -42,12 +43,46 @@
                         <input class="de-input" type="text" name="title" maxlength="200" value="Untitled proposal" data-role="np-title" required>
                     </label>
                     <div class="de-field__label">Start from</div>
-                    <div class="de-radios">
-                        <label class="de-radio is-checked"><input type="radio" name="np_start" value="blank" checked><span><strong>Blank document</strong><small>Add text, products, payment terms and a signature yourself.</small></span></label>
+                    {{-- Contract 17B §6 — a template brings the layout only. You chose the contact above and add the product after. --}}
+                    <div data-role="template-slot">
+                        <div class="de-radios">
+                            <label class="de-radio is-checked"><input type="radio" name="template_uid" value="" checked data-role="np-template" data-template-start="blank"><span><strong>Blank document</strong><small>Add text, products, payment terms and a signature yourself.</small></span></label>
+                        </div>
+                        <div class="de-field__label" data-role="np-my-templates-label">My templates</div>
+                        <div class="de-radios" data-role="np-my-templates">
+                            @forelse($myTemplates as $template)
+                                @php($text = $templateSnippet($template))
+                                <label class="de-radio" data-role="np-template-card" data-template-uid="{{ $template->uid }}">
+                                    <input type="radio" name="template_uid" value="{{ $template->uid }}" data-role="np-template" @checked($useTemplateUid === $template->uid)>
+                                    <span>
+                                        <strong>{{ $template->name }} <span class="de-chip">{{ $template->template_type->value === 'contract' ? 'Contract' : 'Proposal' }}</span></strong>
+                                        @if($template->description)<small>{{ $template->description }}</small>@endif
+                                        @if($text !== '')<small class="de-template-snippet" data-role="np-template-snippet">{{ $text }}</small>@endif
+                                        <small>Use template: keeps the layout, not the product or contact.</small>
+                                    </span>
+                                </label>
+                            @empty
+                                <div class="de-muted" data-role="np-my-templates-empty">No saved templates yet. Open any proposal and choose Save as template to reuse its layout.</div>
+                            @endforelse
+                        </div>
+                        @if($recommendedTemplates->isNotEmpty())
+                            <div class="de-field__label" data-role="np-recommended-label">Recommended for your business</div>
+                            <div class="de-radios" data-role="np-recommended">
+                                @foreach($recommendedTemplates as $template)
+                                    @php($text = $templateSnippet($template))
+                                    <label class="de-radio" data-role="np-template-card" data-template-uid="{{ $template->uid }}">
+                                        <input type="radio" name="template_uid" value="{{ $template->uid }}" data-role="np-template" @checked($useTemplateUid === $template->uid)>
+                                        <span>
+                                            <strong>{{ $template->name }} <span class="de-chip">{{ $template->template_type->value === 'contract' ? 'Contract' : 'Proposal' }}</span></strong>
+                                            @if($template->description)<small>{{ $template->description }}</small>@endif
+                                            @if($text !== '')<small class="de-template-snippet" data-role="np-template-snippet">{{ $text }}</small>@endif
+                                        </span>
+                                    </label>
+                                @endforeach
+                            </div>
+                        @endif
+                        <a class="de-link" href="{{ route('customer.workspaces.businesses.document-templates.index', [$workspaceUid, $businessUid]) }}" data-role="np-manage-templates">Manage templates</a>
                     </div>
-                    {{-- TEMPLATES SLOT (17B stage 5): "My templates" and "Recommended" are
-                         listed here once templates exist. Nothing is invented in this stage. --}}
-                    <div class="de-muted" data-role="template-slot">My templates and recommended templates will appear here.</div>
                 </section>
             </div>
             <div class="de-modal__footer">

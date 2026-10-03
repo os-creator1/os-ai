@@ -1,11 +1,19 @@
 @php
     // The editor draws its own focused header; the layout's title row would only repeat it.
     $pageConfigs = ['pageHeader' => false];
-    $status = $bootstrap['document']['status'];
-    $statusLabel = ['draft' => 'Draft', 'sent' => 'Sent', 'signed' => 'Signed', 'void' => 'Voided', 'paid' => 'Paid', 'expired' => 'Expired'][$status] ?? ucfirst($status);
+    // Contract 17B §6 — ONE editor: a document, or (mode 'template' / 'platform_template') a template.
+    $mode = $bootstrap['mode'] ?? 'document';
+    $isTemplate = $mode !== 'document';
+    $templateArchived = $isTemplate && ($bootstrap['template']['status'] ?? '') === 'archived';
+    $status = $isTemplate ? ($templateArchived ? 'void' : 'draft') : $bootstrap['document']['status'];
+    $statusLabel = $isTemplate
+        ? ($templateArchived ? 'Archived' : 'Template')
+        : (['draft' => 'Draft', 'sent' => 'Sent', 'signed' => 'Signed', 'void' => 'Voided', 'paid' => 'Paid', 'expired' => 'Expired'][$status] ?? ucfirst($status));
+    $titleValue = $isTemplate ? ($bootstrap['template']['name'] ?? '') : $document->title;
     $editable = (bool) $bootstrap['editable'];
     $isLegacy = (bool) $bootstrap['is_legacy'];
     $readonlyNotice = match (true) {
+        $isTemplate => 'This template is archived, so it cannot be edited. Restore it from the template library to change it.',
         $status === 'sent' => 'This document has been sent, so it can no longer be edited here.',
         $status === 'signed' => 'This document has been signed and is locked.',
         $status === 'paid' => 'This document has been paid and is locked.',
@@ -15,7 +23,7 @@
     };
 @endphp
 @extends('layouts/contentLayoutMaster')
-@section('title', 'Edit document')
+@section('title', $isTemplate ? 'Edit template' : 'Edit document')
 
 @section('page-style')
     <link rel="stylesheet" href="{{ asset(mix('css/base/pages/documents-editor.css')) }}">
@@ -27,7 +35,7 @@
      icons, status chip, legacy and read-only notices are server-rendered so
      they exist before (and without) the script. --}}
 @include('documents.blocks._styles')
-<div class="de" id="document-editor" data-role="document-editor" data-editable="{{ $editable ? '1' : '0' }}" data-legacy="{{ $isLegacy ? '1' : '0' }}">
+<div class="de" id="document-editor" data-role="document-editor" data-mode="{{ $mode }}" data-editable="{{ $editable ? '1' : '0' }}" data-legacy="{{ $isLegacy ? '1' : '0' }}">
     <script type="application/json" id="document-editor-bootstrap">{!! json_encode($bootstrap, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) !!}</script>
     @foreach ($icons as $iconName)
         <template id="de-icon-{{ $iconName }}"><x-ds-icon :name="$iconName" size="16" /></template>
@@ -35,13 +43,15 @@
 
     <header class="de-header" data-role="editor-header">
         <div class="de-header__start">
-            <a class="de-iconbtn" href="{{ $bootstrap['urls']['index'] }}" data-role="editor-back" title="Back to documents" aria-label="Back to documents"><x-ds-icon name="arrow-left" size="18" /></a>
+            <a class="de-iconbtn" href="{{ $bootstrap['urls']['index'] }}" data-role="editor-back" title="{{ $isTemplate ? 'Back to template library' : 'Back to documents' }}" aria-label="{{ $isTemplate ? 'Back to template library' : 'Back to documents' }}"><x-ds-icon name="arrow-left" size="18" /></a>
             <button type="button" class="de-iconbtn de-only-narrow" data-role="toolbox-toggle" aria-controls="de-toolbox" aria-expanded="false" title="Blocks" aria-label="Show blocks"><x-ds-icon name="panel-left" size="18" /></button>
             <div class="de-titlewrap">
-                <input class="de-title" type="text" maxlength="200" value="{{ $document->title }}" aria-label="Document title" data-role="editor-title" @disabled(! $editable)>
+                <input class="de-title" type="text" maxlength="200" value="{{ $titleValue }}" aria-label="{{ $isTemplate ? 'Template name' : 'Document title' }}" data-role="editor-title" @disabled(! $editable)>
                 <div class="de-subline">
                     <span class="de-chip de-chip--{{ $status }}" data-role="editor-status">{{ $statusLabel }}</span>
-                    @if(($bootstrap['contact']['name'] ?? '') !== '')<span class="de-contact" data-role="editor-contact" title="This document is for this contact">For {{ $bootstrap['contact']['name'] }}</span>@endif
+                    @if($isTemplate)
+                        <select class="de-type" data-role="template-type" aria-label="Template type" @disabled(! $editable)><option value="proposal">Proposal</option><option value="contract">Contract</option></select>
+                    @elseif(($bootstrap['contact']['name'] ?? '') !== '')<span class="de-contact" data-role="editor-contact" title="This document is for this contact">For {{ $bootstrap['contact']['name'] }}</span>@endif
                     <span class="de-save" data-role="save-indicator" data-state="saved" role="status" aria-live="polite"></span>
                 </div>
             </div>
@@ -52,14 +62,23 @@
             @endunless
             @if($editable && ! $isLegacy)
                 <button type="button" class="de-btn" data-role="action-save"><x-ds-icon name="save" size="15" /><span>Save</span></button>
-                <button type="button" class="de-btn de-hide-narrow" data-role="action-save-template" disabled title="Coming with templates" aria-disabled="true"><x-ds-icon name="file-plus" size="15" /><span>Save as template</span></button>
+            @endif
+            @if(! $isTemplate && ! $isLegacy)
+                {{-- Saves the LAYOUT only (works on a sent / signed document too, read-only). --}}
+                <button type="button" class="de-btn de-hide-narrow" data-role="action-save-template" title="Save this layout as a reusable template"><x-ds-icon name="file-plus" size="15" /><span>Save as template</span></button>
+            @endif
+            @if(! $isTemplate && $editable && ! $isLegacy)
                 <button type="button" class="de-btn de-btn--primary" data-role="action-send"><x-ds-icon name="send" size="15" /><span>Send</span></button>
             @endif
             <div class="de-more">
                 <button type="button" class="de-iconbtn" data-role="action-more" aria-haspopup="true" aria-expanded="false" title="More" aria-label="More actions"><x-ds-icon name="ellipsis" size="18" /></button>
                 <div class="de-menu" data-role="more-menu" hidden>
-                    <a href="{{ $bootstrap['urls']['show'] }}" data-role="more-classic">Open classic page</a>
-                    <a href="{{ $bootstrap['urls']['index'] }}">All documents</a>
+                    @if($isTemplate)
+                        <a href="{{ $bootstrap['urls']['index'] }}" data-role="more-library">Template library</a>
+                    @else
+                        <a href="{{ $bootstrap['urls']['show'] }}" data-role="more-classic">Open classic page</a>
+                        <a href="{{ $bootstrap['urls']['index'] }}">All documents</a>
+                    @endif
                 </div>
             </div>
         </div>
@@ -67,7 +86,7 @@
 
     <div class="de-banners" data-role="editor-banners" role="alert">
         @unless($editable)
-            <div class="de-banner de-banner--info" data-role="readonly-banner">{{ $readonlyNotice }} <a href="{{ $bootstrap['urls']['show'] }}">Open the document page</a></div>
+            <div class="de-banner de-banner--info" data-role="readonly-banner">{{ $readonlyNotice }} <a href="{{ $isTemplate ? $bootstrap['urls']['index'] : $bootstrap['urls']['show'] }}">{{ $isTemplate ? 'Open the template library' : 'Open the document page' }}</a></div>
         @endunless
     </div>
 

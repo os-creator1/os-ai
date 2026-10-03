@@ -9,6 +9,8 @@ use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentBlockRenderer;
 use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\DocumentManager;
+use App\Library\Documents\Templates\DocumentTemplateService;
+use App\Exceptions\Documents\DocumentTemplateRefusedException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Payments\PaymentManager;
 use App\Library\Workspace\LocationAccessGuard;
@@ -41,6 +43,12 @@ class DocumentsController extends CustomerBaseController
 
     public function __construct(private readonly DocumentManager $manager, private readonly EntitlementManager $entitlements, private readonly LocationAccessGuard $locations, private readonly PaymentManager $payments) {}
 
+    /** Contract 17B §6 — resolved lazily so the constructor (subclassed by tests) stays as it was. */
+    private function templates(): DocumentTemplateService
+    {
+        return app(DocumentTemplateService::class);
+    }
+
     public function listing(string $workspaceUid, string $businessUid): View
     {
         $business = $this->business($workspaceUid, $businessUid);
@@ -50,6 +58,11 @@ class DocumentsController extends CustomerBaseController
             'documents' => $documents,
             // Contract 17B — block / new proposal drafts open in the visual editor; issued and legacy documents keep the classic page.
             'editorUids' => $this->editorDraftUids($documents->getCollection()),
+            // Contract 17B §6 — step 2 of New proposal: own ACTIVE templates + recommended platform templates (empty until niche blueprints supply them).
+            'myTemplates' => $this->templates()->listFor($business),
+            'recommendedTemplates' => $this->templates()->recommendedFor($business),
+            'templateSnippet' => fn (\App\Models\DocumentTemplate $t) => $this->templates()->snippet($t),
+            'useTemplateUid' => (string) request()->query('use_template', ''),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
             'locations' => BusinessLocation::where('business_id', $business->id)->whereIn('id', $ids)->where('lifecycle_state', 'active')->get(),
             'contacts' => Contacts::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
@@ -60,7 +73,7 @@ class DocumentsController extends CustomerBaseController
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $business = $this->business($workspaceUid, $businessUid);
-        $data = $request->validate(['location_uid' => 'nullable|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200', 'via' => 'nullable|in:editor']);
+        $data = $request->validate(['location_uid' => 'nullable|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200', 'via' => 'nullable|in:editor', 'template_uid' => 'nullable|string|max:64']);
         $viaEditor = (($data['via'] ?? null) === 'editor') && $data['kind'] === 'proposal';
         // Contract 17B §7 — the New proposal flow names only the Contact; its Location is the contact's own. Every other path still states the Location.
         if (! $viaEditor && empty($data['location_uid'])) {
@@ -76,10 +89,38 @@ class DocumentsController extends CustomerBaseController
         // never a validation message that confirms it. The manager then
         // re-derives Location/Contact/Opportunity integrity itself (§6.6).
         $opportunity = isset($data['opportunity_uid']) ? (CrmOpportunity::where('business_id', $business->id)->where('uid', $data['opportunity_uid'])->first() ?? abort(404)) : null;
-        $document = $this->manager->create($business, $location, $contact, $opportunity, $data['kind'], $data['title'], Auth::user());
+        // Contract 17B §6 — a template is only usable inside the editor flow, and only
+        // an own ACTIVE template (or a recommended platform one). Resolved BEFORE
+        // anything is created: a foreign / forged uid is a 404, an archived one a message.
+        $template = null;
+        if (! empty($data['template_uid'])) {
+            if (! $viaEditor) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['template_uid' => 'Templates can only start a proposal.']);
+            }
+            try {
+                $template = $this->templates()->access()->usable($business, $data['template_uid']);
+            } catch (DocumentTemplateRefusedException $e) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['template_uid' => $e->getMessage()]);
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+                abort(404);
+            }
+        }
+        // One transaction: a template that cannot be applied never leaves a half-created document behind.
+        try {
+            $document = \Illuminate\Support\Facades\DB::transaction(function () use ($business, $location, $contact, $opportunity, $data, $viaEditor, $template) {
+                $document = $this->manager->create($business, $location, $contact, $opportunity, $data['kind'], $data['title'], Auth::user());
+                if ($viaEditor) {
+                    // Block-ready from the first save: an empty block document, or the template's layout on a fresh draft for THIS contact.
+                    $template === null ? $this->manager->saveBlocks($document, []) : $this->templates()->instantiate($template, $document, Auth::user());
+                }
+                return $document;
+            });
+        } catch (DocumentTemplateRefusedException $e) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['template_uid' => $e->getMessage()]);
+        } catch (\App\Exceptions\Documents\InvalidDocumentBlocksException) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['template_uid' => 'This template could not be applied. Open it in the template editor and fix it first.']);
+        }
         if ($viaEditor) {
-            // Block-ready from the first save: an empty block document the editor opens straight away.
-            $this->manager->saveBlocks($document, []);
             return redirect()->route('customer.workspaces.businesses.documents.editor.edit', [$workspaceUid, $businessUid, $document->uid]);
         }
         return redirect()->route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]);

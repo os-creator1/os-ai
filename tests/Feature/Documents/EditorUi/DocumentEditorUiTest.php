@@ -82,13 +82,14 @@ class DocumentEditorUiTest extends TestCase
         $this->assertStringNotContainsString('data-role="legacy-upgrade"', $html);
     }
 
-    public function test_save_as_template_is_rendered_but_disabled_until_templates_exist(): void
+    public function test_save_as_template_is_rendered_and_enabled(): void
     {
         $tenant = $this->editorTenant();
         $html = $this->get($this->ed('edit', $tenant, $this->blankDocument($tenant)))->assertOk()->getContent();
 
-        $this->assertMatchesRegularExpression('#<button[^>]*data-role="action-save-template"[^>]*disabled[^>]*>#', $html);
-        $this->assertStringContainsString('title="Coming with templates"', $html);
+        $this->assertMatchesRegularExpression('#<button[^>]*data-role="action-save-template"[^>]*>#', $html);
+        $this->assertDoesNotMatchRegularExpression('#<button[^>]*data-role="action-save-template"[^>]*disabled[^>]*>#', $html, 'stage 5 enables Save as template');
+        $this->assertStringNotContainsString('Coming with templates', $html);
     }
 
     public function test_the_toolbox_offers_exactly_the_allowed_blocks_and_no_deferred_fields(): void

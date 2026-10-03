@@ -2,8 +2,9 @@
 //
 //   step 1  choose the Contact (searchable; the Location is derived from the
 //           contact on the server)
-//   step 2  title + start blank (the "My templates / Recommended" area is a
-//           clearly marked slot that the templates stage fills)
+//   step 2  title + start blank | one of My templates | Recommended (server-
+//           rendered radios named template_uid; a template brings the layout
+//           only, never the product or the contact chosen in step 1)
 //
 // The markup is server-rendered (documents/index.blade.php); this only drives
 // it. Submitting posts the normal documents.store form with via=editor, which
@@ -33,6 +34,7 @@ function init(root) {
     const title = form.querySelector('[data-role="np-title"]');
     const opener = document.querySelectorAll('[data-role="new-proposal-open"]');
     const searchUrl = root.getAttribute('data-search-url');
+    const templateRadios = Array.prototype.slice.call(form.querySelectorAll('[data-role="np-template"]'));
 
     let step = 1;
     let token = 0;
@@ -130,6 +132,24 @@ function init(root) {
     modal.addEventListener('mousedown', (event) => { if (event.target === modal) close(); });
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !modal.hidden) close(); });
     opener.forEach((node) => node.addEventListener('click', open));
+
+    // Contract 17B §6 — highlight the chosen start option.
+    function syncTemplates() {
+        templateRadios.forEach((radio) => {
+            const label = radio.closest('.de-radio');
+            if (label) {
+                label.classList.toggle('is-checked', radio.checked);
+            }
+        });
+    }
+    templateRadios.forEach((radio) => radio.addEventListener('change', syncTemplates));
+    syncTemplates();
+
+    // The library's "Use" link lands here with ?use_template=<uid>: open the flow with that template already chosen.
+    const wanted = root.getAttribute('data-use-template');
+    if (wanted && templateRadios.some((radio) => radio.value === wanted && radio.checked)) {
+        open();
+    }
 
     form.addEventListener('submit', (event) => {
         if (!contactField.value) {

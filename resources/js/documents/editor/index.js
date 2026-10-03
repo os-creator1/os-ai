@@ -24,6 +24,7 @@ import { createInspector } from './inspector';
 import { openCustomLineModal } from './line-modal';
 import { openModal } from './modal';
 import { openProductWizard } from './product-wizard';
+import { openSaveTemplateDialog } from './save-template';
 import { openSendDialog } from './send-dialog';
 import { createStore } from './state';
 import { createToolbox } from './toolbox';
@@ -54,10 +55,14 @@ function init(root) {
     const toasts = el('div', { class: 'de-toasts', 'aria-live': 'polite' });
     root.appendChild(toasts);
 
-    function notify(message, kind) {
-        const toast = el('div', { class: 'de-toast de-toast--' + (kind || 'info'), role: 'status', text: message });
+    function notify(message, kind, link) {
+        const toast = el('div', { class: 'de-toast de-toast--' + (kind || 'info'), role: 'status' }, [message]);
+        if (link && link.href) {
+            toast.appendChild(document.createTextNode(' '));
+            toast.appendChild(el('a', { href: link.href, 'data-role': 'toast-link', text: link.text || 'Open' }));
+        }
         toasts.appendChild(toast);
-        setTimeout(() => toast.remove(), kind === 'error' ? 7000 : 3500);
+        setTimeout(() => toast.remove(), link ? 9000 : (kind === 'error' ? 7000 : 3500));
     }
 
     // ---- legacy: only the upgrade prompt ----------------------------------------
@@ -143,13 +148,18 @@ function init(root) {
         }
         switch (toolId) {
             case 'product':
-                if (ensureProductBlock(index)) {
-                    ctx.productOps.addProduct();
-                }
-                return;
             case 'custom_line':
+                // A template holds only the generic product area: no wizard, no catalog, no lines (17B §6).
+                if (store.isTemplate) {
+                    ensureProductBlock(index);
+                    return;
+                }
                 if (ensureProductBlock(index)) {
-                    ctx.productOps.customLine();
+                    if (toolId === 'product') {
+                        ctx.productOps.addProduct();
+                    } else {
+                        ctx.productOps.customLine();
+                    }
                 }
                 return;
             case 'signature': {
@@ -370,7 +380,7 @@ function init(root) {
         }
         if (state === 'conflict' && banners && !conflictBanner) {
             conflictBanner = el('div', { class: 'de-banner de-banner--danger', 'data-role': 'conflict-banner' }, [
-                el('span', { text: 'This document was changed in another tab. Your recent edits here were not saved. ' }),
+                el('span', { text: 'This ' + (store.isTemplate ? 'template' : 'document') + ' was changed in another tab. Your recent edits here were not saved. ' }),
                 el('button', { type: 'button', class: 'de-btn de-btn--sm', 'data-role': 'conflict-reload', text: 'Reload', onclick: () => window.location.reload() }),
             ]);
             banners.appendChild(conflictBanner);
@@ -419,6 +429,23 @@ function init(root) {
                 titleInput.blur();
             }
         });
+    }
+
+    // Template mode: the type select beside the name (Proposal / Contract).
+    const typeSelect = root.querySelector('[data-role="template-type"]');
+    if (typeSelect && store.isTemplate) {
+        typeSelect.value = store.templateType || 'proposal';
+        typeSelect.disabled = !store.editable;
+        typeSelect.addEventListener('change', () => {
+            store.templateType = typeSelect.value;
+            autosave.markDirty();
+        });
+    }
+
+    // Document mode: save this layout as a template (the product and contact are never saved).
+    const saveTemplateButton = root.querySelector('[data-role="action-save-template"]');
+    if (saveTemplateButton && !store.isTemplate) {
+        saveTemplateButton.addEventListener('click', () => openSaveTemplateDialog(ctx));
     }
 
     const saveButton = root.querySelector('[data-role="action-save"]');

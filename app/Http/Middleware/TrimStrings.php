@@ -15,5 +15,8 @@ class TrimStrings extends Middleware
         'current_password',
         'password',
         'password_confirmation',
+        // Contract 17B: the spaces around a merge field live in the text run ("Proposal for " + chip).
+        // Trimming them here would glue the chip to the word ("forAlex"); BlockSchema validates run text itself.
+        'blocks.*.data.runs.*.t',
     ];
 }

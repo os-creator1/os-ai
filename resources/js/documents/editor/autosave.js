@@ -6,8 +6,8 @@
 // everything (api.js sets the conflict state); a 422 shows the field message and
 // waits for the next edit; a network failure retries on its own.
 
-import { errorMessage } from './api';
-import { savePayload } from './blocks';
+import { errorMessage } from './api.js';
+import { savePayload } from './blocks.js';
 
 const DELAY = 800;
 const RETRY = 5000;
@@ -36,7 +36,10 @@ export function createAutosave(store, api) {
             store.dirty = false;
             store.setSave('saving');
 
-            return { blocks: savePayload(store.blocks), title: store.title };
+            // A template saves its name and type beside the blocks; a document saves its title.
+            return store.isTemplate
+                ? { blocks: savePayload(store.blocks), name: store.title, template_type: store.templateType }
+                : { blocks: savePayload(store.blocks), title: store.title };
         });
 
         if (result.skipped) {

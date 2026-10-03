@@ -114,6 +114,47 @@ created_by_user_id`.
   Recommended = active platform templates referenced by the *published*
   blueprint version of the Business's niche. Blueprint install does not copy.
 
+### 6a. Business templates (stage 5 — implemented)
+
+**Rule: save the layout, not the product or contact.** A template is built only
+from `content.blocks` (never `payment_plan`, `parties`, lines, recipient, send or
+signature state) and BlockSchema reduces `product_list` to its two presentation
+flags, so none of that can reach `document_templates`. `payment_terms` is kept as a
+presentation-only block. Merge tokens stay tokens; images are kept only when they
+are the Business's own catalog images (an image the Business no longer owns is left
+out, never trusted).
+
+- `App\Library\Documents\Templates\DocumentTemplateService`: `saveFromDocument`
+  (open draft blocks, or the issued version's for sent / signed — read-only; legacy /
+  non-block documents refused), `createBlank`, `update` (conditional on
+  `document_templates.lock_version` → `DocumentTemplateConflictException`; `$scope`
+  Business = its own template, `null` = platform-owned only), `duplicate` ("Copy of …",
+  Business templates only), `archive` / `restore`, `instantiate` (drafts only; copies
+  blocks through `DocumentManager::saveBlocks` with the draft's `lock_version`;
+  re-validates; drops images the draft's Business does not own; never copies a plan;
+  the template is only read and the document keeps no reference to it).
+- `DocumentTemplateAccess`: own templates by `business_id`; a platform template is
+  readable / usable only if `RecommendedPlatformTemplates::forBusiness()` contains it
+  (the seam returns an empty collection until the niche-blueprint stage). Foreign,
+  forged, unrecommended and unknown uids are the same 404; an own archived template
+  is refused with a message.
+- Routes (`customer.workspaces.businesses.document-templates.*`, same gate chain as
+  documents): `index` GET `/`, `create` POST `/` (blank → editor), `edit` GET
+  `{uid}/editor`, `preview` GET `{uid}/preview`, `blocks` PUT `{uid}/blocks`
+  (`blocks`, `name`, `template_type`, `description`, `expected_lock_version`;
+  200/409/422/404 like the document API), `duplicate` / `archive` / `restore` POST.
+  Document side: `documents.editor.save-template` POST (`name`, `template_type`,
+  `description`) and `documents.store` with `via=editor` accepts `template_uid`
+  (inside one transaction; a template that cannot be applied leaves no document).
+- UI: the ONE editor bundle opens templates with bootstrap `mode: 'template'`
+  (`platform_template` is reserved for the next stage): header = back · name · type ·
+  status chip · save indicator · Preview · Save; no Send / Save as template / contact;
+  Add product inserts the generic product placeholder (no wizard, no catalog / line /
+  plan / contact-date calls); merge chips resolve to sample data. New proposal step 2:
+  Start blank · My templates · Recommended (hidden while empty).
+- Also fixed in this stage: the global `TrimStrings` middleware trimmed the spaces
+  around merge chips in saved text runs ("for " + chip became "forAlex");
+  `blocks.*.data.runs.*.t` is now excluded.
 ## 7. Creation, send, sign → pay
 
 - New document flow: **choose Contact → choose blank / My templates /
@@ -165,7 +206,7 @@ vanilla-ES-module bundle `resources/js/documents/editor/` (built to the committe
 draws everything else from the bootstrap JSON.
 
 - **Layout.** Header (back, editable title, status chip, save indicator, Preview /
-  Save / Save as template [disabled until templates, stage 5] / Send / More),
+  Save / Save as template [enabled in stage 5] / Send / More),
   left toolbox (`DocumentEditorToolbox` is the one definition: Content, Commerce,
   Fields [Signature only], Structure, Business), centre page canvas (structured
   flow, `.doc-blocks` stylesheet shared with the renderer), contextual inspector.
@@ -189,7 +230,7 @@ draws everything else from the bootstrap JSON.
   issued version) through `DocumentBlockRenderer` in a standalone print-width page;
   a legacy / non-block document redirects to the classic page.
 - **New proposal flow.** Documents page → New proposal → choose Contact → blank
-  (the "My templates / Recommended" slot is reserved for stage 5). `documents.store`
+  (stage 5 adds My templates / Recommended — see §6a). `documents.store`
   with `via=editor` derives the Location from the Contact, seeds an empty block
   document and redirects into the editor; the classic POST (and invoices) behave as
   before. List rows of block / new drafts link to the editor.

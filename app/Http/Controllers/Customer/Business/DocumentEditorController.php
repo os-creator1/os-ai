@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Customer\Business;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Documents\DocumentDraftConflictException;
+use App\Exceptions\Documents\DocumentTemplateRefusedException;
 use App\Exceptions\Documents\InvalidDocumentBlocksException;
+use App\Library\Documents\Templates\DocumentTemplateService;
 use App\Exceptions\Documents\InvalidDocumentPaymentPlanException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessDocuments;
 use App\Http\Controllers\Customer\CustomerBaseController;
@@ -62,6 +64,7 @@ class DocumentEditorController extends CustomerBaseController
         private readonly DocumentCatalogPicker $catalog,
         private readonly DocumentContactDates $dates,
         private readonly DocumentLegacyUpgrader $upgrader,
+        private readonly DocumentTemplateService $templates,
         private readonly ContactDirectory $contacts,
         private readonly EntitlementManager $entitlements,
         private readonly LocationAccessGuard $locations,
@@ -82,6 +85,7 @@ class DocumentEditorController extends CustomerBaseController
             'toolbox' => DocumentEditorToolbox::categories(),
             'icons' => DocumentEditorToolbox::icons(),
             'bootstrap' => $this->state->bootstrap($document) + [
+                'mode' => 'document',
                 'contact' => ['name' => $contactName !== '' ? $contactName : (string) $document->recipient_name_snapshot, 'email' => (string) $document->recipient_email_snapshot],
                 'business' => ['name' => (string) $business->name],
                 'images' => DocumentEditorToolbox::images($business),
@@ -109,6 +113,8 @@ class DocumentEditorController extends CustomerBaseController
                     'upgrade' => $route('editor.upgrade', [$documentUid]),
                     'send' => $route('editor.send', [$documentUid]),
                     'contacts_search' => $route('editor.contacts.search'),
+                    'save_template' => $route('editor.save-template', [$documentUid]),
+                    'template_library' => route('customer.workspaces.businesses.document-templates.index', $base),
                 ],
             ],
             'workspaceUid' => $workspaceUid,
@@ -343,6 +349,34 @@ class DocumentEditorController extends CustomerBaseController
         });
     }
 
+
+    /**
+     * Contract 17B §6 — "Save as template": the layout of this document (its open
+     * draft blocks, or the issued version's for a sent / signed one) becomes an
+     * ACTIVE Business template. The document is never written and no Contact,
+     * product, price or payment plan is copied (DocumentTemplateService).
+     */
+    public function saveTemplate(Request $request, string $workspaceUid, string $businessUid, string $documentUid): JsonResponse
+    {
+        $document = $this->document($workspaceUid, $businessUid, $documentUid);
+
+        return $this->respond(function () use ($request, $document, $workspaceUid, $businessUid) {
+            $data = $this->validated($request, [
+                'name' => 'required|string|max:' . DocumentTemplateService::NAME_MAX,
+                'template_type' => 'required|string|in:proposal,contract',
+                'description' => 'nullable|string|max:' . DocumentTemplateService::DESCRIPTION_MAX,
+            ]);
+
+            $template = $this->templates->saveFromDocument($document, $data['name'], $data['template_type'], $data['description'] ?? null, Auth::user());
+
+            return [
+                'template' => ['uid' => (string) $template->uid, 'name' => (string) $template->name, 'type' => $template->template_type->value],
+                'dropped_images' => $this->templates->lastDroppedImages(),
+                'library_url' => route('customer.workspaces.businesses.document-templates.index', [$workspaceUid, $businessUid]),
+                'edit_url' => route('customer.workspaces.businesses.document-templates.edit', [$workspaceUid, $businessUid, $template->uid]),
+            ];
+        });
+    }
     /**
      * The new-document flow's contact picker: this Business's contacts in the
      * Locations the actor can reach, behind the documents capability rather than
@@ -393,6 +427,8 @@ class DocumentEditorController extends CustomerBaseController
             return $this->invalid($e->getMessage(), array_map(fn ($message) => [$message], $e->errors()));
         } catch (InvalidDocumentPaymentPlanException $e) {
             return $this->invalid($e->getMessage(), array_map(fn ($message) => [$message], $e->errors()));
+        } catch (DocumentTemplateRefusedException $e) {
+            return $this->invalid($e->getMessage(), ['template' => [$e->getMessage()]]);
         } catch (CatalogRuleException $e) {
             return $this->invalid($e->getMessage(), ['catalog' => [$e->getMessage()]]);
         } catch (ValidationException $e) {

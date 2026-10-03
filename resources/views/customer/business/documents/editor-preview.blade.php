@@ -10,7 +10,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
-    <title>Preview - {{ $document->title }}</title>
+    <title>Preview - {{ $previewTitle ?? $document->title }}</title>
     <style>
         body{margin:0;background:#EFEDE8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
         .doc-preview-bar{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 16px;background:#262522;color:#fff;font-size:13px}
@@ -24,7 +24,7 @@
 <body>
 <div class="doc-preview-bar" data-role="preview-bar">
     <strong>Preview</strong>
-    <span>@if($isDraft)This is how the recipient will see your draft. Names are filled in from the contact.@else This is the version that was sent.@endif</span>
+    <span>@if(isset($previewNote)){{ $previewNote }}@elseif($isDraft)This is how the recipient will see your draft. Names are filled in from the contact.@else This is the version that was sent.@endif</span>
 </div>
 <div class="doc-preview-page" data-role="preview-page">
     {{ $blocksHtml }}

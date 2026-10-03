@@ -2,7 +2,7 @@
 // has to know. BlockSchema (server) remains the only authority; these produce
 // shapes it accepts.
 
-import { uuid } from './dom';
+import { uuid } from './dom.js';
 
 export const SINGLE = ['product_list', 'signature'];
 
