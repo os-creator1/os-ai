@@ -113,9 +113,54 @@ with no change to the CRM domain.
   change anything (application convention: a missing permission answers 401).
 - View-as: every route carries `businessUid`, so it is classified BusinessScoped.
 - Board: GET filters (`pipeline`, `q`, `status`, `contact_status`) update the board
-  region in place via `window.AsyncRegion`; drag and drop posts JSON to the move
-  endpoint; the deal page's move form is the keyboard/no-JavaScript path.
-  Fixed query count (window function caps cards at 50 per column).
+  region in place via `window.AsyncRegion`; the deal page's move form is the
+  keyboard/no-JavaScript path. Fixed query count (window function caps cards at 50
+  per column).
+
+### 6.1 Board drag and drop is optimistic
+
+A drop never refreshes the board. `public/js/crm/board.js` (DOM) and
+`public/js/crm/board-moves.js` (state, no DOM, unit-tested under Node) work like this:
+
+- **Instant.** The one existing card node is moved into the target column and both
+  column headers are corrected from the card's own `data-value-minor` (columns carry
+  `data-count` / `data-value-minor`). No clone, no re-render; a uid-uniqueness
+  invariant removes a duplicate card if one ever appeared.
+- **One request per card at a time**, always from the last server-confirmed stage to the
+  card's current stage. Drops made while one is in flight are coalesced (A→B, B→C is sent
+  as one B→C after A→B answers), so requests cannot overtake each other. Different cards
+  save concurrently; nothing is locked.
+- **Stale answers are ignored.** Every drop bumps a per-card generation; an answer for an
+  older generation updates only the confirmed stage and never moves, redraws or sets
+  totals. Canonical totals from the server are applied (two header texts) only for the
+  newest answer and only when no other move is still unsettled.
+- **Failure** (after bounded retries of network / 502 / 503 / 504 with the identical,
+  idempotent request) rolls the card back to its last confirmed stage with the toast
+  "Couldn't move opportunity. Try again." — unless a newer drop exists, in which case the
+  old failure is dropped silently. A 409 moves the card to the stage the server reports.
+- **Filter change during a save.** When `AsyncRegion` replaces the board (filters), the
+  `async-region:updated` handler puts any still-unsettled card back where it was dropped.
+
+Move endpoint, `POST …/opportunities/{uid}/stage` (JSON): body `stage` (target uid),
+optional `from_stage` (the stage the board last saw; compare-and-set under the existing
+`lockForUpdate` row lock in `CrmOpportunityService::moveToStage`), optional filters on the
+query string so totals are counted as the board is filtered. There is no version column;
+`from_stage` is the concurrency guard. Answers:
+
+- `200 {ok, moved, opportunity_uid, stage_uid, stage:{uid,name}, source_totals, target_totals}`
+  where a totals object is `{stage_uid, count, value_minor, label}`. A repeat of a request
+  already applied (deal already in the target) is `moved:false`, still `ok`.
+- `409 {ok:false, code:'stage_conflict', message, stage_uid}` — the deal is elsewhere;
+  nothing changed.
+- `422 {ok:false, message}` (closed deal, archived stage) and `404` (any uid not of this
+  Business/pipeline, including a forged `from_stage`, or a Location the actor cannot reach).
+
+Without `from_stage` (the detail page's form) the move is unconditional, as before.
+Within-column ordering is not a feature: a column lists newest-in-stage first, so a dropped
+card lands at the top.
+
+Tests: `tests/Feature/Crm/CrmBoardMoveContractTest.php`, `tests/Js/crm-board-moves.test.js`
+(run by `CrmBoardMovesJsTest`).
 
 ## 7. Future flow this preserves
 

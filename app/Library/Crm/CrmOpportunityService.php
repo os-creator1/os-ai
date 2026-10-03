@@ -12,6 +12,7 @@ use App\Events\Crm\CrmOpportunityLost;
 use App\Events\Crm\CrmOpportunityStageChanged;
 use App\Events\Crm\CrmOpportunityWon;
 use App\Library\Crm\Exceptions\CrmRuleException;
+use App\Library\Crm\Exceptions\CrmStageConflictException;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Contacts;
@@ -179,11 +180,19 @@ class CrmOpportunityService
     }
 
     /**
+     * `$expectedFrom` is the board's compare-and-set: the stage the caller last saw
+     * the deal in, checked against the LOCKED row. A deal already in `$to` is a
+     * repeat of the same request and answers false whatever `$expectedFrom` says
+     * (idempotent); a deal anywhere else raises CrmStageConflictException instead of
+     * being silently dragged from a stage the caller never saw. Null = unconditional,
+     * as the detail page's form has always been.
+     *
      * @return bool false when the deal was already in that stage (nothing changed)
+     * @throws CrmStageConflictException
      */
-    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null): bool
+    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null, ?CrmPipelineStage $expectedFrom = null): bool
     {
-        return DB::transaction(function () use ($opportunity, $to, $actorUserId): bool {
+        return DB::transaction(function () use ($opportunity, $to, $actorUserId, $expectedFrom): bool {
             $locked = $this->lock($opportunity);
 
             if ((int) $to->business_id !== (int) $locked->business_id || (int) $to->pipeline_id !== (int) $locked->pipeline_id) {
@@ -200,6 +209,10 @@ class CrmOpportunityService
 
             if ((int) $locked->stage_id === (int) $to->id) {
                 return false;
+            }
+
+            if ($expectedFrom !== null && (int) $locked->stage_id !== (int) $expectedFrom->id) {
+                throw new CrmStageConflictException((int) $locked->stage_id);
             }
 
             $from = CrmPipelineStage::query()->findOrFail($locked->stage_id);
