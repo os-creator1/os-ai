@@ -233,11 +233,16 @@ class SeoCitationsTest extends TestCase
         [, $business, $workspace] = $this->tenant();
         $this->privateLocation($business);
 
-        $html = $this->get($this->citationsUrl($workspace, $business))->getContent();
+        $private = $business->locations()->where('name', 'Home Office')->firstOrFail();
+        $permitted = $business->locations()->where('name', 'Main Storefront')->firstOrFail();
 
-        // The permitted storefront has the field; the private location's
-        // section must not. Two Locations x two directories, one with fields.
+        // One Location per page: the permitted storefront's drawers (2
+        // directories) offer the field; the private location's offer none.
+        $html = $this->get($this->citationsUrl($workspace, $business) . '?location=' . $permitted->uid)->getContent();
         $this->assertSame(2, substr_count($html, 'name="listed_address"'), 'Only the permitted Location (2 directories) may offer an address input.');
+
+        $html = $this->get($this->citationsUrl($workspace, $business) . '?location=' . $private->uid)->getContent();
+        $this->assertSame(0, substr_count($html, 'name="listed_address"'));
         $this->assertStringContainsString('data-role="address-withheld"', $html);
     }
 
@@ -368,8 +373,9 @@ class SeoCitationsTest extends TestCase
 
         preg_match_all('/<a\b[^>]*target="_blank"[^>]*>/i', $html, $matches);
 
-        // 1 listing link + 2 directory claim links.
-        $this->assertCount(3, $matches[0]);
+        // Row: 1 listing link + 2 claim links. Drawers repeat the same safe
+        // links (1 listing + 2 claim). Plus the business website link.
+        $this->assertCount(7, $matches[0]);
 
         foreach ($matches[0] as $tag) {
             $this->assertStringContainsString('rel="noopener noreferrer nofollow"', $tag);
@@ -459,9 +465,11 @@ class SeoCitationsTest extends TestCase
         $this->publicStorefront($business, 'Second');
         $this->publicStorefront($business, 'Third');
 
-        // Owner sees three Locations; a member granted one sees exactly one.
+        // Owner may pick among three Locations (one section rendered at a
+        // time); a member granted one sees exactly one, with no switcher.
         $ownerHtml = $this->get($this->citationsUrl($workspace, $business))->getContent();
-        $this->assertSame(3, substr_count($ownerHtml, 'data-section="citation-location"'));
+        $this->assertSame(1, substr_count($ownerHtml, 'data-section="citation-location"'));
+        $this->assertSame(3, preg_match_all('/<option value="[0-9a-f]{13}"/', $ownerHtml), 'The owner\'s switcher lists all three accessible Locations.');
 
         $this->authenticateAsSeoCustomer($this->selectedScopeMember($workspace, [$granted]));
         $memberHtml = $this->get($this->citationsUrl($workspace, $business))->getContent();
@@ -631,7 +639,7 @@ class SeoCitationsTest extends TestCase
         $this->assertStringContainsString('data-role="google-row"', $html);
         $this->assertStringContainsString('Linked', $html);
         // The mismatch count is GBP's own comparator's, delivered by the reader.
-        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail\(s\) differ from Google\./', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google\./', $html);
 
         $this->assertSame(0, SeoCitation::query()->count(), 'The Google row is synthetic and must never be stored.');
         $this->assertSame([], $this->fakeGoogle->calls, 'No provider call: the row comes from the read model only.');

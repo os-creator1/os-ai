@@ -51,17 +51,36 @@ class SeoCitationController extends CustomerBaseController
     {
     }
 
-    public function citations(string $workspaceUid, string $businessUid): View
+    public function citations(Request $request, string $workspaceUid, string $businessUid): View
     {
         [$workspace, $business] = $this->resolveCitationTenancy($workspaceUid, $businessUid);
 
         $this->authorize('view_seo');
 
+        $sections = $this->citations->page($workspace, $business, Auth::user());
+
+        // One Location at a time: NAP from different Locations is never
+        // combined on a page. `?location=<uid>` picks among the sections the
+        // manager ALREADY filtered to the actor's accessible Locations; a uid
+        // that is not one of them (foreign, inaccessible, malformed) is the
+        // same 404 as everywhere else. No Location picked -> the first.
+        $selected = $sections[0] ?? null;
+        $requested = $request->query('location');
+
+        if ($requested !== null) {
+            $selected = collect($sections)->first(
+                fn ($section) => is_string($requested) && (string) $section->location->uid === $requested,
+            );
+
+            abort_if($selected === null, 404);
+        }
+
         return view('customer.business.seo.citations', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
-            'sections' => $this->citations->page($workspace, $business, Auth::user()),
+            'sections' => $sections,
+            'section' => $selected,
             'statuses' => SeoCitationStatus::cases(),
             'canManage' => Auth::user()->can('manage_seo'),
         ]);

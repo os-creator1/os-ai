@@ -518,6 +518,30 @@ a documented one-directional SEO→GBP-library dependency).
 **GBP appears in Citations as a synthetic, read-only row** derived from the
 read model (§9.2) — never stored as a citation.
 
+**Citations dashboard (presentation only — no schema, route or write-path
+change).** The page renders **one Location at a time** (`?location=<uid>`, chosen
+only among the Locations `SeoCitationManager::page()` already filtered to the
+actor's access; an unknown, foreign or inaccessible uid is the usual 404), so NAP
+from different Locations is never combined. It shows: a canonical *Business
+information* card (read from the Business/Location, never copied into Citations);
+four summary cards that are counts of stored rows and of the read-time comparison
+only — *Listings tracked*, *Complete / linked*, *Needs attention*, and *NAP
+consistency* as `matched / compared` over fields where **both** a canonical and a
+recorded value exist (an unchecked field is never in the denominator and never a
+mismatch; no score, no visibility percentage); a *Needs attention* list that
+exists only when a real action does; and one row per tracked directory plus the
+synthetic Google row. Each directory row has a **display-only** state
+(`SeoCitationDisplayState`: Accurate · Listed · Needs attention · In progress ·
+Not started · Not applicable) derived from the user's own `status` plus the
+comparison; it is never persisted and never written back. Details and edits live
+in a drawer that posts to the one existing write route. The page says **"Manually
+tracked"** and never "synced", "live", "real-time" or "monitored"; only the Google
+row (connected / not linked / connection lost) reflects a real integration, via the
+GBP read model. Listing website is **not** a stored column, so the drawer shows the
+business website as profile context only. Adding a directory later is a new seeded
+`seo_citation_directories` row — the row/drawer templates are generic (only an icon
+map in `citations.blade.php` is per-directory).
+
 **The platform never fetches `listing_url`** (GBP §31: no server-side fetching
 of user-supplied URLs). It is rendered as an `https`-validated link with
 `rel="noopener noreferrer nofollow"` only. Directory submission, claiming and

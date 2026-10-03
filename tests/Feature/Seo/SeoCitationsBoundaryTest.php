@@ -276,6 +276,31 @@ class SeoCitationsBoundaryTest extends TestCase
         );
     }
 
+    public function test_the_citation_partials_have_no_unescaped_output_and_only_the_static_scripts_partial_has_script(): void
+    {
+        $dir = dirname(__DIR__, 3) . '/resources/views/customer/business/seo';
+
+        foreach (glob($dir . '/_citation*.blade.php') as $path) {
+            $markup = preg_replace('/\{\{--.*?--\}\}/s', '', (string) file_get_contents($path));
+            $name = basename($path);
+
+            $this->assertStringNotContainsString('{!!', $markup, $name);
+
+            if ($name === '_citations_scripts.blade.php') {
+                $this->assertStringNotContainsString('{{', $markup, 'The scripts partial must hold no dynamic output.');
+
+                continue;
+            }
+
+            $this->assertStringNotContainsString('<script', strtolower($markup), $name);
+            $this->assertSame(
+                substr_count($markup, 'target="_blank"'),
+                substr_count($markup, 'rel="{{ SeoLinkSafety::EXTERNAL_REL }}"'),
+                $name . ': every external link must carry the contracted rel.'
+            );
+        }
+    }
+
     public function test_the_directory_reference_table_has_no_customer_write_route(): void
     {
         foreach (Route::getRoutes()->getRoutes() as $route) {
