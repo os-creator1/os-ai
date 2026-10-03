@@ -476,6 +476,9 @@
 
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter::class));
 
+                    // 17B §6b — reference-only Proposal/Contract template recommendation.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\DocumentTemplateComponentAdapter::class));
+
                     return $registry;
                 },
             );

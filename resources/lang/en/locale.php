@@ -961,6 +961,7 @@
             'Additional Slot Agreements' => 'Additional Slot Agreements',
             'Niche Blueprints'        => 'Niche Blueprints',
             'Template Library'        => 'Template Library',
+            'Proposal Templates'      => 'Proposal Templates',
             'Messaging Provisioning Incidents' => 'Messaging Provisioning Incidents',
             'Messaging Port-Out Requests' => 'Messaging Port-Out Requests',
             'Messaging Number Lifecycle' => 'Messaging Number Lifecycle',

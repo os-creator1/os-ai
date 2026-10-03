@@ -1875,41 +1875,88 @@ function init(root) {
       return (0,_save_template__WEBPACK_IMPORTED_MODULE_10__.openSaveTemplateDialog)(ctx);
     });
   }
+
+  // Platform templates: Assign / Publish / Unpublish leave the page, so unsaved edits are saved first and a failed
+  // save keeps the user here (nothing is navigated or posted over a conflict or an error).
+  root.querySelectorAll('[data-flush-first]').forEach(function (node) {
+    node.addEventListener('click', /*#__PURE__*/function () {
+      var _ref2 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5(event) {
+        var ok, _t5;
+        return _regenerator().w(function (_context5) {
+          while (1) switch (_context5.n) {
+            case 0:
+              event.preventDefault();
+              if (!store.editable) {
+                _context5.n = 2;
+                break;
+              }
+              _context5.n = 1;
+              return autosave.flush();
+            case 1:
+              _t5 = _context5.v;
+              _context5.n = 3;
+              break;
+            case 2:
+              _t5 = true;
+            case 3:
+              ok = _t5;
+              if (!(!ok && store.save.state !== 'saved')) {
+                _context5.n = 4;
+                break;
+              }
+              notify('Fix the save problem first, then try again.', 'error');
+              return _context5.a(2);
+            case 4:
+              if (node.dataset.flushFirst === 'form' && node.form) {
+                node.form.submit();
+              } else if (node.href) {
+                window.location.href = node.href;
+              }
+            case 5:
+              return _context5.a(2);
+          }
+        }, _callee5);
+      }));
+      return function (_x2) {
+        return _ref2.apply(this, arguments);
+      };
+    }());
+  });
   var saveButton = root.querySelector('[data-role="action-save"]');
   if (saveButton) {
-    saveButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5() {
+    saveButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee6() {
       var ok;
-      return _regenerator().w(function (_context5) {
-        while (1) switch (_context5.n) {
-          case 0:
-            _context5.n = 1;
-            return autosave.flush();
-          case 1:
-            ok = _context5.v;
-            if (ok) {
-              notify('Saved.', 'success');
-            }
-          case 2:
-            return _context5.a(2);
-        }
-      }, _callee5);
-    })));
-  }
-  var previewButton = root.querySelector('[data-role="action-preview"]');
-  if (previewButton) {
-    previewButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee6() {
-      var ok, modal;
       return _regenerator().w(function (_context6) {
         while (1) switch (_context6.n) {
           case 0:
-            if (!store.editable) {
-              _context6.n = 2;
-              break;
-            }
             _context6.n = 1;
             return autosave.flush();
           case 1:
             ok = _context6.v;
+            if (ok) {
+              notify('Saved.', 'success');
+            }
+          case 2:
+            return _context6.a(2);
+        }
+      }, _callee6);
+    })));
+  }
+  var previewButton = root.querySelector('[data-role="action-preview"]');
+  if (previewButton) {
+    previewButton.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee7() {
+      var ok, modal;
+      return _regenerator().w(function (_context7) {
+        while (1) switch (_context7.n) {
+          case 0:
+            if (!store.editable) {
+              _context7.n = 2;
+              break;
+            }
+            _context7.n = 1;
+            return autosave.flush();
+          case 1:
+            ok = _context7.v;
             if (!ok && store.save.state !== 'conflict') {
               notify('Preview shows your last saved version.', 'info');
             }
@@ -1941,9 +1988,9 @@ function init(root) {
               }
             }));
           case 3:
-            return _context6.a(2);
+            return _context7.a(2);
         }
-      }, _callee6);
+      }, _callee7);
     })));
   }
   var sendButton = root.querySelector('[data-role="action-send"]');
@@ -2014,31 +2061,31 @@ function init(root) {
     if (!button) {
       return;
     }
-    button.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee7() {
+    button.addEventListener('click', /*#__PURE__*/_asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee8() {
       var result;
-      return _regenerator().w(function (_context7) {
-        while (1) switch (_context7.n) {
+      return _regenerator().w(function (_context8) {
+        while (1) switch (_context8.n) {
           case 0:
             button.disabled = true;
             message.hidden = true;
-            _context7.n = 1;
+            _context8.n = 1;
             return api.mutate('POST', store.urls.upgrade, {});
           case 1:
-            result = _context7.v;
+            result = _context8.v;
             if (!result.ok) {
-              _context7.n = 2;
+              _context8.n = 2;
               break;
             }
             window.location.reload();
-            return _context7.a(2);
+            return _context8.a(2);
           case 2:
             button.disabled = false;
             message.textContent = result.status === 409 ? 'This document was changed in another tab. Reload the page and try again.' : (0,_api__WEBPACK_IMPORTED_MODULE_0__.errorMessage)(result, 'The document could not be upgraded.');
             message.hidden = false;
           case 3:
-            return _context7.a(2);
+            return _context8.a(2);
         }
-      }, _callee7);
+      }, _callee8);
     })));
   }
 }

@@ -92,3 +92,24 @@ test('document autosave still sends blocks and title only', async () => {
     assert.deepEqual(Object.keys(api.calls[0].body).sort(), ['blocks', 'title']);
     assert.equal(api.calls[0].url, '/docs/d-1/editor/blocks');
 });
+
+// Contract 17B §6b — the Platform Owner's editor is the SAME bundle in `platform_template` mode.
+test('platform_template mode behaves as a template: no contact, sample merge data, name + type autosave', async () => {
+    const boot = { ...templateBoot(), mode: 'platform_template', images: [], urls: { blocks: '/admin/document-templates/t-1/blocks', niches: '/admin/document-templates/t-1/niches' } };
+    const store = createStore(boot);
+    assert.equal(store.mode, 'platform_template');
+    assert.equal(store.isTemplate, true);
+    assert.equal(store.mergePreview('contact.first_name'), 'Alex');
+    assert.deepEqual(store.images, [], 'no platform images in V1');
+    assert.deepEqual(store.commerce.lines, []);
+
+    const api = fakeApi();
+    const autosave = createAutosave(store, api);
+    store.dirty = true;
+    await autosave.flush();
+    assert.equal(api.calls[0].method, 'PUT');
+    assert.equal(api.calls[0].url, '/admin/document-templates/t-1/blocks');
+    assert.equal(api.calls[0].body.name, 'Wedding layout');
+    assert.equal(api.calls[0].body.template_type, 'contract');
+    assert.equal('title' in api.calls[0].body, false);
+});

@@ -12,6 +12,7 @@ use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\DocumentManager;
 use App\Library\Documents\Editor\DocumentEditorState;
+use App\Library\PlatformOwner\PlatformOwnerAuthority;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentVersion;
@@ -223,6 +224,86 @@ final class DocumentTemplateService
             if ($affected !== 1) {
                 throw new DocumentTemplateConflictException((int) $current->lock_version);
             }
+
+            return $current->refresh();
+        });
+    }
+
+    // ---- platform templates (Platform Owner only) --------------------------------------------
+
+    /**
+     * A blank, DRAFT platform template (`business_id` NULL). Platform Owner only
+     * (re-derived from `users.is_admin`, never from the caller's say-so). It
+     * stays invisible to every Business until published AND assigned to a niche.
+     */
+    public function createPlatform(string $name, string $type, ?string $description, User $actor): DocumentTemplate
+    {
+        app(PlatformOwnerAuthority::class)->assertAdministrator((int) $actor->id);
+
+        $template = new DocumentTemplate([
+            'business_id' => null,
+            'template_type' => $this->type($type),
+            'name' => $this->cleanName($name),
+            'description' => $this->cleanDescription($description),
+            'blocks' => [],
+            'schema_version' => BlockSchema::SCHEMA_VERSION,
+            'created_by_user_id' => $actor->id,
+        ]);
+        $template->status = DocumentTemplateStatus::Draft;
+        $template->save();
+
+        return $template->refresh();
+    }
+
+    /**
+     * Draft -> active ("Publish") and archived -> active ("Enable"). A template
+     * can only go live if its blocks pass BlockSchema as a PLATFORM template (no
+     * images) and there is at least one block. Does not touch `lock_version`
+     * (the editor's conflict counter covers content only).
+     *
+     * @throws DocumentTemplateRefusedException
+     */
+    public function activatePlatform(DocumentTemplate $template, User $actor): DocumentTemplate
+    {
+        return $this->setPlatformStatus($template, $actor, DocumentTemplateStatus::Active);
+    }
+
+    /** Active -> archived ("Disable"): takes effect immediately for every Business's recommendations. */
+    public function disablePlatform(DocumentTemplate $template, User $actor): DocumentTemplate
+    {
+        return $this->setPlatformStatus($template, $actor, DocumentTemplateStatus::Archived);
+    }
+
+    private function setPlatformStatus(DocumentTemplate $template, User $actor, DocumentTemplateStatus $to): DocumentTemplate
+    {
+        app(PlatformOwnerAuthority::class)->assertAdministrator((int) $actor->id);
+
+        return DB::transaction(function () use ($template, $to) {
+            $current = DocumentTemplate::query()->whereKey($template->id)->whereNull('business_id')->lockForUpdate()->first()
+                ?? throw (new ModelNotFoundException())->setModel(DocumentTemplate::class);
+
+            if ($to === DocumentTemplateStatus::Active) {
+                if ($current->status === DocumentTemplateStatus::Active) {
+                    return $current;
+                }
+
+                $blocks = is_array($current->blocks) ? $current->blocks : [];
+
+                if ($blocks === []) {
+                    throw new DocumentTemplateRefusedException('Add at least one block before publishing this template.');
+                }
+
+                try {
+                    BlockSchema::normalize($blocks, ['allow_images' => false]);
+                } catch (\App\Exceptions\Documents\InvalidDocumentBlocksException $e) {
+                    throw new DocumentTemplateRefusedException('This template cannot be published: ' . implode(' ', $e->errors()));
+                }
+            } elseif ($current->status !== DocumentTemplateStatus::Active) {
+                throw new DocumentTemplateRefusedException('Only a published template can be disabled.');
+            }
+
+            $current->status = $to;
+            $current->save();
 
             return $current->refresh();
         });

@@ -24,9 +24,11 @@ final class DocumentTemplateEditorState
      * @param  array<string, string>  $urls  library, edit, blocks, preview
      * @return array<string, mixed>
      */
-    public function bootstrap(DocumentTemplate $template, ?Business $business, array $urls, string $mode = 'template'): array
+    public function bootstrap(DocumentTemplate $template, ?Business $business, array $urls, string $mode = 'template', ?array $toolboxCategories = null): array
     {
-        $editable = $template->status !== DocumentTemplateStatus::Archived;
+        // A disabled PLATFORM template stays editable (the Platform Owner fixes it, then enables it); an archived
+        // Business template is read-only until restored.
+        $editable = $mode === 'platform_template' || $template->status !== DocumentTemplateStatus::Archived;
 
         return [
             'mode' => $mode,
@@ -67,7 +69,7 @@ final class DocumentTemplateEditorState
             'images' => $business === null ? [] : DocumentEditorToolbox::images($business),
             'merge_samples' => DocumentMergeFields::sample(),
             'toolbox' => [
-                'categories' => DocumentEditorToolbox::categories(),
+                'categories' => $toolboxCategories ?? DocumentEditorToolbox::categories(),
                 'block_types' => BlockSchema::TYPES,
                 'merge_fields' => DocumentMergeFields::catalog(),
                 'limits' => ['max_blocks' => BlockSchema::MAX_BLOCKS, 'max_bytes' => BlockSchema::MAX_BYTES, 'max_run_text' => BlockSchema::MAX_RUN_TEXT],

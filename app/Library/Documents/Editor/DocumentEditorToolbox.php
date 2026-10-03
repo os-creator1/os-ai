@@ -54,6 +54,21 @@ final class DocumentEditorToolbox
     }
 
     /**
+     * The toolbox a PLATFORM template is built from (17B §6b): the same list without the Image block - there is no
+     * platform media seam in V1 and BlockSchema refuses image blocks in a platform template.
+     *
+     * @return array<int, array{id: string, label: string, items: array<int, array<string, mixed>>}>
+     */
+    public static function platformCategories(): array
+    {
+        return array_map(function (array $category): array {
+            $category['items'] = array_values(array_filter($category['items'], fn (array $item) => $item['type'] !== 'image'));
+
+            return $category;
+        }, self::categories());
+    }
+
+    /**
      * Every icon the editor chrome draws, rendered once server-side through the
      * design system's icon seam and cloned by the JS.
      *

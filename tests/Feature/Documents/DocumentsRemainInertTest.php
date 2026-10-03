@@ -317,6 +317,8 @@ class DocumentsRemainInertTest extends TestCase
                     && ! str_contains($name, 'businesses.documents.')
                     // 17B §6: the Business's authenticated template library / template editor.
                     && ! str_contains($name, 'businesses.document-templates.')
+                    // 17B §6b: the Platform Owner's admin-only (EnsureUserIsAdministrator) platform template surface.
+                    && ! str_starts_with($name, 'admin.document-templates.')
                     // Sub-slice D's owner-only Stripe Connect onboarding.
                     && ! str_contains($name, 'businesses.payments.connect.')
                     // Sub-slice C's secure link plus Sub-slice E's payment

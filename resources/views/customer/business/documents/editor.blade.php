@@ -4,11 +4,18 @@
     // Contract 17B §6 — ONE editor: a document, or (mode 'template' / 'platform_template') a template.
     $mode = $bootstrap['mode'] ?? 'document';
     $isTemplate = $mode !== 'document';
+    // 17B §6b — the Platform Owner's editor: the same shell, with the template's publish state in the chip.
+    $isPlatform = $mode === 'platform_template';
+    $platformStatus = $isPlatform ? ($bootstrap['template']['status'] ?? 'draft') : null;
     $templateArchived = $isTemplate && ($bootstrap['template']['status'] ?? '') === 'archived';
-    $status = $isTemplate ? ($templateArchived ? 'void' : 'draft') : $bootstrap['document']['status'];
-    $statusLabel = $isTemplate
+    $status = $isPlatform
+        ? ['active' => 'signed', 'archived' => 'void'][$platformStatus] ?? 'draft'
+        : ($isTemplate ? ($templateArchived ? 'void' : 'draft') : $bootstrap['document']['status']);
+    $statusLabel = $isPlatform
+        ? ['active' => 'Published', 'archived' => 'Disabled'][$platformStatus] ?? 'Draft'
+        : ($isTemplate
         ? ($templateArchived ? 'Archived' : 'Template')
-        : (['draft' => 'Draft', 'sent' => 'Sent', 'signed' => 'Signed', 'void' => 'Voided', 'paid' => 'Paid', 'expired' => 'Expired'][$status] ?? ucfirst($status));
+        : (['draft' => 'Draft', 'sent' => 'Sent', 'signed' => 'Signed', 'void' => 'Voided', 'paid' => 'Paid', 'expired' => 'Expired'][$status] ?? ucfirst($status)));
     $titleValue = $isTemplate ? ($bootstrap['template']['name'] ?? '') : $document->title;
     $editable = (bool) $bootstrap['editable'];
     $isLegacy = (bool) $bootstrap['is_legacy'];
@@ -43,7 +50,7 @@
 
     <header class="de-header" data-role="editor-header">
         <div class="de-header__start">
-            <a class="de-iconbtn" href="{{ $bootstrap['urls']['index'] }}" data-role="editor-back" title="{{ $isTemplate ? 'Back to template library' : 'Back to documents' }}" aria-label="{{ $isTemplate ? 'Back to template library' : 'Back to documents' }}"><x-ds-icon name="arrow-left" size="18" /></a>
+            <a class="de-iconbtn" href="{{ $bootstrap['urls']['index'] }}" data-role="editor-back" title="{{ $isPlatform ? 'Back to platform templates' : ($isTemplate ? 'Back to template library' : 'Back to documents') }}" aria-label="{{ $isPlatform ? 'Back to platform templates' : ($isTemplate ? 'Back to template library' : 'Back to documents') }}"><x-ds-icon name="arrow-left" size="18" /></a>
             <button type="button" class="de-iconbtn de-only-narrow" data-role="toolbox-toggle" aria-controls="de-toolbox" aria-expanded="false" title="Blocks" aria-label="Show blocks"><x-ds-icon name="panel-left" size="18" /></button>
             <div class="de-titlewrap">
                 <input class="de-title" type="text" maxlength="200" value="{{ $titleValue }}" aria-label="{{ $isTemplate ? 'Template name' : 'Document title' }}" data-role="editor-title" @disabled(! $editable)>
@@ -63,6 +70,15 @@
             @if($editable && ! $isLegacy)
                 <button type="button" class="de-btn" data-role="action-save"><x-ds-icon name="save" size="15" /><span>Save</span></button>
             @endif
+            @if($isPlatform)
+                {{-- Platform Owner: assignment + publish. Both flush unsaved edits first (data-flush-first), then navigate / post. --}}
+                <a class="de-btn" href="{{ $bootstrap['urls']['niches'] }}" data-role="action-assign-niches" data-flush-first="link"><x-ds-icon name="layers-2" size="15" /><span>Assign to niches</span></a>
+                @if($platformStatus === 'active')
+                    <form method="POST" action="{{ $bootstrap['urls']['disable'] }}" class="d-inline">@csrf<button type="submit" class="de-btn" data-role="action-unpublish" data-flush-first="form" title="Take this template out of every Business's recommendations"><span>Unpublish</span></button></form>
+                @else
+                    <form method="POST" action="{{ $bootstrap['urls']['publish'] }}" class="d-inline">@csrf<button type="submit" class="de-btn de-btn--primary" data-role="action-publish" data-flush-first="form"><span>{{ $platformStatus === 'archived' ? 'Enable' : 'Publish' }}</span></button></form>
+                @endif
+            @endif
             @if(! $isTemplate && ! $isLegacy)
                 {{-- Saves the LAYOUT only (works on a sent / signed document too, read-only). --}}
                 <button type="button" class="de-btn de-hide-narrow" data-role="action-save-template" title="Save this layout as a reusable template"><x-ds-icon name="file-plus" size="15" /><span>Save as template</span></button>
@@ -73,7 +89,9 @@
             <div class="de-more">
                 <button type="button" class="de-iconbtn" data-role="action-more" aria-haspopup="true" aria-expanded="false" title="More" aria-label="More actions"><x-ds-icon name="ellipsis" size="18" /></button>
                 <div class="de-menu" data-role="more-menu" hidden>
-                    @if($isTemplate)
+                    @if($isPlatform)
+                        <a href="{{ $bootstrap['urls']['index'] }}" data-role="more-library">All platform templates</a>
+                    @elseif($isTemplate)
                         <a href="{{ $bootstrap['urls']['index'] }}" data-role="more-library">Template library</a>
                     @else
                         <a href="{{ $bootstrap['urls']['show'] }}" data-role="more-classic">Open classic page</a>

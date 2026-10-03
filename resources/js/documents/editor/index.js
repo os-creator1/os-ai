@@ -448,6 +448,24 @@ function init(root) {
         saveTemplateButton.addEventListener('click', () => openSaveTemplateDialog(ctx));
     }
 
+    // Platform templates: Assign / Publish / Unpublish leave the page, so unsaved edits are saved first and a failed
+    // save keeps the user here (nothing is navigated or posted over a conflict or an error).
+    root.querySelectorAll('[data-flush-first]').forEach((node) => {
+        node.addEventListener('click', async (event) => {
+            event.preventDefault();
+            const ok = store.editable ? await autosave.flush() : true;
+            if (!ok && store.save.state !== 'saved') {
+                notify('Fix the save problem first, then try again.', 'error');
+                return;
+            }
+            if (node.dataset.flushFirst === 'form' && node.form) {
+                node.form.submit();
+            } else if (node.href) {
+                window.location.href = node.href;
+            }
+        });
+    });
+
     const saveButton = root.querySelector('[data-role="action-save"]');
     if (saveButton) {
         saveButton.addEventListener('click', async () => {

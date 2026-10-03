@@ -651,6 +651,20 @@
                         'admin_only' => true,
                     ],
                     [
+                        // Implementation Contract 17B §6b — the Platform Owner's
+                        // proposal / contract templates (platform-owned layouts
+                        // recommended to niches). Separate from Template Library
+                        // above, which is the read-only niche-blueprint catalog.
+                        // Same admin_only boundary as the two entries above.
+                        'url'        => url(config('app.admin_path') . '/document-templates'),
+                        'slug'       => config('app.admin_path') . '/document-templates',
+                        'name'       => 'Proposal Templates',
+                        'i18n'       => 'Proposal Templates',
+                        'icon'       => 'file-text',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
                         'url'     => '',
                         'name'    => 'Customer',
                         'icon'    => 'users',
