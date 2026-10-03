@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Customer\Business;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Documents\Blocks\BlockSchema;
+use App\Library\Documents\Blocks\DocumentBlockRenderer;
+use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\DocumentManager;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Payments\PaymentManager;
@@ -71,6 +74,11 @@ class DocumentsController extends CustomerBaseController
             // What the customer was actually sent: the frozen issued version,
             // never the live Catalog. Read-only on this page.
             'issued' => $issued?->load(['lineItems', 'paymentScheduleItems']),
+            // Contract 17B — a block document's frozen version, rendered read-only
+            // through the one renderer from the frozen parties (never live data).
+            'issuedBlocksHtml' => $issued !== null && BlockSchema::hasBlocks($issued->content)
+                ? app(DocumentBlockRenderer::class)->renderVersion($issued, 'preview', DocumentMergeFields::fromFrozenParties(is_array($issued->content['parties'] ?? null) ? $issued->content['parties'] : []), ['business_id' => (int) $document->business_id])
+                : null,
             'payments' => $payments,
             'refundable' => $payments->mapWithKeys(fn (BusinessDocumentPayment $payment) => [$payment->id => $this->payments->refundableAmount($payment)]),
             'contact' => Contacts::find($document->contact_id),

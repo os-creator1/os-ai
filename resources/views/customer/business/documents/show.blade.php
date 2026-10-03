@@ -41,6 +41,7 @@
 <div class="card p-2 mb-2" data-role="issued-version">
     <h5>Sent version {{ $issued->version_number }} <small class="text-muted">(frozen — this is what the customer sees)</small></h5>
     @if(! empty($issued->content['body']))<div data-role="issued-terms" style="white-space:pre-wrap">{{ $issued->content['body'] }}</div>@endif
+    @if(! empty($issuedBlocksHtml))<div class="mb-1" data-role="issued-blocks" style="overflow-x:auto">{{ $issuedBlocksHtml }}</div>@endif
     @foreach($issued->lineItems->sortBy('position') as $line)
         <div>{{ $line->name }} — {{ $line->quantity }} × {{ $money($line->unit_price_minor) }} = {{ $money($line->line_total_minor) }} {{ $line->currency_code }}</div>
     @endforeach

@@ -59,6 +59,9 @@
         <p data-role="payment-processing">Your payment is being confirmed. This page shows it as paid as soon as your bank confirms it — you do not need to pay again.</p>
     @endif
 
+{{-- Contract 17B: a block document (content.blocks) renders through the one
+    DocumentBlockRenderer; a legacy version (content.body) takes the original
+    path below, unchanged. --}}@if($blocksHtml === null)
     {{-- The frozen body and terms the signer is agreeing to. Escaped, with line
          breaks preserved by CSS; never raw HTML. --}}
     @if($body !== null && trim($body) !== '')
@@ -110,125 +113,26 @@
         {{-- §6.3.2 — payment STATE, rendered from persisted data only. This
              block creates no payment row, no PaymentIntent and no provider
              call; the Pay action below is a separate POST. --}}
-        @if($payment['payable_item'] !== null && $payment['can_pay'])
-            <p data-role="amount-due">
-                Due now: {{ number_format($payment['amount_minor'] / 100, 2) }} {{ $payment['currency_code'] }}
-            </p>
-
-            {{-- §11.8 — Stripe.js + the Payment Element, mounted against the
-                 BUSINESS's connected account. This application never collects
-                 a card number, expiry or CVC: the Element talks to Stripe
-                 directly, and Stripe.js performs the confirmation including
-                 any SCA step. --}}
-            <div id="payment-element" data-role="payment-element"></div>
-            <p id="payment-error" class="muted" data-role="payment-error"></p>
-            <button id="pay-button" type="button" data-role="pay-button">Pay now</button>
-
-            <script src="https://js.stripe.com/v3/"></script>
-            <script>
-                (function () {
-                    var payButton = document.getElementById('pay-button');
-                    var errorBox = document.getElementById('payment-error');
-                    var started = false;
-
-                    payButton.addEventListener('click', async function () {
-                        // Re-driving is safe and idempotent server-side, but
-                        // one in-flight start at a time keeps the UI honest.
-                        if (started) { return; }
-                        started = true;
-                        payButton.disabled = true;
-
-                        try {
-                            // The request body is EMPTY: no card data, and no
-                            // account — the server derives the connected
-                            // account from the payment row (SS7.2.2).
-                            var response = await fetch(@json(route('public.documents.pay', ['uid' => $document->uid, 'token' => $paymentToken])), {
-                                method: 'POST',
-                                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': @json(csrf_token()) },
-                            });
-
-                            if (!response.ok) { throw new Error('unavailable'); }
-
-                            var data = await response.json();
-
-                            // Initialized with the SAME connected account the
-                            // PaymentIntent was created on.
-                            var stripe = Stripe(data.publishable_key, { stripeAccount: data.stripe_account });
-                            var elements = stripe.elements({ clientSecret: data.client_secret });
-                            elements.create('payment').mount('#payment-element');
-                            payButton.textContent = 'Confirm payment';
-                            payButton.disabled = false;
-
-                            payButton.onclick = async function () {
-                                payButton.disabled = true;
-                                var result = await stripe.confirmPayment({
-                                    elements: elements,
-                                    confirmParams: { return_url: window.location.href },
-                                });
-
-                                // Reaching here at all means an immediate
-                                // client-side error. A successful confirmation
-                                // redirects — and that redirect carries NO
-                                // authority: only the verified webhook marks
-                                // this payment succeeded (SS8.5).
-                                if (result.error) {
-                                    errorBox.textContent = result.error.message;
-                                    payButton.disabled = false;
-                                }
-                            };
-                        } catch (e) {
-                            errorBox.textContent = 'Payment is not available right now.';
-                            started = false;
-                            payButton.disabled = false;
-                        }
-                    });
-                })();
-            </script>
-        @else
-            <p class="muted" data-role="payment-note">
-                @if($payment['reason'] === \App\Exceptions\Payments\PaymentStartException::NOT_SIGNED)
-                    This document can be paid once it has been signed.
-                @elseif($payment['reason'] === \App\Exceptions\Payments\PaymentStartException::DEPOSIT_OUTSTANDING)
-                    The deposit must be paid before the balance.
-                @elseif($payment['reason'] === \App\Exceptions\Payments\PaymentStartException::NOTHING_PAYABLE)
-                    There is nothing left to pay.
-                @else
-                    Online payment is not available for this document.
-                @endif
-            </p>
-        @endif
+                    @include('public.documents._payment')
     @endif
 
-    @if($document->requires_signature && $signature === null && $document->status === \App\Enums\Documents\DocumentStatus::Sent)
-        <fieldset data-role="sign-form">
-            <legend>Sign this document</legend>
-
-            @foreach($formErrors as $messages)
-                @foreach($messages as $message)
-                    <p class="error" data-role="sign-error">{{ $message }}</p>
-                @endforeach
-            @endforeach
-
-            <form method="POST" action="{{ route('public.documents.sign', ['uid' => $document->uid, 'token' => request()->route('token')]) }}">
-                @csrf
-                {{-- Which version this page was rendered from; the server refuses
-                     the signature if the current version is a different one. --}}
-                <input type="hidden" name="displayed_version_uid" value="{{ $version->uid }}">
-                <label for="signer_name">Your full name</label>
-                <input id="signer_name" type="text" name="signer_name" maxlength="160" value="{{ old('signer_name') }}" required>
-
-                <label for="signer_email">Your email address</label>
-                <input id="signer_email" type="email" name="signer_email" maxlength="255" value="{{ old('signer_email') }}" required>
-
-                <label for="typed_name">Type your name to sign</label>
-                <input id="typed_name" type="text" name="typed_name" maxlength="160" value="{{ old('typed_name') }}" required>
-
-                <p class="consent" data-role="consent-statement">{{ $consentStatement }}</p>
-
-                <button type="submit">Sign document</button>
-            </form>
-        </fieldset>
+    @if($signable)
+        @include('public.documents._sign_form')
     @endif
+@else
+    <style>body{max-width:860px}</style>
+    {{ $blocksHtml }}
+
+    @if($schedule->isNotEmpty())
+        @include('public.documents._payment')
+    @endif
+
+    {{-- The sign form is injected at the signature block; if the version has
+         none (it cannot be sent that way, but fail safe) it follows the content. --}}
+    @if($signable && ! $signatureInBlocks)
+        @include('public.documents._sign_form')
+    @endif
+@endif
 </main>
 </body>
 </html>

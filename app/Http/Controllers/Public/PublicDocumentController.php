@@ -6,6 +6,10 @@ use App\Exceptions\Documents\DocumentLinkException;
 use App\Exceptions\Payments\PaymentStartException;
 use App\Exceptions\Payments\StripeConnectException;
 use App\Http\Controllers\Controller;
+use App\Enums\Documents\DocumentStatus;
+use App\Library\Documents\Blocks\BlockSchema;
+use App\Library\Documents\Blocks\DocumentBlockRenderer;
+use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Library\Documents\DocumentManager;
 use App\Library\Documents\PublicDocumentAccess;
 use App\Library\Documents\PublicDocumentGuard;
@@ -13,6 +17,7 @@ use App\Library\Payments\PaymentManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\HtmlString;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -44,6 +49,7 @@ class PublicDocumentController extends Controller
         private readonly PublicDocumentGuard $guard,
         private readonly DocumentManager $manager,
         private readonly PaymentManager $payments,
+        private readonly DocumentBlockRenderer $blocks,
     ) {
     }
 
@@ -232,7 +238,7 @@ class PublicDocumentController extends Controller
     {
         $version = $access->version;
 
-        return [
+        $data = [
             'document' => $access->document,
             'parties' => $this->parties($access),
             'body' => is_string($version->content['body'] ?? null) ? $version->content['body'] : null,
@@ -253,6 +259,46 @@ class PublicDocumentController extends Controller
             // Deliberately NOT named $errors: that would shadow Blade's own
             // ViewErrorBag and change how every shared partial behaves.
             'formErrors' => $errors,
+            // The sign form is offered only to an unsigned, sent document that
+            // requires a signature (the one condition, shared by both render paths).
+            'signable' => $access->document->requires_signature
+                && $access->document->signature()->doesntExist()
+                && $access->document->status === DocumentStatus::Sent,
+        ];
+
+        return $data + $this->blockData($access, $data);
+    }
+
+    /**
+     * Contract 17B — a block document renders through the one
+     * DocumentBlockRenderer, from the FROZEN version only: merge values come
+     * from content.parties (never the live Business or Contact), and the real
+     * sign form is handed in to be placed at the signature block. A legacy
+     * version (no content.blocks) yields nulls and keeps the original page.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function blockData(PublicDocumentAccess $access, array $data): array
+    {
+        $content = $access->version->content;
+
+        if (! BlockSchema::hasBlocks($content)) {
+            return ['blocksHtml' => null, 'signatureInBlocks' => false];
+        }
+
+        $hasSignatureBlock = BlockSchema::countOfType($content['blocks'], 'signature') > 0;
+        $frozen = is_array($content['parties'] ?? null) ? $content['parties'] : [];
+
+        return [
+            'signatureInBlocks' => $hasSignatureBlock,
+            'blocksHtml' => $this->blocks->renderVersion($access->version, 'public', DocumentMergeFields::fromFrozenParties($frozen), [
+                'business_id' => (int) $access->document->business_id,
+                'timezone' => (string) ($access->business->timezone ?? ''),
+                'signature_html' => $hasSignatureBlock && $data['signable']
+                    ? new HtmlString(view('public.documents._sign_form', $data)->render())
+                    : null,
+            ]),
         ];
     }
 }

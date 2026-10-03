@@ -14,6 +14,7 @@ use App\Events\DocumentVoided;
 use App\Jobs\Documents\SendDocumentLinkEmail;
 use App\Jobs\Documents\SendDocumentReminderEmail;
 use App\Library\Catalog\PackageSnapshotService;
+use App\Library\Documents\Blocks\DocumentMergeFields;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentLineItem;
@@ -214,8 +215,7 @@ final class DocumentManager
             $document->access_token_expires_at = $document->expires_at
                 ?? now()->addDays((int) config('documents.link_ttl_days'));
             $document->access_token_rotated_at = now();
-            $document->link_delivered_at = null;
-            $document->link_delivery_failed_at = null;
+            $document->clearLinkDeliveryOutcome();
             $document->status = DocumentStatus::Sent;
             $document->sent_at = $document->sent_at ?? now();
             $document->save();
@@ -304,8 +304,7 @@ final class DocumentManager
             $document->access_token_expires_at = $document->expires_at
                 ?? now()->addDays((int) config('documents.link_ttl_days'));
             $document->access_token_rotated_at = now();
-            $document->link_delivered_at = null;
-            $document->link_delivery_failed_at = null;
+            $document->clearLinkDeliveryOutcome();
             $document->save();
 
             return $document->refresh();
@@ -357,6 +356,13 @@ final class DocumentManager
             'business_location_name' => (string) $location->name,
             'document_title' => (string) $document->title,
         ];
+
+        // Contract 17B §4 — the merge-field values a block document prints (contact name
+        // and email from the recipient SNAPSHOT, Business details, title) are frozen
+        // here too, so an issued version renders from these and never from the live
+        // Business or Contact. Additive: the keys above are unchanged, and the whole
+        // `parties` block is part of the hashed content.
+        $parties['merge'] = DocumentMergeFields::freeze($document, $business);
 
         if (is_string($document->recipient_name_snapshot) && $document->recipient_name_snapshot !== '') {
             $parties['recipient_name'] = $document->recipient_name_snapshot;
