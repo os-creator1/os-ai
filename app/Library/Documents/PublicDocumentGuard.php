@@ -77,6 +77,43 @@ class PublicDocumentGuard
 
         $this->assertTokenAuthorizes($document, $plaintextToken);
 
+        [$business, $workspace, $location] = $this->assertAccountOperable($document);
+
+        // ---- 5a: viewable at all -----------------------------------------
+        if (in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Void], true)) {
+            throw DocumentLinkException::because(DocumentLinkException::DOCUMENT_NOT_VIEWABLE);
+        }
+
+        $version = $document->current_version_id === null
+            ? null
+            : BusinessDocumentVersion::query()
+                ->where('business_document_id', $document->id)
+                ->find($document->current_version_id);
+
+        // The public surface renders the FROZEN ISSUED version and nothing
+        // else. A draft-state current version would mean the send path was
+        // bypassed, so it is refused rather than displayed.
+        if ($version === null || $version->state !== DocumentVersionState::Issued) {
+            throw DocumentLinkException::because(DocumentLinkException::NO_ISSUED_VERSION);
+        }
+
+        return new PublicDocumentAccess($document, $version, $business, $workspace, $location);
+    }
+
+    /**
+     * §6.3.1 checks 2-4 — the account behind the document may currently
+     * operate customer-facing (lifecycle, Payments & Contracts entitlement,
+     * usable Location). Extracted from resolve() unchanged so the automatic
+     * balance payment request sweep fails closed on EXACTLY the conditions a
+     * public request does, instead of re-implementing them. It never looks at
+     * a token and writes nothing.
+     *
+     * @return array{0: Business, 1: Workspace, 2: BusinessLocation}
+     *
+     * @throws DocumentLinkException
+     */
+    public function assertAccountOperable(BusinessDocument $document): array
+    {
         // ---- 2/3: the account behind the document -----------------------
         $business = Business::query()->find($document->business_id);
         $workspace = $business === null ? null : Workspace::query()->find($business->workspace_id);
@@ -104,25 +141,7 @@ class PublicDocumentGuard
             throw DocumentLinkException::because(DocumentLinkException::LOCATION_UNUSABLE);
         }
 
-        // ---- 5a: viewable at all -----------------------------------------
-        if (in_array($document->status, [DocumentStatus::Draft, DocumentStatus::Void], true)) {
-            throw DocumentLinkException::because(DocumentLinkException::DOCUMENT_NOT_VIEWABLE);
-        }
-
-        $version = $document->current_version_id === null
-            ? null
-            : BusinessDocumentVersion::query()
-                ->where('business_document_id', $document->id)
-                ->find($document->current_version_id);
-
-        // The public surface renders the FROZEN ISSUED version and nothing
-        // else. A draft-state current version would mean the send path was
-        // bypassed, so it is refused rather than displayed.
-        if ($version === null || $version->state !== DocumentVersionState::Issued) {
-            throw DocumentLinkException::because(DocumentLinkException::NO_ISSUED_VERSION);
-        }
-
-        return new PublicDocumentAccess($document, $version, $business, $workspace, $location);
+        return [$business, $workspace, $location];
     }
 
     /**

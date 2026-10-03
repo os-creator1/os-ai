@@ -22,15 +22,15 @@
 </head>
 <body>
 <main>
-    
+
     <p class="muted" data-role="issuer">Harbor Lane Studios &middot; Main</p>
     <h1>Kitchen renovation proposal</h1>
 
-    
-    
-    
-    
-    
+
+
+
+
+
     <table data-role="lines">
         <thead>
         <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
@@ -62,17 +62,17 @@
                 </tr>
                         </tbody>
         </table>
-        
+
                     <p class="muted" data-role="payment-note">
                                     This document can be paid once it has been signed.
                             </p>
-            
+
             <fieldset data-role="sign-form">
             <legend>Sign this document</legend>
 
-            
+
             <form method="POST" action="http://localhost/documents/UID/TOKEN/sign">
-                <input type="hidden" name="_token" value="X" autocomplete="off">                
+                <input type="hidden" name="_token" value="X" autocomplete="off">
                 <input type="hidden" name="displayed_version_uid" value="VUID">
                 <label for="signer_name">Your full name</label>
                 <input id="signer_name" type="text" name="signer_name" maxlength="160" value="" required>

@@ -11,6 +11,7 @@ use App\Models\BusinessDocumentVersion;
 use App\Models\ContactGroupFields;
 use App\Models\ContactsCustomField;
 use App\Models\DocumentTemplate;
+use App\Notifications\Documents\DocumentBalanceRequestNotification;
 use App\Notifications\Documents\DocumentIssuedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -480,6 +481,93 @@ class ProposalEditorJourneyTest extends TestCase
         $items = BusinessDocumentVersion::findOrFail($document->refresh()->current_version_id)->paymentScheduleItems()->get();
         $this->assertCount(1, $items);
         $this->assertSame('full', $items[0]->kind->value);
+    }
+
+    // ---- journey 3: balance due later ---------------------------------------------------------
+
+    public function test_journey_three_balance_due_later_is_requested_automatically_with_a_fresh_link_and_then_paid(): void
+    {
+        Notification::fake();
+        config(['documents.enabled' => true]);
+        [$tenant, $platform] = $this->photoBoothWorld();
+        $document = $this->startFromTemplate($tenant, $platform, 'Balance later booth');
+        $this->addPackage($tenant, $document, 100000);
+        $this->plan($tenant, $document, ['structure' => 'deposit', 'deposit' => '300.00', 'balance_due' => 'date', 'balance_due_date' => '2030-06-01'])
+            ->assertJsonPath('schedule.1.due_date', '2030-06-01');
+
+        $this->postJson($this->ed('send', $tenant, $document), ['channels' => ['email'], 'recipient_email' => self::CONTACT_EMAIL, 'expected_lock_version' => $this->lock($document)])
+            ->assertOk()->assertJsonPath('document_status', 'sent');
+        $document = $document->refresh();
+        $firstToken = null;
+        Notification::assertSentOnDemand(DocumentIssuedNotification::class, function ($n) use (&$firstToken) {
+            $firstToken = $this->token($n);
+
+            return true;
+        });
+        $issued = BusinessDocumentVersion::findOrFail($document->current_version_id);
+
+        // Sign -> Continue to payment -> the deposit is paid through the fake Stripe gateway + webhook.
+        $this->asRecipient();
+        $html = $this->get($this->publicUrl($document, $firstToken))->assertOk()->getContent();
+        $this->sign($document, $firstToken, $html)->assertOk()
+            ->assertSee('Continue to payment')->assertSee('300.00 USD is due now');
+        $this->postJson($this->payUrl($document, $firstToken))->assertOk();
+        $deposit = BusinessDocumentPayment::where('business_document_id', $document->id)->sole();
+        $this->assertSame(30000, (int) $deposit->amount_minor);
+        [$body, $headers] = $this->webhookPayload('payment_intent.succeeded', (string) $deposit->provider_payment_intent_id, 'acct_ready001', 30000, 'USD', (string) $deposit->local_idempotency_key);
+        $this->postWebhook($body, $headers)->assertOk();
+
+        $document = $document->refresh();
+        $this->assertSame('signed', $document->status->value, 'the deposit alone does not complete the document');
+        $frozen = $this->schedule($document, $issued->refresh());
+        $this->assertSame($this->endOfDay('2030-06-01'), $frozen[1]['due_at']);
+        $this->assertSame('pending', $issued->paymentScheduleItems()->where('kind', 'balance')->sole()->status->value);
+
+        try {
+            // Before the due date nothing is sent.
+            Carbon::setTestNow(Carbon::parse('2030-05-31 12:00:00', 'UTC'));
+            $this->artisan('documents:dispatch-balance-requests')->expectsOutput('Dispatched 0 balance payment request(s).')->assertExitCode(0);
+            Notification::assertSentOnDemandTimes(DocumentBalanceRequestNotification::class, 0);
+
+            // One second before the due DAY begins in New York (00:00 on 1 June = 04:00 UTC): still nothing.
+            Carbon::setTestNow(Carbon::parse('2030-06-01 03:59:59', 'UTC'));
+            $this->artisan('documents:dispatch-balance-requests')->expectsOutput('Dispatched 0 balance payment request(s).')->assertExitCode(0);
+
+            // The due date arrives (first moment of 1 June in New York): the sweep sends ONE request.
+            Carbon::setTestNow(Carbon::parse('2030-06-01 04:00:00', 'UTC'));
+            $this->artisan('documents:dispatch-balance-requests')->expectsOutput('Dispatched 1 balance payment request(s).')->assertExitCode(0);
+            $this->artisan('documents:dispatch-balance-requests')->expectsOutput('Dispatched 0 balance payment request(s).')->assertExitCode(0);
+            Notification::assertSentOnDemandTimes(DocumentBalanceRequestNotification::class, 1);
+            $freshToken = null;
+            Notification::assertSentOnDemand(DocumentBalanceRequestNotification::class, function ($n, $channels, $notifiable) use (&$freshToken) {
+                $freshToken = $this->token($n);
+
+                return $notifiable->routes['mail'] === self::CONTACT_EMAIL;
+            });
+            $this->assertNotSame($firstToken, $freshToken);
+
+            // The recipient follows the fresh link: the balance is payable; the first link is gone.
+            $this->asRecipient();
+            $this->get($this->publicUrl($document, $firstToken))->assertNotFound();
+            $this->get($this->publicUrl($document, $freshToken))->assertOk()
+                ->assertSee('Due 1 June 2030')->assertSee('Due now: 700.00 USD')->assertSee('id="pay"', false)->assertSee('data-role="pay-button"', false);
+
+            // Paid through the fake gateway; the document is fully paid.
+            $this->postJson($this->payUrl($document, $freshToken))->assertOk();
+            $balance = BusinessDocumentPayment::where('business_document_id', $document->id)->orderByDesc('id')->firstOrFail();
+            $this->assertSame(70000, (int) $balance->amount_minor);
+            [$body, $headers] = $this->webhookPayload('payment_intent.succeeded', (string) $balance->provider_payment_intent_id, 'acct_ready001', 70000, 'USD', (string) $balance->local_idempotency_key);
+            $this->postWebhook($body, $headers)->assertOk();
+            $this->assertSame('paid', $document->refresh()->status->value);
+            $this->assertSame(['paid', 'paid'], $issued->paymentScheduleItems()->orderBy('sequence')->get()->map(fn ($i) => $i->status->value)->all());
+
+            // No further request, ever.
+            Carbon::setTestNow(Carbon::parse('2030-06-03 12:00:00', 'UTC'));
+            $this->artisan('documents:dispatch-balance-requests')->expectsOutput('Dispatched 0 balance payment request(s).')->assertExitCode(0);
+            Notification::assertSentOnDemandTimes(DocumentBalanceRequestNotification::class, 1);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     // ---- negatives -----------------------------------------------------------------------------

@@ -428,12 +428,7 @@ final class DocumentManager
 
             $this->requireRecipientFor($document, $channels);
 
-            $document->access_token_hash = Hash::make($plaintextToken);
-            $document->access_token_expires_at = $document->expires_at
-                ?? now()->addDays((int) config('documents.link_ttl_days'));
-            $document->access_token_rotated_at = now();
-            $document->clearLinkDeliveryOutcome();
-            $document->save();
+            $this->rotateAccessToken($document, $plaintextToken);
 
             return $document->refresh();
         });
@@ -441,6 +436,25 @@ final class DocumentManager
         DB::afterCommit(fn () => $this->lastDelivery = $this->dispatcher()->dispatch($result, $plaintextToken, $channels, $message));
 
         return $result;
+    }
+
+    /**
+     * The ONE token rotation: hash the new plaintext, restart the link's
+     * expiry, stamp the rotation and clear the previous link's delivery
+     * outcome (the markers describe the CURRENT link only). Every earlier link
+     * dies at once. The caller MUST hold the document row lock inside its own
+     * transaction; this saves the row but opens none. Shared by resendLink()
+     * and the automatic balance payment request sweep so both rotate
+     * identically.
+     */
+    public function rotateAccessToken(BusinessDocument $lockedDocument, string $plaintextToken): void
+    {
+        $lockedDocument->access_token_hash = Hash::make($plaintextToken);
+        $lockedDocument->access_token_expires_at = $lockedDocument->expires_at
+            ?? now()->addDays((int) config('documents.link_ttl_days'));
+        $lockedDocument->access_token_rotated_at = now();
+        $lockedDocument->clearLinkDeliveryOutcome();
+        $lockedDocument->save();
     }
 
     /**

@@ -63,10 +63,9 @@ with a `mode` of `editor | preview | public | template_preview`.
   deposit must satisfy `0 < deposit < total` or the plan is rejected/cleared.
 - UI shows formatted Business currency; "minor units" never appears.
 - **Known semantic (unchanged):** `due_at` does not gate payability; the
-  balance is payable after the deposit. `due_at` is displayed and drives the
-  existing reminder sweep. An auto-issued payment-request email carrying a
-  fresh pay link at the due date is **not** built (token plaintext is
-  unrecoverable; it needs token rotation + a new job) — reported as a gap.
+  balance is payable after the deposit. `due_at` is displayed, drives the
+  existing reminder sweep (which sends no link) and drives the automatic
+  balance payment request (§7, "Automatic balance payment request").
 
 ## 4. Merge fields
 
@@ -203,6 +202,58 @@ The signed page's CTA links to the public page `#pay` section; legacy (non-block
 pages keep their byte-pinned markup, so the CTA reaches the page without the anchor.
 Editor routes serve proposals only; an invoice is 404 in the builder.
 
+**Automatic balance payment request (closure pass).** For Deposit + Balance documents:
+deposit paid → balance stays scheduled → when the balance item's **due date** (frozen `due_at`)
+arrives, the customer is emailed the canonical secure link to pay. Command
+`documents:dispatch-balance-requests` (hourly, `withoutOverlapping`, registered
+unconditionally next to the other document sweeps; the command owns the
+`documents.enabled` no-op and `--limit`, config `documents.balance_request_sweep_limit`)
+runs `Delivery\DocumentBalanceRequestDispatcher`.
+
+- *Eligible* (re-verified under the document → version → schedule-item row locks at claim
+  time, and again inside the job): schedule item `kind=balance`, `status=pending`,
+  `due_at` not null and the due DAY begun (now ≥ the first moment of the due day in the Business timezone — `due_at` itself stays the frozen end-of-day instant); sequence-1 deposit `paid`; no item `refunded`/`void`; the
+  item belongs to the document's **current issued** version; document `Signed` (or `Sent`
+  when no signature is required) and its offer not lapsed; frozen
+  `recipient_email_snapshot` valid; `payment_request_sent_at` null and attempts under the
+  cap. Account conditions are `PublicDocumentGuard::assertAccountOperable()` — the exact
+  lifecycle / Payments & Contracts entitlement / Location checks a public request runs
+  (extracted from `resolve()`, behaviour unchanged). Void, Expired, Paid, Draft and
+  Sent-while-a-signature-is-required are never selected. The Contact is not an input: the
+  recipient is the frozen snapshot, the amount and date are the frozen schedule row, so
+  changing the Contact later changes nothing.
+- *Null `due_at`* ("immediately after the deposit"): nothing is scheduled — the balance is
+  already payable through the existing link, so there is nothing to request.
+- *Claim columns* (migration `2026_10_29_090001`, progress markers on
+  `business_document_payment_schedule_items`, no commercial term touched):
+  `payment_request_claimed_at`, `payment_request_sent_at`, `payment_request_failed_at`,
+  `payment_request_attempts` (unsigned tinyint, default 0).
+- *Claim + rotation*: one short transaction; a conditional UPDATE sets `claimed_at` and
+  bumps `attempts` only while `sent_at` is null, attempts < `balance_request_max_attempts`
+  (3) and no claim younger than `balance_request_lease_minutes` (30) exists, so concurrent
+  sweeps cannot both win. The winner rotates the token with the SAME
+  `DocumentManager::rotateAccessToken()` `resendLink()` uses (every earlier link dies),
+  then queues `SendDocumentBalanceRequestEmail` (`ShouldQueueAfterCommit` +
+  `ShouldBeEncrypted`, plaintext token handled like `SendDocumentLinkEmail`).
+- *Email*: `DocumentBalanceRequestNotification` — "A payment of {amount} for “{title}” is
+  due", business name, due date in the Business timezone, a "Pay now" button to
+  `public.documents.show` with the fresh token and the `#pay` anchor; escaped; no card data.
+- *Idempotency / retry*: the job re-checks eligibility, requires the token it carries to be
+  the CURRENT link (a rotated or stale job sends and records nothing), emails, then
+  records `payment_request_sent_at` once (and the link's `link_delivered_at`). After
+  success the item is never selected again, so a replayed job or sweep sends nothing. A
+  failure records `payment_request_failed_at`, releases the claim and the next sweep
+  retries (rotating the link again) until the attempts cap, then stops. A claim whose job
+  never reported back is retried after the lease. Honest limit: a worker crash between
+  sending the mail and recording it can re-send once after the lease.
+- *Not done*: no auto-charge, no Stripe call in the job, no invoice/document created, no
+  terms or due dates changed, Payment/Refund finalizers untouched. **SMS is not added**:
+  rotation clears `sms_link_delivered_at`, and the SMS path reads the live Contact's
+  consent, so it cannot honour "the Contact is not an input" cleanly; email is the V1
+  requirement.
+- *Timing*: a date-typed `due_at` is the END of that day in the Business timezone (§3) and stays so for
+  reminders and display, but the request goes out at the first hourly sweep on or after the START of that day (SQL prefilter `due_at <= now + 26h`, exact check per Business timezone under the row lock and again in the job).
+
 ## 8. Immutability
 
 Only drafts (and sent documents after `revise()` that have an open draft
@@ -275,9 +326,7 @@ draws everything else from the bootstrap JSON.
 Text, date, checkbox fields; multi-recipient signing; columns; free image upload
 and Business logo block (no media seam / no logo column); platform-template images;
 hosted Stripe Checkout redirect (existing in-page Payment Element is reused);
-auto-issued balance payment request / pay-link email at the due date (`due_at` still
-only drives the existing reminder sweep and display; the token plaintext is
-unrecoverable, so it needs token rotation + a new job); template thumbnails (a text
+SMS for the automatic balance payment request (email only, §7); template thumbnails (a text
 snippet is shown); template deletion (archive only); PayPal; PDF export (contract 17
 §5.6).
 
