@@ -1,12 +1,9 @@
-@extends('layouts/contentLayoutMaster')
+@extends(request()->query('fragment') === '1' ? 'customer.business.calendar._fragment' : 'customer.business.calendar._frame')
 
 @section('title', 'Booking types')
+@section('calendar-active', 'booking-types')
 
-@section('page-style')
-    @include('customer.business.calendar._styles')
-@endsection
-
-@section('content')
+@section('calendar-section')
     @php
         // Implementation Contract 15 §5.1 / §12.B — presentation only. Every
         // authorization answer was decided before this view rendered; nothing
@@ -14,8 +11,6 @@
         // would refuse.
         $scope = [$workspace->uid, $business->uid, $location->uid];
     @endphp
-
-    @include('customer.business.calendar._module-nav', ['active' => 'booking-types'])
 
     <x-card title="Booking types" data-section="booking-types-list">
         <x-slot name="actions">

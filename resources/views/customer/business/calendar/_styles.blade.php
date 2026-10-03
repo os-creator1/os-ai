@@ -161,15 +161,25 @@
        the engine. Scoped to #calendar-grid so nothing else on the page
        is affected.
     --------------------------------------------------------------- */
+    /* The wrap clips vertically (FullCalendar scrolls the hours itself) and
+       scrolls sideways only when the grid's own min-width (set by the section
+       script from the day count) is wider than the workspace — a narrow
+       screen scrolls instead of squeezing day columns unreadable. */
     #calendar-grid-wrap {
         border: 1px solid var(--color-border, #E5E1DA);
         border-radius: 0 0 .5rem .5rem;
         background: var(--color-surface, #fff);
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
     }
 
+    /* The grid lines. FullCalendar draws every hour/day line from
+       --fc-border-color, and the line colour used to be --color-border-subtle
+       (#F2F0ED on a white surface, ~1.1:1) — present but all-but-invisible.
+       --color-border keeps them thin and neutral yet always legible; the
+       half-hour rows stay dotted and fainter so the hours still read first. */
     #calendar-grid {
-        --fc-border-color: var(--color-border-subtle, #F2F0ED);
+        --fc-border-color: var(--color-border, #E5E1DA);
         --fc-page-bg-color: var(--color-surface, #fff);
         --fc-neutral-bg-color: var(--color-surface-secondary, #FBFAF7);
         --fc-list-event-hover-bg-color: var(--color-row-hover, var(--color-primary-soft-bg));
@@ -215,6 +225,14 @@
 
     #calendar-grid .fc-timegrid-slot-minor {
         border-top-style: dotted;
+        border-top-color: var(--color-border-subtle, #F2F0ED);
+    }
+
+    /* Day separators, stated explicitly rather than left to the theme
+       default so the day-column boundary can never silently disappear. */
+    #calendar-grid .fc-col-header-cell,
+    #calendar-grid .fc-timegrid-col {
+        border-left: 1px solid var(--fc-border-color);
     }
 
     #calendar-grid .fc-timegrid-slot-lane:hover {
@@ -269,5 +287,62 @@
 
     #calendar-grid .fc-scrollgrid {
         border-color: var(--color-border-subtle, #F2F0ED);
+    }
+
+    /* ---------------------------------------------------------------
+       Section swap (Calendar view / Booking types / Staff availability).
+       Only #calendar-content is replaced; the old section stays put until
+       the new one is ready, and a slow request just dims it.
+    --------------------------------------------------------------- */
+    #calendar-content {
+        position: relative;
+        transition: opacity .12s ease;
+    }
+
+    #calendar-content.is-loading {
+        opacity: .55;
+        pointer-events: none;
+    }
+
+    #calendar-content.is-loading::after {
+        content: '';
+        position: absolute;
+        top: 3rem;
+        left: 50%;
+        width: 1.5rem;
+        height: 1.5rem;
+        margin-left: -.75rem;
+        border: 2px solid var(--color-border, #E5E1DA);
+        border-top-color: var(--color-primary, #B5524C);
+        border-radius: 50%;
+        animation: calendar-spin .7s linear infinite;
+    }
+
+    /* The grid was rendered for a different day count than this screen can
+       show; hold it invisible for the one extra request instead of flashing
+       the wrong range. */
+    #calendar-content.is-reconciling {
+        opacity: 0;
+    }
+
+    @keyframes calendar-spin {
+        to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        #calendar-content { transition: none; }
+        #calendar-content.is-loading::after { animation: none; }
+    }
+
+    .calendar-sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
     }
 </style>

@@ -65,6 +65,14 @@ class CalendarController extends Controller
     /** Monday-first, the convention for a working-week calendar. */
     private const WEEK_STARTS_ON = Carbon::MONDAY;
 
+    /**
+     * How many consecutive days the multi-day ("week") view may show. The
+     * browser picks one from the width its grid actually has and asks for it
+     * with `?days=`; anything else falls back to the classic 7. Presentation
+     * only — the data read is still one Location's appointments for the range.
+     */
+    private const VISIBLE_DAY_OPTIONS = [7, 10, 14];
+
     public function __construct(
         private readonly AppointmentBookingService $booking,
         private readonly BookingTypeManager $bookingTypes,
@@ -132,9 +140,17 @@ class CalendarController extends Controller
 
         $timezone = $this->timezoneFor($business);
         $view = $request->query('view') === 'day' ? 'day' : 'week';
+        $days = $this->visibleDays($request->query('days'));
         $anchor = $this->anchorDate($request->query('date'), $timezone);
 
-        [$localFrom, $localTo] = $this->rangeFor($view, $anchor);
+        // With no date given, a span that is not whole weeks opens on the
+        // start of the current week (the same rule as its "Today" control)
+        // rather than on today itself.
+        if ($view === 'week' && $days % 7 !== 0 && ! $this->isCalendarDate($request->query('date'))) {
+            $anchor = Carbon::parse($this->todayAnchor($view, $days, $timezone), $timezone)->startOfDay();
+        }
+
+        [$localFrom, $localTo] = $this->rangeFor($view, $anchor, $days);
 
         $appointments = $this->schedule->appointmentsForRange($location, $localFrom->copy()->utc(), $localTo->copy()->utc());
         $contacts = $this->schedule->contactSummaries($business, $appointments);
@@ -145,11 +161,14 @@ class CalendarController extends Controller
             'location' => $location,
             'timezone' => $timezone,
             'view' => $view,
+            'days' => $days,
             'anchor' => $anchor,
             'rangeFrom' => $localFrom,
             'rangeTo' => $localTo,
-            'previous' => $this->shift($anchor, $view, -1),
-            'next' => $this->shift($anchor, $view, 1),
+            'previous' => $this->shift($anchor, $view, $days, -1),
+            'next' => $this->shift($anchor, $view, $days, 1),
+            'todayAnchor' => $this->todayAnchor($view, $days, $timezone),
+            'dayAnchor' => $this->dayAnchor($view, $days, $anchor, $localFrom, $localTo, $timezone),
             'appointments' => $appointments,
             'contacts' => $contacts,
             'events' => $this->eventsFor($appointments, $contacts, $timezone, [$workspaceUid, $businessUid, $locationUid]),
@@ -409,9 +428,14 @@ class CalendarController extends Controller
         return (string) ($business->timezone ?: config('app.timezone', 'UTC'));
     }
 
+    private function isCalendarDate(mixed $date): bool
+    {
+        return is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) === 1;
+    }
+
     private function anchorDate(mixed $date, string $timezone): Carbon
     {
-        if (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) === 1) {
+        if ($this->isCalendarDate($date)) {
             try {
                 return Carbon::createFromFormat('!Y-m-d', $date, $timezone)->startOfDay();
             } catch (\Throwable) {
@@ -431,20 +455,65 @@ class CalendarController extends Controller
      *
      * @return array{0: Carbon, 1: Carbon}
      */
-    private function rangeFor(string $view, Carbon $anchor): array
+    private function rangeFor(string $view, Carbon $anchor, int $days = 7): array
     {
         if ($view === 'day') {
             return [$anchor->copy()->startOfDay(), $anchor->copy()->addDay()->startOfDay()];
         }
 
-        $from = $anchor->copy()->startOfWeek(self::WEEK_STARTS_ON)->startOfDay();
+        // Whole-week spans (7 and 14 days) stay Monday-aligned, so the
+        // classic week is unchanged. A span that is not a whole number of
+        // weeks (10 days) starts on the anchor itself: aligning it to Monday
+        // would make "previous"/"next" move by an unpredictable amount.
+        $from = $days % 7 === 0
+            ? $anchor->copy()->startOfWeek(self::WEEK_STARTS_ON)->startOfDay()
+            : $anchor->copy()->startOfDay();
 
-        return [$from, $from->copy()->addWeek()->startOfDay()];
+        return [$from, $from->copy()->addDays($days)->startOfDay()];
     }
 
-    private function shift(Carbon $anchor, string $view, int $direction): string
+    /** The anchor date one visible range earlier (-1) or later (1). */
+    private function shift(Carbon $anchor, string $view, int $days, int $direction): string
     {
-        return $anchor->copy()->add($view === 'day' ? 'day' : 'week', $direction)->toDateString();
+        return $anchor->copy()->addDays(($view === 'day' ? 1 : $days) * $direction)->toDateString();
+    }
+
+    /**
+     * The date the "Today" control carries. A span that is not whole weeks
+     * starts exactly on its anchor (see rangeFor()), so "Today" for it is the
+     * start of the current week — otherwise the first view would open on a
+     * Saturday and hide the days of this week that already happened.
+     */
+    private function todayAnchor(string $view, int $days, string $timezone): string
+    {
+        $today = Carbon::now($timezone)->startOfDay();
+
+        return ($view === 'week' && $days % 7 !== 0
+            ? $today->startOfWeek(self::WEEK_STARTS_ON)
+            : $today)->toDateString();
+    }
+
+    /**
+     * The date the "Day" control carries: the anchor, except that a
+     * non-whole-week span's anchor is its first day, so "Day" prefers today
+     * when today is inside the range being looked at.
+     */
+    private function dayAnchor(string $view, int $days, Carbon $anchor, Carbon $from, Carbon $to, string $timezone): string
+    {
+        $today = Carbon::now($timezone)->startOfDay();
+
+        if ($view === 'week' && $days % 7 !== 0 && $today->greaterThanOrEqualTo($from) && $today->lessThan($to)) {
+            return $today->toDateString();
+        }
+
+        return $anchor->toDateString();
+    }
+
+    private function visibleDays(mixed $days): int
+    {
+        $days = is_string($days) && ctype_digit($days) ? (int) $days : 7;
+
+        return in_array($days, self::VISIBLE_DAY_OPTIONS, true) ? $days : 7;
     }
 
     private function utcFromLocal(string $date, string $time, string $timezone): CarbonInterface
