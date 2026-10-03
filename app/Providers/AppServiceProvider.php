@@ -301,6 +301,14 @@
                 // parallel; this is where the runtime lane supplies them.
                 \App\Library\Automation\Workflow\Contracts\EnrollmentService::class => \App\Library\Automation\Workflow\Runtime\WorkflowEnrollmentService::class,
                 \App\Library\Automation\Workflow\Contracts\WorkflowLifecycle::class => \App\Library\Automation\Workflow\Runtime\WorkflowLifecycleService::class,
+
+                // Public Marketing Homepage contract, review correction —
+                // FAQ/testimonial/settings persistence moved behind the
+                // repository layer AGENTS.md mandates, out of
+                // MarketingContentController.
+                \App\Repositories\Contracts\MarketingContentSettingsRepository::class => \App\Repositories\Eloquent\EloquentMarketingContentSettingsRepository::class,
+                \App\Repositories\Contracts\MarketingFaqRepository::class => \App\Repositories\Eloquent\EloquentMarketingFaqRepository::class,
+                \App\Repositories\Contracts\MarketingTestimonialRepository::class => \App\Repositories\Eloquent\EloquentMarketingTestimonialRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

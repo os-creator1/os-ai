@@ -3,6 +3,8 @@
 namespace App\Rules;
 
 use App\Library\Branding\Exceptions\InvalidBrandingAssetException;
+use App\Library\Support\Exceptions\InvalidImageSignatureException;
+use App\Library\Support\ImageSignatureDetector;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Http\UploadedFile;
@@ -80,44 +82,29 @@ class ValidBrandingImageRule implements ValidationRule
     }
 
     /**
-     * Detects the real image type from its first bytes, regardless of
-     * claimed extension or MIME type. Returns the safe lowercase
-     * extension to use for storage. SVG is never a valid result here —
-     * it has no raster magic signature this method recognizes, so any
-     * SVG payload (or any non-raster file) falls through to the
-     * exception below.
+     * Branding's own 2MB policy, then the shared, size-agnostic magic-byte
+     * signature check (App\Library\Support\ImageSignatureDetector) — kept
+     * as a public static method here since BrandingUploadService and this
+     * class's own validate() both already call it by this name.
+     *
+     * Review correction: this used to bake the 2MB size limit directly
+     * into the shared magic-byte check, so any other caller (Marketing's
+     * 4MB poster rule included) silently inherited branding's size policy
+     * too. Signature detection is now size-policy-agnostic; every caller
+     * enforces its own limit.
      *
      * @throws InvalidBrandingAssetException
      */
     public static function detectExtension(string $binaryContents): string
     {
-        $length = strlen($binaryContents);
-
-        if ($length < 12) {
-            throw new InvalidBrandingAssetException('The uploaded file is too small to be a real image file.');
-        }
-
-        if ($length > self::MAX_SIZE_BYTES) {
+        if (strlen($binaryContents) > self::MAX_SIZE_BYTES) {
             throw new InvalidBrandingAssetException('The uploaded file exceeds the 2MB branding asset size limit.');
         }
 
-        $header = substr($binaryContents, 0, 12);
-
-        if (substr($header, 0, 8) === "\x89PNG\r\n\x1a\n") {
-            return 'png';
+        try {
+            return ImageSignatureDetector::detectExtension($binaryContents);
+        } catch (InvalidImageSignatureException $e) {
+            throw new InvalidBrandingAssetException($e->getMessage());
         }
-
-        if (substr($header, 0, 3) === "\xFF\xD8\xFF") {
-            return 'jpg';
-        }
-
-        if (substr($header, 0, 4) === 'RIFF' && substr($header, 8, 4) === 'WEBP') {
-            return 'webp';
-        }
-
-        throw new InvalidBrandingAssetException(
-            'The uploaded file does not have a valid PNG, JPEG, or WEBP signature. ' .
-            'Renaming a non-image file to an image extension does not pass validation. SVG uploads are not accepted.'
-        );
     }
 }

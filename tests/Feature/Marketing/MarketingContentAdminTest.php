@@ -1,0 +1,617 @@
+<?php
+
+namespace Tests\Feature\Marketing;
+
+use App\Models\MarketingFaq;
+use App\Models\MarketingTestimonial;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Tests\Feature\Settings\Concerns\SettingsTestHelpers;
+use Tests\TestCase;
+
+/**
+ * Public Marketing Homepage contract — the one small, safe admin surface
+ * for owner-editable homepage copy. Gated by the existing 'general
+ * settings' ability, same as branding (SettingsTestHelpers is that
+ * suite's own established actingAsAdmin()/permission fixture pattern).
+ */
+class MarketingContentAdminTest extends TestCase
+{
+    use RefreshDatabase;
+    use SettingsTestHelpers;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->consumeSuperAdminId();
+        $this->ensureRequiredAppConfigRowsExist();
+    }
+
+    /**
+     * Reads the raw bytes of a fake generated image. Must hold the fake
+     * UploadedFile in a local variable rather than chaining
+     * ->getRealPath() inline — otherwise it can be garbage-collected (and
+     * its backing temp file removed) before file_get_contents() runs.
+     */
+    private function fakeImageBytes(int $width = 400, int $height = 300): string
+    {
+        $file = UploadedFile::fake()->image('poster.png', $width, $height);
+
+        return file_get_contents($file->getRealPath());
+    }
+
+    public function test_index_requires_the_general_settings_ability(): void
+    {
+        $this->actingAsAdmin(['access backend']);
+
+        $this->get(route('admin.marketing-content.index'))->assertUnauthorized();
+    }
+
+    public function test_owner_can_view_the_marketing_content_page(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->get(route('admin.marketing-content.index'))->assertOk();
+    }
+
+    public function test_owner_can_save_the_hero_copy(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.hero.update'), [
+            'hero_headline' => 'New headline',
+            'hero_subheadline' => 'New subheadline',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseHas('marketing_content_settings', [
+            'hero_headline' => 'New headline',
+            'hero_subheadline' => 'New subheadline',
+        ]);
+    }
+
+    public function test_owner_can_add_edit_and_remove_a_faq(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.faqs.store'), [
+            'question' => 'Do you support Photo Booth businesses?',
+            'answer' => 'Yes.',
+            'is_visible' => '1',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $faq = MarketingFaq::query()->firstOrFail();
+        $this->assertSame('Do you support Photo Booth businesses?', $faq->question);
+        $this->assertTrue($faq->is_visible);
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            'question' => 'Updated question?',
+            'answer' => 'Updated answer.',
+            'is_visible' => '0',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $faq->refresh();
+        $this->assertSame('Updated question?', $faq->question);
+        $this->assertFalse($faq->is_visible);
+
+        $this->delete(route('admin.marketing-content.faqs.destroy', $faq))
+            ->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseMissing('marketing_faqs', ['id' => $faq->id]);
+    }
+
+    public function test_a_new_testimonial_requires_a_poster_image(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+        ])->assertSessionHasErrors('poster_image');
+
+        $this->assertDatabaseCount('marketing_testimonials', 0);
+    }
+
+    public function test_owner_can_add_and_remove_a_testimonial_with_a_poster_image(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $poster = UploadedFile::fake()->image('poster.png', 400, 300);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'is_visible' => '1',
+            'poster_image' => $poster,
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertSame('Jamie Rivera', $testimonial->name);
+        $this->assertNotNull($testimonial->poster_image_path);
+        $this->assertFileExists(public_path($testimonial->poster_image_path));
+
+        $storedPath = public_path($testimonial->poster_image_path);
+
+        $this->delete(route('admin.marketing-content.testimonials.destroy', $testimonial))
+            ->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseMissing('marketing_testimonials', ['id' => $testimonial->id]);
+        $this->assertFileDoesNotExist($storedPath);
+    }
+
+    public function test_owner_can_add_a_testimonial_with_only_a_youtube_link_and_no_poster(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'is_visible' => '1',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertNull($testimonial->poster_image_path);
+        $this->assertSame('https://www.youtube.com/watch?v=dQw4w9WgXcQ', $testimonial->video_url);
+        $this->assertSame('dQw4w9WgXcQ', $testimonial->youtubeVideoId());
+    }
+
+    public function test_a_malformed_youtube_link_is_rejected_even_with_no_poster_required(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'video_url' => 'https://www.youtube.com/watch?v=tooshort',
+        ])->assertSessionHasErrors('video_url');
+
+        $this->assertDatabaseCount('marketing_testimonials', 0);
+    }
+
+    public function test_a_non_youtube_video_link_still_requires_a_poster(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'video_url' => 'https://videos.example.test/feedback.mp4',
+        ])->assertSessionHasErrors('poster_image');
+
+        $this->assertDatabaseCount('marketing_testimonials', 0);
+    }
+
+    /**
+     * Review correction: MarketingTestimonialAssetService names poster
+     * files by content hash, so re-uploading identical bytes produces the
+     * SAME path as the one already saved. The old code deleted "the
+     * previous path" unconditionally after saving the new one, which — when
+     * they are the same path — deleted the file the row still points at.
+     */
+    public function test_reuploading_the_identical_poster_image_does_not_break_it(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes(400, 300);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-a.png', $bytes),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $originalPath = $testimonial->poster_image_path;
+        $this->assertFileExists(public_path($originalPath));
+
+        // Re-upload of the byte-identical image under a different filename —
+        // the content hash, and therefore the stored path, is unchanged.
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-b.png', $bytes),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial->refresh();
+        $this->assertSame($originalPath, $testimonial->poster_image_path);
+        $this->assertFileExists(public_path($originalPath));
+    }
+
+    /**
+     * Review correction: two testimonials that happen to share the exact
+     * same uploaded photo (identical bytes, identical hashed filename)
+     * must not have that file deleted out from under the surviving one.
+     */
+    public function test_deleting_one_of_two_testimonials_sharing_a_poster_keeps_the_others_image(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes(400, 300);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Testimonial A',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-a.png', $bytes),
+        ])->assertRedirect();
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Testimonial B',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-b.png', $bytes),
+        ])->assertRedirect();
+
+        $a = MarketingTestimonial::query()->where('name', 'Testimonial A')->firstOrFail();
+        $b = MarketingTestimonial::query()->where('name', 'Testimonial B')->firstOrFail();
+        $this->assertSame($a->poster_image_path, $b->poster_image_path);
+        $sharedPath = $a->poster_image_path;
+
+        $this->delete(route('admin.marketing-content.testimonials.destroy', $a))
+            ->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseMissing('marketing_testimonials', ['id' => $a->id]);
+        $b->refresh();
+        $this->assertSame($sharedPath, $b->poster_image_path);
+        $this->assertFileExists(public_path($sharedPath));
+    }
+
+    /**
+     * Same sharing hazard, on the update path: replacing one testimonial's
+     * poster with a different photo must not delete the shared file the
+     * other testimonial still uses.
+     */
+    public function test_replacing_a_shared_poster_on_one_testimonial_keeps_the_others_image(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $sharedBytes = $this->fakeImageBytes(400, 300);
+        $newBytes = $this->fakeImageBytes(500, 400);
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Testimonial A',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-a.png', $sharedBytes),
+        ])->assertRedirect();
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Testimonial B',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-b.png', $sharedBytes),
+        ])->assertRedirect();
+
+        $a = MarketingTestimonial::query()->where('name', 'Testimonial A')->firstOrFail();
+        $b = MarketingTestimonial::query()->where('name', 'Testimonial B')->firstOrFail();
+        $sharedPath = $a->poster_image_path;
+
+        $this->post(route('admin.marketing-content.testimonials.update', $a), [
+            'name' => 'Testimonial A',
+            'business_context_label' => 'Feedback from an earlier business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-new.png', $newBytes),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $a->refresh();
+        $b->refresh();
+        $this->assertNotSame($sharedPath, $a->poster_image_path);
+        $this->assertFileExists(public_path($a->poster_image_path));
+        $this->assertSame($sharedPath, $b->poster_image_path);
+        $this->assertFileExists(public_path($sharedPath));
+    }
+
+    /**
+     * Review correction (P2): SaveMarketingTestimonialRequest validates
+     * video_url up to 2048 characters, but the original migration's
+     * `string` column only stored 255 — a longer, otherwise-valid URL
+     * either failed to save or was silently truncated. The column is now
+     * sized to 2048 to match.
+     */
+    public function test_a_video_url_between_256_and_2048_characters_persists_intact(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $longUrl = 'https://videos.example.test/feedback.mp4?token=' . str_repeat('a', 2000);
+        $this->assertGreaterThan(255, strlen($longUrl));
+        $this->assertLessThanOrEqual(2048, strlen($longUrl));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'video_url' => $longUrl,
+            'poster_image' => UploadedFile::fake()->createWithContent('poster.png', $this->fakeImageBytes()),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertSame($longUrl, $testimonial->video_url);
+    }
+
+    /**
+     * Review correction (P2): ValidMarketingImageRule previously delegated
+     * signature detection to ValidBrandingImageRule::detectExtension(),
+     * which independently enforced branding's own 2MB limit — rejecting a
+     * valid 2-4MB marketing poster even though this rule's own check
+     * (4MB) had already passed it. Signature detection is now size-policy
+     * agnostic (App\Library\Support\ImageSignatureDetector), so a poster
+     * in that 2-4MB range is accepted.
+     */
+    public function test_a_poster_between_2mb_and_4mb_is_accepted(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes() . str_repeat("\0", 3 * 1024 * 1024);
+        $this->assertGreaterThan(2 * 1024 * 1024, strlen($bytes));
+        $this->assertLessThanOrEqual(4 * 1024 * 1024, strlen($bytes));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-large.png', $bytes),
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $testimonial = MarketingTestimonial::query()->firstOrFail();
+        $this->assertNotNull($testimonial->poster_image_path);
+        $this->assertFileExists(public_path($testimonial->poster_image_path));
+    }
+
+    /**
+     * Boundary regression: Marketing's own 4MB limit must still apply —
+     * separating signature detection from branding's size policy must not
+     * remove Marketing's size policy too.
+     */
+    public function test_a_poster_over_4mb_is_still_rejected(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $bytes = $this->fakeImageBytes() . str_repeat("\0", 5 * 1024 * 1024);
+        $this->assertGreaterThan(4 * 1024 * 1024, strlen($bytes));
+
+        $this->post(route('admin.marketing-content.testimonials.store'), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier photo booth business',
+            'poster_image' => UploadedFile::fake()->createWithContent('poster-huge.png', $bytes),
+        ])->assertSessionHasErrors('poster_image');
+
+        $this->assertDatabaseCount('marketing_testimonials', 0);
+    }
+
+    /**
+     * Review correction round 2 (P2): a stale or nonexistent FAQ/testimonial
+     * id used to throw ModelNotFoundException, which Handler.php renders as
+     * a 500 outside local — the routes now use the established
+     * ->missing(fn () => abort(404)) binding so this is a plain 404.
+     */
+    public function test_a_missing_faq_or_testimonial_id_returns_404_not_500(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $missingId = 999999;
+
+        $this->put(route('admin.marketing-content.faqs.update', ['faq' => $missingId]), [
+            'question' => 'Does not matter?',
+            'answer' => 'A.',
+        ])->assertNotFound();
+
+        $this->delete(route('admin.marketing-content.faqs.destroy', ['faq' => $missingId]))
+            ->assertNotFound();
+
+        $this->post(route('admin.marketing-content.testimonials.update', ['testimonial' => $missingId]), [
+            'name' => 'Does not matter',
+            'business_context_label' => 'Feedback from an earlier business',
+        ])->assertNotFound();
+
+        $this->delete(route('admin.marketing-content.testimonials.destroy', ['testimonial' => $missingId]))
+            ->assertNotFound();
+    }
+
+    /**
+     * Review correction round 2 (P2): clearing the "Order" field submits an
+     * empty string, which ConvertEmptyStringsToNull turns into null before
+     * validation (a `nullable` rule accepts it) — persisting that null into
+     * the non-nullable `position` column used to fail as a database error.
+     * The controller now keeps the existing position instead.
+     */
+    public function test_clearing_the_order_field_on_update_keeps_the_existing_position(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Q?', 'answer' => 'A.', 'position' => 5, 'is_visible' => true]);
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            'question' => 'Updated question?',
+            'answer' => 'Updated answer.',
+            'position' => '',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faq->id, 'position' => 5]);
+
+        $testimonial = MarketingTestimonial::query()->create([
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 7,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => '',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertDatabaseHas('marketing_testimonials', ['id' => $testimonial->id, 'position' => 7]);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof A): a failed edit on one FAQ
+     * must not flash its old input into every other FAQ's form. Each form
+     * carries a hidden "_marketing_form" marker that gates old-input reuse.
+     */
+    public function test_a_failed_faq_edit_does_not_bleed_into_another_faqs_form(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faqA = MarketingFaq::query()->create(['question' => 'A original question?', 'answer' => 'A original answer.', 'position' => 1, 'is_visible' => true]);
+        $faqB = MarketingFaq::query()->create(['question' => 'B original question?', 'answer' => 'B original answer.', 'position' => 2, 'is_visible' => true]);
+
+        $distinctiveQuestion = 'DISTINCTIVE REJECTED QUESTION FOR FAQ A';
+
+        $this->put(route('admin.marketing-content.faqs.update', $faqA), [
+            '_marketing_form' => "faq:{$faqA->id}",
+            'question' => $distinctiveQuestion,
+            'answer' => str_repeat('x', 5001), // exceeds max:5000 — fails validation.
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, $distinctiveQuestion), 'The flashed value must appear in exactly one form — FAQ A\'s.');
+        $this->assertStringContainsString('B original question?', $html, 'FAQ B must still show its own persisted question.');
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faqB->id, 'question' => 'B original question?']);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof B): same isolation guarantee,
+     * for testimonials.
+     */
+    public function test_a_failed_testimonial_edit_does_not_bleed_into_another_testimonials_form(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $testimonialA = MarketingTestimonial::query()->create([
+            'name' => 'DISTINCTIVE REJECTED NAME FOR TESTIMONIAL A',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 1,
+            'is_visible' => true,
+        ]);
+        $testimonialB = MarketingTestimonial::query()->create([
+            'name' => 'B original name',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 2,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonialA), [
+            '_marketing_form' => "testimonial:{$testimonialA->id}",
+            'name' => $testimonialA->name,
+            'business_context_label' => str_repeat('x', 256), // exceeds max:255 — fails validation.
+        ])->assertSessionHasErrors('business_context_label');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($html, $testimonialA->name), 'The flashed value must appear in exactly one form — testimonial A\'s.');
+        $this->assertStringContainsString('B original name', $html, 'Testimonial B must still show its own persisted name.');
+        $this->assertDatabaseHas('marketing_testimonials', ['id' => $testimonialB->id, 'name' => 'B original name']);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof C): unchecking "Visible on
+     * homepage" while another field fails validation must not silently
+     * re-check the box on redisplay, and must persist as false once the
+     * other field is corrected. The explicit hidden-0 + checkbox-1 pair
+     * (rather than a bare @checked(old(..., $model->attr))) is what makes
+     * "unchecked and submitted" distinguishable from "field absent".
+     */
+    public function test_unchecking_a_faqs_visibility_survives_a_validation_redirect(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Q?', 'answer' => 'A.', 'position' => 1, 'is_visible' => true]);
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'Q?',
+            'answer' => str_repeat('x', 5001),
+            'is_visible' => '0',
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        preg_match('/id="faq-visible-' . $faq->id . '"[^>]*/', $html, $matches);
+        $this->assertNotEmpty($matches, 'Expected to find the FAQ visibility checkbox in the page.');
+        $this->assertStringNotContainsString('checked', $matches[0], 'The box must render unchecked after the redirect.');
+        $this->assertTrue($faq->fresh()->is_visible, 'The database must be untouched until the form actually saves.');
+
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'Q?',
+            'answer' => 'A corrected answer.',
+            'is_visible' => '0',
+        ])->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertFalse($faq->fresh()->is_visible);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof D): same proof, for testimonials.
+     */
+    public function test_unchecking_a_testimonials_visibility_survives_a_validation_redirect(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $testimonial = MarketingTestimonial::query()->create([
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'position' => 1,
+            'is_visible' => true,
+        ]);
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            '_marketing_form' => "testimonial:{$testimonial->id}",
+            'name' => 'Jamie Rivera',
+            'business_context_label' => str_repeat('x', 256),
+            'video_url' => $testimonial->video_url,
+            'is_visible' => '0',
+        ])->assertSessionHasErrors('business_context_label');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        preg_match('/id="testimonial-visible-' . $testimonial->id . '"[^>]*/', $html, $matches);
+        $this->assertNotEmpty($matches, 'Expected to find the testimonial visibility checkbox in the page.');
+        $this->assertStringNotContainsString('checked', $matches[0], 'The box must render unchecked after the redirect.');
+        $this->assertTrue($testimonial->fresh()->is_visible, 'The database must be untouched until the form actually saves.');
+
+        $this->post(route('admin.marketing-content.testimonials.update', $testimonial), [
+            '_marketing_form' => "testimonial:{$testimonial->id}",
+            'name' => 'Jamie Rivera',
+            'business_context_label' => 'Feedback from an earlier business',
+            'video_url' => $testimonial->video_url,
+            'is_visible' => '0',
+        ])->assertSessionDoesntHaveErrors()->assertRedirect(route('admin.marketing-content.index'));
+
+        $this->assertFalse($testimonial->fresh()->is_visible);
+    }
+
+    /**
+     * Review correction round 3 (P2, proof E): a failed edit must not
+     * populate the "Add new" create form, and a failed create must retain
+     * only its own entered values (not bleed into any edit row, and not
+     * appear reused from a stale marker).
+     */
+    public function test_a_failed_edit_does_not_populate_the_create_form_and_a_failed_create_stays_isolated(): void
+    {
+        $this->actingAsAdmin(['access backend', 'general settings']);
+
+        $faq = MarketingFaq::query()->create(['question' => 'Existing question?', 'answer' => 'Existing answer.', 'position' => 1, 'is_visible' => true]);
+
+        // A failed edit must not leak into the create form.
+        $this->put(route('admin.marketing-content.faqs.update', $faq), [
+            '_marketing_form' => "faq:{$faq->id}",
+            'question' => 'EDIT ATTEMPT VALUE',
+            'answer' => str_repeat('x', 5001),
+        ])->assertSessionHasErrors('answer');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($html, 'EDIT ATTEMPT VALUE'), 'The failed edit\'s value must appear only in its own form, not the create form.');
+
+        // A failed create must retain only its own value, and must not
+        // have populated the (untouched) existing FAQ's edit form.
+        $distinctiveCreateAnswer = 'DISTINCTIVE CREATE ATTEMPT ANSWER';
+        $this->post(route('admin.marketing-content.faqs.store'), [
+            '_marketing_form' => 'faq:new',
+            'question' => '', // blank — fails the `required` rule.
+            'answer' => $distinctiveCreateAnswer,
+        ])->assertSessionHasErrors('question');
+
+        $html = $this->get(route('admin.marketing-content.index'))->assertOk()->getContent();
+        $this->assertSame(1, substr_count($html, $distinctiveCreateAnswer), 'The failed create\'s value must appear only in the create form.');
+        $this->assertStringContainsString('Existing question?', $html, 'The untouched FAQ must still show its own persisted question.');
+        $this->assertDatabaseHas('marketing_faqs', ['id' => $faq->id, 'question' => 'Existing question?']);
+    }
+}

@@ -6,6 +6,7 @@
     use Illuminate\Support\Facades\DB;
     use App\Http\Controllers\Customer\PusherController;
     use App\Http\Controllers\LanguageController;
+    use App\Http\Controllers\Marketing\HomeController;
     use App\Http\Controllers\MaintenanceNotifyController;
 
     // B5 Business Analytics §14 — the ghost "AI Analytics" / "Hot Leads"
@@ -36,7 +37,10 @@
             return redirect('install');
         }
 
-        return redirect('login');
+        // Public Marketing Homepage contract — the platform's own front
+        // door, replacing the previous unconditional redirect to /login.
+        // Login stays a normal, linked route (see layouts/marketing.blade.php).
+        return app(HomeController::class)->index();
     });
 
 // locale Route

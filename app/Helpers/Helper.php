@@ -872,6 +872,14 @@
                                 'icon'   => 'palette',
                             ],
                             [
+                                'url'    => url(config('app.admin_path') . '/marketing-content'),
+                                'slug'   => config('app.admin_path') . '/marketing-content',
+                                'name'   => 'Marketing Content',
+                                'i18n'   => 'Marketing Content',
+                                'access' => 'general settings',
+                                'icon'   => 'megaphone',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/languages'),
                                 'slug'   => config('app.admin_path') . '/languages',
                                 'name'   => 'Language',

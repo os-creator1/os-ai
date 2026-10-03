@@ -150,16 +150,26 @@ class BrandingDesignSystemContentTest extends TestCase
     public function test_svg_is_never_an_accepted_upload_extension(): void
     {
         // §6.3: SVG is rejected unconditionally for every owner-upload
-        // field -- the rule's own accepted-extension return values are
-        // exactly png/jpg/webp, never svg. The word "SVG" legitimately
-        // appears in this file's own rejection comments/messages, so
-        // this checks the actual returned extension literals, not the
-        // word's mere presence.
-        $rule = file_get_contents(base_path('app/Rules/ValidBrandingImageRule.php'));
+        // field -- the accepted-extension return values are exactly
+        // png/jpg/webp, never svg. The word "SVG" legitimately appears in
+        // this file's own rejection comments/messages, so this checks the
+        // actual returned extension literals, not the word's mere
+        // presence.
+        //
+        // Public Marketing Homepage contract, review correction: the
+        // magic-byte signature check (and these exact literals) moved out
+        // of ValidBrandingImageRule::detectExtension() into the shared,
+        // size-policy-agnostic App\Library\Support\ImageSignatureDetector,
+        // so Marketing's own 4MB poster rule stops inheriting branding's
+        // 2MB limit. ValidBrandingImageRule::detectExtension() still
+        // enforces the 2MB limit and still delegates to that shared class
+        // for the signature check itself -- this test now reads the
+        // literals from their actual current location.
+        $detector = file_get_contents(base_path('app/Library/Support/ImageSignatureDetector.php'));
 
-        $this->assertMatchesRegularExpression("/return 'png';/", $rule);
-        $this->assertMatchesRegularExpression("/return 'jpg';/", $rule);
-        $this->assertMatchesRegularExpression("/return 'webp';/", $rule);
-        $this->assertDoesNotMatchRegularExpression("/return 'svg';/", $rule);
+        $this->assertMatchesRegularExpression("/return 'png';/", $detector);
+        $this->assertMatchesRegularExpression("/return 'jpg';/", $detector);
+        $this->assertMatchesRegularExpression("/return 'webp';/", $detector);
+        $this->assertDoesNotMatchRegularExpression("/return 'svg';/", $detector);
     }
 }
