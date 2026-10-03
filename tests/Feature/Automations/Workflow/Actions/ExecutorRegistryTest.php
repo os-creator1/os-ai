@@ -44,6 +44,13 @@ class ExecutorRegistryTest extends TestCase
             WorkflowNodeType::SendEmail->value => \App\Library\Automation\Workflow\Executors\SendEmailNodeExecutor::class,
             WorkflowNodeType::AddTag->value => \App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class,
             WorkflowNodeType::RemoveTag->value => \App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class,
+            // Cross-domain actions (CRM service, Calendar page, Forms link, DocumentManager).
+            WorkflowNodeType::MoveOpportunity->value => \App\Library\Automation\Workflow\Executors\MoveOpportunityNodeExecutor::class,
+            WorkflowNodeType::SendBookingLink->value => \App\Library\Automation\Workflow\Executors\SendBookingLinkNodeExecutor::class,
+            WorkflowNodeType::SendForm->value => \App\Library\Automation\Workflow\Executors\SendFormNodeExecutor::class,
+            WorkflowNodeType::SendQuestionnaire->value => \App\Library\Automation\Workflow\Executors\SendQuestionnaireNodeExecutor::class,
+            WorkflowNodeType::CreateSendProposal->value => \App\Library\Automation\Workflow\Executors\CreateSendProposalNodeExecutor::class,
+            WorkflowNodeType::RequestPayment->value => \App\Library\Automation\Workflow\Executors\RequestPaymentNodeExecutor::class,
         ];
 
         foreach ($expected as $type => $class) {

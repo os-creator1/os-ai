@@ -84,14 +84,15 @@ class WorkflowLocationAuthority
      * test it? Fail closed.
      *
      * The authority is the workflow's LIVE scope, read from the published version's
-     * own column (never from a contact, never from node config):
-     *   - bound to a Location  → the actor must reach that Location;
+     * own columns/rows (never from a contact, never from node config):
+     *   - one Location / selected Locations → the actor must reach EVERY Location it
+     *                            names;
      *   - Business-wide        → the actor must reach every Location, for the same
      *                            reason only they may publish one.
      * A workflow never published has no live scope yet, so it is judged on its draft:
-     * a draft bound to a Location needs reach of it; an unscoped draft belongs to its
-     * creator (who must be able to open it to choose a Location) and to actors with
-     * full reach.
+     * a draft bound to Locations needs reach of all of them; an unscoped draft belongs
+     * to its creator (who must be able to open it to choose a scope) and to actors
+     * with full reach.
      */
     public function mayOperate(int $userId, Business $business, AutomationWorkflow $workflow): bool
     {
@@ -104,22 +105,28 @@ class WorkflowLocationAuthority
         $attributes = $workflow->getAttributes();
 
         if ($workflow->published_version_id !== null) {
-            $live = array_key_exists('live_location_id', $attributes)
-                ? $attributes['live_location_id']
-                : AutomationWorkflowVersion::query()
+            if (array_key_exists('live_scope_mode', $attributes)) {
+                $scope = $this->liveScope(
+                    $attributes['live_scope_mode'],
+                    $attributes['live_location_id'] ?? null,
+                    $attributes['live_scope_location_ids'] ?? null,
+                );
+            } else {
+                $scope = AutomationWorkflowVersion::query()
                     ->where('workflow_id', (int) $workflow->id)
                     ->whereKey((int) $workflow->published_version_id)
-                    ->value('business_location_id');
+                    ->first()?->scope() ?? new WorkflowLocationScope(WorkflowLocationScope::ONE, []);
+            }
 
-            return $this->scopeAllows($userId, $business, $live === null ? null : (int) $live);
+            return $this->scopeAllows($userId, $business, $scope);
         }
 
-        $declared = array_key_exists('draft_location_id', $attributes)
-            ? $attributes['draft_location_id']
-            : ($this->scopeOf((array) ($workflow->draftVersion()?->definition ?? []))[1]);
-        $scope = (is_int($declared) || (is_string($declared) && ctype_digit($declared))) && (int) $declared > 0 ? (int) $declared : null;
+        $declared = array_key_exists('draft_scope_config', $attributes)
+            ? $this->decodeConfig($attributes['draft_scope_config'])
+            : (array) (($workflow->draftVersion()?->definition ?? [])['root']['config'] ?? []);
+        $scope = WorkflowLocationScope::fromTriggerConfig($declared);
 
-        if ($scope !== null) {
+        if ($scope->isBound()) {
             return $this->scopeAllows($userId, $business, $scope);
         }
 
@@ -128,22 +135,52 @@ class WorkflowLocationAuthority
     }
 
     /**
-     * Does the actor's reach cover a workflow scope: a Location they reach, or —
-     * for Business-wide, or a Location id that is not even this Business's (a
-     * tampered row nobody could otherwise ever open or fix) — every Location.
+     * The published scope from the columns the workflow row carried as subselects.
+     * An unknown mode reads as a bound scope that names nothing (never Business-wide).
      */
-    private function scopeAllows(int $userId, Business $business, ?int $scope): bool
+    private function liveScope(mixed $mode, mixed $oneId, mixed $listCsv): WorkflowLocationScope
     {
-        if ($scope !== null) {
+        return match ((string) $mode) {
+            WorkflowLocationScope::BUSINESS => WorkflowLocationScope::business(),
+            WorkflowLocationScope::ONE => new WorkflowLocationScope(WorkflowLocationScope::ONE, $oneId === null ? [] : [(int) $oneId]),
+            WorkflowLocationScope::SELECTED => new WorkflowLocationScope(
+                WorkflowLocationScope::SELECTED,
+                array_map('intval', array_filter(explode(',', (string) $listCsv), fn (string $id): bool => $id !== '')),
+            ),
+            default => new WorkflowLocationScope(WorkflowLocationScope::ONE, []),
+        };
+    }
+
+    /** @return array<string, mixed> */
+    private function decodeConfig(mixed $json): array
+    {
+        $decoded = is_string($json) ? json_decode($json, true) : null;
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * Does the actor's reach cover a workflow scope: every Location it names — or,
+     * for Business-wide, a scope that names nothing, or a Location id that is not
+     * even this Business's (a tampered row nobody could otherwise ever open or fix),
+     * every Location.
+     */
+    private function scopeAllows(int $userId, Business $business, WorkflowLocationScope $scope): bool
+    {
+        if ($scope->isBound() && $scope->ids() !== []) {
             $reach = $this->reachableIds($userId, $business);
 
-            if (in_array($scope, $reach, true)) {
+            if (array_diff($scope->ids(), $reach) === []) {
                 return true;
             }
 
-            $ownLocation = BusinessLocation::query()->where('business_id', (int) $business->id)->whereKey($scope)->exists();
+            $own = BusinessLocation::query()
+                ->where('business_id', (int) $business->id)
+                ->whereIn('id', $scope->ids())
+                ->count();
 
-            if ($ownLocation) {
+            // Every named Location is this Business's and one is out of reach: refuse.
+            if ($own === count($scope->ids())) {
                 return false;
             }
         }
@@ -162,23 +199,37 @@ class WorkflowLocationAuthority
         $reach = array_map('intval', $this->reachableIds($userId, $business));
         $ids = $reach === [] ? [-1] : $reach;
         $in = implode(',', $ids);
+        $reachJson = json_encode(array_values($ids));
 
-        $query->where(function (EloquentBuilder $visible) use ($business, $in, $ids, $userId): void {
+        $query->where(function (EloquentBuilder $visible) use ($business, $in, $ids, $userId, $reachJson): void {
             $visible
                 // Reaches every Location the Business has: sees everything.
                 ->whereRaw(
                     'NOT EXISTS (SELECT 1 FROM business_locations bl WHERE bl.business_id = ? AND bl.id NOT IN (' . $in . '))',
                     [(int) $business->id],
                 )
-                // Live and bound to a Location they reach.
+                // Live and bound to one Location they reach.
                 ->orWhereExists(fn ($live) => $live->selectRaw('1')
                     ->from('automation_workflow_versions as pv')
                     ->whereColumn('pv.id', 'automation_workflows.published_version_id')
+                    ->where('pv.scope_mode', WorkflowLocationScope::ONE)
                     ->whereIn('pv.business_location_id', $ids))
-                // Never published: their own, or a draft bound to a Location they reach.
-                ->orWhere(function (EloquentBuilder $draftOnly) use ($ids, $userId): void {
+                // Live and bound to selected Locations, every one of which they reach.
+                ->orWhereExists(fn ($live) => $live->selectRaw('1')
+                    ->from('automation_workflow_versions as pv')
+                    ->whereColumn('pv.id', 'automation_workflows.published_version_id')
+                    ->where('pv.scope_mode', WorkflowLocationScope::SELECTED)
+                    ->whereExists(fn ($any) => $any->selectRaw('1')
+                        ->from('automation_workflow_version_locations as vl')
+                        ->whereColumn('vl.version_id', 'pv.id'))
+                    ->whereNotExists(fn ($outside) => $outside->selectRaw('1')
+                        ->from('automation_workflow_version_locations as vl')
+                        ->whereColumn('vl.version_id', 'pv.id')
+                        ->whereNotIn('vl.business_location_id', $ids)))
+                // Never published: their own, or a draft bound to Locations they reach.
+                ->orWhere(function (EloquentBuilder $draftOnly) use ($ids, $userId, $reachJson): void {
                     $draftOnly->whereNull('automation_workflows.published_version_id')
-                        ->where(function (EloquentBuilder $mine) use ($ids, $userId): void {
+                        ->where(function (EloquentBuilder $mine) use ($ids, $userId, $reachJson): void {
                             $mine->where('automation_workflows.created_by_user_id', $userId)
                                 ->orWhereExists(fn ($draft) => $draft->selectRaw('1')
                                     ->from('automation_workflow_versions as dv')
@@ -187,12 +238,18 @@ class WorkflowLocationAuthority
                                     ->whereRaw(
                                         "CAST(JSON_UNQUOTE(JSON_EXTRACT(dv.definition, '$.root.config.business_location_id')) AS UNSIGNED) IN ("
                                         . implode(',', $ids) . ')',
-                                    ));
+                                    ))
+                                ->orWhereExists(fn ($draft) => $draft->selectRaw('1')
+                                    ->from('automation_workflow_versions as dv')
+                                    ->whereColumn('dv.workflow_id', 'automation_workflows.id')
+                                    ->where('dv.state', 'draft')
+                                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(dv.definition, '$.root.config.scope_mode')) = 'selected'")
+                                    ->whereRaw("JSON_LENGTH(JSON_EXTRACT(dv.definition, '$.root.config.business_location_ids')) > 0")
+                                    ->whereRaw("JSON_CONTAINS(CAST(? AS JSON), JSON_EXTRACT(dv.definition, '$.root.config.business_location_ids'))", [$reachJson]));
                         });
                 });
         });
     }
-
     /**
      * The picker's rows: only Locations the actor may bind to.
      *
@@ -209,16 +266,14 @@ class WorkflowLocationAuthority
      * The scope a definition's trigger declares, with the trigger's node key.
      *
      * @param array<string, mixed> $definition
-     * @return array{0: string, 1: int|null}
+     * @return array{0: string, 1: WorkflowLocationScope}
      */
     public function scopeOf(array $definition): array
     {
         $root = is_array($definition['root'] ?? null) ? $definition['root'] : [];
         $config = is_array($root['config'] ?? null) ? $root['config'] : [];
-        $value = $config['business_location_id'] ?? null;
-        $id = (is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value > 0 ? (int) $value : null;
 
-        return [(string) ($root['key'] ?? WorkflowDefinitionValidator::DOCUMENT_KEY), $id];
+        return [(string) ($root['key'] ?? WorkflowDefinitionValidator::DOCUMENT_KEY), WorkflowLocationScope::fromTriggerConfig($config)];
     }
 
     /**
@@ -229,25 +284,33 @@ class WorkflowLocationAuthority
      */
     public function assertMayDraft(int $userId, Business $business, array $definition): void
     {
-        [$key, $locationId] = $this->scopeOf($definition);
+        [$key, $scope] = $this->scopeOf($definition);
 
-        if ($locationId !== null && ! $this->mayBindTo($userId, $business, $locationId)) {
-            throw ValidationException::withMessages([$key => ['You do not have access to that location.']]);
+        if (! $scope->isBound() || $scope->ids() === []) {
+            return;
+        }
+
+        if (array_diff($scope->ids(), $this->reachableIds($userId, $business)) !== []) {
+            throw ValidationException::withMessages([$key => [
+                $scope->mode() === WorkflowLocationScope::SELECTED
+                    ? 'You do not have access to one or more of those locations.'
+                    : 'You do not have access to that location.',
+            ]]);
         }
     }
 
     /**
-     * PUBLISH rule: a bound workflow needs access to its Location; a Business-wide
-     * one needs access to every Location of the Business.
+     * PUBLISH rule: a bound workflow needs access to every Location it names; a
+     * Business-wide one needs access to every Location of the Business.
      *
      * @param array<string, mixed> $definition
      * @throws ValidationException
      */
     public function assertMayPublish(int $userId, Business $business, array $definition): void
     {
-        [$key, $locationId] = $this->scopeOf($definition);
+        [$key, $scope] = $this->scopeOf($definition);
 
-        if ($locationId !== null) {
+        if ($scope->isBound()) {
             $this->assertMayDraft($userId, $business, $definition);
 
             return;
@@ -258,10 +321,5 @@ class WorkflowLocationAuthority
                 'Choose one of your locations. A whole-business workflow runs for every location, so it needs access to all of them.',
             ]]);
         }
-    }
-
-    private function mayBindTo(int $userId, Business $business, int $locationId): bool
-    {
-        return in_array($locationId, $this->reachableIds($userId, $business), true);
     }
 }

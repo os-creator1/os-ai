@@ -49,6 +49,7 @@ class AutomationWorkflowsController extends CustomerBaseController
         private readonly WorkflowReferenceCatalogLoader $catalogs,
         private readonly WorkflowLifecycle $lifecycle,
         private readonly WorkflowLocationAuthority $locationAuthority,
+        private readonly \App\Library\Automation\Workflow\WorkflowCapabilities $capabilities,
     ) {
     }
 
@@ -79,11 +80,14 @@ class AutomationWorkflowsController extends CustomerBaseController
                 // Where each LIVE version applies, as a subselect on the page query
                 // (no second query, never one per row): the Location it is bound
                 // to, or null for the whole business.
-                ->addSelect(['scope_location_name' => \Illuminate\Support\Facades\DB::table('automation_workflow_versions as sv')
-                    ->join('business_locations as sl', 'sl.id', '=', 'sv.business_location_id')
-                    ->whereColumn('sv.id', 'automation_workflows.published_version_id')
-                    ->selectRaw("COALESCE(NULLIF(sl.name, ''), 'Unnamed location')")
-                    ->limit(1)])
+                ->addSelect(\Illuminate\Support\Facades\DB::raw(
+                    "(SELECT CASE sv.scope_mode
+                        WHEN 'one' THEN (SELECT COALESCE(NULLIF(sl.name, ''), 'Unnamed location') FROM business_locations sl WHERE sl.id = sv.business_location_id)
+                        WHEN 'selected' THEN (SELECT GROUP_CONCAT(COALESCE(NULLIF(sl.name, ''), 'Unnamed location') ORDER BY sl.name, sl.id SEPARATOR ', ')
+                            FROM automation_workflow_version_locations vl JOIN business_locations sl ON sl.id = vl.business_location_id WHERE vl.version_id = sv.id)
+                        ELSE NULL END
+                      FROM automation_workflow_versions sv WHERE sv.id = automation_workflows.published_version_id LIMIT 1) AS scope_location_name",
+                ))
                 ->orderByDesc('updated_at')
                 ->orderByDesc('id')
                 ->paginate(self::PAGE_SIZE);
@@ -121,12 +125,14 @@ class AutomationWorkflowsController extends CustomerBaseController
     public function create(string $workspaceUid, string $businessUid): mixed
     {
         return $this->respond(function () use ($workspaceUid, $businessUid): mixed {
-            $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+            [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
             return view('customer.Automations.Workflows.chooser', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'basePath' => $this->basePath($workspaceUid, $businessUid),
+                // A recipe the account cannot run is shown disabled, with the reason.
+                'capabilities' => $this->capabilities->forBusiness($business),
             ]);
         });
     }
@@ -211,6 +217,18 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'crmStages' => $catalog->stages(),
                 'tags' => $catalog->tags(),
                 'forms' => $catalog->forms(),
+                // The resources the link and document actions point at — the same read.
+                // A booking type belongs to one Location, so only the ones THIS actor's
+                // reach covers are offered (the server refuses the rest at save).
+                'bookingTypes' => array_values(array_filter(
+                    $catalog->bookingTypes(),
+                    fn (array $type): bool => in_array((int) $type['location_id'], $reach, true),
+                )),
+                'catalogItems' => $catalog->catalogItems(),
+                // What the account can actually use (entitlements, a texting number, a
+                // mailbox, a Stripe account), so the builder offers only what will run.
+                'capabilities' => $this->capabilities->forBusiness($business),
+                'currency' => (string) $business->currency_code,
                 // The scope picker — Locations of THIS Business, from the same read,
                 // narrowed to the ones THIS actor may bind to (the platform Location
                 // ACL), and whether they may also choose "Whole business" (only an
@@ -315,7 +333,8 @@ class AutomationWorkflowsController extends CustomerBaseController
             'status' => $workflow->status->value,
             'status_label' => $workflow->status->label(),
             'has_published_version' => $workflow->published_version_id !== null,
-            // Null = the whole business (or not selected by this query).
+            // Null = the whole business (or not selected by this query); otherwise the
+            // Location's name, or the selected Locations' names joined.
             'scope_location_name' => $workflow->getAttribute('scope_location_name'),
             'has_draft' => $hasDraft ?? $workflow->draftVersion() !== null,
             'archived_at' => $workflow->archived_at?->toIso8601String(),
@@ -338,7 +357,9 @@ class AutomationWorkflowsController extends CustomerBaseController
             'enrollment_policy' => $version->enrollment_policy?->value,
             'enrollment_policy_source' => $version->enrollment_policy_source?->value,
             'failure_policy' => $version->failure_policy?->value,
-            'business_location_id' => $version->boundLocationId(),
+            'business_location_id' => $version->scope()->singleId(),
+            'scope_mode' => $version->scope()->mode(),
+            'business_location_ids' => $version->scope()->ids(),
             'published_at' => $version->published_at?->toIso8601String(),
         ];
     }

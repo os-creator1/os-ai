@@ -229,10 +229,13 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 
             $workflow = $this->resolveWorkflow($business, $workflowUid);
             $version = $workflow->draftVersion() ?? $this->publishedVersion($workflow);
-            [, $scope] = $version === null ? [null, null] : $this->locationAuthority->scopeOf((array) $version->definition);
+            [, $scope] = $version === null
+                ? [null, \App\Library\Automation\Workflow\WorkflowLocationScope::business()]
+                : $this->locationAuthority->scopeOf((array) $version->definition);
 
-            if ($scope !== null) {
-                $matching->where('contacts.location_id', $scope);
+            if ($scope->isBound()) {
+                // An empty list (a bound scope that names nothing) offers nobody.
+                $matching->whereIn('contacts.location_id', $scope->ids() ?: [0]);
             }
 
             $ids = $matching->orderByDesc('contacts.id')->limit(self::TEST_CONTACT_LIMIT)->pluck('contacts.id')->map(fn ($id): int => (int) $id)->all();

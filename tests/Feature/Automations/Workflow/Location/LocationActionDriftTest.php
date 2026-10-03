@@ -217,7 +217,7 @@ class LocationActionDriftTest extends TestCase
             $this->journey([$this->smsStep('Hello there'), $this->endStep()], $this->downtown);
             $this->fail('A Location-bound workflow with a text step must not publish.');
         } catch (ValidationException $exception) {
-            $this->assertStringContainsString('cannot send text messages yet', json_encode($exception->errors()));
+            $this->assertStringContainsString('text-message number is not set up', json_encode($exception->errors()));
         }
 
         // The same text is fine in a Business-wide workflow.

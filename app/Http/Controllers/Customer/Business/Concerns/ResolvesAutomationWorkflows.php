@@ -135,11 +135,19 @@ trait ResolvesAutomationWorkflows
      */
     protected function resolveWorkflow(Business $business, string $workflowUid): AutomationWorkflow
     {
-        // The two facts the Location gate needs ride the SAME statement as subselects
-        // — the live version's scope column, and a never-published draft's declared
-        // scope — so the gate costs the workflow feature no extra read.
+        // The facts the Location gate needs ride the SAME statement as subselects —
+        // the live version's scope (mode, single Location, selected list), and a
+        // never-published draft's declared scope — so the gate costs the workflow
+        // feature no extra read.
         $workflow = AutomationWorkflow::query()
             ->select('automation_workflows.*')
+            ->selectSub(
+                DB::table('automation_workflow_versions as lv')
+                    ->select('lv.scope_mode')
+                    ->whereColumn('lv.id', 'automation_workflows.published_version_id')
+                    ->limit(1),
+                'live_scope_mode',
+            )
             ->selectSub(
                 DB::table('automation_workflow_versions as lv')
                     ->select('lv.business_location_id')
@@ -148,12 +156,18 @@ trait ResolvesAutomationWorkflows
                 'live_location_id',
             )
             ->selectSub(
+                DB::table('automation_workflow_version_locations as vl')
+                    ->selectRaw('GROUP_CONCAT(vl.business_location_id)')
+                    ->whereColumn('vl.version_id', 'automation_workflows.published_version_id'),
+                'live_scope_location_ids',
+            )
+            ->selectSub(
                 DB::table('automation_workflow_versions as dv')
-                    ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(dv.definition, '$.root.config.business_location_id'))")
+                    ->selectRaw("JSON_EXTRACT(dv.definition, '$.root.config')")
                     ->whereColumn('dv.workflow_id', 'automation_workflows.id')
                     ->where('dv.state', 'draft')
                     ->limit(1),
-                'draft_location_id',
+                'draft_scope_config',
             )
             ->where('business_id', (int) $business->id)
             ->where('uid', $workflowUid)
@@ -174,7 +188,7 @@ trait ResolvesAutomationWorkflows
         abort_unless($mayOperate, 404);
 
         // Scaffolding for the gate only; nothing downstream should see or save it.
-        unset($workflow->live_location_id, $workflow->draft_location_id);
+        unset($workflow->live_scope_mode, $workflow->live_location_id, $workflow->live_scope_location_ids, $workflow->draft_scope_config);
 
         return $workflow;
     }

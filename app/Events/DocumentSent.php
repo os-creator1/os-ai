@@ -21,6 +21,12 @@ use Illuminate\Queue\SerializesModels;
  * replayed, which is what lets a consumer refuse a duplicate. A re-send of the
  * link (rotating the token) is NOT a lifecycle transition and emits nothing.
  *
+ * `origin` IS AN OPAQUE CAUSATION REFERENCE, null for a person's own send (the same
+ * contract as `ContactTagEvent::$origin`). The Automations engine passes
+ * `automation_step_run:{id}` when it sends a document it created, so a consumer can
+ * tell its own output from a person's and never re-trigger the workflow that made
+ * it. This domain never reads it.
+ *
  * This is a transient integration event, not an audit log (§10).
  */
 final class DocumentSent
@@ -34,6 +40,7 @@ final class DocumentSent
         public readonly ?int $businessId = null,
         public readonly ?int $businessLocationId = null,
         public readonly ?int $contactId = null,
+        public readonly ?string $origin = null,
     ) {
     }
 

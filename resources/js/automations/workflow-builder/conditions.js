@@ -16,8 +16,64 @@ export const CUSTOM_FIELD_PREFIX = 'contact.custom_field:'
 export const HAS_TAG_PREFIX = 'contact.has_tag:'
 
 export const TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company']
-export const BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT]
+export const BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT, 'document.signed', 'document.paid']
 export const GROUP_SUBJECTS = ['contact.in_group']
+
+// The subjects that read the deal, document, payment or appointment behind a
+// journey (ConditionSubjectRegistry::FACT_SUBJECTS). Each has a closed set of
+// values (or, for the stage, a stage of this Business) and the trigger family that
+// can give it something to read.
+export const STAGE_SUBJECT = 'opportunity.stage'
+export const FACT_SUBJECTS = {
+    [STAGE_SUBJECT]: { label: 'Opportunity stage', kind: 'reference', needs: null },
+    'opportunity.status': {
+        label: 'Opportunity status',
+        kind: 'choice',
+        needs: null,
+        values: { open: 'Open', won: 'Won', lost: 'Lost' },
+    },
+    'document.status': {
+        label: 'Document status',
+        kind: 'choice',
+        needs: 'document',
+        values: { draft: 'Draft', sent: 'Sent', signed: 'Signed', paid: 'Paid', expired: 'Expired', void: 'Void' },
+    },
+    'document.signed': { label: 'Document signed', kind: 'boolean', needs: 'document' },
+    'document.paid': { label: 'Document paid', kind: 'boolean', needs: 'document' },
+    'payment.status': {
+        label: 'Payment status',
+        kind: 'choice',
+        needs: 'payment',
+        values: { succeeded: 'Succeeded', failed: 'Failed', processing: 'Processing', requires_action: 'Needs customer action', created: 'Started', canceled: 'Cancelled' },
+    },
+    'appointment.status': {
+        label: 'Appointment status',
+        kind: 'choice',
+        needs: 'appointment',
+        values: { scheduled: 'Scheduled', cancelled: 'Cancelled', completed: 'Completed', no_show: 'No-show' },
+    },
+}
+
+const DOCUMENT_TRIGGERS = ['document_sent', 'document_signed', 'payment_succeeded', 'payment_failed']
+
+/** Whether the workflow's trigger gives this fact subject something to read. */
+export function factSubjectAvailable(subject, triggerType) {
+    const meta = FACT_SUBJECTS[subject]
+
+    if (!meta || meta.needs === null) {
+        return true
+    }
+
+    if (meta.needs === 'document') {
+        return DOCUMENT_TRIGGERS.includes(triggerType)
+    }
+
+    if (meta.needs === 'payment') {
+        return ['payment_succeeded', 'payment_failed'].includes(triggerType)
+    }
+
+    return ['appointment_scheduled', 'appointment_cancelled', 'appointment_rescheduled'].includes(triggerType)
+}
 
 export const SUBJECT_LABELS = {
     [REPLIED_SUBJECT]: 'Customer replied',
@@ -47,6 +103,8 @@ const OPERATOR_LABELS = {
 }
 
 const BOOLEAN_OPERATOR_LABELS = {
+    'document.signed': { is_true: 'is signed', is_false: 'is not signed yet' },
+    'document.paid': { is_true: 'is paid', is_false: 'is not paid yet' },
     'contact.subscribed': { is_true: 'is subscribed', is_false: 'is not subscribed' },
     [REPLIED_SUBJECT]: { is_true: 'has replied', is_false: 'has not replied yet' },
 }
@@ -105,7 +163,7 @@ export function subjectOperators(subject, catalogs) {
         return BOOLEAN_OPERATORS
     }
 
-    if (GROUP_SUBJECTS.includes(subject)) {
+    if (GROUP_SUBJECTS.includes(subject) || (FACT_SUBJECTS[subject] && FACT_SUBJECTS[subject].kind !== 'boolean')) {
         return REFERENCE_OPERATORS
     }
 
@@ -123,6 +181,10 @@ export function needsOperand(operator) {
 export function subjectLabel(subject, catalogs) {
     if (SUBJECT_LABELS[subject]) {
         return SUBJECT_LABELS[subject]
+    }
+
+    if (FACT_SUBJECTS[subject]) {
+        return FACT_SUBJECTS[subject].label
     }
 
     if (tagId(subject) !== null) {
@@ -177,6 +239,20 @@ export function describeCondition(condition, catalogs) {
         const name = tag ? `“${tag.name}”` : 'a tag'
 
         return operator === 'is_false' ? `Contact does not have the tag ${name}` : `Contact has the tag ${name}`
+    }
+
+    if (FACT_SUBJECTS[subject]) {
+        const meta = FACT_SUBJECTS[subject]
+
+        if (meta.kind === 'boolean') {
+            return `${meta.label.replace(/ (signed|paid)$/, '')} ${operatorLabel(subject, operator)}`
+        }
+
+        const operand = meta.kind === 'reference'
+            ? ((catalogs && catalogs.crmStages) || []).find((row) => String(row.id) === String(condition.operand))?.name
+            : meta.values[condition.operand]
+
+        return `${meta.label} ${operatorLabel(subject, operator)} “${operand || '…'}”`
     }
 
     if (subject === 'contact.in_group') {

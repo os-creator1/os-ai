@@ -44,7 +44,25 @@ class WorkflowCompiler
         private readonly WorkflowDefinitionValidator $validator,
         private readonly NodeTypeRegistry $registry,
         private readonly WorkflowReferenceCatalogLoader $catalogs,
+        private readonly ?\App\Library\Messaging\BusinessMessagingIdentityResolver $messagingResolver = null,
+        private readonly ?WorkflowActionVerifier $actionVerifier = null,
     ) {
+    }
+
+    /**
+     * The two collaborators the cross-domain checks need. Optional constructor
+     * arguments resolved from the container on first use, so a caller that builds a
+     * compiler by hand (a spy in a test) keeps the three-argument construction it has
+     * always had, and a document that needs neither never resolves either.
+     */
+    private function messaging(): \App\Library\Messaging\BusinessMessagingIdentityResolver
+    {
+        return $this->messagingResolver ?? app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class);
+    }
+
+    private function actions(): WorkflowActionVerifier
+    {
+        return $this->actionVerifier ?? app(WorkflowActionVerifier::class);
     }
 
     /**
@@ -320,13 +338,11 @@ class WorkflowCompiler
                     $errors[$entry['key']][] = 'That tag does not belong to this business.';
                 }
 
-                // THE WORKFLOW'S LOCATION SCOPE. A bound workflow must name an
-                // ACTIVE Location of THIS Business — a foreign, missing or archived
-                // one cannot publish, so the persisted scope is always one the
-                // runtime can trust. Absent = Business-wide.
-                $scopeId = $this->positiveId($entry['config']['business_location_id'] ?? null);
-
-                if ($scopeId !== null) {
+                // THE WORKFLOW'S LOCATION SCOPE. A bound workflow (one Location, or
+                // selected ones) must name only ACTIVE Locations of THIS Business — a
+                // foreign, missing or archived one cannot publish, so the persisted
+                // scope is always one the runtime can trust. Business-wide names none.
+                foreach (WorkflowLocationScope::fromTriggerConfig($entry['config'] ?? [])->ids() as $scopeId) {
                     $scope = $references()->location($scopeId);
 
                     if ($scope === null) {
@@ -340,6 +356,16 @@ class WorkflowCompiler
 
                 if ($triggerType === WorkflowTriggerType::FormSubmitted && $formFilter !== null && $references()->form($formFilter) === null) {
                     $errors[$entry['key']][] = 'That form does not belong to this business.';
+                }
+
+                if ($triggerType === WorkflowTriggerType::QuestionnaireSubmitted && $formFilter !== null) {
+                    $questionnaire = $references()->form($formFilter);
+
+                    if ($questionnaire === null) {
+                        $errors[$entry['key']][] = 'That questionnaire does not belong to this business.';
+                    } elseif ($questionnaire['pages'] < 2) {
+                        $errors[$entry['key']][] = 'That is a one-page form, not a questionnaire. Choose a questionnaire, or use the "A form is submitted" trigger.';
+                    }
                 }
             }
         }
@@ -383,23 +409,47 @@ class WorkflowCompiler
             }
         }
 
-        // A Location-bound workflow cannot send texts yet. The messaging
-        // foundation's sending identities and numbers are Business-level, so a
-        // sender cannot be PROVEN to belong to the bound Location, and the
-        // runtime refuses (SendSmsNodeExecutor). Refusing here too tells the author
-        // at publish instead of failing every journey. Business-wide: unchanged.
-        $boundScope = null;
+        // A workflow limited to Locations may text only from a sender that can be
+        // shown to belong to every one of them. Refusing at publish tells the author
+        // now, instead of failing every journey later; the runtime re-proves it for
+        // the one Location each journey is pinned to (AutomationSmsDispatcher).
+        $scope = WorkflowLocationScope::business();
 
         foreach ($flattened as $entry) {
             if ($entry['type'] === WorkflowNodeType::Trigger) {
-                $boundScope = $this->positiveId($entry['config']['business_location_id'] ?? null);
+                $scope = WorkflowLocationScope::fromTriggerConfig($entry['config'] ?? []);
             }
         }
 
-        if ($boundScope !== null) {
+        // The cross-domain actions are checked against what the account holds. A
+        // workflow without one reads nothing extra: the Business is loaded only when
+        // there is something to check.
+        $crossDomain = array_filter($flattened, fn (array $entry): bool => $entry['type']->isCrossDomainAction());
+
+        if ($crossDomain !== []) {
+            $business = \App\Models\Business::query()->find($businessId);
+
+            if ($business !== null) {
+                foreach ($this->actions()->errors($business, $crossDomain, $triggerType, $scope, $references) as $nodeKey => $messages) {
+                    foreach ($messages as $message) {
+                        $errors[$nodeKey][] = $message;
+                    }
+                }
+            }
+        }
+
+        if ($scope->isBound()) {
+            $unprovable = null;
+
             foreach ($flattened as $entry) {
-                if ($entry['type'] === WorkflowNodeType::SendSms) {
-                    $errors[$entry['key']][] = 'A workflow limited to one location cannot send text messages yet. Use a whole-business workflow, or send an email instead.';
+                if ($entry['type'] !== WorkflowNodeType::SendSms) {
+                    continue;
+                }
+
+                $unprovable ??= $this->textingLocationProblem($version, $scope);
+
+                if ($unprovable !== null) {
+                    $errors[$entry['key']][] = $unprovable;
                 }
             }
         }
@@ -409,12 +459,49 @@ class WorkflowCompiler
                 continue;
             }
 
-            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references) as $error) {
+            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $references, $triggerType) as $error) {
                 $errors[$entry['key']][] = $error;
             }
         }
 
         return $errors;
+    }
+
+    /**
+     * Why this Business cannot text for every Location of a Location-limited
+     * scope, or null when it can (or has no sender at all, which fails closed at
+     * run time with its own reason).
+     */
+    private function textingLocationProblem(AutomationWorkflowVersion $version, WorkflowLocationScope $scope): ?string
+    {
+        $business = \App\Models\Business::query()->find((int) $version->business_id);
+
+        if ($business === null) {
+            return null;
+        }
+
+        $identity = $this->messaging()->resolveForBusiness($business);
+        $message = 'This workflow is limited to locations, but your text-message number is not set up for all of them. Choose which locations use your number in Settings > Text messaging, or send an email instead.';
+
+        if ($identity === null) {
+            // A BYO sender has no Location assignment: it cannot be shown to belong to
+            // one Location of several.
+            return count($this->messaging()->activeLocationIds($business)) > 1 ? $message : null;
+        }
+
+        try {
+            $number = $this->messaging()->resolvePrimaryNumber($identity);
+        } catch (\App\Library\Messaging\Exceptions\MessagingIdentityConflictException) {
+            return null;
+        }
+
+        foreach ($scope->ids() as $locationId) {
+            if (! $this->messaging()->numberServes($number, $business, new \App\Library\Messaging\DTO\LocationSendContext($locationId, true))) {
+                return $message;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -434,7 +521,7 @@ class WorkflowCompiler
      *
      * @return list<string>
      */
-    private function conditionReferenceErrors(array $config, \Closure $references): array
+    private function conditionReferenceErrors(array $config, \Closure $references, ?WorkflowTriggerType $triggerType = null): array
     {
         $errors = [];
         $conditions = is_array($config['conditions'] ?? null) ? array_values($config['conditions']) : [];
@@ -446,6 +533,29 @@ class WorkflowCompiler
 
             $position = $index + 1;
             $subject = is_string($condition['subject'] ?? null) ? $condition['subject'] : '';
+
+            // The fact-backed subjects read the CRM deal, document, payment or
+            // appointment behind the journey. Each needs a trigger that provides one,
+            // and a stage operand must be a stage of THIS Business.
+            if (isset(ConditionSubjectRegistry::FACT_SUBJECTS[$subject])) {
+                $problem = ConditionSubjectRegistry::triggerProblem($subject, $triggerType);
+
+                if ($problem !== null) {
+                    $errors[] = sprintf('Condition %d %s.', $position, $problem);
+                }
+
+                if ($subject === ConditionSubjectRegistry::OPPORTUNITY_STAGE) {
+                    $stage = $references()->stage($this->positiveId($condition['operand'] ?? null) ?? 0);
+
+                    if ($stage === null) {
+                        $errors[] = sprintf('Condition %d checks a stage that does not belong to this business.', $position);
+                    } elseif ($stage['archived']) {
+                        $errors[] = sprintf('Condition %d checks a stage that is archived.', $position);
+                    }
+                }
+
+                continue;
+            }
 
             if ($subject === ConditionSubjectRegistry::IN_GROUP) {
                 $operand = $condition['operand'] ?? null;

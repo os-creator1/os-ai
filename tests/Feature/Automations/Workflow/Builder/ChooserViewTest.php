@@ -60,6 +60,6 @@ class ChooserViewTest extends TestCase
 
         $this->assertSame('Welcome a new contact', $labels['welcome_new_contact']['title']);
         $this->assertArrayHasKey('description', $labels['welcome_new_contact']);
-        $this->assertCount(4, $labels, 'Exactly the four V2-scoped recipes — never the withheld B4-era catalogue.');
+        $this->assertCount(9, $labels, 'The four V2 recipes plus the five cross-domain starters — never the withheld B4-era catalogue.');
     }
 }

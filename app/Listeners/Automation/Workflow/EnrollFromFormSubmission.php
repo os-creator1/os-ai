@@ -29,23 +29,29 @@ class EnrollFromFormSubmission implements ShouldQueue
 
     public function handle(FormSubmissionRecorded $event): void
     {
-        $source = $this->sources->for(WorkflowTriggerType::FormSubmitted);
+        // One submission, two triggers: "a form is submitted" takes every form, and
+        // "a questionnaire is submitted" only a form of two or more pages.
+        foreach ([WorkflowTriggerType::FormSubmitted, WorkflowTriggerType::QuestionnaireSubmitted] as $type) {
+            $source = $this->sources->for($type);
 
-        if (! $source instanceof FormSubmittedTriggerSource) {
-            return;
+            if (! $source instanceof FormSubmittedTriggerSource) {
+                continue;
+            }
+
+            $result = $source->handle($event);
+
+            // A one-page form is simply not a questionnaire; that is not worth a log line.
+            if ($result['skipped'] === [] || ($type === WorkflowTriggerType::QuestionnaireSubmitted && $result['enrolled'] === 0 && array_keys($result['skipped']) === [FormSubmittedTriggerSource::SKIPPED_NO_FACT])) {
+                continue;
+            }
+
+            Log::info('automation.form_submission.skipped', [
+                'business_id' => $event->businessId,
+                'trigger_type' => $type->value,
+                'occurrence_key' => $event->occurrenceKey,
+                'enrolled' => $result['enrolled'],
+                'skipped' => $result['skipped'],
+            ]);
         }
-
-        $result = $source->handle($event);
-
-        if ($result['skipped'] === []) {
-            return;
-        }
-
-        Log::info('automation.form_submission.skipped', [
-            'business_id' => $event->businessId,
-            'occurrence_key' => $event->occurrenceKey,
-            'enrolled' => $result['enrolled'],
-            'skipped' => $result['skipped'],
-        ]);
     }
 }

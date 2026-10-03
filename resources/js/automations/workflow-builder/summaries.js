@@ -45,6 +45,31 @@ function namedRow(rows, id) {
     return crmName(rows, id)
 }
 
+/** "by email", "by text", "by email and text". */
+function channelText(channels) {
+    const list = Array.isArray(channels) ? channels : []
+    const words = [list.includes('email') ? 'email' : null, list.includes('sms') ? 'text' : null].filter(Boolean)
+
+    return words.length ? `by ${words.join(' and ')}` : '— choose how to send it'
+}
+
+function hasChannels(config) {
+    return Array.isArray(config.channels) && config.channels.length > 0
+}
+
+/** The Location(s) a workflow is limited to, in words; null for the whole business. */
+function scopeText(config, catalogs) {
+    if (config.scope_mode === 'selected') {
+        const names = (Array.isArray(config.business_location_ids) ? config.business_location_ids : [])
+            .map((id) => namedRow(catalogs.locations, id))
+            .filter(Boolean)
+
+        return names.length ? names.join(', ') : null
+    }
+
+    return namedRow(catalogs.locations, config.business_location_id)
+}
+
 function plural(amount, unit) {
     const singular = unit.replace(/s$/, '')
 
@@ -84,10 +109,67 @@ export function summarize(node, catalogs) {
     switch (node.type) {
         case NODE_TYPES.TRIGGER: {
             const trigger = summarizeTrigger(config, catalogs)
-            const location = namedRow(catalogs.locations, config.business_location_id)
+            const location = scopeText(config, catalogs)
 
-            // "· Downtown" when bound to a Location; nothing for the whole business.
+            // "· Downtown" when limited to a Location, "· Downtown, Uptown" for a chosen
+            // list; nothing for the whole business.
             return location && trigger.summary ? { ...trigger, summary: `${trigger.summary} · ${location}` } : trigger
+        }
+
+        case NODE_TYPES.MOVE_OPPORTUNITY: {
+            const pipeline = crmName(catalogs.crmPipelines, config.pipeline_id)
+            const stage = crmName(catalogs.crmStages, config.stage_id)
+
+            return pipeline && stage
+                ? { summary: `Move the opportunity to “${stage}” in ${pipeline}`, incomplete: false }
+                : { summary: 'Choose a pipeline and a stage', incomplete: true }
+        }
+
+        case NODE_TYPES.SEND_BOOKING_LINK: {
+            const type = namedRow(catalogs.bookingTypes, config.booking_type_id)
+
+            return type
+                ? { summary: `Send the “${type}” booking link ${channelText(config.channels)}`, incomplete: !hasChannels(config) }
+                : { summary: 'Choose a booking type to send', incomplete: true }
+        }
+
+        case NODE_TYPES.SEND_FORM:
+        case NODE_TYPES.SEND_QUESTIONNAIRE: {
+            const noun = node.type === NODE_TYPES.SEND_FORM ? 'form' : 'questionnaire'
+            const form = namedRow(catalogs.forms, config.form_id)
+
+            return form
+                ? { summary: `Send the ${noun} “${form}” ${channelText(config.channels)}`, incomplete: !hasChannels(config) }
+                : { summary: `Choose a ${noun} to send`, incomplete: true }
+        }
+
+        case NODE_TYPES.CREATE_SEND_PROPOSAL: {
+            const item = namedRow(catalogs.catalogItems, config.catalog_item_id)
+            const title = String(config.title || '').trim()
+
+            if (!title || !item) {
+                return { summary: !title ? 'Give the proposal a title' : 'Choose a product or package', incomplete: true }
+            }
+
+            const deposit = config.payment_schedule === 'deposit' ? ` · ${config.deposit_percent}% deposit` : ''
+
+            return { summary: `Email “${excerpt(title)}” (${item})${deposit}`, incomplete: false }
+        }
+
+        case NODE_TYPES.REQUEST_PAYMENT: {
+            if (config.source === 'document') {
+                return { summary: 'Email a payment link for this workflow’s document', incomplete: false }
+            }
+
+            const title = String(config.title || '').trim()
+            const item = namedRow(catalogs.catalogItems, config.catalog_item_id)
+            const amount = config.amount_minor ? (Number(config.amount_minor) / 100).toFixed(2) : null
+
+            if (!title || (!item && !amount)) {
+                return { summary: !title ? 'Give the invoice a title' : 'Choose a product or enter an amount', incomplete: true }
+            }
+
+            return { summary: `Invoice “${excerpt(title)}” — ${item || amount}`, incomplete: false }
         }
 
         case NODE_TYPES.SEND_SMS:
@@ -170,6 +252,10 @@ export function summarize(node, catalogs) {
     }
 }
 
+function documentKindText(kind) {
+    return kind === 'invoice' ? 'an invoice' : kind === 'proposal' ? 'a proposal or contract' : 'a proposal, contract or invoice'
+}
+
 function summarizeTrigger(config, catalogs) {
     const info = triggerTypeInfo(config.trigger_type)
 
@@ -249,6 +335,26 @@ function summarizeTrigger(config, catalogs) {
             const form = namedRow(catalogs.forms, config.form_id)
 
             return { title: info.title, summary: form ? `When “${form}” is submitted` : 'When any form is submitted', incomplete: false }
+        }
+
+        case 'questionnaire_submitted': {
+            const form = namedRow(catalogs.forms, config.form_id)
+
+            return { title: info.title, summary: form ? `When “${form}” is submitted` : 'When any questionnaire is submitted', incomplete: false }
+        }
+
+        case 'document_sent':
+        case 'document_signed': {
+            const verb = info.value === 'document_sent' ? 'sent' : 'signed'
+
+            return { title: info.title, summary: `When ${documentKindText(config.document_kind)} is ${verb}`, incomplete: false }
+        }
+
+        case 'payment_succeeded':
+        case 'payment_failed': {
+            const verb = info.value === 'payment_succeeded' ? 'succeeds' : 'fails'
+
+            return { title: info.title, summary: `When a payment for ${documentKindText(config.document_kind)} ${verb}`, incomplete: false }
         }
 
         case 'appointment_scheduled':

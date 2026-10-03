@@ -88,21 +88,21 @@ class WorkflowLocationScopeTest extends TestCase
         $workflow = $this->triggerWorkflow($this->business, WorkflowTriggerType::ManualEnrollment);
 
         $this->assertNull($this->version($workflow)->business_location_id);
-        $this->assertNull($this->version($workflow)->boundLocationId());
+        $this->assertNull($this->version($workflow)->scope()->singleId());
     }
 
     public function test_a_workflow_bound_to_an_own_active_location_publishes_and_pins_it(): void
     {
         $workflow = $this->triggerWorkflow($this->business, WorkflowTriggerType::ManualEnrollment, ['business_location_id' => $this->downtown->id]);
 
-        $this->assertSame((int) $this->downtown->id, $this->version($workflow)->boundLocationId());
+        $this->assertSame((int) $this->downtown->id, $this->version($workflow)->scope()->singleId());
     }
 
     public function test_a_string_id_from_the_browser_is_accepted_and_stored_as_an_integer(): void
     {
         $workflow = $this->triggerWorkflow($this->business, WorkflowTriggerType::ManualEnrollment, ['business_location_id' => (string) $this->downtown->id]);
 
-        $this->assertSame((int) $this->downtown->id, $this->version($workflow)->boundLocationId());
+        $this->assertSame((int) $this->downtown->id, $this->version($workflow)->scope()->singleId());
     }
 
     public function test_a_foreign_missing_archived_or_malformed_location_cannot_publish(): void
@@ -184,7 +184,7 @@ class WorkflowLocationScopeTest extends TestCase
 
         $this->assertNotSame($first->id, $second->id);
         $this->assertSame((int) $this->downtown->id, (int) $first->fresh()->business_location_id, 'History is not rewritten.');
-        $this->assertSame((int) $this->uptown->id, $second->boundLocationId());
+        $this->assertSame((int) $this->uptown->id, $second->scope()->singleId());
         $this->assertSame((int) $first->id, (int) $enrollment->fresh()->version_id);
         $this->assertSame((int) $this->downtown->id, (int) $enrollment->fresh()->business_location_id, 'A journey keeps the scope it started under.');
 

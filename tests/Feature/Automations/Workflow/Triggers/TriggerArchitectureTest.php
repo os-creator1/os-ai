@@ -179,6 +179,12 @@ class TriggerArchitectureTest extends TestCase
             WorkflowTriggerType::ContactTagAdded->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
             WorkflowTriggerType::ContactTagRemoved->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
             WorkflowTriggerType::FormSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            WorkflowTriggerType::QuestionnaireSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            // Documents and payments — one source class, registered per trigger type.
+            WorkflowTriggerType::DocumentSent->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::DocumentSigned->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::PaymentSucceeded->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::PaymentFailed->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
             WorkflowTriggerType::AppointmentScheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
             WorkflowTriggerType::AppointmentCancelled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
             WorkflowTriggerType::AppointmentRescheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,

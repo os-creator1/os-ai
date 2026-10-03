@@ -7,12 +7,26 @@ published version, one on the enrollment, and the existing enrollment door.
 
 ## 1. Model
 
-A workflow is either **Business-wide** or **bound to one Location**.
+A workflow has one of three scopes (the final V1 pass added the third):
+
+* **Whole business** — no Location bound; the fact's Location (if any) is pinned.
+* **One Location** — only facts at that Location.
+* **Selected Locations** — only facts at one of up to 100 chosen Locations. A run is
+  **always pinned to ONE factual Location**, never to the list.
 
 | Where | Column | Meaning |
 |---|---|---|
-| `automation_workflow_versions.business_location_id` | nullable FK → `business_locations` | the scope this version was published with; NULL = Business-wide |
+| `automation_workflow_versions.scope_mode` | `business` \| `one` \| `selected` (default `business`) | the scope this version was published with |
+| `automation_workflow_versions.business_location_id` | nullable FK → `business_locations` | the Location of a `one` scope; NULL otherwise |
+| `automation_workflow_version_locations` | pivot (version, Location), unique pair | the Locations of a `selected` scope |
 | `automation_enrollments.business_location_id` | nullable FK → `business_locations` | the Location the journey is pinned to; NULL = the fact had none |
+
+The runtime reads one value object, `WorkflowLocationScope` (`AutomationWorkflowVersion::scope()`),
+and it fails closed: a bound scope that names nothing admits nothing, and an unknown mode
+reads as bound-to-nothing. Drafts carry `scope_mode`, `business_location_id` and
+`business_location_ids` in the trigger node's config; a legacy draft with only
+`business_location_id` reads as "one" and the migration backfills existing bound versions to
+`one`. A selected scope with no fact Location is never enrolled.
 
 The scope lives on the **version** because a version is immutable once published
 and enrollments pin their version. Changing a workflow's Location is therefore a new
@@ -135,16 +149,22 @@ Location-sensitive honour the pin or fail closed:
   (`contact_outside_workflow_location`; `run_location_mismatch` if the pin and the
   version disagree), never written under a scope they have left and never
   re-scoped to their new Location. Business-wide journeys are unchanged.
-* **Send SMS** — a Contact who left is skipped, as above. And a bound journey **cannot
-  text at all yet**: the messaging foundation's sending identities and numbers
-  (`BusinessMessagingIdentity`, `Senderid`, `PhoneNumbers`, BYO channels) are
-  Business-level and carry no Location, so no sender can be proven to belong to the
-  pinned Location, and sending from the Business-wide one could speak for another
-  Location. It fails closed (`location_sender_unavailable`), and publish refuses a bound
-  workflow containing a text step with a plain-words message. **Dependency:** a
-  Location-aware sender seam in messaging (numbers/identities assigned to Locations)
-  — until then use a Business-wide workflow or an email. Business-wide journeys are
-  unchanged.
+* **Send SMS** — a Contact who left is skipped, as above. **The Location-aware sender
+  blocker is closed** (final V1 pass) by the smallest canonical seam:
+  `business_messaging_number_locations` assigns a managed number to Locations
+  (Settings → Text messaging → "Locations that use this number"), and
+  `BusinessMessagingIdentityResolver::numberServes()` is the one rule:
+  *assigned* → exactly those Locations; *unassigned* → a Business with at most one
+  active Location serves it implicitly, while with several Locations only a
+  Business-wide workflow may use it. The run's pinned Location travels in a
+  `LocationSendContext` through the existing quick-send → managed dispatch path, and
+  `ManagedMessageDispatcher` refuses before any operation, measurement or provider call
+  when the number cannot be shown to speak for it. The idempotency key gains the Location
+  fragment, so billing and opt-out stay the one managed path. A bring-your-own sender has
+  no assignment, so a Location-limited workflow of a multi-Location Business with a BYO
+  sender is refused (`location_sender_unavailable`) — documented limit, not a guess.
+  Publish refuses such a workflow up front for a plain-words reason. Business-wide
+  journeys keep the unassigned number exactly as before.
 * **Internal notification** — the note names the contact and the workflow, so for a
   journey **pinned to a Location** (bound workflow, or a Business-wide workflow whose
   fact had a Location) the audience is the Business owner plus active members whom
@@ -169,11 +189,15 @@ effects it cannot prove, or fails visibly. Holding such journeys remains deferre
 
 ## 6. Builder
 
-One control on the trigger: **Where it applies — Whole business / a Location**
-(active Locations of the Business; an archived one already chosen stays visible and
-marked). The trigger card summary appends the Location; the workflow list gains an
-"Applies to" column (a subselect on the page query; no extra query). Nothing else in
-the builder changed. The bundle was rebuilt with the repository's `laravel-mix`.
+One control on the trigger: **Where it applies — Whole business / One location / Selected
+locations** (active Locations of the Business; an archived one already chosen stays visible
+and marked; the selected list is a scrolling checkbox list). The trigger card summary
+appends the Location(s); the workflow list's "Applies to" column names one Location or
+"N locations" (a subselect on the page query; no extra query). The actor must reach
+**every** Location the scope names (Business-wide needs full reach) to save, publish, pause,
+resume, archive, run or see the workflow; a selected scope is hidden from, and closed to,
+staff who miss any of its Locations. The simulator and manual enrollment use the same scope
+object. The bundle was rebuilt with the repository's `laravel-mix`.
 
 ## 7. Schema
 
@@ -184,6 +208,14 @@ Location is never guessed after the fact):
 * `2026_10_27_090002_add_business_location_id_to_automation_enrollments_table`
 
 Both are idempotent and reversible (`down()` drops FK, index, column).
+
+The final V1 pass added three more (each justified by one table or column):
+
+* `2026_10_28_090001_add_scope_mode_to_automation_workflow_versions_table` —
+  `scope_mode`, backfilled to `one` where a version already named a Location.
+* `2026_10_28_090002_create_automation_workflow_version_locations_table` — the selected list.
+* `2026_10_28_090003_create_business_messaging_number_locations_table` — which Locations a
+  managed number serves (the Location-aware sender seam).
 
 ## 8. Historical branch
 
@@ -198,15 +230,12 @@ triggers), and "no Location, no bound run".
 
 ## 9. Deferred
 
-* Location-aware Send SMS (needs a messaging seam that assigns numbers/identities to
-  Locations); bound workflows cannot text until then.
-* **BLOCKER for the next full Automations V1 completion pass: Location-bound SMS
-  requires a Location-aware messaging sender/number seam.** Until messaging assigns
-  identities and numbers to Locations, a bound workflow cannot text (it fails closed
-  at runtime and publish refuses it).
+* ~~Location-aware Send SMS~~ — **closed** in the final V1 pass (see §5). Remaining limit:
+  a bring-your-own sender cannot be assigned to Locations.
 * Backfilling a Location onto pre-existing enrollments.
 * A checkpoint that holds a journey whose pinned Location is later archived (see above).
-* Per-node Location overrides and multi-Location fan-out (out of scope by design).
+* Per-node Location overrides and multi-Location fan-out (out of scope by design; a
+  selected scope is a filter, and each run pins one Location).
 
 ## 10. Verification
 
@@ -215,3 +244,12 @@ Own disposable database: `ultimatesms_testing_automations_location_scope`. New t
 LocationTriggerRulesTest,LocationAppointmentTriggersTest,LocationRuntimeAndActionsTest,
 LocationBuilderTest,LocationActorAuthorityTest,LocationActionDriftTest,
 LocationNotificationRecipientsTest}.php`.
+
+The final V1 pass added (database `ultimatesms_testing_automations_v1_final`):
+`Location/SelectedLocationsScopeTest.php` (the selected scope end to end: builder data,
+save, publish, list visibility, operation ACL, enrollment, simulator),
+`Location/LocationSmsSenderTest.php` (the sender rule across implicit / assigned /
+unassigned / BYO), `tests/Feature/Messaging/LocationAwareManagedSendTest.php` (the dispatcher
+refuses before any operation or provider call), and
+`tests/Feature/Business/TextMessagingNumberLocationsTest.php` (the settings card). The
+cross-domain suites are under `Workflow/CrossDomain/`.

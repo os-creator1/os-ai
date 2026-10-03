@@ -65,6 +65,13 @@ class EventServiceProvider extends ServiceProvider
         \App\Events\DocumentPaymentSucceeded::class => [
             \App\Listeners\BusinessPayments\SendReceiptOnPaymentSucceeded::class,
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handlePaymentSucceeded',
+            // Automations V2 — "A payment succeeds".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
+        ],
+        // Automations V2 — "A payment fails". The finalizer emits this once per
+        // payment row that transitions into `failed`; nothing else consumes it.
+        \App\Events\DocumentPaymentFailed::class => [
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
         ],
         // Implementation Contract 17 §12.G — Blueprint §24's "payment events
         // reach the Activity Center", extended to the whole document
@@ -72,9 +79,13 @@ class EventServiceProvider extends ServiceProvider
         // of these durable transitions.
         \App\Events\DocumentSent::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSent',
+            // Automations V2 — "A proposal or document is sent".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
         ],
         \App\Events\DocumentSigned::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleSigned',
+            // Automations V2 — "A proposal or document is signed".
+            \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
         ],
         \App\Events\DocumentFullyPaid::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleFullyPaid',

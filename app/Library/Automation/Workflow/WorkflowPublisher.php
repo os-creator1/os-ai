@@ -105,6 +105,7 @@ class WorkflowPublisher
             $nodeCount = $this->compiler->compile($draft);
 
             $triggerConfig = $this->triggerConfig($draft);
+            $scope = WorkflowLocationScope::fromTriggerConfig($triggerConfig);
 
             // (1) Retire the version that was live. MUST precede (2).
             $previousId = $locked->published_version_id;
@@ -133,10 +134,24 @@ class WorkflowPublisher
                 // The Location scope, proved by the compiler above, pinned for the
                 // life of this version. The runtime reads this column, never the
                 // node config it came from.
-                'business_location_id' => $this->boundLocationId($triggerConfig),
+                'business_location_id' => $scope->singleId(),
+                'scope_mode' => $scope->mode(),
                 'published_at' => Carbon::now(),
                 'published_by_user_id' => $publishedByUserId,
             ])->save();
+
+            // The Locations of a selected scope, written once with the version.
+            if ($scope->mode() === WorkflowLocationScope::SELECTED) {
+                DB::table('automation_workflow_version_locations')->insert(array_map(
+                    fn (int $locationId): array => [
+                        'version_id' => (int) $draft->getKey(),
+                        'business_id' => (int) $draft->business_id,
+                        'business_location_id' => $locationId,
+                        'created_at' => Carbon::now(),
+                    ],
+                    $scope->ids(),
+                ));
+            }
 
             // (3) Point the workflow at it. A paused workflow that publishes
             // becomes live again, which is what the button says it does.
@@ -164,14 +179,6 @@ class WorkflowPublisher
         }
 
         return is_array($root['config'] ?? null) ? $root['config'] : [];
-    }
-
-    /** @param array<string, mixed> $triggerConfig */
-    private function boundLocationId(array $triggerConfig): ?int
-    {
-        $value = $triggerConfig['business_location_id'] ?? null;
-
-        return (is_int($value) || (is_string($value) && ctype_digit($value))) && (int) $value > 0 ? (int) $value : null;
     }
 
     private function assertPublishedWorkflowQuota(AutomationWorkflow $workflow): void

@@ -56,6 +56,11 @@
                     <option value="contact.in_group">{{ __('automations.v2.if_else_form.subject_in_group') }}</option>
                 </optgroup>
                 <optgroup label="{{ __('automations.v2.if_else_form.group_tags') }}" data-role="wf-condition-tag-group"></optgroup>
+                <optgroup label="{{ __('automations.v2.if_else_form.group_facts') }}" data-role="wf-condition-fact-group">
+                    @foreach (array_keys(\App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry::FACT_SUBJECTS) as $factSubject)
+                        <option value="{{ $factSubject }}">{{ __('automations.v2.if_else_form.subject_' . str_replace('.', '_', $factSubject)) }}</option>
+                    @endforeach
+                </optgroup>
                 <optgroup label="{{ __('automations.v2.if_else_form.group_custom_fields') }}" data-role="wf-condition-custom-field-group"></optgroup>
             </select>
             <p class="wf-help" data-role="wf-condition-help" hidden>{{ __('automations.v2.if_else_form.replied_help') }}</p>

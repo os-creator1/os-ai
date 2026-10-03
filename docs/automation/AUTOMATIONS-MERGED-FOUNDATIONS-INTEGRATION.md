@@ -154,7 +154,11 @@ the Business's own catalog, a bounded select — no async picker was built.
 
 ## 9. Deferred (explicit)
 
-* Payments / Invoices / Documents / Proposals / Contracts triggers (separate lanes).
+* ~~Payments / Invoices / Documents / Proposals / Contracts triggers~~ — landed in the
+  final V1 pass with the Move opportunity, Send booking link / form / questionnaire,
+  Create & send proposal and Request payment steps, event-fact conditions, five starter
+  recipes and Location-aware SMS: see `docs/product/v1-acceptance/07-AUTOMATIONS.md`
+  (the final contract) and `AUTOMATIONS-LOCATION-RUN-SCOPE.md` (Selected Locations).
 * ~~Workflow-level Location run-scope~~ — landed: `AUTOMATIONS-LOCATION-RUN-SCOPE.md`.
 * Email suppression / unsubscribe — a declared dependency of the Business Email
   foundation before any promotional-style automation email; inbound / reply triggers.

@@ -10,6 +10,7 @@ import { createAutosave } from './autosave.js'
 import { createApiClient } from './api.js'
 import { createStepPicker } from './step-picker.js'
 import { createTestPanel } from './test-panel.js'
+import { createJourneys } from './journeys.js'
 import { listRecipes } from './recipes.js'
 import { newNode, countNodes, insertAt, insertBranchAt, removeFrom, moveWithin } from './document-model.js'
 import { renderDocumentBanner, hasErrors, countIssues } from './validation.js'
@@ -116,6 +117,11 @@ function initBuilder(root) {
         dateOffsets: data.dateOffsets,
         limits: data.limits,
         locationScope: data.locationScope,
+        capabilities: data.capabilities || {},
+        currency: data.currency || '',
+        // The trigger as the document has it NOW, so a condition or an action only
+        // offers what the workflow's trigger can give it.
+        triggerType: () => (doc && doc.root && doc.root.config ? doc.root.config.trigger_type : null),
         onSave(node, config) {
             node.config = config
             onDocumentChanged()
@@ -149,6 +155,26 @@ function initBuilder(root) {
             syncPanels()
         },
     })
+
+    // The two read-only tabs: who entered the workflow, and what happened to each.
+    const historyPane = root.querySelector('[data-role="wf-journeys-history"]')
+    const logsPane = root.querySelector('[data-role="wf-journeys-logs"]')
+
+    if (historyPane && logsPane) {
+        const logsTab = root.querySelector('[data-bs-target="#wf-tabs-logs"]')
+        const journeys = createJourneys({
+            api,
+            basePath: data.basePath,
+            historyEl: historyPane,
+            logsEl: logsPane,
+            showLogsTab: () => logsTab && logsTab.click(),
+        })
+
+        const historyTab = root.querySelector('[data-bs-target="#wf-tabs-enrollments"]')
+
+        historyTab && historyTab.addEventListener('click', () => journeys.showHistory())
+        logsTab && logsTab.addEventListener('click', () => journeys.showLogs())
+    }
 
     function selectNode(node) {
         if (testPanel.isOpen()) {
@@ -262,6 +288,7 @@ function initBuilder(root) {
         picker.open(anchorEl, {
             types,
             hints,
+            capabilities: data.capabilities || {},
             note: canBranch ? '' : 'If / Else can’t be nested any deeper here.',
             onPick(type) {
                 const node = newNode(type, defaultConfigFor(type))
@@ -424,6 +451,9 @@ function initChooser(root) {
     const createUrl = root.dataset.createUrl
     const labelsEl = document.getElementById('wf-recipe-labels')
     const labels = labelsEl ? JSON.parse(labelsEl.textContent) : {}
+    const capabilitiesEl = document.getElementById('wf-capabilities')
+    const capabilities = capabilitiesEl ? JSON.parse(capabilitiesEl.textContent) : {}
+    const unavailablePrefix = capabilitiesEl ? capabilitiesEl.dataset.unavailablePrefix || '' : ''
     const api = createApiClient(createUrl)
     let busy = false
 
@@ -507,6 +537,23 @@ function initChooser(root) {
         card.appendChild(description)
         col.appendChild(card)
         recipesContainer.appendChild(col)
+
+        // A recipe the account cannot run is shown, disabled, with the reason — never
+        // created and then refused at publish.
+        const missing = (recipe.requires || []).map((key) => capabilities[key]).filter((entry) => entry && entry.available === false)
+
+        if (missing.length > 0) {
+            card.disabled = true
+            card.classList.add('is-disabled')
+            card.dataset.unavailable = 'true'
+
+            const reason = document.createElement('span')
+            reason.className = 'wf-chooser-card__reason'
+            reason.textContent = `${unavailablePrefix}${missing[0].reason || ''}`
+            card.appendChild(reason)
+
+            return
+        }
 
         card.addEventListener('click', () => {
             createWorkflow(labelSet.title || 'Untitled workflow', recipe.build())

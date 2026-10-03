@@ -179,7 +179,7 @@ class DateReachedTriggerSource implements TriggerSource
                 $policy,
                 $afterContactId,
                 min($remaining - $enrolled, WorkflowLimits::SWEEP_CHUNK_SIZE),
-                $row->business_location_id === null ? null : (int) $row->business_location_id,
+                $this->scopeIds($row),
             );
 
             if ($page === []) {
@@ -209,6 +209,27 @@ class DateReachedTriggerSource implements TriggerSource
     }
 
     /**
+     * The Locations a published version's scope admits, for the contact query:
+     * null for Business-wide, otherwise the (possibly empty) list. Read from the
+     * version's own columns/rows through its scope(), like every other reader.
+     *
+     * @return list<int>|null
+     */
+    private function scopeIds(object $row): ?array
+    {
+        $version = new \App\Models\AutomationWorkflowVersion();
+        $version->forceFill([
+            'id' => (int) $row->version_id,
+            'business_location_id' => $row->business_location_id,
+            'scope_mode' => $row->scope_mode,
+        ]);
+
+        $scope = $version->scope();
+
+        return $scope->isBound() ? $scope->ids() : null;
+    }
+
+    /**
      * The published workflows whose pinned trigger is contact_date_reached, one
      * keyset page at a time, with the Business timezone the rule needs.
      *
@@ -233,7 +254,9 @@ class DateReachedTriggerSource implements TriggerSource
                 'b.timezone',
                 'n.config as trigger_config',
                 'v.enrollment_policy',
+                'v.id as version_id',
                 'v.business_location_id',
+                'v.scope_mode',
             ])
             ->all();
     }
@@ -259,7 +282,7 @@ class DateReachedTriggerSource implements TriggerSource
         EnrollmentPolicy $policy,
         int $afterContactId,
         int $limit,
-        ?int $boundLocationId = null,
+        ?array $boundLocationIds = null,
     ): array {
         [$keyPrefix, $keySuffix] = $this->keyFragmentsAround($workflow, $policy, $occurrenceYear);
 
@@ -267,9 +290,10 @@ class DateReachedTriggerSource implements TriggerSource
             ->select('contacts.*')
             ->where('contacts.business_id', $workflow->business_id)
             // A Location-bound workflow only ever considers contacts of its own
-            // Location, in SQL — so a capped run's pages are not spent on contacts
-            // EnrollmentService would only refuse.
-            ->when($boundLocationId !== null, fn ($query) => $query->where('contacts.location_id', $boundLocationId))
+            // Location(s), in SQL — so a capped run's pages are not spent on contacts
+            // EnrollmentService would only refuse. An empty list (a bound scope that
+            // names nothing) matches no contact: it never reads as Business-wide.
+            ->when($boundLocationIds !== null, fn ($query) => $query->whereIn('contacts.location_id', $boundLocationIds))
             ->where('contacts.group_id', $config['group_id'])
             ->where('contacts.status', Contacts::STATUS_SUBSCRIBE)
             ->where('contacts.id', '>', $afterContactId)

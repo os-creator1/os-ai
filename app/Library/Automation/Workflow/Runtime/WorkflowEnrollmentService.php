@@ -79,9 +79,7 @@ class WorkflowEnrollmentService implements EnrollmentService
         // Location arrives must be one of THIS Business's, so a forged id from any
         // source enrolls nobody. A Business-wide workflow pins the fact's Location
         // (or null) and applies no further restriction.
-        $bound = $version->boundLocationId();
-
-        if ($bound !== null && $locationId !== $bound) {
+        if (! $version->scope()->allows($locationId)) {
             return null;
         }
 

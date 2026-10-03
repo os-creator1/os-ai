@@ -40,7 +40,16 @@
       iterable $tags                    optional; this Business's contact tags,
                                           each: ->id, ->name, ->archived
       iterable $forms                   optional; this Business's forms,
-                                          each: ->id, ->name, ->lifecycle
+                                          each: ->id, ->name, ->lifecycle, ->pages
+                                          (pages: 1 = a form, 2+ = a questionnaire)
+      iterable $bookingTypes            optional; the booking types THIS actor may use
+                                          (their Locations' only), each: ->id, ->name,
+                                          ->location_id, ->active
+      iterable $catalogItems            optional; this Business's products, packages and
+                                          services, each: ->id, ->name, ->type, ->active
+      array    $capabilities            optional; what the account can use,
+                                          capability => ['available' => bool, 'reason' => ?string]
+      string   $currency                optional; the Business's currency code
       iterable $locations               optional; the Locations THIS actor may bind a workflow
                                           to (already ACL-filtered), each: ->id, ->name, ->active
       array    $locationScope           optional; ['businessWide' => bool] — whether this actor
@@ -79,7 +88,9 @@
             'crmPipelines' => $toArrayList($crmPipelines ?? [], ['id', 'name', 'archived']),
             'crmStages' => $toArrayList($crmStages ?? [], ['id', 'pipeline_id', 'name', 'archived']),
             'tags' => $toArrayList($tags ?? [], ['id', 'name', 'archived']),
-            'forms' => $toArrayList($forms ?? [], ['id', 'name', 'lifecycle']),
+            'forms' => $toArrayList($forms ?? [], ['id', 'name', 'lifecycle', 'pages']),
+            'bookingTypes' => $toArrayList($bookingTypes ?? [], ['id', 'name', 'location_id', 'active']),
+            'catalogItems' => $toArrayList($catalogItems ?? [], ['id', 'name', 'type', 'active']),
             'locations' => $toArrayList($locations ?? [], ['id', 'name', 'active']),
         ],
         'limits' => [
@@ -88,6 +99,8 @@
             'maxConditionsPerBranch' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_CONDITIONS_PER_BRANCH,
         ],
         'locationScope' => ['businessWide' => (bool) ($locationScope['businessWide'] ?? true)],
+        'capabilities' => $capabilities ?? [],
+        'currency' => $currency ?? '',
         'dateOffsets' => \App\Library\Automation\Workflow\NodeTypeRegistry::DATE_OFFSET_ALLOWLIST,
         'contactSources' => \App\Library\Automation\Workflow\NodeTypeRegistry::CONTACT_SOURCES,
     ];
@@ -100,6 +113,8 @@
         'trash-2', 'search', 'user', 'user-plus', 'message-square-reply', 'calendar-clock', 'hand', 'x',
         'briefcase-business', 'arrow-right-left', 'trophy', 'circle-x',
         'mail', 'tag', 'clipboard-list', 'calendar-check', 'calendar-x',
+        'calendar-plus', 'list-checks', 'file-signature', 'file-text', 'credit-card',
+        'circle-check', 'circle-alert',
     ];
 
     $statusLabel = __('automations.v2.list.status_' . $statusValue);
@@ -257,11 +272,19 @@
             </div>
 
             <div class="tab-pane fade" id="wf-tabs-enrollments" role="tabpanel">
-                <x-empty-state icon="users" :title="__('automations.v2.builder.tab_enrollment_history')" :description="__('automations.v2.builder.enrollment_history_empty')" />
+                <x-card>
+                    <div data-role="wf-journeys-history">
+                        <p class="text-muted mb-0">{{ __('automations.v2.builder.enrollment_history_empty') }}</p>
+                    </div>
+                </x-card>
             </div>
 
             <div class="tab-pane fade" id="wf-tabs-logs" role="tabpanel">
-                <x-empty-state icon="list" :title="__('automations.v2.builder.tab_execution_logs')" :description="__('automations.v2.builder.execution_logs_empty')" />
+                <x-card>
+                    <div data-role="wf-journeys-logs">
+                        <p class="text-muted mb-0">{{ __('automations.v2.builder.execution_logs_empty') }}</p>
+                    </div>
+                </x-card>
             </div>
         </x-tabs>
 
@@ -272,6 +295,12 @@
         @include('customer.Automations.Workflows.partials.node-form-send-email')
         @include('customer.Automations.Workflows.partials.node-form-add-tag')
         @include('customer.Automations.Workflows.partials.node-form-remove-tag')
+        @include('customer.Automations.Workflows.partials.node-form-move-opportunity')
+        @include('customer.Automations.Workflows.partials.node-form-send-booking-link')
+        @include('customer.Automations.Workflows.partials.node-form-send-form')
+        @include('customer.Automations.Workflows.partials.node-form-send-questionnaire')
+        @include('customer.Automations.Workflows.partials.node-form-create-send-proposal')
+        @include('customer.Automations.Workflows.partials.node-form-request-payment')
         @include('customer.Automations.Workflows.partials.node-form-wait')
         @include('customer.Automations.Workflows.partials.node-form-if-else')
         @include('customer.Automations.Workflows.partials.node-form-end')

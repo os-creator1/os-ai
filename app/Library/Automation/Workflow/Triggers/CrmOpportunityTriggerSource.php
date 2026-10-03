@@ -94,8 +94,22 @@ class CrmOpportunityTriggerSource implements TriggerSource
             return $this->skip($result, self::SKIPPED_NO_CONTACT);
         }
 
+        // LOOP PREVENTION. When an automation's own Move opportunity step made this
+        // change (the event's `origin`), the producing workflow never re-triggers off
+        // its own output, and any other workflow enrolls at depth + 1 — which
+        // EnrollmentService refuses beyond MAX_CAUSATION_DEPTH. A person's own move
+        // has no origin and is depth 0.
+        $cause = TriggerCause::resolve($event->origin, $context->businessId);
+        $depth = $cause === null ? 0 : $cause['depth'] + 1;
+
         foreach ($this->listeningWorkflows($context) as $workflow) {
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $context->occurrenceKey(), locationId: $context->locationId);
+            if ($cause !== null && $cause['workflow_id'] === (int) $workflow->getKey()) {
+                $result = $this->skip($result, 'self_trigger');
+
+                continue;
+            }
+
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $context->occurrenceKey(), $depth, $context->locationId);
 
             // Null is EnrollmentService's own refusal: the same change replayed,
             // the contact still part-way through, the workflow paused since.

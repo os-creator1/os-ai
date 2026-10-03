@@ -121,6 +121,16 @@ function createApiClient(basePath) {
         method: 'GET'
       });
     },
+    enrollments: function enrollments(workflowBasePath) {
+      return request("".concat(workflowBasePath, "/enrollments"), {
+        method: 'GET'
+      });
+    },
+    enrollmentLogs: function enrollmentLogs(workflowBasePath, enrollmentUid) {
+      return request("".concat(workflowBasePath, "/enrollments/").concat(encodeURIComponent(enrollmentUid), "/logs"), {
+        method: 'GET'
+      });
+    },
     pause: function pause(workflowBasePath) {
       return request("".concat(workflowBasePath, "/pause"), {
         method: 'POST'
@@ -556,13 +566,16 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   BOOLEAN_SUBJECTS: () => (/* binding */ BOOLEAN_SUBJECTS),
 /* harmony export */   CUSTOM_FIELD_PREFIX: () => (/* binding */ CUSTOM_FIELD_PREFIX),
+/* harmony export */   FACT_SUBJECTS: () => (/* binding */ FACT_SUBJECTS),
 /* harmony export */   GROUP_SUBJECTS: () => (/* binding */ GROUP_SUBJECTS),
 /* harmony export */   HAS_TAG_PREFIX: () => (/* binding */ HAS_TAG_PREFIX),
 /* harmony export */   REPLIED_SUBJECT: () => (/* binding */ REPLIED_SUBJECT),
+/* harmony export */   STAGE_SUBJECT: () => (/* binding */ STAGE_SUBJECT),
 /* harmony export */   SUBJECT_LABELS: () => (/* binding */ SUBJECT_LABELS),
 /* harmony export */   TEXT_SUBJECTS: () => (/* binding */ TEXT_SUBJECTS),
 /* harmony export */   customFieldId: () => (/* binding */ customFieldId),
 /* harmony export */   describeCondition: () => (/* binding */ describeCondition),
+/* harmony export */   factSubjectAvailable: () => (/* binding */ factSubjectAvailable),
 /* harmony export */   isDateSubject: () => (/* binding */ isDateSubject),
 /* harmony export */   needsOperand: () => (/* binding */ needsOperand),
 /* harmony export */   operatorLabel: () => (/* binding */ operatorLabel),
@@ -591,8 +604,86 @@ var REPLIED_SUBJECT = 'contact.replied_since_enrollment';
 var CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
 var HAS_TAG_PREFIX = 'contact.has_tag:';
 var TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company'];
-var BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT];
+var BOOLEAN_SUBJECTS = ['contact.subscribed', REPLIED_SUBJECT, 'document.signed', 'document.paid'];
 var GROUP_SUBJECTS = ['contact.in_group'];
+
+// The subjects that read the deal, document, payment or appointment behind a
+// journey (ConditionSubjectRegistry::FACT_SUBJECTS). Each has a closed set of
+// values (or, for the stage, a stage of this Business) and the trigger family that
+// can give it something to read.
+var STAGE_SUBJECT = 'opportunity.stage';
+var FACT_SUBJECTS = _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty({}, STAGE_SUBJECT, {
+  label: 'Opportunity stage',
+  kind: 'reference',
+  needs: null
+}), 'opportunity.status', {
+  label: 'Opportunity status',
+  kind: 'choice',
+  needs: null,
+  values: {
+    open: 'Open',
+    won: 'Won',
+    lost: 'Lost'
+  }
+}), 'document.status', {
+  label: 'Document status',
+  kind: 'choice',
+  needs: 'document',
+  values: {
+    draft: 'Draft',
+    sent: 'Sent',
+    signed: 'Signed',
+    paid: 'Paid',
+    expired: 'Expired',
+    "void": 'Void'
+  }
+}), 'document.signed', {
+  label: 'Document signed',
+  kind: 'boolean',
+  needs: 'document'
+}), 'document.paid', {
+  label: 'Document paid',
+  kind: 'boolean',
+  needs: 'document'
+}), 'payment.status', {
+  label: 'Payment status',
+  kind: 'choice',
+  needs: 'payment',
+  values: {
+    succeeded: 'Succeeded',
+    failed: 'Failed',
+    processing: 'Processing',
+    requires_action: 'Needs customer action',
+    created: 'Started',
+    canceled: 'Cancelled'
+  }
+}), 'appointment.status', {
+  label: 'Appointment status',
+  kind: 'choice',
+  needs: 'appointment',
+  values: {
+    scheduled: 'Scheduled',
+    cancelled: 'Cancelled',
+    completed: 'Completed',
+    no_show: 'No-show'
+  }
+});
+var DOCUMENT_TRIGGERS = ['document_sent', 'document_signed', 'payment_succeeded', 'payment_failed'];
+
+/** Whether the workflow's trigger gives this fact subject something to read. */
+function factSubjectAvailable(subject, triggerType) {
+  var meta = FACT_SUBJECTS[subject];
+  if (!meta || meta.needs === null) {
+    return true;
+  }
+  if (meta.needs === 'document') {
+    return DOCUMENT_TRIGGERS.includes(triggerType);
+  }
+  if (meta.needs === 'payment') {
+    return ['payment_succeeded', 'payment_failed'].includes(triggerType);
+  }
+  return ['appointment_scheduled', 'appointment_cancelled', 'appointment_rescheduled'].includes(triggerType);
+}
 var SUBJECT_LABELS = _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty({}, REPLIED_SUBJECT, 'Customer replied'), 'contact.first_name', 'First name'), 'contact.last_name', 'Last name'), 'contact.email', 'Email'), 'contact.company', 'Company'), 'contact.subscribed', 'Subscribed to texts'), 'contact.in_group', 'Contact group');
 var TEXT_OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'is_empty', 'is_not_empty'];
 var BOOLEAN_OPERATORS = ['is_true', 'is_false'];
@@ -610,6 +701,14 @@ var OPERATOR_LABELS = {
   on_date: 'is on'
 };
 var BOOLEAN_OPERATOR_LABELS = _defineProperty({
+  'document.signed': {
+    is_true: 'is signed',
+    is_false: 'is not signed yet'
+  },
+  'document.paid': {
+    is_true: 'is paid',
+    is_false: 'is not paid yet'
+  },
   'contact.subscribed': {
     is_true: 'is subscribed',
     is_false: 'is not subscribed'
@@ -661,7 +760,7 @@ function subjectOperators(subject, catalogs) {
   if (BOOLEAN_SUBJECTS.includes(subject) || tagId(subject) !== null) {
     return BOOLEAN_OPERATORS;
   }
-  if (GROUP_SUBJECTS.includes(subject)) {
+  if (GROUP_SUBJECTS.includes(subject) || FACT_SUBJECTS[subject] && FACT_SUBJECTS[subject].kind !== 'boolean') {
     return REFERENCE_OPERATORS;
   }
   if (customFieldId(subject) !== null) {
@@ -675,6 +774,9 @@ function needsOperand(operator) {
 function subjectLabel(subject, catalogs) {
   if (SUBJECT_LABELS[subject]) {
     return SUBJECT_LABELS[subject];
+  }
+  if (FACT_SUBJECTS[subject]) {
+    return FACT_SUBJECTS[subject].label;
   }
   if (tagId(subject) !== null) {
     var tag = tagFor(subject, catalogs);
@@ -718,6 +820,17 @@ function describeCondition(condition, catalogs) {
     var name = tag ? "\u201C".concat(tag.name, "\u201D") : 'a tag';
     return operator === 'is_false' ? "Contact does not have the tag ".concat(name) : "Contact has the tag ".concat(name);
   }
+  if (FACT_SUBJECTS[subject]) {
+    var _find;
+    var meta = FACT_SUBJECTS[subject];
+    if (meta.kind === 'boolean') {
+      return "".concat(meta.label.replace(/ (signed|paid)$/, ''), " ").concat(operatorLabel(subject, operator));
+    }
+    var _operand = meta.kind === 'reference' ? (_find = (catalogs && catalogs.crmStages || []).find(function (row) {
+      return String(row.id) === String(condition.operand);
+    })) === null || _find === void 0 ? void 0 : _find.name : meta.values[condition.operand];
+    return "".concat(meta.label, " ").concat(operatorLabel(subject, operator), " \u201C").concat(_operand || '…', "\u201D");
+  }
   if (subject === 'contact.in_group') {
     return operator === 'not_equals' ? "Contact is not in ".concat(groupName(condition.operand, catalogs)) : "Contact is in ".concat(groupName(condition.operand, catalogs));
   }
@@ -747,6 +860,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   NODE_LABELS: () => (/* binding */ NODE_LABELS),
 /* harmony export */   NODE_TYPES: () => (/* binding */ NODE_TYPES),
 /* harmony export */   STEP_CATALOG: () => (/* binding */ STEP_CATALOG),
+/* harmony export */   STEP_GROUPS: () => (/* binding */ STEP_GROUPS),
+/* harmony export */   TRIGGER_GROUPS: () => (/* binding */ TRIGGER_GROUPS),
 /* harmony export */   TRIGGER_TYPES: () => (/* binding */ TRIGGER_TYPES),
 /* harmony export */   closesSequence: () => (/* binding */ closesSequence),
 /* harmony export */   defaultConfigFor: () => (/* binding */ defaultConfigFor),
@@ -755,6 +870,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   offsetLabel: () => (/* binding */ offsetLabel),
 /* harmony export */   triggerTypeInfo: () => (/* binding */ triggerTypeInfo)
 /* harmony export */ });
+var _NODE_LABELS;
 function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
@@ -774,6 +890,12 @@ var NODE_TYPES = {
   SEND_EMAIL: 'send_email',
   ADD_TAG: 'add_tag',
   REMOVE_TAG: 'remove_tag',
+  MOVE_OPPORTUNITY: 'move_opportunity',
+  SEND_BOOKING_LINK: 'send_booking_link',
+  SEND_FORM: 'send_form',
+  SEND_QUESTIONNAIRE: 'send_questionnaire',
+  CREATE_SEND_PROPOSAL: 'create_send_proposal',
+  REQUEST_PAYMENT: 'request_payment',
   WAIT: 'wait',
   IF_ELSE: 'if_else',
   END: 'end'
@@ -781,62 +903,110 @@ var NODE_TYPES = {
 
 // Customer wording for each step. Outcome-first: what the step does for the
 // business, never how the engine names it.
-var NODE_LABELS = _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty({}, NODE_TYPES.TRIGGER, 'Trigger'), NODE_TYPES.SEND_SMS, 'Send text message'), NODE_TYPES.UPDATE_CONTACT_FIELD, 'Update contact field'), NODE_TYPES.INTERNAL_NOTIFICATION, 'Notify your team'), NODE_TYPES.SEND_EMAIL, 'Send email'), NODE_TYPES.ADD_TAG, 'Add tag'), NODE_TYPES.REMOVE_TAG, 'Remove tag'), NODE_TYPES.WAIT, 'Wait'), NODE_TYPES.IF_ELSE, 'If / Else'), NODE_TYPES.END, 'End workflow');
+var NODE_LABELS = (_NODE_LABELS = {}, _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_NODE_LABELS, NODE_TYPES.TRIGGER, 'Trigger'), NODE_TYPES.SEND_SMS, 'Send text message'), NODE_TYPES.UPDATE_CONTACT_FIELD, 'Update contact field'), NODE_TYPES.INTERNAL_NOTIFICATION, 'Notify your team'), NODE_TYPES.SEND_EMAIL, 'Send email'), NODE_TYPES.ADD_TAG, 'Add tag'), NODE_TYPES.REMOVE_TAG, 'Remove tag'), NODE_TYPES.MOVE_OPPORTUNITY, 'Move opportunity'), NODE_TYPES.SEND_BOOKING_LINK, 'Send booking link'), NODE_TYPES.SEND_FORM, 'Send form'), _defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_defineProperty(_NODE_LABELS, NODE_TYPES.SEND_QUESTIONNAIRE, 'Send questionnaire'), NODE_TYPES.CREATE_SEND_PROPOSAL, 'Create & send proposal or contract'), NODE_TYPES.REQUEST_PAYMENT, 'Request payment'), NODE_TYPES.WAIT, 'Wait'), NODE_TYPES.IF_ELSE, 'If / Else'), NODE_TYPES.END, 'End workflow'));
 
 // The step picker's catalogue. Every entry is a registered node type; the
 // keywords are only there so a search for "delay", "sms" or "branch" finds
-// the step a person means.
+// the step a person means. `group` is how the picker sections them, in this
+// order; `requires` is the account capability the step needs (the server's
+// WorkflowCapabilities) — a step the account cannot use is shown, disabled,
+// with the reason, rather than offered and refused at publish.
+var STEP_GROUPS = ['Messaging', 'CRM', 'Documents', 'Payments', 'Internal', 'Flow'];
 var STEP_CATALOG = [{
-  type: NODE_TYPES.SEND_SMS,
-  group: 'Messages',
-  description: 'Text the contact. Personalise it with their name.',
-  keywords: ['sms', 'text', 'message', 'send', 'follow up', 'reminder'],
-  icon: 'message-square-text'
-}, {
   type: NODE_TYPES.SEND_EMAIL,
-  group: 'Messages',
+  group: 'Messaging',
   description: 'Email the contact from your connected mailbox. Personalise it with their name.',
   keywords: ['email', 'mail', 'message', 'send', 'follow up', 'confirmation'],
-  icon: 'mail'
+  icon: 'mail',
+  requires: 'email'
 }, {
-  type: NODE_TYPES.INTERNAL_NOTIFICATION,
-  group: 'Messages',
-  description: 'Let your team know something needs their attention.',
-  keywords: ['notify', 'alert', 'team', 'staff', 'owner', 'tell'],
-  icon: 'bell'
+  type: NODE_TYPES.SEND_SMS,
+  group: 'Messaging',
+  description: 'Text the contact. Personalise it with their name.',
+  keywords: ['sms', 'text', 'message', 'send', 'follow up', 'reminder'],
+  icon: 'message-square-text',
+  requires: 'sms'
 }, {
-  type: NODE_TYPES.UPDATE_CONTACT_FIELD,
-  group: 'Contact',
-  description: 'Save a value on the contact, such as a status or a note.',
-  keywords: ['update', 'field', 'contact', 'save', 'set', 'status', 'note'],
-  icon: 'user-pen'
+  type: NODE_TYPES.SEND_BOOKING_LINK,
+  group: 'Messaging',
+  description: 'Send the link to book one of your booking types, by email, text, or both.',
+  keywords: ['booking', 'book', 'appointment', 'schedule', 'calendar', 'link'],
+  icon: 'calendar-plus',
+  requires: 'calendar'
+}, {
+  type: NODE_TYPES.SEND_FORM,
+  group: 'Messaging',
+  description: 'Send the link to one of your forms, by email, text, or both.',
+  keywords: ['form', 'link', 'collect', 'intake', 'enquiry'],
+  icon: 'clipboard-list',
+  requires: 'forms'
+}, {
+  type: NODE_TYPES.SEND_QUESTIONNAIRE,
+  group: 'Messaging',
+  description: 'Send the link to one of your multi-step questionnaires, by email, text, or both.',
+  keywords: ['questionnaire', 'survey', 'questions', 'link', 'intake', 'feedback'],
+  icon: 'list-checks',
+  requires: 'forms'
 }, {
   type: NODE_TYPES.ADD_TAG,
-  group: 'Contact',
+  group: 'CRM',
   description: 'Tag the contact so you can find, segment or follow up with them later.',
   keywords: ['tag', 'label', 'add', 'segment', 'mark'],
   icon: 'tag'
 }, {
   type: NODE_TYPES.REMOVE_TAG,
-  group: 'Contact',
+  group: 'CRM',
   description: 'Take a tag off the contact.',
   keywords: ['tag', 'label', 'remove', 'untag', 'clear'],
   icon: 'tag'
 }, {
+  type: NODE_TYPES.UPDATE_CONTACT_FIELD,
+  group: 'CRM',
+  description: 'Save a value on the contact, such as a status or a note.',
+  keywords: ['update', 'field', 'contact', 'save', 'set', 'status', 'note'],
+  icon: 'user-pen'
+}, {
+  type: NODE_TYPES.MOVE_OPPORTUNITY,
+  group: 'CRM',
+  description: "Move the contact's opportunity to another stage of its pipeline.",
+  keywords: ['opportunity', 'deal', 'stage', 'pipeline', 'move', 'crm', 'sales'],
+  icon: 'arrow-right-left',
+  requires: 'crm'
+}, {
+  type: NODE_TYPES.CREATE_SEND_PROPOSAL,
+  group: 'Documents',
+  description: 'Create a proposal or contract from one of your products or packages and email it for signing.',
+  keywords: ['proposal', 'contract', 'quote', 'agreement', 'sign', 'document', 'send'],
+  icon: 'file-signature',
+  requires: 'documents'
+}, {
+  type: NODE_TYPES.REQUEST_PAYMENT,
+  group: 'Payments',
+  description: 'Email a secure payment link: for the document this workflow is about, or a new invoice.',
+  keywords: ['payment', 'pay', 'invoice', 'deposit', 'charge', 'money', 'request'],
+  icon: 'credit-card',
+  requires: 'payments'
+}, {
+  type: NODE_TYPES.INTERNAL_NOTIFICATION,
+  group: 'Internal',
+  description: 'Let your team know something needs their attention.',
+  keywords: ['notify', 'alert', 'team', 'staff', 'owner', 'tell'],
+  icon: 'bell'
+}, {
   type: NODE_TYPES.WAIT,
-  group: 'Timing',
+  group: 'Flow',
   description: 'Pause for a while, or until a set date and time.',
   keywords: ['wait', 'delay', 'pause', 'later', 'timer', 'days', 'hours', 'minutes'],
   icon: 'clock'
 }, {
   type: NODE_TYPES.IF_ELSE,
-  group: 'Logic',
+  group: 'Flow',
   description: 'Split the path: one set of steps if something is true, another if not.',
   keywords: ['if', 'else', 'branch', 'condition', 'split', 'check', 'replied', 'decide'],
   icon: 'split'
 }, {
   type: NODE_TYPES.END,
-  group: 'Logic',
+  group: 'Flow',
   description: 'Stop the workflow for this contact here.',
   keywords: ['end', 'stop', 'finish', 'exit', 'done'],
   icon: 'circle-stop'
@@ -891,6 +1061,40 @@ function defaultConfigFor(type) {
       return {
         tag_id: null
       };
+    case NODE_TYPES.MOVE_OPPORTUNITY:
+      return {
+        pipeline_id: null,
+        stage_id: null
+      };
+    case NODE_TYPES.SEND_BOOKING_LINK:
+      return {
+        booking_type_id: null,
+        channels: ['email'],
+        subject: '',
+        message: ''
+      };
+    case NODE_TYPES.SEND_FORM:
+    case NODE_TYPES.SEND_QUESTIONNAIRE:
+      return {
+        form_id: null,
+        channels: ['email'],
+        subject: '',
+        message: ''
+      };
+    case NODE_TYPES.CREATE_SEND_PROPOSAL:
+      return {
+        title: '',
+        catalog_item_id: null,
+        quantity: 1,
+        payment_schedule: 'full'
+      };
+    case NODE_TYPES.REQUEST_PAYMENT:
+      return {
+        source: 'invoice',
+        title: '',
+        catalog_item_id: null,
+        quantity: 1
+      };
     case NODE_TYPES.WAIT:
       return {
         mode: 'duration',
@@ -909,96 +1113,144 @@ function defaultConfigFor(type) {
   }
 }
 
-// Triggers with a real producer today (WorkflowTriggerType::isIngestableInThisSlice()).
-// Payments, documents and proposals have none, so none is offered.
+// Triggers with a real producer today (WorkflowTriggerType::isIngestableInThisSlice()),
+// in the groups the picker shows them under. Documents, payments and questionnaires
+// are the owning domain's own durable events, never a browser redirect.
+var TRIGGER_GROUPS = ['CRM', 'Messaging', 'Forms', 'Calendar', 'Documents', 'Payments', 'Manual / time'];
 var TRIGGER_TYPES = [{
   value: 'contact_created',
+  group: 'CRM',
   title: 'Contact is created',
   description: 'Starts when a new contact is added.',
   icon: 'user-plus',
-  defaultPolicy: 'once_ever'
-}, {
-  value: 'message_received',
-  title: 'Customer sends a text',
-  description: 'Starts when a contact texts your business.',
-  icon: 'message-square-reply',
-  defaultPolicy: 'once_per_occurrence'
-}, {
-  value: 'contact_date_reached',
-  title: 'Contact date arrives',
-  description: 'Starts on a date saved on the contact, such as a birthday.',
-  icon: 'calendar-clock',
-  defaultPolicy: 'once_per_occurrence'
-}, {
-  value: 'manual_enrollment',
-  title: 'Added by hand',
-  description: 'Starts only when you add a contact to it yourself.',
-  icon: 'hand',
   defaultPolicy: 'once_ever'
 },
 // CRM sales opportunities. Each defaults to "every time it happens": one
 // contact can have many deals, and a deal many moves.
 {
   value: 'opportunity_created',
+  group: 'CRM',
   title: 'Opportunity created',
   description: 'Starts when a new opportunity is added for a contact.',
   icon: 'briefcase-business',
   defaultPolicy: 'once_per_occurrence'
 }, {
   value: 'opportunity_stage_changed',
+  group: 'CRM',
   title: 'Opportunity moves stage',
   description: 'Starts when an opportunity moves to another stage.',
   icon: 'arrow-right-left',
   defaultPolicy: 'once_per_occurrence'
 }, {
   value: 'opportunity_won',
+  group: 'CRM',
   title: 'Opportunity marked won',
   description: 'Starts when an opportunity is marked won.',
   icon: 'trophy',
   defaultPolicy: 'once_per_occurrence'
 }, {
   value: 'opportunity_lost',
+  group: 'CRM',
   title: 'Opportunity marked lost',
   description: 'Starts when an opportunity is marked lost.',
   icon: 'circle-x',
   defaultPolicy: 'once_per_occurrence'
-},
-// Contact tags, forms and appointments. Each is its own occurrence: a
-// contact can be tagged, submit a form or book again.
-{
+}, {
   value: 'contact_tag_added',
+  group: 'CRM',
   title: 'Tag added to a contact',
   description: 'Starts when a tag is added to a contact.',
   icon: 'tag',
   defaultPolicy: 'once_per_occurrence'
 }, {
   value: 'contact_tag_removed',
+  group: 'CRM',
   title: 'Tag removed from a contact',
   description: 'Starts when a tag is taken off a contact.',
   icon: 'tag',
   defaultPolicy: 'once_per_occurrence'
 }, {
+  value: 'message_received',
+  group: 'Messaging',
+  title: 'Customer sends a text',
+  description: 'Starts when a contact texts your business.',
+  icon: 'message-square-reply',
+  defaultPolicy: 'once_per_occurrence'
+}, {
   value: 'form_submitted',
+  group: 'Forms',
   title: 'Form submitted',
   description: 'Starts when someone finishes and submits one of your forms.',
   icon: 'clipboard-list',
   defaultPolicy: 'once_per_occurrence'
 }, {
+  value: 'questionnaire_submitted',
+  group: 'Forms',
+  title: 'Questionnaire submitted',
+  description: 'Starts when someone finishes one of your multi-step questionnaires.',
+  icon: 'list-checks',
+  defaultPolicy: 'once_per_occurrence'
+}, {
   value: 'appointment_scheduled',
+  group: 'Calendar',
   title: 'Appointment booked',
   description: 'Starts when an appointment is booked for a contact.',
   icon: 'calendar-check',
   defaultPolicy: 'once_per_occurrence'
 }, {
+  value: 'appointment_rescheduled',
+  group: 'Calendar',
+  title: 'Appointment rescheduled',
+  description: 'Starts when an appointment is moved to another time.',
+  icon: 'calendar-clock',
+  defaultPolicy: 'once_per_occurrence'
+}, {
   value: 'appointment_cancelled',
+  group: 'Calendar',
   title: 'Appointment cancelled',
   description: 'Starts when an appointment is cancelled.',
   icon: 'calendar-x',
   defaultPolicy: 'once_per_occurrence'
 }, {
-  value: 'appointment_rescheduled',
-  title: 'Appointment rescheduled',
-  description: 'Starts when an appointment is moved to another time.',
+  value: 'document_sent',
+  group: 'Documents',
+  title: 'Proposal or document sent',
+  description: 'Starts when a proposal, contract or invoice is sent to a contact.',
+  icon: 'file-text',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'document_signed',
+  group: 'Documents',
+  title: 'Proposal or document signed',
+  description: 'Starts when a contact signs a proposal or contract.',
+  icon: 'file-signature',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'payment_succeeded',
+  group: 'Payments',
+  title: 'Payment succeeded',
+  description: 'Starts when a contact pays an invoice, a deposit or a balance.',
+  icon: 'circle-check',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'payment_failed',
+  group: 'Payments',
+  title: 'Payment failed',
+  description: "Starts when a contact's payment attempt is declined.",
+  icon: 'circle-alert',
+  defaultPolicy: 'once_per_occurrence'
+}, {
+  value: 'manual_enrollment',
+  group: 'Manual / time',
+  title: 'Added by hand',
+  description: 'Starts only when you add a contact to it yourself.',
+  icon: 'hand',
+  defaultPolicy: 'once_ever'
+}, {
+  value: 'contact_date_reached',
+  group: 'Manual / time',
+  title: 'Contact date arrives',
+  description: 'Starts on a date saved on the contact, such as a birthday.',
   icon: 'calendar-clock',
   defaultPolicy: 'once_per_occurrence'
 }];
@@ -1260,6 +1512,388 @@ function icon(name, className) {
 
 /***/ },
 
+/***/ "./resources/js/automations/workflow-builder/drawer-actions.js"
+/*!*********************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/drawer-actions.js ***!
+  \*********************************************************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ACTION_TYPES: () => (/* binding */ ACTION_TYPES),
+/* harmony export */   populateAction: () => (/* binding */ populateAction),
+/* harmony export */   readAction: () => (/* binding */ readAction)
+/* harmony export */ });
+/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+// Automations — the inspector forms of the cross-domain actions: Move opportunity,
+// Send booking link, Send form, Send questionnaire, Create & send proposal or
+// contract, and Request payment.
+//
+// Same rules as the rest of the drawer: each form is a hidden `<template>` the Blade
+// view rendered, and every option list comes ONLY from the `catalogs` this Business's
+// page was handed — never another Business's row, and never an identifier shown to a
+// person. A resource the step still names but that is archived or switched off stays
+// visible, marked, so the validator's message makes sense; a way of sending the
+// account cannot use is shown disabled with its reason.
+
+function option(value, label) {
+  var opt = (0,_dom_js__WEBPACK_IMPORTED_MODULE_0__.el)('option', null, label);
+  opt.value = String(value);
+  return opt;
+}
+function fill(select, placeholder, rows) {
+  select.innerHTML = '';
+  select.appendChild(option('', placeholder));
+  rows.forEach(function (row) {
+    return select.appendChild(row);
+  });
+}
+function numberOrNull(value) {
+  return value === '' || value === null || value === undefined ? null : Number(value);
+}
+
+/** Minor units → "250.00"; null → "". */
+function formatMajor(minor) {
+  return minor === null || minor === undefined || minor === '' ? '' : (Number(minor) / 100).toFixed(2);
+}
+
+/** "250" / "250.5" / "250.00" → 25000 minor units, or null when it is not an amount. */
+function parseMajor(text) {
+  var clean = String(text || '').trim().replace(/,/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(clean)) {
+    return null;
+  }
+  var minor = Math.round(Number(clean) * 100);
+  return minor > 0 ? minor : null;
+}
+
+// ---------------------------------------------------------------------------
+// Move opportunity
+// ---------------------------------------------------------------------------
+
+function populateMoveOpportunity(formEl, node, _ref) {
+  var catalogs = _ref.catalogs;
+  var pipelineSelect = formEl.querySelector('[data-role="wf-move-pipeline-select"]');
+  var stageSelect = formEl.querySelector('[data-role="wf-move-stage-select"]');
+  var empty = formEl.querySelector('[data-role="wf-move-no-pipelines"]');
+  var pipelines = catalogs.crmPipelines || [];
+  var stages = catalogs.crmStages || [];
+  var keep = function keep(row, selected) {
+    return !row.archived || String(row.id) === String(selected !== null && selected !== void 0 ? selected : '');
+  };
+  var label = function label(row) {
+    return row.archived ? "".concat(row.name, " (archived)") : row.name;
+  };
+  fill(pipelineSelect, 'Choose a pipeline', pipelines.filter(function (row) {
+    return keep(row, node.config.pipeline_id);
+  }).map(function (row) {
+    return option(row.id, label(row));
+  }));
+  pipelineSelect.value = node.config.pipeline_id != null ? String(node.config.pipeline_id) : '';
+  empty.hidden = pipelines.length > 0;
+  function fillStages(selected) {
+    var rows = stages.filter(function (row) {
+      return String(row.pipeline_id) === pipelineSelect.value && keep(row, selected);
+    });
+    fill(stageSelect, pipelineSelect.value === '' ? 'Choose a pipeline first' : 'Choose a stage', rows.map(function (row) {
+      return option(row.id, label(row));
+    }));
+    stageSelect.value = selected != null && rows.some(function (row) {
+      return String(row.id) === String(selected);
+    }) ? String(selected) : '';
+  }
+  fillStages(node.config.stage_id);
+  pipelineSelect.addEventListener('change', function () {
+    return fillStages(null);
+  });
+}
+function readMoveOpportunity(formEl) {
+  return {
+    pipeline_id: numberOrNull(formEl.querySelector('[data-role="wf-move-pipeline-select"]').value),
+    stage_id: numberOrNull(formEl.querySelector('[data-role="wf-move-stage-select"]').value)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The three "send a link" actions share one delivery block
+// ---------------------------------------------------------------------------
+
+function populateChannels(formEl, node, _ref2) {
+  var capabilities = _ref2.capabilities;
+  var channels = Array.isArray(node.config.channels) ? node.config.channels : [];
+  formEl.querySelectorAll('input[data-role="wf-channel"]').forEach(function (input) {
+    var capability = (capabilities || {})[input.value === 'sms' ? 'sms' : 'email'];
+    var unavailable = capability && capability.available === false;
+    var note = formEl.querySelector("[data-role=\"wf-channel-note-".concat(input.value, "\"]"));
+    input.checked = channels.includes(input.value);
+
+    // Already chosen stays visible (and ticked) so the validator's message makes
+    // sense; a way the account cannot use cannot be newly chosen.
+    if (unavailable && !input.checked) {
+      input.disabled = true;
+    }
+    if (note) {
+      note.hidden = !unavailable;
+      note.textContent = unavailable ? capability.reason || '' : '';
+    }
+  });
+  formEl.querySelector('[data-field="subject"]').value = node.config.subject || '';
+  formEl.querySelector('[data-field="message"]').value = node.config.message || '';
+}
+function readChannels(formEl) {
+  return {
+    channels: _toConsumableArray(formEl.querySelectorAll('input[data-role="wf-channel"]:checked')).map(function (input) {
+      return input.value;
+    }),
+    subject: formEl.querySelector('[data-field="subject"]').value,
+    message: formEl.querySelector('[data-field="message"]').value
+  };
+}
+function populateBookingLink(formEl, node, context) {
+  var select = formEl.querySelector('[data-role="wf-booking-type-select"]');
+  var empty = formEl.querySelector('[data-role="wf-no-booking-types"]');
+  var types = context.catalogs.bookingTypes || [];
+  var locations = context.catalogs.locations || [];
+  var selected = node.config.booking_type_id != null ? String(node.config.booking_type_id) : '';
+  select.innerHTML = '';
+  select.appendChild(option('', 'Choose a booking type'));
+
+  // Grouped by Location, so two locations' "Consultation" are told apart.
+  var byLocation = new Map();
+  types.filter(function (row) {
+    return row.active || String(row.id) === selected;
+  }).forEach(function (row) {
+    var list = byLocation.get(String(row.location_id)) || [];
+    list.push(row);
+    byLocation.set(String(row.location_id), list);
+  });
+  byLocation.forEach(function (rows, locationId) {
+    var location = locations.find(function (candidate) {
+      return String(candidate.id) === locationId;
+    });
+    var group = (0,_dom_js__WEBPACK_IMPORTED_MODULE_0__.el)('optgroup');
+    group.label = location ? location.name || 'Unnamed location' : 'Another location';
+    rows.forEach(function (row) {
+      return group.appendChild(option(row.id, row.active ? row.name : "".concat(row.name, " (switched off)")));
+    });
+    select.appendChild(group);
+  });
+  select.value = selected;
+  empty.hidden = types.length > 0;
+  populateChannels(formEl, node, context);
+}
+function readBookingLink(formEl) {
+  return _objectSpread({
+    booking_type_id: numberOrNull(formEl.querySelector('[data-role="wf-booking-type-select"]').value)
+  }, readChannels(formEl));
+}
+function populateFormLink(formEl, node, context, questionnaire) {
+  var select = formEl.querySelector('[data-role="wf-form-select"]');
+  var empty = formEl.querySelector('[data-role="wf-no-forms"]');
+  var selected = node.config.form_id != null ? String(node.config.form_id) : '';
+  // One definition serves both: a form is one page, a questionnaire two or more.
+  var rows = (context.catalogs.forms || []).filter(function (row) {
+    return (row.pages || 1) >= 2 === questionnaire;
+  });
+  fill(select, questionnaire ? 'Choose a questionnaire' : 'Choose a form', rows.filter(function (row) {
+    return row.lifecycle === 'active' || String(row.id) === selected;
+  }).map(function (row) {
+    return option(row.id, row.lifecycle === 'active' ? row.name : "".concat(row.name, " (not switched on)"));
+  }));
+  select.value = selected;
+  empty.hidden = rows.length > 0;
+  populateChannels(formEl, node, context);
+}
+function readFormLink(formEl) {
+  return _objectSpread({
+    form_id: numberOrNull(formEl.querySelector('[data-role="wf-form-select"]').value)
+  }, readChannels(formEl));
+}
+
+// ---------------------------------------------------------------------------
+// Create & send proposal or contract
+// ---------------------------------------------------------------------------
+
+function itemOptions(catalogs, selected) {
+  return (catalogs.catalogItems || []).filter(function (row) {
+    return row.active || String(row.id) === String(selected !== null && selected !== void 0 ? selected : '');
+  }).map(function (row) {
+    return option(row.id, row.active ? row.name : "".concat(row.name, " (archived)"));
+  });
+}
+function populateProposal(formEl, node, _ref3) {
+  var catalogs = _ref3.catalogs;
+  var itemSelect = formEl.querySelector('[data-role="wf-catalog-item-select"]');
+  var empty = formEl.querySelector('[data-role="wf-no-catalog-items"]');
+  var scheduleInputs = formEl.querySelectorAll('input[name="wf-proposal-schedule"]');
+  var depositWrap = formEl.querySelector('[data-role="wf-deposit-fields"]');
+  var percent = formEl.querySelector('[data-field="deposit_percent"]');
+  formEl.querySelector('[data-field="title"]').value = node.config.title || '';
+  fill(itemSelect, 'Choose a product or package', itemOptions(catalogs, node.config.catalog_item_id));
+  itemSelect.value = node.config.catalog_item_id != null ? String(node.config.catalog_item_id) : '';
+  empty.hidden = (catalogs.catalogItems || []).length > 0;
+  formEl.querySelector('[data-field="quantity"]').value = node.config.quantity != null ? node.config.quantity : 1;
+  var schedule = node.config.payment_schedule === 'deposit' ? 'deposit' : 'full';
+  scheduleInputs.forEach(function (input) {
+    input.checked = input.value === schedule;
+  });
+  percent.value = node.config.deposit_percent != null ? node.config.deposit_percent : 30;
+  function sync() {
+    depositWrap.hidden = formEl.querySelector('input[name="wf-proposal-schedule"]:checked').value !== 'deposit';
+  }
+  scheduleInputs.forEach(function (input) {
+    return input.addEventListener('change', sync);
+  });
+  sync();
+}
+function readProposal(formEl) {
+  var schedule = formEl.querySelector('input[name="wf-proposal-schedule"]:checked').value;
+  var config = {
+    title: formEl.querySelector('[data-field="title"]').value,
+    catalog_item_id: numberOrNull(formEl.querySelector('[data-role="wf-catalog-item-select"]').value),
+    quantity: Number(formEl.querySelector('[data-field="quantity"]').value) || 1,
+    payment_schedule: schedule
+  };
+  if (schedule === 'deposit') {
+    config.deposit_percent = Number(formEl.querySelector('[data-field="deposit_percent"]').value);
+  }
+  return config;
+}
+
+// ---------------------------------------------------------------------------
+// Request payment
+// ---------------------------------------------------------------------------
+
+function populateRequestPayment(formEl, node, _ref4) {
+  var catalogs = _ref4.catalogs,
+    currency = _ref4.currency,
+    triggerType = _ref4.triggerType;
+  var sourceInputs = formEl.querySelectorAll('input[name="wf-payment-source"]');
+  var documentWrap = formEl.querySelector('[data-role="wf-payment-document-fields"]');
+  var invoiceWrap = formEl.querySelector('[data-role="wf-payment-invoice-fields"]');
+  var documentOption = formEl.querySelector('input[name="wf-payment-source"][value="document"]');
+  var documentNote = formEl.querySelector('[data-role="wf-payment-document-note"]');
+  var basisInputs = formEl.querySelectorAll('input[name="wf-payment-basis"]');
+  var itemWrap = formEl.querySelector('[data-role="wf-payment-item-fields"]');
+  var amountWrap = formEl.querySelector('[data-role="wf-payment-amount-fields"]');
+  var itemSelect = formEl.querySelector('[data-role="wf-catalog-item-select"]');
+  var empty = formEl.querySelector('[data-role="wf-no-catalog-items"]');
+
+  // "This journey's document" only exists when the workflow starts from one.
+  var documentTriggers = ['document_sent', 'document_signed', 'payment_succeeded', 'payment_failed'];
+  var hasDocument = documentTriggers.includes(typeof triggerType === 'function' ? triggerType() : triggerType);
+  if (!hasDocument) {
+    documentOption.disabled = true;
+    documentNote.hidden = false;
+  }
+
+  // A new step starts on the journey's own document when there is one: that is what
+  // "request payment" almost always means after a proposal is sent or signed.
+  var source = hasDocument && node.config.source !== 'invoice' ? 'document' : 'invoice';
+  sourceInputs.forEach(function (input) {
+    input.checked = input.value === source;
+  });
+  formEl.querySelector('[data-field="title"]').value = node.config.title || '';
+  fill(itemSelect, 'Choose a product or package', itemOptions(catalogs, node.config.catalog_item_id));
+  itemSelect.value = node.config.catalog_item_id != null ? String(node.config.catalog_item_id) : '';
+  empty.hidden = (catalogs.catalogItems || []).length > 0;
+  formEl.querySelector('[data-field="quantity"]').value = node.config.quantity != null ? node.config.quantity : 1;
+  formEl.querySelector('[data-field="amount"]').value = formatMajor(node.config.amount_minor);
+  formEl.querySelector('[data-role="wf-currency"]').textContent = currency || '';
+  var basis = node.config.amount_minor != null && node.config.catalog_item_id == null ? 'amount' : 'item';
+  basisInputs.forEach(function (input) {
+    input.checked = input.value === basis;
+  });
+  function sync() {
+    var isDocument = formEl.querySelector('input[name="wf-payment-source"]:checked').value === 'document';
+    documentWrap.hidden = !isDocument;
+    invoiceWrap.hidden = isDocument;
+    var byAmount = formEl.querySelector('input[name="wf-payment-basis"]:checked').value === 'amount';
+    itemWrap.hidden = byAmount;
+    amountWrap.hidden = !byAmount;
+  }
+  sourceInputs.forEach(function (input) {
+    return input.addEventListener('change', sync);
+  });
+  basisInputs.forEach(function (input) {
+    return input.addEventListener('change', sync);
+  });
+  sync();
+}
+function readRequestPayment(formEl) {
+  if (formEl.querySelector('input[name="wf-payment-source"]:checked').value === 'document') {
+    return {
+      source: 'document'
+    };
+  }
+  var config = {
+    source: 'invoice',
+    title: formEl.querySelector('[data-field="title"]').value
+  };
+  if (formEl.querySelector('input[name="wf-payment-basis"]:checked').value === 'amount') {
+    // An unreadable amount stays unset, so the validator says what is missing
+    // rather than the browser guessing a number.
+    config.amount_minor = parseMajor(formEl.querySelector('[data-field="amount"]').value);
+  } else {
+    config.catalog_item_id = numberOrNull(formEl.querySelector('[data-role="wf-catalog-item-select"]').value);
+    config.quantity = Number(formEl.querySelector('[data-field="quantity"]').value) || 1;
+  }
+  return config;
+}
+
+// ---------------------------------------------------------------------------
+
+var ACTION_TYPES = ['move_opportunity', 'send_booking_link', 'send_form', 'send_questionnaire', 'create_send_proposal', 'request_payment'];
+function populateAction(type, formEl, node, context) {
+  switch (type) {
+    case 'move_opportunity':
+      return populateMoveOpportunity(formEl, node, context);
+    case 'send_booking_link':
+      return populateBookingLink(formEl, node, context);
+    case 'send_form':
+      return populateFormLink(formEl, node, context, false);
+    case 'send_questionnaire':
+      return populateFormLink(formEl, node, context, true);
+    case 'create_send_proposal':
+      return populateProposal(formEl, node, context);
+    case 'request_payment':
+      return populateRequestPayment(formEl, node, context);
+    default:
+      return undefined;
+  }
+}
+function readAction(type, formEl) {
+  switch (type) {
+    case 'move_opportunity':
+      return readMoveOpportunity(formEl);
+    case 'send_booking_link':
+      return readBookingLink(formEl);
+    case 'send_form':
+    case 'send_questionnaire':
+      return readFormLink(formEl);
+    case 'create_send_proposal':
+      return readProposal(formEl);
+    case 'request_payment':
+      return readRequestPayment(formEl);
+    default:
+      return {};
+  }
+}
+
+/***/ },
+
 /***/ "./resources/js/automations/workflow-builder/drawer.js"
 /*!*************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/drawer.js ***!
@@ -1273,6 +1907,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 /* harmony import */ var _conditions_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./conditions.js */ "./resources/js/automations/workflow-builder/conditions.js");
 /* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+/* harmony import */ var _drawer_actions_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./drawer-actions.js */ "./resources/js/automations/workflow-builder/drawer-actions.js");
 function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
 function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _iterableToArrayLimit(r, l) { var t = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (null != t) { var e, n, i, u, a = [], f = !0, o = !1; try { if (i = (t = t.call(r)).next, 0 === l) { if (Object(t) !== t) return; f = !1; } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0); } catch (r) { o = !0, n = r; } finally { try { if (!f && null != t["return"] && (u = t["return"](), Object(u) !== u)) return; } finally { if (o) throw n; } } return a; } }
@@ -1293,6 +1928,7 @@ function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length)
 // validate, and every option list it offers (contact groups, writable fields,
 // date fields) comes only from the `catalogs` this Business's page was handed —
 // never another Business's row.
+
 
 
 
@@ -1351,11 +1987,17 @@ function createDrawer(_ref) {
     dateOffsets = _ref.dateOffsets,
     limits = _ref.limits,
     locationScope = _ref.locationScope,
+    capabilities = _ref.capabilities,
+    currency = _ref.currency,
+    triggerType = _ref.triggerType,
     onSave = _ref.onSave,
     onDelete = _ref.onDelete,
     onClose = _ref.onClose;
   var data = {
-    locationScope: locationScope
+    locationScope: locationScope,
+    capabilities: capabilities || {},
+    currency: currency || '',
+    triggerType: triggerType
   };
   var iconEl = drawerEl.querySelector('[data-role="wf-drawer-icon"]');
   var eyebrowEl = drawerEl.querySelector('[data-role="wf-drawer-eyebrow"]');
@@ -1441,6 +2083,13 @@ function createDrawer(_ref) {
       populateTagAction(node);
     } else if (node.type === 'wait') {
       populateWait(node);
+    } else if (_drawer_actions_js__WEBPACK_IMPORTED_MODULE_3__.ACTION_TYPES.includes(node.type)) {
+      (0,_drawer_actions_js__WEBPACK_IMPORTED_MODULE_3__.populateAction)(node.type, formEl, node, {
+        catalogs: catalogs,
+        capabilities: data.capabilities,
+        currency: data.currency,
+        triggerType: data.triggerType
+      });
     } else {
       populateGeneric(node);
     }
@@ -1593,15 +2242,26 @@ function createDrawer(_ref) {
   }
 
   /**
-   * "Where it applies": the whole business, or one of THIS Business's Locations.
-   * An archived Location stays visible, marked, only where the workflow already
-   * names it, so the validator's message makes sense.
+   * "Where it applies": the whole business, ONE of THIS Business's Locations, or a
+   * chosen list of them. A run is never multi-location — each is pinned to the one
+   * Location of the fact that started it — this only decides which facts are
+   * admitted. Options are the Locations THIS actor reaches (already ACL-filtered by
+   * the server); an archived Location stays visible, marked, only where the workflow
+   * already names it, so the validator's message makes sense.
    */
   function populateLocationScope(config) {
+    var modeInputs = formEl.querySelectorAll('input[name="wf-scope-mode"]');
     var select = formEl.querySelector('[data-role="wf-location-scope-select"]');
-    var selected = config.business_location_id != null ? String(config.business_location_id) : '';
+    var list = formEl.querySelector('[data-role="wf-location-scope-list"]');
+    var oneWrap = formEl.querySelector('[data-role="wf-scope-one-fields"]');
+    var selectedWrap = formEl.querySelector('[data-role="wf-scope-selected-fields"]');
+    var businessInput = formEl.querySelector('input[name="wf-scope-mode"][value="business"]');
+    var businessNote = formEl.querySelector('[data-role="wf-scope-business-note"]');
+    var noLocations = formEl.querySelector('[data-role="wf-scope-no-locations"]');
+    var chosenOne = config.business_location_id != null ? String(config.business_location_id) : '';
+    var chosenMany = Array.isArray(config.business_location_ids) ? config.business_location_ids.map(String) : [];
     var rows = (catalogs.locations || []).filter(function (row) {
-      return row.active || String(row.id) === selected;
+      return row.active || String(row.id) === chosenOne || chosenMany.includes(String(row.id));
     }).map(function (row) {
       return {
         id: row.id,
@@ -1609,14 +2269,55 @@ function createDrawer(_ref) {
       };
     });
 
-    // Only an actor who reaches every Location may choose "Whole business": it
-    // runs for all of them. Everyone else must pick one of their own, and the
-    // server refuses the rest at save and publish.
-    var businessWide = !data || !data.locationScope || data.locationScope.businessWide !== false;
-    fillSelect(select, rows, 'id', 'label', businessWide ? 'Whole business' : 'Choose a location');
-    select.value = selected;
-  }
+    // The mode: an explicit one, else what the pre-mode document means.
+    var mode = config.scope_mode;
+    if (!['business', 'one', 'selected'].includes(mode)) {
+      mode = chosenOne !== '' ? 'one' : 'business';
+    }
 
+    // Only an actor who reaches every Location may choose "Whole business": it runs
+    // for all of them. Everyone else chooses their own, and the server refuses the
+    // rest at save and publish.
+    var businessWide = !data || !data.locationScope || data.locationScope.businessWide !== false;
+    if (!businessWide) {
+      businessInput.disabled = true;
+      businessNote.hidden = false;
+      if (mode === 'business') {
+        mode = 'one';
+      }
+    }
+    fillSelect(select, rows, 'id', 'label', 'Choose a location');
+    select.value = chosenOne;
+    list.innerHTML = '';
+    rows.forEach(function (row) {
+      var label = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('label', 'form-check');
+      var input = (0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('input', 'form-check-input');
+      input.type = 'checkbox';
+      input.value = String(row.id);
+      input.dataset.role = 'wf-scope-location';
+      input.checked = chosenMany.includes(String(row.id));
+      label.appendChild(input);
+      label.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_2__.el)('span', 'form-check-label ms-1', row.label));
+      list.appendChild(label);
+    });
+    noLocations.hidden = rows.length > 0;
+    modeInputs.forEach(function (input) {
+      input.checked = input.value === mode;
+    });
+    function sync() {
+      var current = formEl.querySelector('input[name="wf-scope-mode"]:checked');
+      var value = current ? current.value : 'business';
+      oneWrap.hidden = value !== 'one';
+      selectedWrap.hidden = value !== 'selected';
+      formEl.querySelectorAll('[data-role="wf-scope-choices"] .wf-choice').forEach(function (choice) {
+        choice.classList.toggle('is-checked', choice.querySelector('input').checked);
+      });
+    }
+    modeInputs.forEach(function (input) {
+      return input.addEventListener('change', sync);
+    });
+    sync();
+  }
   /**
    * Tag triggers may narrow to one tag, and "Form submitted" to one form — each
    * optional ("any"). Options are this Business's own catalog only; an archived
@@ -1641,14 +2342,37 @@ function createDrawer(_ref) {
     }), 'id', 'label', 'Any tag');
     tagSelect.value = selectedTag;
     noTags.hidden = tags.length > 0;
-    fillSelect(formSelect, forms.map(function (row) {
-      return {
-        id: row.id,
-        label: row.name
-      };
-    }), 'id', 'label', 'Any form');
-    formSelect.value = selectedForm;
-    noForms.hidden = forms.length > 0;
+
+    // "Form submitted" may narrow to any one form; "Questionnaire submitted" only
+    // to a questionnaire (two or more pages). The list follows the chosen trigger.
+    function fillFormFilter() {
+      var checked = formEl.querySelector('input[name="wf-trigger-type"]:checked');
+      var questionnaires = checked && checked.value === 'questionnaire_submitted';
+      var rows = questionnaires ? forms.filter(function (row) {
+        return (row.pages || 1) >= 2;
+      }) : forms;
+      var previous = formSelect.value || selectedForm;
+      fillSelect(formSelect, rows.map(function (row) {
+        return {
+          id: row.id,
+          label: row.name
+        };
+      }), 'id', 'label', questionnaires ? 'Any questionnaire' : 'Any form');
+      formSelect.value = _toConsumableArray(formSelect.options).some(function (opt) {
+        return opt.value === previous;
+      }) ? previous : '';
+      noForms.hidden = rows.length > 0;
+    }
+    fillFormFilter();
+    formEl.querySelectorAll('input[name="wf-trigger-type"]').forEach(function (input) {
+      return input.addEventListener('change', fillFormFilter);
+    });
+
+    // Document and payment triggers may narrow to one kind of document.
+    var kindSelect = formEl.querySelector('[data-role="wf-document-kind-select"]');
+    if (kindSelect) {
+      kindSelect.value = config.document_kind || '';
+    }
   }
 
   /** "Add tag" / "Remove tag": one Business tag. Archived ones are hidden unless already chosen. */
@@ -1788,7 +2512,60 @@ function createDrawer(_ref) {
       if (tagGroup.children.length === 0) {
         tagGroup.remove();
       }
-      fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null);
+
+      // The deal, document, payment and appointment behind the journey — offered
+      // only where the workflow's trigger gives them something to read (a stored
+      // one stays visible so the validator's message makes sense).
+      var factGroup = row.querySelector('[data-role="wf-condition-fact-group"]');
+      var currentTrigger = typeof data.triggerType === 'function' ? data.triggerType() : data.triggerType;
+      _toConsumableArray(factGroup.querySelectorAll('option')).forEach(function (opt) {
+        if (!(0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.factSubjectAvailable)(opt.value, currentTrigger) && condition.subject !== opt.value) {
+          opt.remove();
+        }
+      });
+      if (factGroup.children.length === 0) {
+        factGroup.remove();
+      }
+
+      /** The choices an operand is picked from, for the subjects whose operand is a choice. */
+      function operandChoices(subject) {
+        if (_conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject)) {
+          return (catalogs.contactGroups || []).map(function (group) {
+            return {
+              value: group.id,
+              label: group.name
+            };
+          });
+        }
+        var meta = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.FACT_SUBJECTS[subject];
+        if (!meta) {
+          return null;
+        }
+        if (meta.kind === 'reference') {
+          // A stage, named with its pipeline so two pipelines' "Booked" differ.
+          var pipelines = catalogs.crmPipelines || [];
+          return (catalogs.crmStages || []).filter(function (stage) {
+            return !stage.archived;
+          }).map(function (stage) {
+            var pipeline = pipelines.find(function (candidate) {
+              return String(candidate.id) === String(stage.pipeline_id);
+            });
+            return {
+              value: stage.id,
+              label: pipeline ? "".concat(pipeline.name, " \u2014 ").concat(stage.name) : stage.name
+            };
+          });
+        }
+        return meta.kind === 'choice' ? Object.entries(meta.values).map(function (_ref2) {
+          var _ref3 = _slicedToArray(_ref2, 2),
+            value = _ref3[0],
+            label = _ref3[1];
+          return {
+            value: value,
+            label: label
+          };
+        }) : null;
+      }
       function syncOperators() {
         var subject = subjectSelect.value;
         var previous = operatorSelect.value;
@@ -1808,9 +2585,19 @@ function createDrawer(_ref) {
       function syncOperand() {
         var subject = subjectSelect.value;
         var takesValue = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.needsOperand)(operatorSelect.value);
-        var isGroup = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject);
-        operandWrap.hidden = !takesValue || isGroup;
-        operandGroupWrap.hidden = !takesValue || !isGroup;
+        var choices = operandChoices(subject);
+        var isChoice = choices !== null;
+        if (isChoice) {
+          var previous = operandGroupSelect.value;
+          fillSelect(operandGroupSelect, choices, 'value', 'label', null);
+          if (_toConsumableArray(operandGroupSelect.options).some(function (opt) {
+            return opt.value === previous;
+          })) {
+            operandGroupSelect.value = previous;
+          }
+        }
+        operandWrap.hidden = !takesValue || isChoice;
+        operandGroupWrap.hidden = !takesValue || !isChoice;
         operandInput.type = (0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.isDateSubject)(subject, catalogs) ? 'date' : 'text';
       }
       subjectSelect.addEventListener('change', function () {
@@ -1837,7 +2624,7 @@ function createDrawer(_ref) {
         return o.value === condition.operator;
       }) ? condition.operator : operatorSelect.options[0].value;
       syncOperand();
-      if (_conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subjectSelect.value)) {
+      if (operandChoices(subjectSelect.value) !== null) {
         operandGroupSelect.value = condition.operand != null ? String(condition.operand) : '';
       } else {
         operandInput.value = condition.operand != null ? condition.operand : '';
@@ -1902,23 +2689,35 @@ function createDrawer(_ref) {
     } else if (triggerType === 'contact_tag_added' || triggerType === 'contact_tag_removed') {
       var tagValue = formEl.querySelector('[data-role="wf-tag-filter-select"]').value;
       config.tag_id = tagValue ? Number(tagValue) : null;
-    } else if (triggerType === 'form_submitted') {
+    } else if (triggerType === 'form_submitted' || triggerType === 'questionnaire_submitted') {
       var formValue = formEl.querySelector('[data-role="wf-form-filter-select"]').value;
       config.form_id = formValue ? Number(formValue) : null;
+    } else if (['document_sent', 'document_signed', 'payment_succeeded', 'payment_failed'].includes(triggerType)) {
+      var kind = formEl.querySelector('[data-role="wf-document-kind-select"]').value;
+      config.document_kind = kind || null;
     } else if (triggerType === 'opportunity_stage_changed') {
       ;
-      [['pipeline_id', 'wf-crm-pipeline-select'], ['from_stage_id', 'wf-crm-from-stage-select'], ['to_stage_id', 'wf-crm-to-stage-select']].forEach(function (_ref2) {
-        var _ref3 = _slicedToArray(_ref2, 2),
-          key = _ref3[0],
-          role = _ref3[1];
+      [['pipeline_id', 'wf-crm-pipeline-select'], ['from_stage_id', 'wf-crm-from-stage-select'], ['to_stage_id', 'wf-crm-to-stage-select']].forEach(function (_ref4) {
+        var _ref5 = _slicedToArray(_ref4, 2),
+          key = _ref5[0],
+          role = _ref5[1];
         var value = formEl.querySelector("[data-role=\"".concat(role, "\"]")).value;
         config[key] = value ? Number(value) : null;
       });
     }
 
-    // Location scope applies to every trigger; null = the whole business.
-    var scopeValue = formEl.querySelector('[data-role="wf-location-scope-select"]').value;
-    config.business_location_id = scopeValue ? Number(scopeValue) : null;
+    // Location scope applies to every trigger: the whole business, one location,
+    // or a chosen list. Exactly the keys of the chosen mode are sent.
+    var scopeMode = formEl.querySelector('input[name="wf-scope-mode"]:checked').value;
+    config.scope_mode = scopeMode;
+    if (scopeMode === 'one') {
+      var scopeValue = formEl.querySelector('[data-role="wf-location-scope-select"]').value;
+      config.business_location_id = scopeValue ? Number(scopeValue) : null;
+    } else if (scopeMode === 'selected') {
+      config.business_location_ids = _toConsumableArray(formEl.querySelectorAll('input[data-role="wf-scope-location"]:checked')).map(function (input) {
+        return Number(input.value);
+      });
+    }
     return config;
   }
   function readIfElse() {
@@ -1931,7 +2730,10 @@ function createDrawer(_ref) {
         operator: operator
       };
       if ((0,_conditions_js__WEBPACK_IMPORTED_MODULE_1__.needsOperand)(operator)) {
-        condition.operand = _conditions_js__WEBPACK_IMPORTED_MODULE_1__.GROUP_SUBJECTS.includes(subject) ? row.querySelector('[data-role="wf-condition-operand-group"]').value : row.querySelector('[data-role="wf-condition-operand"]').value;
+        // A subject whose operand is a choice (a group, a stage, a status) reads
+        // its select; every other reads the text box.
+        var operandWrapper = row.querySelector('[data-role="wf-condition-operand-group-wrapper"]');
+        condition.operand = operandWrapper && !operandWrapper.hidden ? row.querySelector('[data-role="wf-condition-operand-group"]').value : row.querySelector('[data-role="wf-condition-operand"]').value;
       }
       conditions.push(condition);
     });
@@ -1970,6 +2772,8 @@ function createDrawer(_ref) {
       config = readWait();
     } else if (currentNode.type === 'end') {
       config = {};
+    } else if (_drawer_actions_js__WEBPACK_IMPORTED_MODULE_3__.ACTION_TYPES.includes(currentNode.type)) {
+      config = (0,_drawer_actions_js__WEBPACK_IMPORTED_MODULE_3__.readAction)(currentNode.type, formEl);
     } else {
       config = readGeneric();
     }
@@ -2077,6 +2881,241 @@ function createHistory(initialDocument) {
 
 /***/ },
 
+/***/ "./resources/js/automations/workflow-builder/journeys.js"
+/*!***************************************************************!*\
+  !*** ./resources/js/automations/workflow-builder/journeys.js ***!
+  \***************************************************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   createJourneys: () => (/* binding */ createJourneys)
+/* harmony export */ });
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+/* harmony import */ var _dom_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dom.js */ "./resources/js/automations/workflow-builder/dom.js");
+function _regenerator() { /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */ var e, t, r = "function" == typeof Symbol ? Symbol : {}, n = r.iterator || "@@iterator", o = r.toStringTag || "@@toStringTag"; function i(r, n, o, i) { var c = n && n.prototype instanceof Generator ? n : Generator, u = Object.create(c.prototype); return _regeneratorDefine2(u, "_invoke", function (r, n, o) { var i, c, u, f = 0, p = o || [], y = !1, G = { p: 0, n: 0, v: e, a: d, f: d.bind(e, 4), d: function d(t, r) { return i = t, c = 0, u = e, G.n = r, a; } }; function d(r, n) { for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) { var o, i = p[t], d = G.p, l = i[2]; r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0)); } if (o || r > 1) return a; throw y = !0, n; } return function (o, p, l) { if (f > 1) throw TypeError("Generator is already running"); for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) { i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u); try { if (f = 2, i) { if (c || (o = "next"), t = i[o]) { if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object"); if (!t.done) return t; u = t.value, c < 2 && (c = 0); } else 1 === c && (t = i["return"]) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1); i = e; } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break; } catch (t) { i = e, c = 1, u = t; } finally { f = 1; } } return { value: t, done: y }; }; }(r, o, i), !0), u; } var a = {}; function Generator() {} function GeneratorFunction() {} function GeneratorFunctionPrototype() {} t = Object.getPrototypeOf; var c = [][n] ? t(t([][n]())) : (_regeneratorDefine2(t = {}, n, function () { return this; }), t), u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c); function f(e) { return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine2(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e; } return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine2(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine2(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine2(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine2(u), _regeneratorDefine2(u, o, "Generator"), _regeneratorDefine2(u, n, function () { return this; }), _regeneratorDefine2(u, "toString", function () { return "[object Generator]"; }), (_regenerator = function _regenerator() { return { w: i, m: f }; })(); }
+function _regeneratorDefine2(e, r, n, t) { var i = Object.defineProperty; try { i({}, "", {}); } catch (e) { i = 0; } _regeneratorDefine2 = function _regeneratorDefine(e, r, n, t) { function o(r, n) { _regeneratorDefine2(e, r, function (e) { return this._invoke(r, n, e); }); } r ? i ? i(e, r, { value: n, enumerable: !t, configurable: !t, writable: !t }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2)); }, _regeneratorDefine2(e, r, n, t); }
+function asyncGeneratorStep(n, t, e, r, o, a, c) { try { var i = n[a](c), u = i.value; } catch (n) { return void e(n); } i.done ? t(u) : Promise.resolve(u).then(r, o); }
+function _asyncToGenerator(n) { return function () { var t = this, e = arguments; return new Promise(function (r, o) { var a = n.apply(t, e); function _next(n) { asyncGeneratorStep(a, r, o, _next, _throw, "next", n); } function _throw(n) { asyncGeneratorStep(a, r, o, _next, _throw, "throw", n); } _next(void 0); }); }; }
+// Automations V2 (contract §13.1 tabs "Enrollment history" and "Execution logs") —
+// who entered the workflow, where they are, and what happened to each of them,
+// step by step.
+//
+// Read-only. It shows what the two existing JSON endpoints already return
+// (GET /enrollments, GET /enrollments/{uid}/logs): the people are shown by number,
+// never by id, the reasons are the bounded customer-readable ones, and nothing here
+// can start, stop or change a journey. Loaded when its tab is first opened.
+
+
+var STATUS_TONES = {
+  active: 'info',
+  waiting: 'info',
+  completed: 'success',
+  failed: 'danger',
+  exited: 'secondary',
+  cancelled: 'secondary'
+};
+var STEP_WORDS = {
+  succeeded: 'Done',
+  failed: 'Could not run',
+  skipped: 'Skipped',
+  waiting: 'Waiting',
+  pending: 'Queued',
+  running: 'Running'
+};
+function when(iso) {
+  if (!iso) {
+    return '';
+  }
+  var date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString([], {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+}
+function badge(text, tone) {
+  return (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', "badge bg-".concat(tone || 'secondary'), text);
+}
+function createJourneys(_ref) {
+  var api = _ref.api,
+    basePath = _ref.basePath,
+    historyEl = _ref.historyEl,
+    logsEl = _ref.logsEl,
+    showLogsTab = _ref.showLogsTab;
+  var loadedHistory = false;
+  var selectedUid = null;
+  function note(container, text) {
+    container.innerHTML = '';
+    container.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'text-muted mb-0', text));
+  }
+  function loadHistory() {
+    return _loadHistory.apply(this, arguments);
+  }
+  function _loadHistory() {
+    _loadHistory = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
+      var result, _t;
+      return _regenerator().w(function (_context) {
+        while (1) switch (_context.p = _context.n) {
+          case 0:
+            note(historyEl, 'Loading…');
+            _context.p = 1;
+            _context.n = 2;
+            return api.enrollments(basePath);
+          case 2:
+            result = _context.v;
+            if (!(result.status !== 200)) {
+              _context.n = 3;
+              break;
+            }
+            note(historyEl, 'The history could not be loaded right now.');
+            return _context.a(2);
+          case 3:
+            renderHistory(result.body && result.body.enrollments || []);
+            loadedHistory = true;
+            _context.n = 5;
+            break;
+          case 4:
+            _context.p = 4;
+            _t = _context.v;
+            note(historyEl, 'The history could not be loaded right now.');
+          case 5:
+            return _context.a(2);
+        }
+      }, _callee, null, [[1, 4]]);
+    }));
+    return _loadHistory.apply(this, arguments);
+  }
+  function renderHistory(rows) {
+    historyEl.innerHTML = '';
+    if (rows.length === 0) {
+      historyEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'text-muted mb-0', 'Nobody has entered this workflow yet.'));
+      return;
+    }
+    var table = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('table', 'table table-sm align-middle mb-0');
+    var head = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('tr');
+    ['Contact', 'Status', 'Started', 'Steps', ''].forEach(function (label) {
+      return head.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('th', null, label));
+    });
+    table.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('thead')).appendChild(head);
+    var body = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('tbody');
+    rows.forEach(function (row) {
+      var _row$step_count;
+      var tr = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('tr');
+      tr.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('td', null, row.contact_label || 'A contact'));
+      var status = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('td');
+      status.appendChild(badge(row.status_label, STATUS_TONES[row.status]));
+      if (row.exit_reason_label) {
+        status.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'small text-muted', row.exit_reason_label));
+      }
+      tr.appendChild(status);
+      tr.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('td', null, when(row.enrolled_at)));
+      tr.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('td', null, String((_row$step_count = row.step_count) !== null && _row$step_count !== void 0 ? _row$step_count : 0)));
+      var action = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('td', 'text-end');
+      var view = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('button', 'btn btn-sm btn-outline-secondary', 'View steps');
+      view.type = 'button';
+      view.dataset.role = 'wf-journey-view';
+      view.addEventListener('click', function () {
+        return openLogs(row);
+      });
+      action.appendChild(view);
+      tr.appendChild(action);
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    historyEl.appendChild(table);
+  }
+  function openLogs(_x) {
+    return _openLogs.apply(this, arguments);
+  }
+  function _openLogs() {
+    _openLogs = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(row) {
+      var result, _t2;
+      return _regenerator().w(function (_context2) {
+        while (1) switch (_context2.p = _context2.n) {
+          case 0:
+            selectedUid = row.uid;
+            showLogsTab();
+            note(logsEl, 'Loading…');
+            _context2.p = 1;
+            _context2.n = 2;
+            return api.enrollmentLogs(basePath, row.uid);
+          case 2:
+            result = _context2.v;
+            if (!(selectedUid !== row.uid)) {
+              _context2.n = 3;
+              break;
+            }
+            return _context2.a(2);
+          case 3:
+            if (!(result.status !== 200)) {
+              _context2.n = 4;
+              break;
+            }
+            note(logsEl, 'The steps could not be loaded right now.');
+            return _context2.a(2);
+          case 4:
+            renderLogs(row, result.body && result.body.steps || []);
+            _context2.n = 6;
+            break;
+          case 5:
+            _context2.p = 5;
+            _t2 = _context2.v;
+            note(logsEl, 'The steps could not be loaded right now.');
+          case 6:
+            return _context2.a(2);
+        }
+      }, _callee2, null, [[1, 5]]);
+    }));
+    return _openLogs.apply(this, arguments);
+  }
+  function renderLogs(row, steps) {
+    logsEl.innerHTML = '';
+    logsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('h3', 'h6', "".concat(row.contact_label || 'A contact', " \xB7 ").concat(row.status_label)));
+    if (steps.length === 0) {
+      logsEl.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('p', 'text-muted mb-0', 'No steps have run for this contact yet.'));
+      return;
+    }
+    var list = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('ol', 'list-group list-group-numbered');
+    steps.forEach(function (step) {
+      var item = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('li', 'list-group-item d-flex flex-column gap-1');
+      var top = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('div', 'd-flex justify-content-between gap-2');
+      top.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'fw-semibold', step.node_label || _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[step.node_type] || step.node_type));
+      top.appendChild(badge(STEP_WORDS[step.status] || step.status, step.status === 'failed' ? 'danger' : step.status === 'succeeded' ? 'success' : 'secondary'));
+      item.appendChild(top);
+      var detail = step.error_label || step.result;
+      if (detail) {
+        item.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', step.status === 'failed' ? 'small text-danger' : 'small text-muted', detail));
+      }
+      if (step.branch_taken) {
+        item.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'small text-muted', step.branch_taken === 'yes' ? 'Took the Yes path' : 'Took the No path'));
+      }
+      var time = when(step.completed_at || step.started_at);
+      if (time) {
+        item.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'small text-muted', time));
+      }
+      list.appendChild(item);
+    });
+    logsEl.appendChild(list);
+  }
+  function showHistory() {
+    if (!loadedHistory) {
+      loadHistory();
+    }
+  }
+  function showLogs() {
+    if (selectedUid === null) {
+      note(logsEl, 'Choose a contact in Enrollment history and pick “View steps” to see what happened, step by step.');
+    }
+  }
+  return {
+    showHistory: showHistory,
+    showLogs: showLogs,
+    refresh: loadHistory
+  };
+}
+
+/***/ },
+
 /***/ "./resources/js/automations/workflow-builder/recipes.js"
 /*!**************************************************************!*\
   !*** ./resources/js/automations/workflow-builder/recipes.js ***!
@@ -2125,11 +3164,29 @@ var TRIGGER_DEFAULTS = {
     failure_policy: 'halt'
   }
 };
+
+// The triggers the cross-domain recipes start from. Each is "every time it
+// happens", the default of its trigger, so the policy still says it is a default.
+function occurrenceTrigger(type, extra) {
+  return Object.assign({
+    trigger_type: type,
+    enrollment_policy: 'once_per_occurrence',
+    enrollment_policy_source: 'default',
+    failure_policy: 'halt'
+  }, extra || {});
+}
+
+// A recipe is only a starting DRAFT: it never runs until it is published. Anything
+// that points at one of the Business's own resources (a pipeline and stage, a form, a
+// product) starts empty — a recipe cannot know them — and the builder says exactly
+// what is still to choose. `requires` names the account capabilities a recipe needs;
+// the chooser shows a recipe the account cannot use disabled, with the reason.
 function listRecipes() {
   return [{
     key: 'welcome_new_contact',
     titleKey: 'welcome_new_contact',
     descriptionKey: 'welcome_new_contact_description',
+    requires: ['sms'],
     build: function build() {
       return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
         body: 'Hi {first_name}, thanks for reaching out! We will be in touch shortly.'
@@ -2148,6 +3205,7 @@ function listRecipes() {
     key: 'check_in_after_days',
     titleKey: 'check_in_after_days',
     descriptionKey: 'check_in_after_days_description',
+    requires: ['sms'],
     build: function build() {
       var wait = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('wait', {
         mode: 'duration',
@@ -2174,9 +3232,100 @@ function listRecipes() {
       return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_created), [wait, branch]);
     }
   }, {
+    key: 'new_lead_follow_up',
+    titleKey: 'new_lead_follow_up',
+    descriptionKey: 'new_lead_follow_up_description',
+    requires: ['email', 'sms'],
+    build: function build() {
+      return starter(occurrenceTrigger('form_submitted', {
+        form_id: null
+      }), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_email', {
+        subject: 'Thanks for getting in touch',
+        body: 'Hi {first_name},\n\nThanks for reaching out. We have your details and will be in touch shortly.'
+      }), (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('wait', {
+        mode: 'duration',
+        amount: 1,
+        unit: 'days'
+      }), (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
+        body: 'Hi {first_name}, just checking you got our email. Any questions, reply here.'
+      })]);
+    }
+  }, {
+    key: 'booking_follow_up',
+    titleKey: 'booking_follow_up',
+    descriptionKey: 'booking_follow_up_description',
+    requires: ['crm', 'email'],
+    build: function build() {
+      return starter(occurrenceTrigger('appointment_scheduled'), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('move_opportunity', {
+        pipeline_id: null,
+        stage_id: null
+      }), (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_email', {
+        subject: 'Your appointment is booked',
+        body: 'Hi {first_name},\n\nYour appointment is booked. We look forward to seeing you.'
+      })]);
+    }
+  }, {
+    key: 'proposal_follow_up',
+    titleKey: 'proposal_follow_up',
+    descriptionKey: 'proposal_follow_up_description',
+    requires: ['documents', 'email'],
+    build: function build() {
+      var wait = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('wait', {
+        mode: 'duration',
+        amount: 3,
+        unit: 'days'
+      });
+      var branch = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('if_else', {
+        match: 'all',
+        conditions: [{
+          subject: 'document.signed',
+          operator: 'is_false'
+        }]
+      });
+      branch.yes = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_email', {
+        subject: 'A reminder about your proposal',
+        body: 'Hi {first_name},\n\nJust a reminder that your proposal is waiting for your signature. Reply if you have any questions.'
+      })];
+      branch.no = [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('end', {})];
+      return starter(occurrenceTrigger('document_sent', {
+        document_kind: 'proposal'
+      }), [wait, branch]);
+    }
+  }, {
+    key: 'signed_to_payment',
+    titleKey: 'signed_to_payment',
+    descriptionKey: 'signed_to_payment_description',
+    requires: ['payments'],
+    build: function build() {
+      return starter(occurrenceTrigger('document_signed', {
+        document_kind: 'proposal'
+      }), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('request_payment', {
+        source: 'document'
+      })]);
+    }
+  }, {
+    key: 'payment_complete',
+    titleKey: 'payment_complete',
+    descriptionKey: 'payment_complete_description',
+    requires: ['crm', 'forms'],
+    build: function build() {
+      return starter(occurrenceTrigger('payment_succeeded'), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('move_opportunity', {
+        pipeline_id: null,
+        stage_id: null
+      }), (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_questionnaire', {
+        form_id: null,
+        channels: ['email'],
+        subject: '',
+        message: ''
+      }), (0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('internal_notification', {
+        message: 'Payment received from {first_name} {last_name}'
+      })]);
+    }
+  }, {
     key: 'date_reminder',
     titleKey: 'date_reminder',
     descriptionKey: 'date_reminder_description',
+    requires: ['sms'],
     build: function build() {
       return starter(Object.assign({}, TRIGGER_DEFAULTS.contact_date_reached), [(0,_document_model_js__WEBPACK_IMPORTED_MODULE_0__.newNode)('send_sms', {
         body: 'Hi {first_name}, just a friendly reminder from {business_name}!'
@@ -2275,10 +3424,19 @@ function createStepPicker(hostEl) {
       option.dataset.nodeType = entry.type;
       option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
       option.classList.toggle('is-active', index === activeIndex);
+
+      // A step the account cannot use is shown, disabled, with the reason — never
+      // offered and then refused at publish.
+      var reason = unavailableReason(entry);
+      if (reason) {
+        option.classList.add('is-disabled');
+        option.setAttribute('aria-disabled', 'true');
+        option.dataset.unavailable = 'true';
+      }
       option.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.icon)(entry.icon, "wf-tone wf-tone--".concat(entry.type)));
       var text = (0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__text');
       text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__label', _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_LABELS[entry.type]));
-      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__description', options.hints && options.hints[entry.type] || entry.description));
+      text.appendChild((0,_dom_js__WEBPACK_IMPORTED_MODULE_1__.el)('span', 'wf-picker__description', reason || options.hints && options.hints[entry.type] || entry.description));
       option.appendChild(text);
       option.addEventListener('mouseenter', function () {
         activeIndex = index;
@@ -2312,7 +3470,19 @@ function createStepPicker(hostEl) {
     panel.style.left = "".concat(left, "px");
     panel.style.top = "".concat(top, "px");
   }
+
+  /** The plain reason this step cannot be used by this account, or null when it can. */
+  function unavailableReason(entry) {
+    var capability = entry.requires && options && options.capabilities ? options.capabilities[entry.requires] : null;
+    return capability && capability.available === false ? capability.reason || 'Not available on your account.' : null;
+  }
   function choose(type) {
+    var entry = _constants_js__WEBPACK_IMPORTED_MODULE_0__.STEP_CATALOG.find(function (candidate) {
+      return candidate.type === type;
+    });
+    if (entry && unavailableReason(entry)) {
+      return;
+    }
     var chosen = options;
     close();
     chosen.onPick(type);
@@ -2452,6 +3622,27 @@ function crmName(rows, id) {
 function namedRow(rows, id) {
   return crmName(rows, id);
 }
+
+/** "by email", "by text", "by email and text". */
+function channelText(channels) {
+  var list = Array.isArray(channels) ? channels : [];
+  var words = [list.includes('email') ? 'email' : null, list.includes('sms') ? 'text' : null].filter(Boolean);
+  return words.length ? "by ".concat(words.join(' and ')) : '— choose how to send it';
+}
+function hasChannels(config) {
+  return Array.isArray(config.channels) && config.channels.length > 0;
+}
+
+/** The Location(s) a workflow is limited to, in words; null for the whole business. */
+function scopeText(config, catalogs) {
+  if (config.scope_mode === 'selected') {
+    var names = (Array.isArray(config.business_location_ids) ? config.business_location_ids : []).map(function (id) {
+      return namedRow(catalogs.locations, id);
+    }).filter(Boolean);
+    return names.length ? names.join(', ') : null;
+  }
+  return namedRow(catalogs.locations, config.business_location_id);
+}
 function plural(amount, unit) {
   var singular = unit.replace(/s$/, '');
   return Number(amount) === 1 ? "1 ".concat(singular) : "".concat(amount, " ").concat(unit);
@@ -2488,12 +3679,87 @@ function summarize(node, catalogs) {
     case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.TRIGGER:
       {
         var trigger = summarizeTrigger(config, catalogs);
-        var location = namedRow(catalogs.locations, config.business_location_id);
+        var location = scopeText(config, catalogs);
 
-        // "· Downtown" when bound to a Location; nothing for the whole business.
+        // "· Downtown" when limited to a Location, "· Downtown, Uptown" for a chosen
+        // list; nothing for the whole business.
         return location && trigger.summary ? _objectSpread(_objectSpread({}, trigger), {}, {
           summary: "".concat(trigger.summary, " \xB7 ").concat(location)
         }) : trigger;
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.MOVE_OPPORTUNITY:
+      {
+        var pipeline = crmName(catalogs.crmPipelines, config.pipeline_id);
+        var stage = crmName(catalogs.crmStages, config.stage_id);
+        return pipeline && stage ? {
+          summary: "Move the opportunity to \u201C".concat(stage, "\u201D in ").concat(pipeline),
+          incomplete: false
+        } : {
+          summary: 'Choose a pipeline and a stage',
+          incomplete: true
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_BOOKING_LINK:
+      {
+        var type = namedRow(catalogs.bookingTypes, config.booking_type_id);
+        return type ? {
+          summary: "Send the \u201C".concat(type, "\u201D booking link ").concat(channelText(config.channels)),
+          incomplete: !hasChannels(config)
+        } : {
+          summary: 'Choose a booking type to send',
+          incomplete: true
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_FORM:
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_QUESTIONNAIRE:
+      {
+        var noun = node.type === _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_FORM ? 'form' : 'questionnaire';
+        var form = namedRow(catalogs.forms, config.form_id);
+        return form ? {
+          summary: "Send the ".concat(noun, " \u201C").concat(form, "\u201D ").concat(channelText(config.channels)),
+          incomplete: !hasChannels(config)
+        } : {
+          summary: "Choose a ".concat(noun, " to send"),
+          incomplete: true
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.CREATE_SEND_PROPOSAL:
+      {
+        var item = namedRow(catalogs.catalogItems, config.catalog_item_id);
+        var title = String(config.title || '').trim();
+        if (!title || !item) {
+          return {
+            summary: !title ? 'Give the proposal a title' : 'Choose a product or package',
+            incomplete: true
+          };
+        }
+        var deposit = config.payment_schedule === 'deposit' ? " \xB7 ".concat(config.deposit_percent, "% deposit") : '';
+        return {
+          summary: "Email \u201C".concat(excerpt(title), "\u201D (").concat(item, ")").concat(deposit),
+          incomplete: false
+        };
+      }
+    case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.REQUEST_PAYMENT:
+      {
+        if (config.source === 'document') {
+          return {
+            summary: 'Email a payment link for this workflow’s document',
+            incomplete: false
+          };
+        }
+        var _title = String(config.title || '').trim();
+        var _item = namedRow(catalogs.catalogItems, config.catalog_item_id);
+        var amount = config.amount_minor ? (Number(config.amount_minor) / 100).toFixed(2) : null;
+        if (!_title || !_item && !amount) {
+          return {
+            summary: !_title ? 'Give the invoice a title' : 'Choose a product or enter an amount',
+            incomplete: true
+          };
+        }
+        return {
+          summary: "Invoice \u201C".concat(excerpt(_title), "\u201D \u2014 ").concat(_item || amount),
+          incomplete: false
+        };
       }
     case _constants_js__WEBPACK_IMPORTED_MODULE_0__.NODE_TYPES.SEND_SMS:
       return config.body && String(config.body).trim() !== '' ? {
@@ -2601,6 +3867,9 @@ function summarize(node, catalogs) {
       };
   }
 }
+function documentKindText(kind) {
+  return kind === 'invoice' ? 'an invoice' : kind === 'proposal' ? 'a proposal or contract' : 'a proposal, contract or invoice';
+}
 function summarizeTrigger(config, catalogs) {
   var info = (0,_constants_js__WEBPACK_IMPORTED_MODULE_0__.triggerTypeInfo)(config.trigger_type);
   if (!info) {
@@ -2706,6 +3975,35 @@ function summarizeTrigger(config, catalogs) {
         return {
           title: info.title,
           summary: form ? "When \u201C".concat(form, "\u201D is submitted") : 'When any form is submitted',
+          incomplete: false
+        };
+      }
+    case 'questionnaire_submitted':
+      {
+        var _form = namedRow(catalogs.forms, config.form_id);
+        return {
+          title: info.title,
+          summary: _form ? "When \u201C".concat(_form, "\u201D is submitted") : 'When any questionnaire is submitted',
+          incomplete: false
+        };
+      }
+    case 'document_sent':
+    case 'document_signed':
+      {
+        var _verb = info.value === 'document_sent' ? 'sent' : 'signed';
+        return {
+          title: info.title,
+          summary: "When ".concat(documentKindText(config.document_kind), " is ").concat(_verb),
+          incomplete: false
+        };
+      }
+    case 'payment_succeeded':
+    case 'payment_failed':
+      {
+        var _verb2 = info.value === 'payment_succeeded' ? 'succeeds' : 'fails';
+        return {
+          title: info.title,
+          summary: "When a payment for ".concat(documentKindText(config.document_kind), " ").concat(_verb2),
           incomplete: false
         };
       }
@@ -3294,10 +4592,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _api_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./api.js */ "./resources/js/automations/workflow-builder/api.js");
 /* harmony import */ var _step_picker_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./step-picker.js */ "./resources/js/automations/workflow-builder/step-picker.js");
 /* harmony import */ var _test_panel_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./test-panel.js */ "./resources/js/automations/workflow-builder/test-panel.js");
-/* harmony import */ var _recipes_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./recipes.js */ "./resources/js/automations/workflow-builder/recipes.js");
-/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
-/* harmony import */ var _validation_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./validation.js */ "./resources/js/automations/workflow-builder/validation.js");
-/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
+/* harmony import */ var _journeys_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./journeys.js */ "./resources/js/automations/workflow-builder/journeys.js");
+/* harmony import */ var _recipes_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./recipes.js */ "./resources/js/automations/workflow-builder/recipes.js");
+/* harmony import */ var _document_model_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./document-model.js */ "./resources/js/automations/workflow-builder/document-model.js");
+/* harmony import */ var _validation_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./validation.js */ "./resources/js/automations/workflow-builder/validation.js");
+/* harmony import */ var _constants_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./constants.js */ "./resources/js/automations/workflow-builder/constants.js");
 function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
 function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method."); }
 function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
@@ -3313,6 +4612,7 @@ function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length)
 // bundled ES module (contract §13.1), exposed as `window.AutomationsWorkflowBuilder`
 // so the Blade views (which cannot use `import` directly) can call it after
 // this bundle loads.
+
 
 
 
@@ -3425,6 +4725,13 @@ function initBuilder(root) {
     dateOffsets: data.dateOffsets,
     limits: data.limits,
     locationScope: data.locationScope,
+    capabilities: data.capabilities || {},
+    currency: data.currency || '',
+    // The trigger as the document has it NOW, so a condition or an action only
+    // offers what the workflow's trigger can give it.
+    triggerType: function triggerType() {
+      return doc && doc.root && doc.root.config ? doc.root.config.trigger_type : null;
+    },
     onSave: function onSave(node, config) {
       node.config = config;
       onDocumentChanged();
@@ -3459,6 +4766,29 @@ function initBuilder(root) {
       syncPanels();
     }
   });
+
+  // The two read-only tabs: who entered the workflow, and what happened to each.
+  var historyPane = root.querySelector('[data-role="wf-journeys-history"]');
+  var logsPane = root.querySelector('[data-role="wf-journeys-logs"]');
+  if (historyPane && logsPane) {
+    var logsTab = root.querySelector('[data-bs-target="#wf-tabs-logs"]');
+    var journeys = (0,_journeys_js__WEBPACK_IMPORTED_MODULE_8__.createJourneys)({
+      api: api,
+      basePath: data.basePath,
+      historyEl: historyPane,
+      logsEl: logsPane,
+      showLogsTab: function showLogsTab() {
+        return logsTab && logsTab.click();
+      }
+    });
+    var historyTab = root.querySelector('[data-bs-target="#wf-tabs-enrollments"]');
+    historyTab && historyTab.addEventListener('click', function () {
+      return journeys.showHistory();
+    });
+    logsTab && logsTab.addEventListener('click', function () {
+      return journeys.showLogs();
+    });
+  }
   function selectNode(node) {
     if (testPanel.isOpen()) {
       testPanel.close();
@@ -3484,7 +4814,7 @@ function initBuilder(root) {
     try {
       for (_iterator.s(); !(_step = _iterator.n()).done;) {
         var node = _step.value;
-        if (node.type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
+        if (node.type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
           var inYes = findContainingList(target, node.yes || []);
           if (inYes) return inYes;
           var inNo = findContainingList(target, node.no || []);
@@ -3502,7 +4832,7 @@ function initBuilder(root) {
     return null;
   }
   function stepCount(node) {
-    if (node.type !== _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
+    if (node.type !== _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
       return 0;
     }
     var count = function count(list) {
@@ -3528,7 +4858,7 @@ function initBuilder(root) {
       if (selectedKey === node.key) {
         drawer.close();
       }
-      (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.removeFrom)(list, node);
+      (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.removeFrom)(list, node);
       onDocumentChanged();
     }
   }
@@ -3544,31 +4874,32 @@ function initBuilder(root) {
   function requestAdd(anchorEl, list, index, depth) {
     var trailing = index === list.length;
     var canBranch = !(data.limits && depth >= data.limits.maxBranchDepth);
-    var types = _constants_js__WEBPACK_IMPORTED_MODULE_11__.INSERTABLE_TYPES.filter(function (type) {
-      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE) {
+    var types = _constants_js__WEBPACK_IMPORTED_MODULE_12__.INSERTABLE_TYPES.filter(function (type) {
+      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE) {
         return canBranch;
       }
 
       // End closes a path, so it is only offered where nothing follows.
-      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.END) {
+      if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.END) {
         return trailing;
       }
       return true;
     });
     var hints = {};
     if (!trailing && canBranch) {
-      hints[_constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE] = 'The steps below move into its Yes path.';
+      hints[_constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE] = 'The steps below move into its Yes path.';
     }
     picker.open(anchorEl, {
       types: types,
       hints: hints,
+      capabilities: data.capabilities || {},
       note: canBranch ? '' : 'If / Else can’t be nested any deeper here.',
       onPick: function onPick(type) {
-        var node = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.newNode)(type, (0,_constants_js__WEBPACK_IMPORTED_MODULE_11__.defaultConfigFor)(type));
-        if (type === _constants_js__WEBPACK_IMPORTED_MODULE_11__.NODE_TYPES.IF_ELSE && !trailing) {
-          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.insertBranchAt)(list, index, node);
+        var node = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.newNode)(type, (0,_constants_js__WEBPACK_IMPORTED_MODULE_12__.defaultConfigFor)(type));
+        if (type === _constants_js__WEBPACK_IMPORTED_MODULE_12__.NODE_TYPES.IF_ELSE && !trailing) {
+          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.insertBranchAt)(list, index, node);
         } else {
-          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.insertAt)(list, index, node);
+          (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.insertAt)(list, index, node);
         }
         onDocumentChanged();
         selectNode(node);
@@ -3576,7 +4907,7 @@ function initBuilder(root) {
     });
   }
   function rerender() {
-    var nodeCount = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.countNodes)(doc);
+    var nodeCount = (0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.countNodes)(doc);
     (0,_canvas_renderer_js__WEBPACK_IMPORTED_MODULE_0__.renderCanvas)(doc, canvasRootEl, {
       onSelect: selectNode,
       onRequestAdd: requestAdd,
@@ -3584,7 +4915,7 @@ function initBuilder(root) {
         deleteNode(node, false);
       },
       onMove: function onMove(node, list, direction) {
-        if ((0,_document_model_js__WEBPACK_IMPORTED_MODULE_9__.moveWithin)(list, node, direction)) {
+        if ((0,_document_model_js__WEBPACK_IMPORTED_MODULE_10__.moveWithin)(list, node, direction)) {
           onDocumentChanged();
         }
       }
@@ -3597,12 +4928,12 @@ function initBuilder(root) {
       catalogs: data.catalogs,
       path: path
     });
-    (0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.renderDocumentBanner)(bannerEl, errors, 'This workflow has :count issue(s) to fix before it can publish.');
+    (0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.renderDocumentBanner)(bannerEl, errors, 'This workflow has :count issue(s) to fix before it can publish.');
     undoButton.disabled = readOnly || !history.canUndo();
     redoButton.disabled = readOnly || !history.canRedo();
-    var blocked = (0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.hasErrors)(errors);
+    var blocked = (0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.hasErrors)(errors);
     publishButton.disabled = blocked;
-    publishButton.title = blocked ? "Fix ".concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.countIssues)(errors), " issue").concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_10__.countIssues)(errors) === 1 ? '' : 's', " before publishing") : '';
+    publishButton.title = blocked ? "Fix ".concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.countIssues)(errors), " issue").concat((0,_validation_js__WEBPACK_IMPORTED_MODULE_11__.countIssues)(errors) === 1 ? '' : 's', " before publishing") : '';
   }
 
   // ---------------------------------------------------------------
@@ -3746,6 +5077,9 @@ function initChooser(root) {
   var createUrl = root.dataset.createUrl;
   var labelsEl = document.getElementById('wf-recipe-labels');
   var labels = labelsEl ? JSON.parse(labelsEl.textContent) : {};
+  var capabilitiesEl = document.getElementById('wf-capabilities');
+  var capabilities = capabilitiesEl ? JSON.parse(capabilitiesEl.textContent) : {};
+  var unavailablePrefix = capabilitiesEl ? capabilitiesEl.dataset.unavailablePrefix || '' : '';
   var api = (0,_api_js__WEBPACK_IMPORTED_MODULE_5__.createApiClient)(createUrl);
   var busy = false;
   function showError(message) {
@@ -3832,7 +5166,7 @@ function initChooser(root) {
       createWorkflow('Untitled workflow', null);
     }
   });
-  (0,_recipes_js__WEBPACK_IMPORTED_MODULE_8__.listRecipes)().forEach(function (recipe) {
+  (0,_recipes_js__WEBPACK_IMPORTED_MODULE_9__.listRecipes)().forEach(function (recipe) {
     var col = document.createElement('div');
     col.className = 'col-12 col-md-6 col-xl-3';
     var card = document.createElement('button');
@@ -3851,6 +5185,24 @@ function initChooser(root) {
     card.appendChild(description);
     col.appendChild(card);
     recipesContainer.appendChild(col);
+
+    // A recipe the account cannot run is shown, disabled, with the reason — never
+    // created and then refused at publish.
+    var missing = (recipe.requires || []).map(function (key) {
+      return capabilities[key];
+    }).filter(function (entry) {
+      return entry && entry.available === false;
+    });
+    if (missing.length > 0) {
+      card.disabled = true;
+      card.classList.add('is-disabled');
+      card.dataset.unavailable = 'true';
+      var reason = document.createElement('span');
+      reason.className = 'wf-chooser-card__reason';
+      reason.textContent = "".concat(unavailablePrefix).concat(missing[0].reason || '');
+      card.appendChild(reason);
+      return;
+    }
     card.addEventListener('click', function () {
       createWorkflow(labelSet.title || 'Untitled workflow', recipe.build());
     });

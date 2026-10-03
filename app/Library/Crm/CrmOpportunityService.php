@@ -179,11 +179,15 @@ class CrmOpportunityService
     }
 
     /**
+     * @param string|null $origin an opaque causation reference for the event this
+     *        emits (the Automations engine passes `automation_step_run:{id}`); null
+     *        for a person's own move. Never read here.
+     *
      * @return bool false when the deal was already in that stage (nothing changed)
      */
-    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null): bool
+    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null, ?string $origin = null): bool
     {
-        return DB::transaction(function () use ($opportunity, $to, $actorUserId): bool {
+        return DB::transaction(function () use ($opportunity, $to, $actorUserId, $origin): bool {
             $locked = $this->lock($opportunity);
 
             if ((int) $to->business_id !== (int) $locked->business_id || (int) $to->pipeline_id !== (int) $locked->pipeline_id) {
@@ -212,6 +216,7 @@ class CrmOpportunityService
                 ...$this->eventArguments($locked, $to, $history, $actorUserId),
                 fromStageId: $from->id,
                 fromStageSemanticKey: $from->semantic_key,
+                origin: $origin,
             );
 
             $opportunity->setRawAttributes($locked->getAttributes(), true);

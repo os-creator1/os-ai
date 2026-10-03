@@ -5,6 +5,7 @@ namespace App\Library\Automation\Workflow;
 use App\Enums\Automation\Workflow\NodeSideEffectClass;
 use App\Enums\Automation\Workflow\WorkflowEdgeKind;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
+use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry;
 use App\Models\AutomationEnrollment;
@@ -151,9 +152,7 @@ class WorkflowSimulator
         // A Location-bound version would never enroll a contact of another
         // Location (or of none), so a test with one would show a journey that can
         // not happen. Say so instead.
-        $bound = $version->boundLocationId();
-
-        if ($bound !== null && ($contact->location_id === null || (int) $contact->location_id !== $bound)) {
+        if (! $version->scope()->allows($contact->location_id === null ? null : (int) $contact->location_id)) {
             $result['refused'] = self::REFUSED_OUTSIDE_LOCATION;
 
             return $result;
@@ -319,6 +318,13 @@ class WorkflowSimulator
             $step['did'] = self::DID_BRANCHED;
             $step['branch'] = $outcome->branchTaken->value;
 
+            // A document, payment, appointment or deal condition reads the real event a
+            // journey is about; a test contact has none, so it reads as "not set".
+            if ($this->readsAnEvent($entry['config'])) {
+                $note = 'Conditions about a document, payment, appointment or deal read the real event. A test has none, so they count as not set.';
+                $step['detail'] = $step['detail'] === null || $step['detail'] === '' ? $note : $step['detail'] . '. ' . $note;
+            }
+
             // An empty lane has no edge: the journey simply ends there, which is
             // a real and useful thing for Test workflow to show.
             return [$step, $entry['edges'][$outcome->branchTaken->value] ?? null, null];
@@ -353,6 +359,23 @@ class WorkflowSimulator
         return [$step, $entry['edges'][WorkflowEdgeKind::Next->value] ?? null, null];
     }
 
+    /**
+     * Whether an If / Else step asks about the event behind a journey (a document,
+     * payment, appointment or deal) rather than about the contact.
+     *
+     * @param array<string, mixed> $config
+     */
+    private function readsAnEvent(array $config): bool
+    {
+        foreach ((array) ($config['conditions'] ?? []) as $condition) {
+            if (is_array($condition) && array_key_exists((string) ($condition['subject'] ?? ''), ConditionSubjectRegistry::FACT_SUBJECTS)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** A plain description of a step a simulation refuses to perform. */
     private function wouldRunDetail(WorkflowNodeType $type): string
     {
@@ -363,6 +386,12 @@ class WorkflowSimulator
             WorkflowNodeType::SendEmail => 'Would send this email from your connected mailbox. Nothing is sent while testing.',
             WorkflowNodeType::AddTag => 'Would add this tag to the contact. Nothing is changed while testing.',
             WorkflowNodeType::RemoveTag => 'Would remove this tag from the contact. Nothing is changed while testing.',
+            WorkflowNodeType::MoveOpportunity => 'Would move the contact\'s opportunity to this stage. Nothing is changed while testing.',
+            WorkflowNodeType::SendBookingLink => 'Would send the booking link. Nothing is sent while testing.',
+            WorkflowNodeType::SendForm => 'Would send this form\'s link. Nothing is sent while testing.',
+            WorkflowNodeType::SendQuestionnaire => 'Would send this questionnaire\'s link. Nothing is sent while testing.',
+            WorkflowNodeType::CreateSendProposal => 'Would create this proposal and email it to the contact. Nothing is created or sent while testing.',
+            WorkflowNodeType::RequestPayment => 'Would email the contact a secure payment link. Nothing is sent while testing.',
             default => 'Would run this step. Nothing happens while testing.',
         };
     }
@@ -385,9 +414,10 @@ class WorkflowSimulator
             'version_id' => $version->getKey(),
             'business_id' => $version->business_id,
             'contact_id' => $contact->getKey(),
-            // What a real enrollment would pin: the bound Location, or the
-            // contact's own for a Business-wide test.
-            'business_location_id' => $version->boundLocationId() ?? ($contact->location_id === null ? null : (int) $contact->location_id),
+            // What a real enrollment would pin: the fact's Location, which for a
+            // test is the contact's own (a bound scope only ever admits a contact at
+            // one of its Locations, checked above).
+            'business_location_id' => $contact->location_id === null ? null : (int) $contact->location_id,
             'step_count' => 0,
         ]);
 

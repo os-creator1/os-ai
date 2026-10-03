@@ -81,6 +81,12 @@ class NodeTypeRegistry
             WorkflowNodeType::InternalNotification => $this->validateInternalNotification($config),
             WorkflowNodeType::SendEmail => $this->validateSendEmail($config),
             WorkflowNodeType::AddTag, WorkflowNodeType::RemoveTag => $this->validateTagAction($config),
+            WorkflowNodeType::MoveOpportunity => $this->validateMoveOpportunity($config),
+            WorkflowNodeType::SendBookingLink => $this->validateLinkAction($config, 'booking_type_id', 'Choose which booking type to send.'),
+            WorkflowNodeType::SendForm => $this->validateLinkAction($config, 'form_id', 'Choose which form to send.'),
+            WorkflowNodeType::SendQuestionnaire => $this->validateLinkAction($config, 'form_id', 'Choose which questionnaire to send.'),
+            WorkflowNodeType::CreateSendProposal => $this->validateCreateSendProposal($config),
+            WorkflowNodeType::RequestPayment => $this->validateRequestPayment($config),
             WorkflowNodeType::Wait => $this->validateWait($config),
             WorkflowNodeType::IfElse => $this->validateIfElse($config),
             WorkflowNodeType::End => $this->validateEnd($config),
@@ -141,17 +147,88 @@ class NodeTypeRegistry
             $errors[] = 'The failure rule is missing or not recognised.';
         }
 
-        // Location scope, for every trigger: absent / null = the whole Business,
-        // otherwise one Location id. Shape only — whether it is an active Location
-        // of THIS Business is the compiler's question, answered against real rows.
-        if (array_key_exists('business_location_id', $config)
-            && $config['business_location_id'] !== null
-            && $config['business_location_id'] !== ''
-            && ! $this->isPositiveInt($config['business_location_id'])) {
-            $errors[] = 'Choose a valid location, or leave it as the whole business.';
-        }
+        // Location scope, for every trigger: the whole Business (the default), one
+        // Location, or a list of selected Locations. Shape only — whether each is an
+        // active Location of THIS Business is the compiler's question, answered
+        // against real rows.
+        $errors = [...$errors, ...$this->validateLocationScope($config)];
 
         return [...$errors, ...$this->validateTriggerSpecifics($triggerType, $config)];
+    }
+
+    /**
+     * The trigger's Location scope: `scope_mode` (business / one / selected), with
+     * `business_location_id` for "one" and `business_location_ids` for "selected".
+     * A document written before the mode existed carries only `business_location_id`,
+     * which still means one Location (or none = Business-wide).
+     *
+     * @return list<string>
+     */
+    private function validateLocationScope(array $config): array
+    {
+        $mode = $config['scope_mode'] ?? null;
+        $single = $config['business_location_id'] ?? null;
+        $list = $config['business_location_ids'] ?? null;
+        $hasSingle = $single !== null && $single !== '';
+
+        if ($hasSingle && ! $this->isPositiveInt($single)) {
+            return ['Choose a valid location, or leave it as the whole business.'];
+        }
+
+        if ($mode === null || $mode === '') {
+            // The pre-mode shape. Stray list entries with no mode are ignored by the
+            // reader, so they are refused here instead of being quietly dropped.
+            return ($list === null || $list === []) ? [] : ['Choose how this workflow is limited: the whole business, one location, or selected locations.'];
+        }
+
+        if (! in_array($mode, WorkflowLocationScope::modes(), true)) {
+            return ['Choose how this workflow is limited: the whole business, one location, or selected locations.'];
+        }
+
+        $ids = is_array($list) ? $list : [];
+
+        foreach ($ids as $id) {
+            if (! $this->isPositiveInt($id)) {
+                return ['Choose valid locations, or limit the workflow some other way.'];
+            }
+        }
+
+        return match ($mode) {
+            WorkflowLocationScope::BUSINESS => ($hasSingle || $ids !== [])
+                ? ['A whole-business workflow is not limited to any location. Clear the location, or choose one or more.']
+                : [],
+            WorkflowLocationScope::ONE => (! $hasSingle || $ids !== [])
+                ? ['Choose the one location this workflow is limited to.']
+                : [],
+            WorkflowLocationScope::SELECTED => $this->selectedLocationErrors($hasSingle, $ids),
+        };
+    }
+
+    /**
+     * @param list<mixed> $ids
+     * @return list<string>
+     */
+    private function selectedLocationErrors(bool $hasSingle, array $ids): array
+    {
+        if ($hasSingle) {
+            return ['Selected locations use a list. Remove the single location, or choose "one location".'];
+        }
+
+        $unique = array_values(array_unique(array_map('intval', $ids)));
+
+        if (count($unique) < 2) {
+            return ['Choose two or more locations, or limit the workflow to one location.'];
+        }
+
+        if (count($unique) !== count($ids)) {
+            return ['Each location can be chosen only once.'];
+        }
+
+        if (count($unique) > WorkflowLocationScope::MAX_SELECTED) {
+            return [sprintf('Choose at most %d locations.', WorkflowLocationScope::MAX_SELECTED)];
+        }
+
+        return [];
     }
 
     private function validateTriggerSpecifics(WorkflowTriggerType $triggerType, array $config): array
@@ -202,8 +279,19 @@ class NodeTypeRegistry
             $errors[] = 'Choose a valid tag, or leave it as any tag.';
         }
 
-        if ($triggerType === WorkflowTriggerType::FormSubmitted && array_key_exists('form_id', $config) && $config['form_id'] !== null && ! $this->isPositiveInt($config['form_id'])) {
-            $errors[] = 'Choose a valid form, or leave it as any form.';
+        if (in_array($triggerType, [WorkflowTriggerType::FormSubmitted, WorkflowTriggerType::QuestionnaireSubmitted], true)
+            && array_key_exists('form_id', $config) && $config['form_id'] !== null && ! $this->isPositiveInt($config['form_id'])) {
+            $errors[] = $triggerType === WorkflowTriggerType::QuestionnaireSubmitted
+                ? 'Choose a valid questionnaire, or leave it as any questionnaire.'
+                : 'Choose a valid form, or leave it as any form.';
+        }
+
+        // Document and payment triggers may narrow to one kind of document
+        // (a proposal or an invoice). "Any" when absent.
+        if ($triggerType->hasDocumentFact()
+            && array_key_exists('document_kind', $config) && $config['document_kind'] !== null && $config['document_kind'] !== ''
+            && ! in_array($config['document_kind'], self::DOCUMENT_KINDS, true)) {
+            $errors[] = 'Choose proposals, invoices, or leave it as any document.';
         }
 
         if ($triggerType === WorkflowTriggerType::ContactDateReached) {
@@ -261,6 +349,171 @@ class NodeTypeRegistry
             $errors[] = 'Write the email you want to send.';
         } elseif (mb_strlen($body) > $maxBody) {
             $errors[] = sprintf('That email is too long. Keep it under %d characters.', $maxBody);
+        }
+
+        return $errors;
+    }
+
+    /** What a document trigger may narrow to; the values are DocumentKind's own. */
+    public const DOCUMENT_KINDS = ['proposal', 'invoice'];
+
+    /** How a link action may deliver. The booking, form and questionnaire links are plain public URLs, so both work. */
+    public const LINK_CHANNELS = ['email', 'sms'];
+
+    private const MAX_LINK_SUBJECT_LENGTH = 200;
+
+    private const MAX_LINK_MESSAGE_LENGTH = 1000;
+
+    private const MAX_DOCUMENT_TITLE_LENGTH = 200;
+
+    private function validateMoveOpportunity(array $config): array
+    {
+        $errors = [];
+
+        if (! $this->isPositiveInt($config['pipeline_id'] ?? null)) {
+            $errors[] = 'Choose which pipeline the opportunity is in.';
+        }
+
+        if (! $this->isPositiveInt($config['stage_id'] ?? null)) {
+            $errors[] = 'Choose which stage to move the opportunity to.';
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Booking-link, form and questionnaire actions: one resource, how to deliver
+     * the link, and the words around it. The link itself is never in the config —
+     * it is resolved from the resource when the step runs.
+     */
+    private function validateLinkAction(array $config, string $resourceKey, string $resourceMessage): array
+    {
+        $errors = [];
+
+        if (! $this->isPositiveInt($config[$resourceKey] ?? null)) {
+            $errors[] = $resourceMessage;
+        }
+
+        $errors = [...$errors, ...$this->validateChannels($config)];
+
+        $subject = $config['subject'] ?? null;
+
+        if ($subject !== null && $subject !== '' && (! is_string($subject) || mb_strlen($subject) > self::MAX_LINK_SUBJECT_LENGTH)) {
+            $errors[] = sprintf('Keep the email subject under %d characters.', self::MAX_LINK_SUBJECT_LENGTH);
+        }
+
+        $message = $config['message'] ?? null;
+
+        if ($message !== null && $message !== '' && (! is_string($message) || mb_strlen($message) > self::MAX_LINK_MESSAGE_LENGTH)) {
+            $errors[] = sprintf('Keep the message under %d characters.', self::MAX_LINK_MESSAGE_LENGTH);
+        }
+
+        return $errors;
+    }
+
+    /** @return list<string> */
+    private function validateChannels(array $config): array
+    {
+        $channels = $config['channels'] ?? null;
+
+        if (! is_array($channels) || $channels === []) {
+            return ['Choose how to send it: email, text message, or both.'];
+        }
+
+        foreach ($channels as $channel) {
+            if (! is_string($channel) || ! in_array($channel, self::LINK_CHANNELS, true)) {
+                return ['Choose how to send it: email, text message, or both.'];
+            }
+        }
+
+        return count(array_unique($channels)) === count($channels) ? [] : ['Choose each way of sending only once.'];
+    }
+
+    private function validateCreateSendProposal(array $config): array
+    {
+        $errors = [];
+        $title = $config['title'] ?? null;
+
+        if (! is_string($title) || trim($title) === '') {
+            $errors[] = 'Give the proposal a title.';
+        } elseif (mb_strlen($title) > self::MAX_DOCUMENT_TITLE_LENGTH) {
+            $errors[] = sprintf('Keep the title under %d characters.', self::MAX_DOCUMENT_TITLE_LENGTH);
+        }
+
+        if (! $this->isPositiveInt($config['catalog_item_id'] ?? null)) {
+            $errors[] = 'Choose the product or package this proposal is for.';
+        }
+
+        $quantity = $config['quantity'] ?? 1;
+
+        if (! $this->isPositiveInt($quantity) || (int) $quantity > 99) {
+            $errors[] = 'Choose a quantity from 1 to 99.';
+        }
+
+        return [...$errors, ...$this->validateSchedule($config)];
+    }
+
+    /** The payment schedule a document may carry: pay in full, or a deposit then the balance. */
+    private function validateSchedule(array $config): array
+    {
+        $schedule = $config['payment_schedule'] ?? 'full';
+
+        if ($schedule === 'full') {
+            return array_key_exists('deposit_percent', $config) && $config['deposit_percent'] !== null
+                ? ['A deposit percentage only applies to a deposit-and-balance schedule.']
+                : [];
+        }
+
+        if ($schedule !== 'deposit') {
+            return ['Choose whether the customer pays in full, or a deposit first.'];
+        }
+
+        $percent = $config['deposit_percent'] ?? null;
+
+        return $this->isPositiveInt($percent) && (int) $percent >= 5 && (int) $percent <= 95
+            ? []
+            : ['Choose a deposit between 5% and 95%.'];
+    }
+
+    /**
+     * "Request payment" is NOT charging a saved card: it creates (or re-sends) the
+     * canonical secure payment link. Either an invoice made here from a catalog item
+     * or a fixed amount, or the link of the document the journey is about.
+     */
+    private function validateRequestPayment(array $config): array
+    {
+        $source = $config['source'] ?? null;
+
+        if ($source === 'document') {
+            return [];
+        }
+
+        if ($source !== 'invoice') {
+            return ['Choose whether to request payment for this journey\'s document, or for a new invoice.'];
+        }
+
+        $errors = [];
+        $title = $config['title'] ?? null;
+
+        if (! is_string($title) || trim($title) === '') {
+            $errors[] = 'Give the invoice a title.';
+        } elseif (mb_strlen($title) > self::MAX_DOCUMENT_TITLE_LENGTH) {
+            $errors[] = sprintf('Keep the title under %d characters.', self::MAX_DOCUMENT_TITLE_LENGTH);
+        }
+
+        $hasItem = $this->isPositiveInt($config['catalog_item_id'] ?? null);
+        $hasAmount = $this->isPositiveInt($config['amount_minor'] ?? null);
+
+        if ($hasItem === $hasAmount) {
+            $errors[] = 'Choose a product or package, or enter an amount — not both.';
+        }
+
+        if ($hasItem) {
+            $quantity = $config['quantity'] ?? 1;
+
+            if (! $this->isPositiveInt($quantity) || (int) $quantity > 99) {
+                $errors[] = 'Choose a quantity from 1 to 99.';
+            }
         }
 
         return $errors;
@@ -431,6 +684,11 @@ class NodeTypeRegistry
             if ($hasOperand && is_string($condition['operand'])
                 && mb_strlen($condition['operand']) > self::MAX_OPERAND_LENGTH) {
                 $errors[] = sprintf('Condition %d\'s value is too long.', $position);
+            }
+
+            // The fact-backed subjects take a closed set of values (or a stage id).
+            if (is_string($subject) && $hasOperand && ($problem = ConditionSubjectRegistry::operandProblem($subject, $condition['operand'])) !== null) {
+                $errors[] = sprintf('Condition %d %s.', $position, $problem);
             }
         }
 
