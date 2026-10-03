@@ -11,7 +11,10 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Catalog\Exceptions\CatalogRuleException;
 use App\Library\Contacts\ContactDirectory;
 use App\Library\Documents\Blocks\BlockSchema;
+use App\Library\Documents\Blocks\DocumentBlockRenderer;
 use App\Library\Documents\Blocks\DocumentMergeFields;
+use App\Enums\Documents\DocumentVersionState;
+use App\Library\Documents\Editor\DocumentEditorToolbox;
 use App\Library\Documents\Editor\DocumentCatalogPicker;
 use App\Library\Documents\Editor\DocumentContactDates;
 use App\Library\Documents\Delivery\DocumentLinkSmsSender;
@@ -28,6 +31,7 @@ use Closure;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -69,10 +73,20 @@ class DocumentEditorController extends CustomerBaseController
         $base = [$workspaceUid, $businessUid];
         $route = fn (string $name, array $extra = []) => route('customer.workspaces.businesses.documents.' . $name, [...$base, ...$extra]);
 
+        $business = Business::findOrFail($document->business_id);
+        $contact = $document->contact_id === null ? null : Contacts::query()->whereKey($document->contact_id)->where('business_id', $business->id)->first();
+        $contactName = $contact === null ? '' : trim((string) $contact->getFullName(''));
+
         return view('customer.business.documents.editor', [
             'document' => $document,
+            'toolbox' => DocumentEditorToolbox::categories(),
+            'icons' => DocumentEditorToolbox::icons(),
             'bootstrap' => $this->state->bootstrap($document) + [
+                'contact' => ['name' => $contactName !== '' ? $contactName : (string) $document->recipient_name_snapshot, 'email' => (string) $document->recipient_email_snapshot],
+                'business' => ['name' => (string) $business->name],
+                'images' => DocumentEditorToolbox::images($business),
                 'toolbox' => [
+                    'categories' => DocumentEditorToolbox::categories(),
                     'block_types' => BlockSchema::TYPES,
                     'merge_fields' => DocumentMergeFields::catalog(),
                     'limits' => ['max_blocks' => BlockSchema::MAX_BLOCKS, 'max_bytes' => BlockSchema::MAX_BYTES, 'max_run_text' => BlockSchema::MAX_RUN_TEXT],
@@ -80,6 +94,9 @@ class DocumentEditorController extends CustomerBaseController
                 ],
                 'urls' => [
                     'show' => $route('show', [$documentUid]),
+                    'index' => $route('index'),
+                    'edit' => $route('editor.edit', [$documentUid]),
+                    'preview' => $route('editor.preview', [$documentUid]),
                     'blocks' => $route('editor.blocks', [$documentUid]),
                     'plan' => $route('editor.plan', [$documentUid]),
                     'lines_catalog' => $route('editor.lines.catalog', [$documentUid]),
@@ -96,6 +113,40 @@ class DocumentEditorController extends CustomerBaseController
             ],
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
+        ]);
+    }
+
+    /**
+     * The CURRENT saved draft rendered by the one renderer (mode preview) in a
+     * standalone print-width page: merge fields resolve live from the document's
+     * Contact and Business, lines and schedule are the canonical rows. An issued
+     * version renders from its frozen parties instead, exactly as the recipient
+     * saw it. A legacy / empty (non-block) document has nothing to preview here,
+     * so it goes to the classic page.
+     */
+    public function preview(string $workspaceUid, string $businessUid, string $documentUid): View|RedirectResponse
+    {
+        $document = $this->document($workspaceUid, $businessUid, $documentUid);
+        $version = $this->state->version($document);
+
+        if ($version === null || ! BlockSchema::hasBlocks($version->content)) {
+            return redirect()->route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $documentUid]);
+        }
+
+        $business = Business::findOrFail($document->business_id);
+        $isDraft = $version->state === DocumentVersionState::Draft;
+        $merge = $isDraft
+            ? DocumentMergeFields::forDocument($document)
+            : DocumentMergeFields::fromFrozenParties(is_array($version->content['parties'] ?? null) ? $version->content['parties'] : []);
+
+        return view('customer.business.documents.editor-preview', [
+            'document' => $document,
+            'business' => $business,
+            'isDraft' => $isDraft,
+            'blocksHtml' => app(DocumentBlockRenderer::class)->renderVersion($version, 'preview', $merge, [
+                'business_id' => (int) $document->business_id,
+                'timezone' => (string) ($business->timezone ?: config('app.timezone', 'UTC')),
+            ]),
         ]);
     }
 

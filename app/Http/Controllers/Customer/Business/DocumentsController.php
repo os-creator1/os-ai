@@ -45,8 +45,11 @@ class DocumentsController extends CustomerBaseController
     {
         $business = $this->business($workspaceUid, $businessUid);
         $ids = $this->locations->accessibleLocationIdsForBusiness((int) Auth::id(), $business);
+        $documents = BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->with(['businessLocation', 'currentVersion'])->latest()->paginate(25);
         return view('customer.business.documents.index', [
-            'documents' => BusinessDocument::where('business_id', $business->id)->whereIn('business_location_id', $ids)->with(['businessLocation', 'currentVersion'])->latest()->paginate(25),
+            'documents' => $documents,
+            // Contract 17B — block / new proposal drafts open in the visual editor; issued and legacy documents keep the classic page.
+            'editorUids' => $this->editorDraftUids($documents->getCollection()),
             'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid,
             'locations' => BusinessLocation::where('business_id', $business->id)->whereIn('id', $ids)->where('lifecycle_state', 'active')->get(),
             'contacts' => Contacts::where('business_id', $business->id)->whereIn('location_id', $ids)->get(),
@@ -57,16 +60,28 @@ class DocumentsController extends CustomerBaseController
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         $business = $this->business($workspaceUid, $businessUid);
-        $data = $request->validate(['location_uid' => 'required|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200']);
-        $location = BusinessLocation::where('business_id', $business->id)->where('uid', $data['location_uid'])->first() ?? abort(404);
+        $data = $request->validate(['location_uid' => 'nullable|string|max:64', 'contact_uid' => 'required|string|max:64', 'opportunity_uid' => 'nullable|string|max:64', 'kind' => 'required|in:proposal,invoice', 'title' => 'required|string|max:200', 'via' => 'nullable|in:editor']);
+        $viaEditor = (($data['via'] ?? null) === 'editor') && $data['kind'] === 'proposal';
+        // Contract 17B §7 — the New proposal flow names only the Contact; its Location is the contact's own. Every other path still states the Location.
+        if (! $viaEditor && empty($data['location_uid'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['location_uid' => 'The location uid field is required.']);
+        }
+        $contact = Contacts::where('business_id', $business->id)->where('uid', $data['contact_uid'])->first() ?? abort(404);
+        $location = BusinessLocation::where('business_id', $business->id)
+            ->when($viaEditor, fn ($query) => $query->whereKey($contact->location_id), fn ($query) => $query->where('uid', $data['location_uid']))
+            ->first() ?? abort(404);
         $this->location($location);
         // Both are looked up INSIDE this Business: a uid belonging to another
         // Business is indistinguishable from one that does not exist (404),
         // never a validation message that confirms it. The manager then
         // re-derives Location/Contact/Opportunity integrity itself (§6.6).
-        $contact = Contacts::where('business_id', $business->id)->where('uid', $data['contact_uid'])->first() ?? abort(404);
         $opportunity = isset($data['opportunity_uid']) ? (CrmOpportunity::where('business_id', $business->id)->where('uid', $data['opportunity_uid'])->first() ?? abort(404)) : null;
         $document = $this->manager->create($business, $location, $contact, $opportunity, $data['kind'], $data['title'], Auth::user());
+        if ($viaEditor) {
+            // Block-ready from the first save: an empty block document the editor opens straight away.
+            $this->manager->saveBlocks($document, []);
+            return redirect()->route('customer.workspaces.businesses.documents.editor.edit', [$workspaceUid, $businessUid, $document->uid]);
+        }
         return redirect()->route('customer.workspaces.businesses.documents.show', [$workspaceUid, $businessUid, $document->uid]);
     }
 
@@ -86,6 +101,7 @@ class DocumentsController extends CustomerBaseController
             'issuedBlocksHtml' => $issued !== null && BlockSchema::hasBlocks($issued->content)
                 ? app(DocumentBlockRenderer::class)->renderVersion($issued, 'preview', DocumentMergeFields::fromFrozenParties(is_array($issued->content['parties'] ?? null) ? $issued->content['parties'] : []), ['business_id' => (int) $document->business_id])
                 : null,
+            'editorUrl' => ($document->kind->value !== 'proposal' || $document->status !== \App\Enums\Documents\DocumentStatus::Draft) ? null : route('customer.workspaces.businesses.documents.editor.edit', [$workspaceUid, $businessUid, $document->uid]),
             'payments' => $payments,
             'refundable' => $payments->mapWithKeys(fn (BusinessDocumentPayment $payment) => [$payment->id => $this->payments->refundableAmount($payment)]),
             'contact' => Contacts::find($document->contact_id),
@@ -234,5 +250,34 @@ class DocumentsController extends CustomerBaseController
             return back()->with(['status' => 'error', 'message' => $e->customerMessage()]);
         }
         return back()->with(['status' => 'success', 'message' => 'Refund requested.']);
+    }
+
+    /**
+     * Contract 17B — uids of proposals whose OPEN DRAFT is a block document (or an
+     * empty new one): those open in the visual editor. Issued documents and
+     * legacy (body-only) drafts keep the classic page. One query for the page.
+     *
+     * @param  \Illuminate\Support\Collection<int, BusinessDocument>  $documents
+     * @return array<int, string>
+     */
+    private function editorDraftUids(\Illuminate\Support\Collection $documents): array
+    {
+        $candidates = $documents->filter(fn (BusinessDocument $document) => $document->kind->value === 'proposal' && $document->status === \App\Enums\Documents\DocumentStatus::Draft);
+        if ($candidates->isEmpty()) {
+            return [];
+        }
+
+        $drafts = \App\Models\BusinessDocumentVersion::query()
+            ->whereIn('business_document_id', $candidates->pluck('id'))
+            ->where('state', 'draft')
+            ->get(['business_document_id', 'content'])
+            ->keyBy('business_document_id');
+
+        return $candidates->filter(function (BusinessDocument $document) use ($drafts) {
+            $content = $drafts->get($document->id)?->content;
+            $content = is_array($content) ? $content : [];
+
+            return BlockSchema::hasBlocks($content) || ! (isset($content['body']) && is_string($content['body']) && trim($content['body']) !== '');
+        })->pluck('uid')->values()->all();
     }
 }

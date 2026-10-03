@@ -157,6 +157,47 @@ block document that requires a signature and has no signature block.
 Legacy upgrade (`editor.upgrade`) converts a DRAFT legacy body to blocks once and
 keeps the original `body`.
 
+## 8b. Editor UI (stage 4 — implemented)
+
+`GET {doc}/editor` renders the shell (`customer.business.documents.editor`); the
+vanilla-ES-module bundle `resources/js/documents/editor/` (built to the committed
+`public/js/documents/editor.js`, page CSS `public/css/base/pages/documents-editor.css`)
+draws everything else from the bootstrap JSON.
+
+- **Layout.** Header (back, editable title, status chip, save indicator, Preview /
+  Save / Save as template [disabled until templates, stage 5] / Send / More),
+  left toolbox (`DocumentEditorToolbox` is the one definition: Content, Commerce,
+  Fields [Signature only], Structure, Business), centre page canvas (structured
+  flow, `.doc-blocks` stylesheet shared with the renderer), contextual inspector.
+  Under 992px the toolbox is a drawer and the inspector a bottom sheet.
+- **Save model.** One promise queue for every mutation; every request reads the
+  latest `lock_version`; debounced (~800ms) `PUT editor.blocks`; `beforeunload`
+  guard while dirty/saving; 409 → conflict banner + read-only stale copy (never
+  retried, never overwritten); 422 → the field message in a banner. An image block
+  with no image chosen is kept on the canvas but left out of the save.
+- **Inline text.** `contenteditable` with a mini toolbar (bold, italic, underline,
+  link [http/https/mailto/tel], alignment, paragraph/H1-H3, Insert merge field);
+  `serializer.js` turns the DOM into exactly the BlockSchema run format; paste is
+  plain text only.
+- **Product flow.** Add product → single `product_list` block + wizard (choose /
+  create from the Business catalog → full or deposit+balance → due timing, date
+  prefilled from `contact.dates` but never forced). Money is typed as a decimal,
+  formatted with `Intl.NumberFormat` and sent as a decimal string; the wizard blocks
+  invalid deposits live. After every line change the server re-applies the plan and
+  `plan_invalid` / `plan_error` are shown on the block.
+- **Preview.** `GET {doc}/editor/preview` renders the saved draft (or the frozen
+  issued version) through `DocumentBlockRenderer` in a standalone print-width page;
+  a legacy / non-block document redirects to the classic page.
+- **New proposal flow.** Documents page → New proposal → choose Contact → blank
+  (the "My templates / Recommended" slot is reserved for stage 5). `documents.store`
+  with `via=editor` derives the Location from the Contact, seeds an empty block
+  document and redirects into the editor; the classic POST (and invoices) behave as
+  before. List rows of block / new drafts link to the editor.
+- **Known gaps.** Classic show page still carries pre-17B "minor units" form
+  labels (untouched). The canvas is responsive rather than a fixed 794px at narrow
+  desktop widths. Native HTML5 drag-and-drop only (touch uses the toolbox click and
+  the up/down buttons).
+
 ## 9. Deferred / reported gaps
 
 Text, date, checkbox fields; multi-recipient signing; columns; free image upload

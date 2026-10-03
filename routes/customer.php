@@ -1290,6 +1290,7 @@
             // explicit 200/404/409/422 and require `expected_lock_version`.
             Route::get('editor/contacts', 'Business\DocumentEditorController@contactSearch')->middleware('throttle:60,1')->name('editor.contacts.search');
             Route::get('{documentUid}/editor', 'Business\DocumentEditorController@edit')->name('editor.edit');
+            Route::get('{documentUid}/editor/preview', 'Business\DocumentEditorController@preview')->middleware('throttle:60,1')->name('editor.preview');
             Route::put('{documentUid}/editor/blocks', 'Business\DocumentEditorController@blocks')->middleware('throttle:240,1')->name('editor.blocks');
             Route::put('{documentUid}/editor/plan', 'Business\DocumentEditorController@plan')->middleware('throttle:120,1')->name('editor.plan');
             Route::post('{documentUid}/editor/lines/catalog', 'Business\DocumentEditorController@catalogLine')->middleware('throttle:120,1')->name('editor.lines.catalog');
