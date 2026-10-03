@@ -247,6 +247,43 @@ class WebsiteServiceAreaPagesTest extends TestCase
         $this->assertSame(1, $business->locations()->count());
     }
 
+    public function test_the_service_area_contract_end_to_end(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindDistinctAiClient();
+        // As in a real installation, onboarding already created the one primary location.
+        (new \App\Models\BusinessLocation())->forceFill(['business_id' => $business->id, 'is_primary' => true, 'service_mode' => 'service_area', 'name' => 'Main', 'country_code' => 'US'])->save();
+        $locationsBefore = $business->locations()->count();
+        $this->assertSame(1, $locationsBefore);
+
+        // 15 entered cities, with whitespace noise and case-insensitive duplicates.
+        $entered = ['  Manhattan,  NY ', 'Brooklyn', 'brooklyn', 'Queens', 'The Bronx', 'Staten Island', 'Jersey City', 'Hoboken', 'Newark', 'Yonkers', 'Stamford', 'Albany', 'Buffalo', 'Rochester', 'Syracuse', 'QUEENS'];
+        $expected = ['Manhattan, NY', 'Brooklyn', 'Queens', 'The Bronx', 'Staten Island', 'Jersey City', 'Hoboken', 'Newark', 'Yonkers', 'Stamford', 'Albany', 'Buffalo', 'Rochester', 'Syracuse'];
+        $this->completeV2Setup($workspace, $business, ['service_area_cities' => ['value' => $entered]]);
+
+        // Duplicates normalize safely; order preserved.
+        $this->assertSame($expected, $this->activeResponse($business)->answer('service_area_cities'));
+
+        $this->post($this->wizardUrl($workspace, $business, 'setup.generate'))->assertRedirect($this->wizardUrl($workspace, $business, 'preview'));
+
+        // No BusinessLocation is created from any city; the FULL list stays saved, in order.
+        $this->assertSame($locationsBefore, $business->locations()->count());
+        $this->assertSame($expected, $business->fresh()->primaryLocation()->first()->service_area_cities);
+
+        // Initial planning respects the area cap and the total page budget, in the owner's order.
+        $website = Website::where('business_id', $business->id)->sole();
+        $areaSlugs = $website->pages()->where('slug', 'like', 'serving-%')->orderBy('id')->pluck('slug')->all();
+        $this->assertGreaterThanOrEqual(4, count($areaSlugs));
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_AREA_PAGES, count($areaSlugs));
+        $this->assertLessThanOrEqual(WebsitePageStrategy::MAX_TOTAL_PAGES, $website->pages()->count());
+        $this->assertSame(
+            array_slice(['serving-manhattan-ny', 'serving-brooklyn', 'serving-queens', 'serving-the-bronx', 'serving-staten-island', 'serving-jersey-city', 'serving-hoboken', 'serving-newark'], 0, count($areaSlugs)),
+            $areaSlugs,
+            'The first (highest-priority) areas get the pages.'
+        );
+    }
+
     public function test_a_generation_of_near_duplicate_area_pages_fails_and_never_marks_setup_completed(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

@@ -45,6 +45,10 @@
                                         <a class="text-label" href="{{ route('customer.workspaces.businesses.website.setup.step', [$workspaceUid, $businessUid, $block['edit_key']]) }}">Edit</a>
                                     </div>
 
+                                    @if (! empty($block['notice']))
+                                        <div class="text-warning small mb-1" data-summary-notice>{{ $block['notice'] }}</div>
+                                    @endif
+
                                     @if ($block['kind'] === 'text')
                                         <div>{{ $block['value'] }}</div>
                                     @elseif ($block['kind'] === 'photos' || $block['kind'] === 'backdrops')

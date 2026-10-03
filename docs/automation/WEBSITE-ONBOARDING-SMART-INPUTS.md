@@ -12,11 +12,19 @@ copy.
 Questionnaire versions are immutable and every session is pinned to the
 version it started on. The improved setup is therefore **published as v2**
 by `PhotoboothWebsiteSetupQuestionnaireV2Seeder` (it ensures v1 first on a
-fresh database, then supersedes it; re-running is a no-op):
+fresh database, then supersedes it; re-running is a no-op). Nobody has to
+remember to run it:
 
-```
-php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV2Seeder
-```
+* **Existing installations** — the data migration
+  `2026_11_02_090002_publish_photobooth_website_setup_questionnaire_v2` runs
+  with the deploy (same precedent as `seed_seo_citation_directories`). It
+  only acts when the Photo Booth questionnaire is already provisioned (a
+  published version exists) and publishes v2 as its next version; it never
+  creates the definition from nothing.
+* **Fresh installations** — `DatabaseSeeder` calls the V2 seeder.
+* Running either again (or the seeder by hand:
+  `php artisan db:seed --class=PhotoboothWebsiteSetupQuestionnaireV2Seeder`)
+  creates no second version.
 
 * New setups start on v2.
 * In-progress sessions, completed responses, "Edit setup answers" and

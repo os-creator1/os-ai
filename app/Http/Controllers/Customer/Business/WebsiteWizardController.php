@@ -551,7 +551,12 @@ class WebsiteWizardController extends CustomerBaseController
 
         if ($step['input_type'] === 'catalog_selection') {
             $uids = array_values(array_filter(array_map(fn ($e) => is_array($e) ? ($e['uid'] ?? null) : null, (array) $value)));
-            $items = \App\Models\CatalogItem::whereIn('uid', $uids)->where('business_id', $website?->business_id)->get()->keyBy('uid');
+            // Only packages that are STILL live in Packages & Products count;
+            // generation skips the others, so the review says so plainly.
+            $items = \App\Models\CatalogItem::whereIn('uid', $uids)
+                ->where('business_id', $website?->business_id)
+                ->where('lifecycle_state', \App\Enums\Catalog\CatalogItemLifecycleState::Active->value)
+                ->get()->keyBy('uid');
             $entries = [];
 
             foreach ($uids as $uid) {
@@ -561,7 +566,13 @@ class WebsiteWizardController extends CustomerBaseController
                 }
             }
 
-            return $entries === [] ? null : $block('packages', null, $entries);
+            $missing = count($uids) - count($entries);
+            $packagesBlock = $block('packages', null, $entries);
+            $packagesBlock['notice'] = $missing > 0
+                ? ($missing === 1 ? 'A package you selected is' : $missing . ' packages you selected are') . ' no longer in Packages & Products and will be left out of your website. Edit this step to choose others.'
+                : null;
+
+            return ($entries === [] && $missing === 0) ? null : $packagesBlock;
         }
 
         if ($step['input_type'] === 'string_list') {
