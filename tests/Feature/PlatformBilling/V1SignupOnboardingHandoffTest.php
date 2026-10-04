@@ -223,6 +223,28 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame('Adopted', (string) Business::query()->sole()->name);
     }
 
+    public function test_the_services_step_renders_real_inputs_so_a_service_can_be_added(): void
+    {
+        $this->paidSignup();
+        $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes());
+        $this->post(route('customer.onboarding.location.store'), [
+            'service_mode' => 'storefront', 'address_line_1' => '1 Main St', 'city' => 'Austin',
+            'region' => 'TX', 'country_code' => 'US', 'public_address' => '1',
+        ]);
+
+        // Nested double quotes inside a component attribute used to leave the
+        // <x-input> tags unrendered, so there was no field to type a service in.
+        $html = $this->get(route('customer.onboarding.show', ['step' => 'services']))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringNotContainsString('<x-input', $html);
+        $this->assertStringContainsString('name="services[0][name]"', $html);
+        $this->assertMatchesRegularExpression('/<input[^>]+name="services\[0\]\[name\]"/', $html);
+        $this->assertMatchesRegularExpression('/<input[^>]+name="services\[0\]\[starting_price\]"/', $html);
+    }
+
     // D ----------------------------------------------------------------
 
     public function test_completing_onboarding_activates_the_same_business_and_reaches_home(): void
