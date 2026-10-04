@@ -88,6 +88,10 @@ class PlatformOwnerShellNavigationTest extends TestCase
         parent::setUp();
 
         $this->bootPlatformOwnerFixtures();
+
+        // These tests pin the full inherited sidebar; the default-off behaviour is
+        // covered by test_legacy_messaging_entries_are_hidden_by_default below.
+        config(['app.legacy_messaging_menu' => true]);
     }
 
     // --- helpers ----------------------------------------------------------
@@ -160,6 +164,23 @@ class PlatformOwnerShellNavigationTest extends TestCase
         foreach (self::OWNER_ORDER as $label => $suffix) {
             $this->assertSame($adminBase . '/' . $suffix, $byLabel[$label], "{$label} links to the wrong place");
         }
+    }
+
+    public function test_legacy_messaging_entries_are_hidden_by_default_and_the_owner_lands_on_platform_home(): void
+    {
+        config(['app.legacy_messaging_menu' => false]);
+        $this->actingAsFullOwner();
+
+        $labels = array_column($this->sidebar($this->get(route('admin.platform-owner.overview'))->assertOk()->getContent())['links'], 'label');
+
+        foreach (['Messaging Dashboard', 'Sending Servers', 'Sender ID', 'SMS History', 'Plans', 'Invoices', 'Blacklist', 'Customers', 'Subscriptions'] as $legacy) {
+            $this->assertNotContains($legacy, $labels, "{$legacy} is a legacy gateway surface and must not be in the default Platform Owner sidebar.");
+        }
+        foreach (['Home', 'Workspaces', 'Announcements', 'Plan Catalog', 'Administrators', 'Number Operations'] as $kept) {
+            $this->assertContains($kept, $labels, "{$kept} must stay in the Platform Owner sidebar.");
+        }
+
+        $this->assertSame(route('admin.platform-owner.overview'), \App\Helpers\Helper::home_route());
     }
 
     public function test_previously_unlinked_owner_surfaces_are_now_reachable_from_the_sidebar(): void

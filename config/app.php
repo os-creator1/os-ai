@@ -318,6 +318,12 @@
 
         'admin_path' => env('ADMIN_PATH', 'admin'),
 
+        // The inherited Ultimate SMS gateway surfaces (sending servers, sender IDs,
+        // SMS plans/reports, legacy customers/subscriptions/invoices, blacklists).
+        // The routes stay registered; the Platform Owner sidebar hides them unless
+        // this is switched on.
+        'legacy_messaging_menu' => (bool) env('LEGACY_MESSAGING_MENU', false),
+
         /*
         |--------------------------------------------------------------------------
         | Application Site Editor

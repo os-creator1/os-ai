@@ -795,6 +795,7 @@
             'Audit Logs'          => 'Audit Logs',
             'Workspaces'          => 'Workspaces',
             'Customer'            => 'Customer',
+            'Communications'      => 'Communications',
             'Customers'           => 'Customers',
             'Subscriptions'       => 'Subscriptions',
             'Plan'                => 'Plan',

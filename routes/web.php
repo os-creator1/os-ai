@@ -33,7 +33,9 @@
     Route::get('/', function () {
 
         if (config('app.stage') == 'new') {
-            return redirect('install');
+            // There is no web installer: a fresh instance is provisioned from the
+            // command line, and a redirect to a route that does not exist only 404s.
+            abort(503, 'This instance is not installed yet. Run `php artisan platform:install` on the server.');
         }
 
         return redirect('login');

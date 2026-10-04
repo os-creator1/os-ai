@@ -228,6 +228,12 @@
         public static function home_route(): string
         {
             if (Gate::allows('access backend')) {
+                // A Platform Owner lands on the Platform Owner Home, not the
+                // inherited messaging dashboard (Contract 22 §3a).
+                if (\Illuminate\Support\Facades\Auth::user()?->is_admin && Gate::allows('view workspace') && \Illuminate\Support\Facades\Route::has('admin.platform-owner.overview')) {
+                    return route('admin.platform-owner.overview');
+                }
+
                 return route('admin.home');
             }
 
@@ -610,7 +616,7 @@
                     ],
                     [
                         'url'     => '',
-                        'name'    => 'Customer',
+                        'name'    => 'Communications',
                         'icon'    => 'users',
                         'i18n'    => 'Customer',
                         'access'  => 'view customer|view subscription|view announcement',
@@ -619,6 +625,7 @@
                                 'url'    => url(config('app.admin_path') . '/customers'),
                                 'slug'   => config('app.admin_path') . '/customers',
                                 'name'   => 'Customers',
+                                'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                                 'i18n'   => 'Customers',
                                 'access' => 'view customer',
                                 'icon'   => 'users',
@@ -627,6 +634,7 @@
                                 'url'    => url(config('app.admin_path') . '/subscriptions'),
                                 'slug'   => config('app.admin_path') . '/subscriptions',
                                 'name'   => 'Subscriptions',
+                                'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                                 'i18n'   => 'Subscriptions',
                                 'access' => 'view subscription',
                                 'icon'   => 'credit-card',
@@ -721,6 +729,7 @@
                         'url'        => url(config('app.admin_path') . '/dashboard'),
                         'slug'       => config('app.admin_path') . '/dashboard',
                         'name'       => 'Messaging Dashboard',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'i18n'       => 'Messaging Dashboard',
                         'icon'       => 'bar-chart-2',
                         'access'     => 'access backend',
@@ -729,6 +738,7 @@
                     [
                         'url'     => '',
                         'name'    => 'Sending',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'icon'    => 'send',
                         'i18n'    => 'Sending',
                         'access'  => 'view sender_id|view keywords|view sending_servers|view phone_numbers|view tags',
@@ -846,6 +856,7 @@
                     [
                         'url'     => '',
                         'name'    => 'Reports',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'i18n'    => 'Reports',
                         'icon'    => 'bar-chart-2',
                         'access'  => 'view sms_history',
@@ -905,6 +916,7 @@
                     [
                         'url'     => '',
                         'name'    => 'Plan',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'i18n'    => 'Plan',
                         'icon'    => 'credit-card',
                         'access'  => 'manage plans|manage currencies',
@@ -940,6 +952,7 @@
                         'url'    => url(config('app.admin_path') . '/invoices'),
                         'slug'   => config('app.admin_path') . '/invoices',
                         'name'   => 'Invoices',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'i18n'   => 'Invoices',
                         'access' => 'view invoices',
                         'icon'   => 'shopping-cart',
@@ -1007,6 +1020,7 @@
                     [
                         'url'     => '',
                         'name'    => 'Security',
+                        'requires_config' => 'app.legacy_messaging_menu', // legacy Ultimate SMS surface; hidden from the Platform Owner shell by default
                         'i18n'    => 'Security',
                         'icon'    => 'shield',
                         'access'  => 'view blacklist|view spam_word|view blocked_senderids',
