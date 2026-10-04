@@ -221,11 +221,22 @@ final class GoogleAdsHttpTransport
             in_array($status, [401, 403], true), in_array($errorStatus, ['UNAUTHENTICATED', 'PERMISSION_DENIED'], true) => GoogleAdsProviderException::accessDenied(),
             $status === 404, $errorStatus === 'NOT_FOUND' => GoogleAdsProviderException::notFound(),
             $status === 400, $errorStatus === 'INVALID_ARGUMENT' => GoogleAdsProviderException::validation(),
+            // A mutate that Google may have executed before it answered (5xx, 408, or an
+            // ambiguous Google status) is NOT a definite failure: ledger it `unknown`,
+            // never replay it, and let the reconciler judge it from synced state.
+            $mutate && $this->isAmbiguousMutateFailure($status, $errorStatus) => GoogleAdsProviderException::timeout(afterMutateSent: true),
             $response->serverError() => GoogleAdsProviderException::providerUnavailable(),
             default => GoogleAdsProviderException::unexpectedResponse(),
         };
 
         throw $this->logged($exception, $kind, $status, (string) $response->header('request-id'));
+    }
+
+    private function isAmbiguousMutateFailure(int $status, ?string $errorStatus): bool
+    {
+        return $status >= 500
+            || $status === 408
+            || in_array($errorStatus, ['ABORTED', 'UNKNOWN', 'DEADLINE_EXCEEDED', 'INTERNAL', 'UNAVAILABLE'], true);
     }
 
     /**

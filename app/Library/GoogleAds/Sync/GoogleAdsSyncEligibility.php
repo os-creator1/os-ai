@@ -34,6 +34,8 @@ class GoogleAdsSyncEligibility
 {
     public const REASON_ACCOUNT_MISSING = 'account_missing';
 
+    public const REASON_ACCOUNT_NOT_SELECTED = 'account_not_selected';
+
     public const REASON_BUSINESS_INACTIVE = 'business_inactive';
 
     public const REASON_WORKSPACE_INACTIVE = 'workspace_inactive';
@@ -53,6 +55,10 @@ class GoogleAdsSyncEligibility
 
         if ($account === null) {
             return GoogleAdsSyncEligibilityResult::refused(self::REASON_ACCOUNT_MISSING);
+        }
+
+        if ($account->selected_at === null) {
+            return GoogleAdsSyncEligibilityResult::refused(self::REASON_ACCOUNT_NOT_SELECTED, $account);
         }
 
         $business = Business::query()->find($account->business_id);

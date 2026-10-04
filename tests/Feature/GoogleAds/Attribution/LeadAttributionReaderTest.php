@@ -208,6 +208,18 @@ class LeadAttributionReaderTest extends TestCase
         $this->assertFalse($row['booked']);
     }
 
+    public function test_the_opportunitys_own_currency_wins_over_the_business_currency(): void
+    {
+        $lead = $this->lead($this->touchCookies(['gclid' => self::CLICK]));
+        $opportunity = app(CrmOpportunityService::class)->create($this->business, $this->formsPipeline($this->business), $lead->contact, 'Euro deal', 90000);
+        DB::table('businesses')->where('id', $this->business->id)->update(['currency_code' => 'USD']);
+        DB::table('crm_opportunities')->where('id', $opportunity->id)->update(['currency_code' => 'EUR']);
+
+        $row = $this->read($this->business->fresh())[0];
+
+        $this->assertSame('EUR', $row['opportunity']['currency']);
+    }
+
     public function test_query_count_does_not_depend_on_the_number_of_rows(): void
     {
         $pipeline = $this->formsPipeline($this->business);

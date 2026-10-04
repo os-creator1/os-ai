@@ -12,6 +12,10 @@ use App\Models\GoogleAdsAccount;
  * replayed. Google's own state is the only evidence of whether it applied, so
  * once campaigns / keywords have just been re-synced the reconciler compares
  * that fresh state with each unknown operation. It never calls the provider.
+ *
+ * Keyword and negative operations are judged only after the `keywords` stage
+ * (the `campaigns` stage has not refreshed them yet), and absence is evidence
+ * only when that stage's report was complete, not truncated.
  */
 final class ReconcileMutationsAfterSync implements GoogleAdsSyncObserver
 {
@@ -19,10 +23,10 @@ final class ReconcileMutationsAfterSync implements GoogleAdsSyncObserver
     {
     }
 
-    public function afterStage(GoogleAdsAccount $account, string $stageKey): void
+    public function afterStage(GoogleAdsAccount $account, string $stageKey, bool $truncated = false): void
     {
         if ($stageKey === 'campaigns' || $stageKey === 'keywords') {
-            $this->reconciler->reconcile($account);
+            $this->reconciler->reconcile($account, $stageKey, $truncated);
         }
     }
 }

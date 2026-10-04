@@ -451,6 +451,62 @@ class GoogleAdsSyncCoordinatorTest extends TestCase
         $this->assertSame(0, DB::table('google_ads_campaigns')->whereNotIn('business_id', [$a->id, $b->id])->count());
     }
 
+    public function test_a_run_stops_cleanly_when_the_account_was_reselected_mid_run(): void
+    {
+        [, , $account] = $this->syncableAccount();
+        $this->hook->before = function (string $method) use ($account): void {
+            if ($method === 'campaigns') {
+                DB::table('google_ads_accounts')->where('id', $account->id)->update(['customer_id' => PhotoBoothFixture::SECOND_MANAGED_CUSTOMER_ID]);
+            }
+        };
+
+        $run = $this->runSync($account);
+
+        $this->assertSame(GoogleAdsSyncRunState::Failed, $run->state);
+        $this->assertSame('account_changed', $run->failure_code);
+        $this->assertSame(0, $this->rows('google_ads_campaigns', $account), 'nothing is written for the old customer after the change');
+        $this->assertSame(0, $this->fakeAds->callCount('adGroups'));
+    }
+
+    public function test_a_run_stops_cleanly_when_the_currency_changed_or_the_account_was_unselected_mid_run(): void
+    {
+        foreach ([['currency_code' => 'EUR'], ['selected_at' => null]] as $change) {
+            [, , $account] = $this->syncableAccount('Biz ' . json_encode($change));
+            $this->hook->before = function (string $method) use ($account, $change): void {
+                if ($method === 'campaigns') {
+                    DB::table('google_ads_accounts')->where('id', $account->id)->update($change);
+                }
+            };
+
+            $run = $this->runSync($account);
+
+            $this->assertSame('account_changed', $run->failure_code, json_encode($change));
+            $this->assertSame(0, $this->rows('google_ads_campaigns', $account));
+        }
+    }
+
+    public function test_observers_receive_the_truncated_flag_of_the_stage(): void
+    {
+        [, , $account] = $this->syncableAccount();
+        $observer = new class implements GoogleAdsSyncObserver {
+            /** @var array<string, bool> */
+            public array $truncated = [];
+
+            public function afterStage(GoogleAdsAccount $account, string $stageKey, bool $truncated = false): void
+            {
+                $this->truncated[$stageKey] = $truncated;
+            }
+        };
+        $this->app->instance('test.ads.observer2', $observer);
+        $this->app->tag(['test.ads.observer2'], GoogleAdsSyncCoordinator::OBSERVER_TAG);
+        $this->fakeAds->limitRows('keywords', 2);
+
+        $this->runSync($account);
+
+        $this->assertFalse($observer->truncated['campaigns']);
+        $this->assertTrue($observer->truncated['keywords']);
+    }
+
     public function test_tagged_observers_are_told_after_each_stage_and_an_observer_failure_does_not_abort(): void
     {
         [, , $account] = $this->syncableAccount();
@@ -458,7 +514,7 @@ class GoogleAdsSyncCoordinatorTest extends TestCase
             /** @var array<int, string> */
             public array $stages = [];
 
-            public function afterStage(GoogleAdsAccount $account, string $stageKey): void
+            public function afterStage(GoogleAdsAccount $account, string $stageKey, bool $truncated = false): void
             {
                 $this->stages[] = $stageKey;
 

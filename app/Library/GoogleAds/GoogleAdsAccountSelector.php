@@ -6,6 +6,7 @@ use App\DTO\GoogleAds\GoogleAdsAccountCandidate;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Exceptions\GoogleAds\GoogleAdsAccountSelectionException;
 use App\Exceptions\GoogleAds\GoogleAdsProviderException;
+use App\Library\GoogleAds\Sync\GoogleAdsSyncGuard;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\GoogleAdsAccount;
@@ -38,6 +39,11 @@ use Throwable;
  * customers / currencies never mix. Sync-run and mutation history, and the
  * ledger, are retained.
  *
+ * Selection is REFUSED (`sync_running`) while a sync is live for the existing
+ * account: a purge or customer switch under a running sync would let it write
+ * the old customer's rows into the new selection. The check runs again under
+ * the account row lock, which GoogleAdsSyncDispatcher::queue() also takes.
+ *
  * Two ledger operations record the story: `ads_accounts_listed` (from the
  * directory, carries the call count) and `ads_account_selected`.
  */
@@ -47,6 +53,7 @@ final class GoogleAdsAccountSelector
         private readonly GoogleAdsConnectionManager $connections,
         private readonly GoogleAdsAccountDirectory $directory,
         private readonly GoogleAdsOperationLedger $ledger,
+        private readonly GoogleAdsSyncGuard $syncGuard,
     ) {
     }
 
@@ -63,6 +70,12 @@ final class GoogleAdsAccountSelector
 
         if ($connection === null || ! $connection->isActive()) {
             throw GoogleAdsAccountSelectionException::notConnected();
+        }
+
+        $current = GoogleAdsAccount::query()->where('business_id', $business->id)->first();
+
+        if ($current !== null && $this->syncGuard->hasLiveWork($current)) {
+            throw GoogleAdsAccountSelectionException::syncRunning();
         }
 
         $candidate = $this->findCandidate(
@@ -141,6 +154,10 @@ final class GoogleAdsAccountSelector
                         throw new \LogicException('Google Ads account row vanished during selection.');
                     }
                 }
+            }
+
+            if ($this->syncGuard->hasLiveWork($existing)) {
+                throw GoogleAdsAccountSelectionException::syncRunning();
             }
 
             if ($existing->customer_id !== $attributes['customer_id'] || $existing->currency_code !== $attributes['currency_code']) {

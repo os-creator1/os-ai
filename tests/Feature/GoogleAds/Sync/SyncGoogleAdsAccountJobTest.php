@@ -12,6 +12,7 @@ use App\Jobs\Base;
 use App\Jobs\GoogleAds\SyncGoogleAdsAccount;
 use App\Library\GoogleAds\PhotoBoothFixture;
 use App\Library\GoogleAds\Sync\GoogleAdsSyncDispatcher;
+use App\Library\GoogleAds\Sync\GoogleAdsSyncGuard;
 use App\Models\BusinessGoogleConnection;
 use App\Models\GoogleAdsAccount;
 use App\Models\GoogleAdsSyncRun;
@@ -130,6 +131,47 @@ class SyncGoogleAdsAccountJobTest extends TestCase
 
         $this->assertSame(GoogleAdsSyncRunState::Succeeded, $this->latestRun($account)->state);
         $this->assertNull($account->fresh()->sync_claimed_at);
+    }
+
+    public function test_a_job_whose_claim_was_taken_over_stops_and_does_not_release_the_new_owners_claim(): void
+    {
+        [, , $account] = $this->syncableAccount();
+        $this->hook->before = function (string $method) use ($account): void {
+            if ($method === 'campaigns') {
+                // The claim went stale and another worker took it over mid-run.
+                DB::table('google_ads_accounts')->where('id', $account->id)->update(['sync_claimed_at' => '2026-10-04 12:14:00']);
+            }
+        };
+
+        SyncGoogleAdsAccount::dispatchSync($account->id);
+
+        $run = $this->latestRun($account);
+        $this->assertSame(GoogleAdsSyncRunState::Failed, $run->state);
+        $this->assertSame('claim_lost', $run->failure_code);
+        $this->assertSame(0, $this->fakeAds->callCount('adGroups'), 'no further stage runs once the claim is lost');
+        $this->assertSame('2026-10-04 12:14:00', (string) DB::table('google_ads_accounts')->where('id', $account->id)->value('sync_claimed_at'), 'the old job must not release the new owner');
+    }
+
+    public function test_every_stage_heartbeats_the_claim_so_a_long_run_is_never_stale(): void
+    {
+        [, , $account] = $this->syncableAccount();
+        $stolen = 'untouched';
+        $this->hook->before = function (string $method) use ($account, &$stolen): void {
+            if ($method === 'adGroups') {
+                $this->advance(10);
+            }
+
+            if ($method === 'keywords') {
+                $this->advance(10); // 20 minutes after the claim was taken, 10 after the last heartbeat
+                $stolen = app(GoogleAdsSyncGuard::class)->acquire((int) $account->id);
+            }
+        };
+
+        SyncGoogleAdsAccount::dispatchSync($account->id);
+
+        $this->assertNull($stolen, 'a claim that heartbeats at each stage is not stealable');
+        $this->assertSame(GoogleAdsSyncRunState::Succeeded, $this->latestRun($account)->state);
+        $this->assertNull($account->fresh()->sync_claimed_at, 'the refreshed claim is still ours, so it is released');
     }
 
     public function test_two_concurrent_syncs_for_one_account_run_the_provider_once(): void

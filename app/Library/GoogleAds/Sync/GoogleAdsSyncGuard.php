@@ -15,6 +15,12 @@ use Illuminate\Support\Facades\DB;
  * abandoned after CLAIM_STALE_MINUTES (a dead worker can never wedge an
  * account). It mirrors the GBP connection refresh claim, on the Ads account.
  *
+ * OWNERSHIP. A claim older than CLAIM_STALE_MINUTES can be taken over, so the
+ * claimant holds a GoogleAdsSyncClaim (the stored stamp). It heartbeats at the
+ * start of every stage (a live run never goes stale) and releases ONLY while
+ * the stored stamp still equals its own, so a job whose claim was taken over
+ * can neither extend nor release the new owner's claim.
+ *
  * hasLiveWork() is the wider "is anything already in flight or about to be"
  * question the sweep, the requester and the freshness reader all ask: a live
  * claim, a run that is `running`, or a `queued` run whose job is plausibly
@@ -24,22 +30,26 @@ final class GoogleAdsSyncGuard
 {
     public const CLAIM_STALE_MINUTES = 15;
 
+    private const STAMP_FORMAT = 'Y-m-d H:i:s';
+
     /** A queued run older than this is treated as lost (its job never ran). */
     public const QUEUED_RUN_WINDOW_MINUTES = 180;
 
-    /** True only for the single caller that wins the account. */
-    public function acquire(int $accountId): bool
+    /** The claim for the single caller that wins the account, or null. */
+    public function acquire(int $accountId): ?GoogleAdsSyncClaim
     {
+        $stamp = now()->format(self::STAMP_FORMAT);
+
         $affected = DB::table('google_ads_accounts')
             ->where('id', $accountId)
             ->where(static function ($query): void {
                 $query->whereNull('sync_claimed_at')
                     ->orWhere('sync_claimed_at', '<', now()->subMinutes(self::CLAIM_STALE_MINUTES));
             })
-            ->update(['sync_claimed_at' => now()]);
+            ->update(['sync_claimed_at' => $stamp]);
 
         if ($affected !== 1) {
-            return false;
+            return null;
         }
 
         // We hold the claim, so any `running` row older than the stale window
@@ -55,12 +65,42 @@ final class GoogleAdsSyncGuard
                 'updated_at' => now(),
             ]);
 
+        return new GoogleAdsSyncClaim($accountId, $stamp);
+    }
+
+    /**
+     * Extends our claim. False when it was taken over (the caller must stop).
+     * A same-second heartbeat changes nothing, so ownership is then read back.
+     */
+    public function heartbeat(GoogleAdsSyncClaim $claim): bool
+    {
+        $next = now()->format(self::STAMP_FORMAT);
+
+        if ($next === $claim->stamp) {
+            return DB::table('google_ads_accounts')->where('id', $claim->accountId)->value('sync_claimed_at') === $claim->stamp;
+        }
+
+        $affected = DB::table('google_ads_accounts')
+            ->where('id', $claim->accountId)
+            ->where('sync_claimed_at', $claim->stamp)
+            ->update(['sync_claimed_at' => $next]);
+
+        if ($affected !== 1) {
+            return false;
+        }
+
+        $claim->stamp = $next;
+
         return true;
     }
 
-    public function release(int $accountId): void
+    /** Releases the claim only while it is still ours. */
+    public function release(GoogleAdsSyncClaim $claim): void
     {
-        DB::table('google_ads_accounts')->where('id', $accountId)->update(['sync_claimed_at' => null]);
+        DB::table('google_ads_accounts')
+            ->where('id', $claim->accountId)
+            ->where('sync_claimed_at', $claim->stamp)
+            ->update(['sync_claimed_at' => null]);
     }
 
     public function isClaimLive(GoogleAdsAccount $account): bool

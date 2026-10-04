@@ -68,6 +68,7 @@ final class GoogleAdsSyncCoordinator
         private readonly GoogleAdsOperationLedger $ledger,
         private readonly GoogleAdsCallBudget $budget,
         private readonly GoogleAdsConfig $config,
+        private readonly GoogleAdsSyncGuard $guard,
         private readonly Container $container,
         AccountSummaryStage $accountSummary,
         CampaignsStage $campaigns,
@@ -85,6 +86,7 @@ final class GoogleAdsSyncCoordinator
         BusinessGoogleConnection $connection,
         GoogleAdsSyncRun $run,
         ?int $actorUserId = null,
+        ?GoogleAdsSyncClaim $claim = null,
     ): GoogleAdsSyncRun {
         $this->begin($account, $run);
 
@@ -96,6 +98,9 @@ final class GoogleAdsSyncCoordinator
         );
         $run->forceFill(['business_google_operation_id' => $operation->id])->save();
 
+        // What the run was started for; compared again before every persist (L1).
+        $customerId = (string) $account->customer_id;
+        $currency = strtoupper((string) $account->currency_code);
         $rows = 0;
         $truncated = false;
         $through = null;
@@ -109,14 +114,19 @@ final class GoogleAdsSyncCoordinator
             $context = $this->contextFor($account, $token);
 
             foreach ($this->stages as $stage) {
+                if ($claim !== null && ! $this->guard->heartbeat($claim)) {
+                    throw new GoogleAdsSyncAbortException(GoogleAdsSyncFailureCode::CLAIM_LOST);
+                }
+
                 $report = $this->budget->withinOperation($connection, $operation, fn () => $stage->fetch($context));
+                $this->assertAccountUnchanged($account, $customerId, $currency);
                 $result = $stage->persist($context, $report);
 
                 $rows += $result->rows;
                 $truncated = $truncated || $result->truncated;
                 $through = $result->dataThroughDate ?? $through;
 
-                $this->notifyObservers($account, $stage->key());
+                $this->notifyObservers($account, $stage->key(), $result->truncated);
             }
         } catch (GoogleAdsProviderException $exception) {
             $this->ledger->fail($operation, $exception, 'Google Ads sync stopped');
@@ -163,6 +173,19 @@ final class GoogleAdsSyncCoordinator
         ])->save();
 
         return $run;
+    }
+
+    /** Nothing more is written once the account was re-selected (other customer / currency) or unselected. */
+    private function assertAccountUnchanged(GoogleAdsAccount $account, string $customerId, string $currency): void
+    {
+        $row = DB::table('google_ads_accounts')->where('id', $account->id)->first(['customer_id', 'currency_code', 'selected_at']);
+
+        if ($row === null
+            || $row->selected_at === null
+            || (string) $row->customer_id !== $customerId
+            || strtoupper((string) $row->currency_code) !== $currency) {
+            throw new GoogleAdsSyncAbortException(GoogleAdsSyncFailureCode::ACCOUNT_CHANGED);
+        }
     }
 
     private function begin(GoogleAdsAccount $account, GoogleAdsSyncRun $run): void
@@ -231,7 +254,7 @@ final class GoogleAdsSyncCoordinator
         return $run;
     }
 
-    private function notifyObservers(GoogleAdsAccount $account, string $stageKey): void
+    private function notifyObservers(GoogleAdsAccount $account, string $stageKey, bool $truncated): void
     {
         foreach ($this->container->tagged(self::OBSERVER_TAG) as $observer) {
             if (! $observer instanceof GoogleAdsSyncObserver) {
@@ -239,7 +262,7 @@ final class GoogleAdsSyncCoordinator
             }
 
             try {
-                $observer->afterStage($account, $stageKey);
+                $observer->afterStage($account, $stageKey, $truncated);
             } catch (Throwable $exception) {
                 // An observer defect must not abort the sync, but it must be seen.
                 report($exception);

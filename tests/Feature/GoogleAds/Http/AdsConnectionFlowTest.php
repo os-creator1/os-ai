@@ -14,7 +14,18 @@ use App\Models\BusinessGoogleConnection;
 use App\Models\GoogleAdsAccount;
 use App\Models\GoogleAdsSyncRun;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
+use App\Library\GoogleAds\GoogleAdsConfig;
+use App\Library\GoogleAds\Mutations\GoogleAdsMutationNotFoundException;
+use App\Library\GoogleAds\Mutations\GoogleAdsMutationService;
+use App\Library\GoogleAds\Sync\GoogleAdsSyncDispatcher;
+use App\Library\GoogleAds\Sync\GoogleAdsSyncEligibility;
+use App\Models\Customer;
+use App\Models\GoogleAdsCampaign;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\GoogleAds\Http\Concerns\CreatesAdsHttpFixtures;
 use Tests\TestCase;
 
@@ -434,6 +445,71 @@ class AdsConnectionFlowTest extends TestCase
 
         $html = $this->get($this->adsUrl($workspace, $business))->assertOk()->getContent();
         $this->assertStringContainsString('Connect Google Ads to see where your ad budget is generating results.', $html);
+    }
+
+    public function test_selecting_while_an_update_is_running_redirects_back_with_a_friendly_message(): void
+    {
+        [$customer, $business, $workspace] = $this->adsHttpTenant();
+        $account = $this->selectedAdsAccount($business, ['customer_id' => P::CUSTOMER_ID, 'login_customer_id' => P::MANAGER_ID]);
+        GoogleAdsSyncRun::create(['business_id' => $business->id, 'google_ads_account_id' => $account->id, 'state' => 'running', 'trigger' => 'manual', 'started_at' => now()]);
+        $this->asAdsUser($customer);
+
+        $this->post($this->adsUrl($workspace, $business, 'accounts.select'), ['customer_id' => P::SECOND_MANAGED_CUSTOMER_ID])
+            ->assertRedirect($this->adsUrl($workspace, $business, 'accounts'));
+
+        $this->assertSame('error', session('status'));
+        $this->assertStringContainsString('An update is running; try again in a minute.', (string) session('message'));
+        $this->assertSame(P::CUSTOMER_ID, $account->fresh()->customer_id);
+    }
+
+    public function test_disconnect_unselects_the_account_so_a_reconnect_must_choose_again_and_the_same_customer_keeps_its_data(): void
+    {
+        [$customer, $business, $workspace] = $this->adsHttpTenant();
+        $account = $this->selectedAdsAccount($business, [
+            'customer_id' => P::CUSTOMER_ID, 'login_customer_id' => P::MANAGER_ID, 'monthly_budget_target_micros' => 250_000_000,
+        ]);
+        $this->seedOctoberData($account);
+        $campaign = GoogleAdsCampaign::query()->where('google_ads_account_id', $account->id)->firstOrFail();
+        $this->asAdsUser($customer);
+
+        $this->post($this->adsUrl($workspace, $business, 'disconnect'))->assertRedirect();
+
+        $this->assertNull($account->fresh()->selected_at);
+        $this->assertSame(1, GoogleAdsCampaign::query()->where('google_ads_account_id', $account->id)->count(), 'facts are kept for history');
+
+        // Reconnect (possibly with a different Google identity): active again, but nothing is selected.
+        BusinessGoogleConnection::query()->where('business_id', $business->id)->firstOrFail()
+            ->forceFill(['state' => GoogleConnectionState::Active, 'refresh_token_encrypted' => 'new-identity-token', 'disconnected_at' => null])->save();
+
+        $this->get($this->adsUrl($workspace, $business))->assertOk()->assertSee('Choose your Google Ads account');
+
+        // Sync and mutations treat it as no account at all.
+        $check = app(GoogleAdsSyncEligibility::class)->evaluate((int) $account->id);
+        $this->assertSame(GoogleAdsSyncEligibility::REASON_ACCOUNT_NOT_SELECTED, $check->reason);
+        DB::table('google_ads_accounts')->where('id', $account->id)->update(['last_successful_sync_at' => null]);
+        (new SweepGoogleAdsSyncs())->handle(app(GoogleAdsConfig::class), app(GoogleAdsSyncEligibility::class), app(GoogleAdsSyncDispatcher::class));
+        Queue::assertNotPushed(\App\Jobs\GoogleAds\SyncGoogleAdsAccount::class);
+        $this->assertRefusedMutation($business, $customer, $campaign->uid);
+
+        // Choosing the SAME customer again keeps the facts and the target.
+        $this->post($this->adsUrl($workspace, $business, 'accounts.select'), ['customer_id' => P::CUSTOMER_ID])->assertRedirect($this->adsUrl($workspace, $business));
+
+        $again = $account->fresh();
+        $this->assertNotNull($again->selected_at);
+        $this->assertSame(250_000_000, (int) $again->monthly_budget_target_micros);
+        $this->assertSame(1, GoogleAdsCampaign::query()->where('google_ads_account_id', $account->id)->count());
+    }
+
+    private function assertRefusedMutation(Business $business, Customer $customer, string $campaignUid): void
+    {
+        $actor = User::query()->findOrFail($customer->user_id);
+
+        try {
+            app(GoogleAdsMutationService::class)->pauseCampaign($business, $actor, $campaignUid);
+            $this->fail('an unselected account must refuse mutations');
+        } catch (GoogleAdsMutationNotFoundException) {
+            $this->assertSame(0, $this->fakeAds->callCount('setCampaignStatus'));
+        }
     }
 
     public function test_disconnecting_when_nothing_is_connected_is_harmless(): void

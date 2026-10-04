@@ -43,7 +43,7 @@
         <div class="d-flex gap-1 flex-nowrap overflow-auto pb-50">
             @foreach($adsNav as $navItem)
                 <a href="{{ $navItem['url'] }}"
-                   class="btn btn-sm {{ $navItem['active'] ? 'btn-primary' : 'btn-flat-secondary' }} text-nowrap"
+                   class="btn btn-sm {{ $navItem['active'] ? 'btn-primary' : 'btn-flat-secondary' }} text-nowrap flex-shrink-0"
                    @if($navItem['active']) aria-current="page" @endif
                    data-nav="{{ $navItem['key'] }}">{{ $navItem['label'] }}</a>
             @endforeach
@@ -54,3 +54,22 @@
 @if($showFreshness && $account !== null && $freshness !== null)
     @include('customer.business.ads._freshness', ['freshness' => $freshness])
 @endif
+
+{{-- Compact data tables: Ads tables carry up to ten numeric columns, so tighten padding and let headers wrap
+     instead of forcing a horizontal scroll at laptop widths. Scoped to pages that render this header. --}}
+<style>
+    body:has([data-role="ads-title"]) .table-responsive > .table th,
+    body:has([data-role="ads-title"]) .table-responsive > .table td {
+        padding-left: .6rem;
+        padding-right: .6rem;
+    }
+    body:has([data-role="ads-title"]) .table-responsive > .table th {
+        white-space: normal !important;
+        line-height: 1.25;
+        vertical-align: bottom;
+    }
+    body:has([data-role="ads-title"]) .table-responsive > .table td.text-end,
+    body:has([data-role="ads-title"]) .table-responsive > .table td[data-col] {
+        white-space: nowrap;
+    }
+</style>

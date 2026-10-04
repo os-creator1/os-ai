@@ -33,6 +33,12 @@ final class GoogleAdsSyncFailureCode
     /** A running run whose claim went stale (worker died) was retired. */
     public const ABANDONED = 'abandoned';
 
+    /** The account's customer / currency was changed, or it was unselected, while the run was in flight. */
+    public const ACCOUNT_CHANGED = 'account_changed';
+
+    /** This run's account claim was taken over by another worker (it went stale). */
+    public const CLAIM_LOST = 'claim_lost';
+
     /** An unexpected local error; the exception itself is rethrown to the queue. */
     public const INTERNAL_ERROR = 'internal_error';
 
@@ -74,6 +80,8 @@ final class GoogleAdsSyncFailureCode
             self::ALREADY_RUNNING => 'A refresh is already in progress.',
             self::EXPIRED => 'A scheduled refresh never started.',
             self::ABANDONED => 'A refresh was interrupted before it finished.',
+            self::ACCOUNT_CHANGED => 'The Google Ads account was changed during a refresh. The next refresh will start over.',
+            self::CLAIM_LOST => 'A refresh was interrupted by another refresh.',
             self::INTERNAL_ERROR => 'The last refresh failed unexpectedly.',
             self::RATE_LIMITED => 'Google is rate limiting requests. The next refresh will retry.',
             GoogleAdsProviderException::INVALID_GRANT => 'Google has revoked this connection. Reconnect to continue.',

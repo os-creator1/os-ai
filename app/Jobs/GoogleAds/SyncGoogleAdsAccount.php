@@ -23,7 +23,8 @@ use App\Models\GoogleAdsSyncRun;
  * Before ANY provider call the job RE-FETCHES the account and re-checks
  * Business / workspace / entitlement / connection (GoogleAdsSyncEligibility),
  * then takes the account claim so two jobs never run for one account. The
- * claim is released in `finally` whatever happens.
+ * claim is released in `finally` whatever happens, but only while it is still
+ * this job's (a claim taken over after going stale is never released here).
  *
  * Provider failures are already classified, ledgered and stored on the run by
  * the coordinator, so they end the job quietly (re-throwing would only add a
@@ -61,18 +62,20 @@ class SyncGoogleAdsAccount extends Base
             return;
         }
 
-        if (! $guard->acquire($this->accountId)) {
+        $claim = $guard->acquire($this->accountId);
+
+        if ($claim === null) {
             $coordinator->skip($run, GoogleAdsSyncFailureCode::ALREADY_RUNNING);
 
             return;
         }
 
         try {
-            $coordinator->execute($check->account, $check->connection, $run, $this->actorUserId);
+            $coordinator->execute($check->account, $check->connection, $run, $this->actorUserId, $claim);
         } catch (GoogleAdsProviderException) {
             // Already classified, ledgered and stored on the run.
         } finally {
-            $guard->release($this->accountId);
+            $guard->release($claim);
         }
     }
 

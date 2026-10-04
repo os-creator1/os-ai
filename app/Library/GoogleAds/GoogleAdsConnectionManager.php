@@ -51,7 +51,10 @@ use LogicException;
  * provider call, or the budget fails closed.
  *
  * Disconnect keeps the Ads account row, normalised facts and ledger rows for
- * history (contract §3); it destroys only the authorization material.
+ * history (contract §3); it destroys only the authorization material and
+ * UNSELECTS the account (selected_at = NULL), as does a revoke: after any
+ * reconnect the Business must choose its account again, so data of a previous
+ * Google identity never reads as the live account.
  */
 final class GoogleAdsConnectionManager
 {
@@ -306,6 +309,8 @@ final class GoogleAdsConnectionManager
             'oauth_state_expires_at' => null,
             'failure_classification' => GoogleAdsProviderException::INVALID_GRANT,
         ]);
+
+        $this->unselectAccount((int) $connection->business_id);
     }
 
     /**
@@ -329,6 +334,8 @@ final class GoogleAdsConnectionManager
             'failure_classification' => null,
         ]);
 
+        $this->unselectAccount($businessId);
+
         $operation = $this->ledger->open(
             businessId: $businessId,
             type: GoogleOperationType::Disconnected,
@@ -337,6 +344,12 @@ final class GoogleAdsConnectionManager
         );
 
         $this->ledger->succeed($operation);
+    }
+
+    /** Keeps the row and its facts, but the Business has no selected account until it chooses one again. */
+    private function unselectAccount(int $businessId): void
+    {
+        DB::table('google_ads_accounts')->where('business_id', $businessId)->update(['selected_at' => null, 'updated_at' => now()]);
     }
 
     public function markFailure(BusinessGoogleConnection $connection, GoogleAdsProviderException $exception): void

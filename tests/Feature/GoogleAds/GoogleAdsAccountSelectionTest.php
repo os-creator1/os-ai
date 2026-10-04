@@ -409,6 +409,30 @@ class GoogleAdsAccountSelectionTest extends TestCase
         $this->assertNotNull($again->last_successful_sync_at);
     }
 
+    public function test_selection_is_refused_while_a_sync_is_live_and_changes_nothing(): void
+    {
+        $account = $this->selector()->select($this->business, $this->actorId, P::CUSTOMER_ID);
+        $this->seedFacts($account);
+        $run = GoogleAdsSyncRun::create(['business_id' => $this->business->id, 'google_ads_account_id' => $account->id, 'state' => 'queued', 'trigger' => 'connect']);
+
+        $reason = $this->selectionReason(fn () => $this->selector()->select($this->business, $this->actorId, P::SECOND_MANAGED_CUSTOMER_ID));
+
+        $this->assertSame(GoogleAdsAccountSelectionException::SYNC_RUNNING, $reason);
+        $this->assertSame(P::CUSTOMER_ID, $account->fresh()->customer_id);
+        $this->assertSame(5, $this->factCount($account));
+
+        // A live claim counts too; once nothing is in flight the selection goes through.
+        $run->forceFill(['state' => 'succeeded'])->save();
+        DB::table('google_ads_accounts')->where('id', $account->id)->update(['sync_claimed_at' => now()->subMinutes(2)]);
+        $this->assertSame(
+            GoogleAdsAccountSelectionException::SYNC_RUNNING,
+            $this->selectionReason(fn () => $this->selector()->select($this->business, $this->actorId, P::SECOND_MANAGED_CUSTOMER_ID)),
+        );
+
+        DB::table('google_ads_accounts')->where('id', $account->id)->update(['sync_claimed_at' => null]);
+        $this->assertSame(P::SECOND_MANAGED_CUSTOMER_ID, $this->selector()->select($this->business, $this->actorId, P::SECOND_MANAGED_CUSTOMER_ID)->customer_id);
+    }
+
     public function test_changing_the_customer_purges_facts_and_resets_targets_and_sync_state(): void
     {
         $account = $this->selector()->select($this->business, $this->actorId, P::CUSTOMER_ID);

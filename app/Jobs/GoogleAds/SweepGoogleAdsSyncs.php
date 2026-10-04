@@ -50,6 +50,7 @@ class SweepGoogleAdsSyncs extends Base
                 $query->where('product', GoogleConnectionProduct::GoogleAds->value)
                     ->where('state', GoogleConnectionState::Active->value);
             })
+            ->whereNotNull('selected_at')
             ->where(function ($query) use ($cutoff): void {
                 $query->whereNull('last_successful_sync_at')->orWhere('last_successful_sync_at', '<', $cutoff);
             })

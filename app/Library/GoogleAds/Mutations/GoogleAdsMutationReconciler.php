@@ -20,9 +20,13 @@ use Illuminate\Support\Carbon;
  * from Google's own synced state. It NEVER calls the provider and never
  * re-sends anything.
  *
- * PRECONDITION: the sync coordinator calls it right after campaigns and
- * keywords were freshly synced for the account (it is not wired into sync
- * here).
+ * PRECONDITION: the sync coordinator calls it right after the campaigns or the
+ * keywords stage persisted (ReconcileMutationsAfterSync). `$afterStage` says
+ * which: campaign-status operations may be judged "not applied" after either,
+ * keyword-status and negative operations only after `keywords` (the campaigns
+ * stage has not refreshed google_ads_keywords yet), and a negative's ABSENCE
+ * counts as evidence only when that keywords report was complete (`$truncated`
+ * false). "Applied" (state equals the request) is valid evidence at any time.
  *
  * For each `unknown` operation of the account:
  *   - the synced state already equals the requested state (campaign / keyword
@@ -47,7 +51,7 @@ final class GoogleAdsMutationReconciler
     {
     }
 
-    public function reconcile(GoogleAdsAccount $account): void
+    public function reconcile(GoogleAdsAccount $account, string $afterStage = 'keywords', bool $truncated = false): void
     {
         $this->promoteStalePending($account);
 
@@ -72,6 +76,10 @@ final class GoogleAdsMutationReconciler
                 GoogleAdsMutationKind::KeywordStatus => $this->keywordVerdict($mutation, $operation),
                 GoogleAdsMutationKind::NegativeKeyword => $this->negativeVerdict($mutation, $operation),
             };
+
+            if ($verdict === false && ! $this->mayConcludeNotApplied($mutation->kind, $afterStage, $truncated)) {
+                $verdict = null;
+            }
 
             if ($verdict === true) {
                 $this->ledger->succeed($operation, 'Confirmed by Google Ads sync: ' . $this->describe($mutation));
@@ -162,13 +170,24 @@ final class GoogleAdsMutationReconciler
 
         // Absence is only evidence when the keywords were synced after the mutate. The
         // keywords stage runs after the campaigns stage in the same run, so the parent
-        // campaign's sync time bounds it from below.
+        // campaign's sync time bounds it from below (completeness: mayConcludeNotApplied).
         $campaign = GoogleAdsCampaign::query()
             ->whereKey($campaignId)
             ->where('google_ads_account_id', $mutation->google_ads_account_id)
             ->first();
 
         return $campaign !== null && $this->syncedAfter($campaign->last_synced_at, $operation) ? false : null;
+    }
+
+    /** Whether the stage that just persisted refreshed what this kind's absence is judged from. */
+    private function mayConcludeNotApplied(GoogleAdsMutationKind $kind, string $afterStage, bool $truncated): bool
+    {
+        return match ($kind) {
+            GoogleAdsMutationKind::CampaignStatus => true,
+            GoogleAdsMutationKind::KeywordStatus => $afterStage === 'keywords',
+            // A truncated report reads a present negative as absent.
+            GoogleAdsMutationKind::NegativeKeyword => $afterStage === 'keywords' && ! $truncated,
+        };
     }
 
     private function syncedAfter(?Carbon $syncedAt, BusinessGoogleOperation $operation): bool

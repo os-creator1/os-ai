@@ -8,6 +8,7 @@ use App\Enums\GoogleAds\GoogleAdsEntityStatus;
 use App\Enums\GoogleAds\GoogleAdsKeywordLevel;
 use App\Enums\GoogleAds\GoogleAdsMatchType;
 use App\Enums\GoogleAds\GoogleAdsMutationKind;
+use App\Enums\GoogleAds\GoogleAdsSyncRunState;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Enums\GoogleBusinessProfile\GoogleOperationStatus;
 use App\Exceptions\GoogleAds\GoogleAdsProviderException;
@@ -350,7 +351,16 @@ final class GoogleAdsMutationService
         ];
     }
 
-    /** A synced (or locally recorded) live negative, or a previously succeeded operation for the same key. */
+    /**
+     * A synced (or locally recorded) live negative, or - ONLY until the next full sync - a
+     * previously succeeded operation for the same key.
+     *
+     * The ledger fallback covers the window where Google applied the negative but we hold no
+     * local row for it yet (a double-submit, or a result without a usable id). Once a sync run
+     * that SUCCEEDED (every stage complete, none truncated) STARTED after the operation
+     * completed, the keywords it read are the sole truth: a negative missing from them was
+     * removed in Google Ads and may be added again. A partial run does not count.
+     */
     private function negativeAlreadyPresent(
         GoogleAdsAccount $account,
         GoogleAdsKeywordLevel $scope,
@@ -378,7 +388,13 @@ final class GoogleAdsMutationService
             ->where('google_ads_account_id', $account->id)
             ->where('kind', GoogleAdsMutationKind::NegativeKeyword->value)
             ->where('dedupe_key', $dedupeKey)
-            ->whereHas('operation', fn ($operation) => $operation->where('status', GoogleOperationStatus::Succeeded->value))
+            ->whereHas('operation', fn ($operation) => $operation
+                ->where('status', GoogleOperationStatus::Succeeded->value)
+                ->whereNotExists(fn ($run) => $run->select(DB::raw(1))
+                    ->from('google_ads_sync_runs')
+                    ->where('google_ads_sync_runs.google_ads_account_id', $account->id)
+                    ->where('google_ads_sync_runs.state', GoogleAdsSyncRunState::Succeeded->value)
+                    ->whereColumn('google_ads_sync_runs.started_at', '>', 'business_google_operations.completed_at')))
             ->exists();
     }
 
@@ -593,7 +609,8 @@ final class GoogleAdsMutationService
 
     private function accountFor(Business $business, bool $lock): GoogleAdsAccount
     {
-        $query = GoogleAdsAccount::query()->where('business_id', $business->id);
+        // An unselected account (disconnected / revoked) is no account to write to.
+        $query = GoogleAdsAccount::query()->where('business_id', $business->id)->whereNotNull('selected_at');
 
         if ($lock) {
             $query->lockForUpdate();

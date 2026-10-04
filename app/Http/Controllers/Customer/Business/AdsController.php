@@ -94,7 +94,7 @@ class AdsController extends CustomerBaseController
             return view('customer.business.ads.overview', $data + ['period' => null, 'overview' => null]);
         }
 
-        $period = GoogleAdsPeriod::resolve($request->query('period'), $account);
+        $period = GoogleAdsPeriod::resolve(is_string($request->query('period')) ? $request->query('period') : null, $account);
         $overview = $this->overviewReader->read($account, $period);
 
         // The "Money wasted?" teaser links to the Search terms page, so it is
@@ -138,7 +138,7 @@ class AdsController extends CustomerBaseController
             return response()->json(['message' => 'Not found.'], 404);
         }
 
-        $period = GoogleAdsPeriod::resolve($request->query('period'), $account);
+        $period = GoogleAdsPeriod::resolve(is_string($request->query('period')) ? $request->query('period') : null, $account);
 
         return response()->json($this->trend->forPeriod($account, $period));
     }

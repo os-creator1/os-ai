@@ -675,7 +675,7 @@ class HttpGoogleAdsClientTest extends TestCase
 
     public function test_definite_mutation_rejections_are_not_ambiguous(): void
     {
-        foreach ([[400, 'validation', false], [403, 'access_denied', false], [404, 'not_found', false], [429, 'rate_limited', true], [500, 'provider_unavailable', false]] as [$status, $expected, $deferrable]) {
+        foreach ([[400, 'validation', false], [403, 'access_denied', false], [404, 'not_found', false], [429, 'rate_limited', true]] as [$status, $expected, $deferrable]) {
             $this->fakeHttp(['googleads.googleapis.com/*' => Http::response(['error' => ['status' => 'X']], $status)]);
 
             $e = $this->failure(fn () => $this->mutations()->setCampaignStatus($this->context(), '1000000001', GoogleAdsEntityStatus::Paused));
@@ -684,6 +684,49 @@ class HttpGoogleAdsClientTest extends TestCase
             $this->assertFalse($e->isAmbiguous(), (string) $status);
             $this->assertSame($deferrable, $e->isDeferrable(), (string) $status);
         }
+    }
+
+    /** @return array<string, array{0: int, 1: ?string}> */
+    public static function ambiguousMutateStatuses(): array
+    {
+        return [
+            '500' => [500, null],
+            '503' => [503, null],
+            '408' => [408, null],
+            '409 ABORTED' => [409, 'ABORTED'],
+            '409 UNKNOWN' => [409, 'UNKNOWN'],
+            'DEADLINE_EXCEEDED' => [504, 'DEADLINE_EXCEEDED'],
+            'INTERNAL' => [500, 'INTERNAL'],
+            'UNAVAILABLE' => [503, 'UNAVAILABLE'],
+        ];
+    }
+
+    #[DataProvider('ambiguousMutateStatuses')]
+    public function test_an_ambiguous_http_answer_to_a_mutate_is_unknown_and_never_retried(int $status, ?string $googleStatus): void
+    {
+        $attempts = 0;
+        Http::fake(function () use (&$attempts, $status, $googleStatus) {
+            $attempts++;
+
+            return Http::response($googleStatus === null ? [] : ['error' => ['status' => $googleStatus]], $status);
+        });
+
+        $e = $this->failure(fn () => $this->mutations()->setCampaignStatus($this->context(), '1000000001', GoogleAdsEntityStatus::Paused));
+
+        $this->assertSame('timeout', $e->classification);
+        $this->assertTrue($e->isAmbiguous(), 'Google may have executed it before answering');
+        $this->assertFalse($e->isDeferrable());
+        $this->assertSame(1, $attempts);
+    }
+
+    public function test_the_same_ambiguous_statuses_stay_provider_unavailable_for_a_read(): void
+    {
+        $this->fakeHttp(['googleads.googleapis.com/*' => Http::response(['error' => ['status' => 'INTERNAL']], 503)]);
+
+        $e = $this->failure(fn () => $this->reads()->listAccessibleCustomers($this->context()->accessToken));
+
+        $this->assertSame('provider_unavailable', $e->classification);
+        $this->assertFalse($e->isAmbiguous());
     }
 
     public function test_the_ledger_records_each_failure_kind_with_the_right_status(): void

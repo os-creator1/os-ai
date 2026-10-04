@@ -11,6 +11,7 @@ use App\Library\GoogleAds\Mutations\GoogleAdsMutationOperations;
 use App\Library\GoogleAds\Mutations\GoogleAdsMutationReconciler;
 use App\Library\GoogleAds\Mutations\GoogleAdsMutationService;
 use App\Library\GoogleAds\Mutations\MutationOutcomeStatus;
+use App\Library\GoogleAds\Mutations\ReconcileMutationsAfterSync;
 use App\Models\BusinessGoogleOperation;
 use App\Models\GoogleAdsMutation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -156,6 +157,59 @@ class GoogleAdsMutationReconcilerTest extends TestCase
         $this->reconciler()->reconcile($t['account']);
 
         $this->assertSame(GoogleOperationStatus::Unknown, $this->operation(GoogleOperationType::AdsCampaignStatusChanged)->status);
+    }
+
+    public function test_a_negative_is_not_called_not_applied_after_the_campaigns_stage_or_a_truncated_keywords_report(): void
+    {
+        $t = $this->mutationTenant();
+        $campaign = $this->campaignOf($t['account']);
+        // Applied at Google, but our keyword mirror has not been refreshed yet.
+        $this->fakeAds->failNext('addNegativeKeyword', GoogleAdsProviderException::timeout(true), 1, true);
+        $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'photo booth jobs');
+
+        // The campaigns stage just ran (campaign stamp is newer than the op); keywords have not.
+        $campaign->forceFill(['last_synced_at' => now()->addMinutes(5)])->save();
+        $type = GoogleOperationType::AdsNegativeKeywordAdded;
+
+        $this->reconciler()->reconcile($t['account'], 'campaigns');
+        $this->assertSame(GoogleOperationStatus::Unknown, $this->operation($type)->status, 'campaigns stage: keywords not refreshed');
+
+        $this->reconciler()->reconcile($t['account'], 'keywords', truncated: true);
+        $this->assertSame(GoogleOperationStatus::Unknown, $this->operation($type)->status, 'truncated report: absence proves nothing');
+
+        $this->reconciler()->reconcile($t['account'], 'keywords');
+        $this->assertSame('not_applied', $this->operation($type)->failure_classification, 'complete keywords report: absence is evidence');
+    }
+
+    public function test_the_sync_observer_passes_the_stage_and_truncation_to_the_reconciler(): void
+    {
+        $t = $this->mutationTenant();
+        $campaign = $this->campaignOf($t['account']);
+        $this->fakeAds->failNext('addNegativeKeyword', GoogleAdsProviderException::timeout(true), 1, true);
+        $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'photo booth jobs');
+        $campaign->forceFill(['last_synced_at' => now()->addMinutes(5)])->save();
+        $observer = app(ReconcileMutationsAfterSync::class);
+        $type = GoogleOperationType::AdsNegativeKeywordAdded;
+
+        $observer->afterStage($t['account'], 'campaigns', false);
+        $observer->afterStage($t['account'], 'keywords', true);
+        $this->assertSame(GoogleOperationStatus::Unknown, $this->operation($type)->status);
+
+        $observer->afterStage($t['account'], 'keywords', false);
+        $this->assertSame(GoogleOperationStatus::Failed, $this->operation($type)->status);
+    }
+
+    public function test_an_applied_state_is_accepted_after_the_campaigns_stage_too(): void
+    {
+        $t = $this->mutationTenant();
+        $campaign = $this->campaignOf($t['account']);
+        $this->fakeAds->failNext('setCampaignStatus', GoogleAdsProviderException::timeout(true), 1, true);
+        $this->service()->pauseCampaign($t['business'], $t['actor'], $campaign->uid);
+        $this->syncFromFakeProvider($t['account']);
+
+        $this->reconciler()->reconcile($t['account'], 'campaigns');
+
+        $this->assertSame(GoogleOperationStatus::Succeeded, $this->operation(GoogleOperationType::AdsCampaignStatusChanged)->status);
     }
 
     public function test_an_operation_older_than_the_bound_without_evidence_stays_unknown(): void

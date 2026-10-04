@@ -154,6 +154,7 @@ trait ResolvesAdsBusinessTenancy
         return GoogleAdsAccount::query()
             ->where('business_id', $business->id)
             ->where('business_google_connection_id', $connection->id)
+            ->whereNotNull('selected_at') // unselected by a disconnect / revoke: choose the account again
             ->first();
     }
 

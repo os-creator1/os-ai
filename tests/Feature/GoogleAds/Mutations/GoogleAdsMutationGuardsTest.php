@@ -227,6 +227,9 @@ class GoogleAdsMutationGuardsTest extends TestCase
             $this->fail('expected a refusal');
         } catch (GoogleAdsMutationConnectionException $e) {
             $this->assertSame(409, $e->httpStatus());
+        } catch (GoogleAdsMutationNotFoundException $e) {
+            // A disconnect also unselects the account, so it is refused as "no account" first.
+            $this->assertSame('disconnected', $case);
         }
 
         $this->assertNothingHappened();

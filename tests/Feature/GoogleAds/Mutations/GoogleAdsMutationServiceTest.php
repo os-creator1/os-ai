@@ -12,6 +12,7 @@ use App\Enums\GoogleBusinessProfile\GoogleOperationStatus;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
 use App\Exceptions\GoogleAds\GoogleAdsProviderException;
 use App\Library\GoogleAds\Contracts\GoogleAdsMutationClient;
+use App\Library\GoogleAds\HttpGoogleAdsMutationClient;
 use App\Library\GoogleAds\Mutations\GoogleAdsMutationOperations;
 use App\Library\GoogleAds\Mutations\GoogleAdsMutationService;
 use App\Library\GoogleAds\Mutations\GoogleAdsMutationValidationException;
@@ -23,6 +24,7 @@ use App\Models\GoogleAdsKeyword;
 use App\Models\GoogleAdsMutation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Feature\GoogleAds\Mutations\Concerns\CreatesMutationFixtures;
 use Tests\TestCase;
@@ -477,6 +479,61 @@ class GoogleAdsMutationServiceTest extends TestCase
         $this->assertNull($this->negativeOf($t['account'], 'wedding dj'));
     }
 
+    public function test_a_succeeded_negative_blocks_a_double_submit_but_not_a_re_add_after_a_complete_sync_removed_it(): void
+    {
+        $t = $this->mutationTenant();
+        $campaign = $this->campaignOf($t['account']);
+
+        $first = $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'wedding dj');
+        $this->assertSame(MutationOutcomeStatus::Succeeded, $first->status);
+
+        // We hold no local row for it (never stored, or removed by a sync): only the ledger knows.
+        GoogleAdsKeyword::query()->where('google_ads_account_id', $t['account']->id)->where('is_negative', true)->whereRaw('LOWER(text) = ?', ['wedding dj'])->delete();
+
+        $double = $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'wedding dj');
+        $this->assertSame(MutationOutcomeStatus::DuplicateNoop, $double->status, 'before any sync the ledger still protects against a double-submit');
+        $this->assertSame(1, $this->fakeAds->callCount('addNegativeKeyword'));
+
+        // A PARTIAL run is not a complete read of the keywords: still protected.
+        $this->syncRun($t['account'], 'partial');
+        $partial = $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'wedding dj');
+        $this->assertSame(MutationOutcomeStatus::DuplicateNoop, $partial->status);
+
+        // A complete sync after the operation did not find it: it was removed upstream, so re-adding is allowed.
+        $this->syncRun($t['account'], 'succeeded');
+        $again = $this->service()->addNegativeKeyword($t['business'], $t['actor'], $campaign->uid, 'wedding dj');
+        // (The fake provider still holds the negative and rejects the duplicate; what matters is that it was SENT.)
+        $this->assertNotSame(MutationOutcomeStatus::DuplicateNoop, $again->status);
+        $this->assertSame(2, $this->fakeAds->callCount('addNegativeKeyword'));
+    }
+
+    private function syncRun(\App\Models\GoogleAdsAccount $account, string $state): void
+    {
+        DB::table('google_ads_sync_runs')->insert([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $account->business_id,
+            'google_ads_account_id' => $account->id, 'state' => $state, 'trigger' => 'scheduled',
+            'started_at' => now()->addMinutes(2), 'completed_at' => now()->addMinutes(3),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    public function test_a_503_answer_to_a_real_mutate_is_unknown_and_the_second_attempt_is_not_re_sent(): void
+    {
+        $t = $this->mutationTenant();
+        $campaign = $this->campaignOf($t['account']);
+        // The REAL mutation client over a faked wire (tokens still come from the fake auth client).
+        $this->app->bind(GoogleAdsMutationClient::class, HttpGoogleAdsMutationClient::class);
+        Http::fake(['googleads.googleapis.com/*' => Http::response([], 503)]);
+
+        $first = $this->service()->pauseCampaign($t['business'], $t['actor'], $campaign->uid);
+        $second = $this->service()->pauseCampaign($t['business'], $t['actor'], $campaign->uid);
+
+        $this->assertSame(MutationOutcomeStatus::AwaitingConfirmation, $first->status);
+        $this->assertSame(MutationOutcomeStatus::AwaitingConfirmation, $second->status);
+        $this->assertSame(GoogleOperationStatus::Unknown, $this->lastOperation(GoogleOperationType::AdsCampaignStatusChanged)->status);
+        Http::assertSentCount(1);
+        $this->assertSame(GoogleAdsEntityStatus::Enabled, $campaign->fresh()->status);
+    }
     public function test_a_rate_limit_is_deferred_not_failed_and_not_retried_and_does_not_block_a_later_attempt(): void
     {
         $t = $this->mutationTenant();

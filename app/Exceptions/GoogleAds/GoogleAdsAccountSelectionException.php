@@ -21,6 +21,8 @@ final class GoogleAdsAccountSelectionException extends RuntimeException
 
     public const MANAGER_NOT_SELECTABLE = 'manager_not_selectable';
 
+    public const SYNC_RUNNING = 'sync_running';
+
     private function __construct(public readonly string $reason)
     {
         parent::__construct($reason);
@@ -46,10 +48,16 @@ final class GoogleAdsAccountSelectionException extends RuntimeException
         return new self(self::MANAGER_NOT_SELECTABLE);
     }
 
+    public static function syncRunning(): self
+    {
+        return new self(self::SYNC_RUNNING);
+    }
+
     public function customerMessage(): string
     {
         return match ($this->reason) {
             self::NOT_CONNECTED => 'Connect Google Ads before choosing an account.',
+            self::SYNC_RUNNING => 'An update is running; try again in a minute.',
             self::MANAGER_NOT_SELECTABLE => 'That is a manager account. Choose one of the advertising accounts under it.',
             default => 'That Google Ads account is not available to this connection.',
         };

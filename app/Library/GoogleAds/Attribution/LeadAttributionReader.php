@@ -225,7 +225,7 @@ class LeadAttributionReader
                     'stage' => (string) $opportunity->stage_name,
                     'status' => (string) $opportunity->status,
                     'value_minor' => $opportunity->value_minor === null ? null : (int) $opportunity->value_minor,
-                    'currency' => (string) ($business->currency_code ?: $opportunity->currency_code),
+                    'currency' => (string) ($opportunity->currency_code ?: $business->currency_code),
                 ],
                 'booked' => $booked->has($id),
                 'subject' => $event === null ? null : ['type' => (string) $event->subject_type, 'id' => (int) $event->subject_id],

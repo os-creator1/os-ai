@@ -359,7 +359,9 @@ final class PhotoBoothFixture
                 $m = $this->campaignDay((string) $campaignId, $day);
                 $impressions = $this->distribute($m->impressions, $weights);
                 $clicks = $this->distribute($m->clicks, $weights);
-                $cost = $this->distribute($m->costMicros, $weights);
+                // Cost follows clicks (a keyword that received no click cannot have spent money);
+                // a day with no clicks at all falls back to the keyword weights.
+                $cost = $this->distribute($m->costMicros, array_sum($clicks) > 0 ? $clicks : $weights);
 
                 foreach ($keywords as $i => [$key]) {
                     // Conversions (whole numbers) are credited to the campaign's first keyword.

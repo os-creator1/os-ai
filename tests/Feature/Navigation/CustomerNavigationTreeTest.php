@@ -1254,9 +1254,11 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->assertStringNotContainsString('>Inbox<', $horizontal);
 
-        foreach (['Send', 'Campaigns'] as $legacyOutbound) {
-            $this->assertStringNotContainsString('>' . $legacyOutbound . '<', $horizontal, "The horizontal shell must not render [{$legacyOutbound}].");
-        }
+        // The legacy outbound "Send" entry is gone and nothing links to the old
+        // outreach area. The word "Campaigns" can no longer be asserted absent:
+        // it is also the label of the Ads module's own child item.
+        $this->assertStringNotContainsString('>Send<', $horizontal, 'The horizontal shell must not render [Send].');
+        $this->assertStringNotContainsString('/outreach', $horizontal, 'The horizontal shell must not link to the legacy outreach area.');
 
         $this->assertStringNotContainsString('Developers', $horizontal);
     }
