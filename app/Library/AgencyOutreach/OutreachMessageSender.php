@@ -117,7 +117,10 @@ final class OutreachMessageSender
             return OutreachSendResult::blocked('campaign_assignment_not_confirmed');
         } catch (MessagingProviderNotConfiguredException) {
             return OutreachSendResult::blocked('provider_not_configured');
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            // Class and message only (never the number or the text): a failed send must be diagnosable.
+            \Illuminate\Support\Facades\Log::warning('outreach.send_exception', ['exception' => $e::class, 'message' => $e->getMessage()]);
+
             return OutreachSendResult::failed('send_exception');
         }
 

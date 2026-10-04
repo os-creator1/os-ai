@@ -34,7 +34,7 @@ use Illuminate\Support\Facades\Log;
 final class OutreachSendPipeline
 {
     /** Eligibility refusals that only HOLD a paused send; anything else cancels it. */
-    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled'];
+    private const RECOVERABLE = ['manual_hold', 'campaign_not_active', 'no_business', 'workspace_inactive', 'not_entitled', 'no_sending_number', 'verification_incomplete'];
 
     public function __construct(
         private readonly OutreachEligibility $eligibility,

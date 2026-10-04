@@ -27,6 +27,8 @@ use App\Models\Workspace;
  *   campaign_not_managed / _not_active only an ACTIVE `managed` campaign uses this engine
  *   prospect_not_active                stopped or booked
  *   no_business                        the Agency's own Business is not resolvable
+ *   no_sending_number                  the Agency Business has no usable sending number
+ *   verification_incomplete            the number's messaging verification is not approved yet
  *   opted_out                          the number is on the Agency Business's Blacklists
  *   manual_hold                        AI is paused for this member (only when asked)
  */
@@ -85,6 +87,14 @@ final class OutreachEligibility
 
         if (self::blacklisted($business, $prospect)) {
             return OutreachEligibilityResult::refused('opted_out');
+        }
+
+        // The canonical readiness state (the same one the Text messaging page shows), re-read at send time:
+        // a campaign that was Active when its number or verification was fine must stop the moment either is not.
+        $state = app(MessagingReadinessReader::class)->situation($business)['state'] ?? 'no_number';
+
+        if ($state !== 'ready') {
+            return OutreachEligibilityResult::refused($state === 'registration_required' ? 'verification_incomplete' : 'no_sending_number');
         }
 
         if ($requireAiActive && $member->isAiPaused()) {

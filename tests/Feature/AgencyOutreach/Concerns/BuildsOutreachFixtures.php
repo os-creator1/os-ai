@@ -89,6 +89,16 @@ trait BuildsOutreachFixtures
         $this->attachNumber($identity, '+' . $digits, true);
         $this->managedDigits[(int) $business->id] = $digits;
 
+        // Messaging verification approved: Outreach re-checks the canonical readiness state at send time.
+        \App\Models\BusinessMessagingRegistration::create([
+            'business_id' => $business->id, 'number_type' => 'local', 'status' => 'approved', 'approved_at' => now(),
+            'legal_business_name' => $name . ' LLC', 'entity_type' => 'ein', 'ein' => '12-3456789',
+            'address_line_1' => '1 Main St', 'city' => 'Portland', 'region' => 'OR', 'postal_code' => '97201',
+            'website_url' => 'https://example.com', 'contact_email' => 'o@example.com', 'contact_phone' => '+15035550100',
+            'use_case' => 'customer_care', 'opt_in_method' => 'Opt in form.', 'sample_message_1' => 'Hi. Reply STOP to opt out.',
+            'sample_message_2' => 'Hello. Reply STOP to opt out.', 'privacy_policy_url' => 'https://example.com/p', 'terms_url' => 'https://example.com/t',
+        ]);
+
         $customer->user->sms_unit = 1000;
         $customer->user->save();
         $customer->permissions = Customer::customerPermissions();

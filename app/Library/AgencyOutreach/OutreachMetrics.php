@@ -36,8 +36,20 @@ class OutreachMetrics
             ->distinct()
             ->count('cm.prospect_id');
 
-        $messaged = $distinctProspects(AgencyProspectMessage::DIRECTION_OUTBOUND, AgencyProspectMessage::STATUS_SENT);
         $replies = $distinctProspects(AgencyProspectMessage::DIRECTION_INBOUND, null);
+
+        // "Contacted" = a prospect we texted OR who texted us. A prospect can reply before any text of ours
+        // was delivered (a cold reply, or a first reply held back for funds), so counting only delivered
+        // outbound would let replies exceed the denominator and show a rate above 100%.
+        $messaged = DB::table('agency_prospect_messages as m')
+            ->join('agency_prospect_campaign_members as cm', 'cm.id', '=', 'm.campaign_member_id')
+            ->where('m.workspace_id', $workspace->id)
+            ->where('cm.workspace_id', $workspace->id)
+            ->where(fn ($q) => $q
+                ->where(fn ($o) => $o->where('m.direction', AgencyProspectMessage::DIRECTION_OUTBOUND)->where('m.status', AgencyProspectMessage::STATUS_SENT))
+                ->orWhere('m.direction', AgencyProspectMessage::DIRECTION_INBOUND))
+            ->distinct()
+            ->count('cm.prospect_id');
 
         return [
             'active' => $active,

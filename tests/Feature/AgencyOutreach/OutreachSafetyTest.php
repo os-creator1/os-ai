@@ -191,9 +191,9 @@ class OutreachSafetyTest extends TestCase
         $this->inbound($business, 'yes');
 
         $this->assertCount(0, $this->fakeAdapter->sentRequests);
-        $out = $this->ledger($member, 'outbound')[0];
-        $this->assertSame('failed', $out->status);
-        $this->assertSame('messaging_not_ready', $out->failure_reason);
+        // The canonical readiness gate refuses before an outbound row is even claimed, and says why on the inbound.
+        $this->assertSame([], $this->ledger($member, 'outbound'));
+        $this->assertSame('no_sending_number', $this->ledger($member, 'inbound')[0]->failure_reason);
         $this->assertSame(1, $this->member($member)->stage->value);
     }
 
