@@ -297,7 +297,11 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::SeoBasicVisibility->value, $result);
         $this->assertArrayHasKey(PlatformFeature::SeoModule->value, $result);
 
-        $this->assertCount(12, $result);
+        // SEO Keyword Rank Tracking V1: SeoRankTracking is Available and Business-scoped
+        // (packaged Core+Growth+Agency), so it joins this map too.
+        $this->assertArrayHasKey(PlatformFeature::SeoRankTracking->value, $result);
+
+        $this->assertCount(13, $result);
     }
 
     /**

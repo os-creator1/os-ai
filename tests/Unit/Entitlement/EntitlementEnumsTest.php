@@ -77,7 +77,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertSame($expected, $actual);
     }
 
-    public function test_platform_feature_has_exactly_nineteen_cases_matching_rfc_004_slice_a_and_slice_3(): void
+    public function test_platform_feature_has_exactly_twenty_cases_matching_rfc_004_slice_a_and_slice_3(): void
     {
         $expected = [
             'crm',
@@ -112,11 +112,12 @@ class EntitlementEnumsTest extends TestCase
             // no controller, route, view, provider call or public link
             // exists yet.
             'payments_contracts',
+            'seo_rank_tracking',
         ];
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(19, PlatformFeature::cases());
+        $this->assertCount(20, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 

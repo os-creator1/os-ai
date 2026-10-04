@@ -148,7 +148,7 @@ class SeoKeywordsHttpTest extends TestCase
         $this->assertStringContainsString($location->name, $html);
         $this->assertStringContainsString('data-role="keyword-add-form"', $html);
         $this->assertStringContainsString('data-role="keyword-archive"', $html);
-        $this->assertStringContainsString('This does not show search rankings.', $html);
+        $this->assertStringContainsString('data-role="rank-table"', $html);
     }
 
     public function test_without_a_published_website_coverage_says_to_publish(): void

@@ -428,6 +428,10 @@ class SeoFoundationBoundaryTest extends TestCase
             // It writes only THROUGH SeoKeywordManager; those call names are
             // not table writes (the manager's own writes are pinned separately).
             $code = (string) preg_replace('/\$this->keywords->(create|update|archive|reactivate)\s*\(/', '', $code);
+            // Rank Tracking V1: the ONLY queued side effect permitted here is the
+            // first-check dispatch of the rank scheduler for a target the rank
+            // manager just created (the budget authority runs inside that job).
+            $code = (string) preg_replace('/\bScheduleSeoRankChecks::dispatch\(\$target->id\);/', '', $code);
         }
 
         $this->assertNotSame('', $code);

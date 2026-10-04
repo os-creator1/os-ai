@@ -619,6 +619,10 @@
         // admin-only AI usage ledger summary. Read-only, paginated, and inside
         // this EnsureUserIsAdministrator group so no customer can reach it.
         Route::get('ai-usage', 'AiUsageController@summary')->name('ai-usage.index');
+
+        // SEO Keyword Rank Tracking V1 §24 — admin-only, read-only platform
+        // provider-cost summary ("how much did rank tracking cost this month?").
+        Route::get('seo-rank-cost', 'SeoRankCostController@summary')->name('seo-rank-cost.index');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
 

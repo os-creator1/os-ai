@@ -76,4 +76,74 @@ return [
         'manual_rerun_cooldown_seconds' => env('SEO_AUDIT_MANUAL_RERUN_COOLDOWN_SECONDS'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Rank tracking (SEO KEYWORD RANK TRACKING V1) — PAID provider safety model
+    |--------------------------------------------------------------------------
+    |
+    | Money is always integer micro-USD (1 USD = 1_000_000) — never a float.
+    | Every value is read through SeoConfig, which FAILS CLOSED: a malformed,
+    | absent, zero-or-negative or out-of-range value is ignored and the
+    | documented default is used. A lower value may REDUCE a limit; nothing
+    | here can raise a limit above its documented hard maximum, and a bad
+    | value can never switch a safeguard off. The master switch defaults OFF:
+    | no provider call is possible until it is explicitly enabled.
+    |
+    | These are platform-cost guards, not customer pricing.
+    */
+    'rank_tracking' => [
+        'enabled' => env('SEO_RANK_TRACKING_ENABLED', false),
+
+        'dataforseo' => [
+            'login' => env('DATAFORSEO_LOGIN'),
+            'password' => env('DATAFORSEO_PASSWORD'),
+            'base_url' => env('DATAFORSEO_BASE_URL', 'https://api.dataforseo.com'),
+        ],
+
+        // Provider cost FACTS (not business logic): micro-USD per 10-result
+        // SERP page on the Standard queue ($0.0006). Used only to ESTIMATE
+        // the reservation; the provider-reported cost reconciles it.
+        'cost_per_page_micros' => env('SEO_RANK_COST_PER_PAGE_MICROS'),
+
+        // Result depths. Lower only.
+        'organic_depth' => env('SEO_RANK_ORGANIC_DEPTH'),
+        'local_depth' => env('SEO_RANK_LOCAL_DEPTH'),
+
+        // Plan tiers. Tracked targets and caps can only be lowered; cadence
+        // can only be made slower. Keys are entitlement tiers, not plan names
+        // scattered through SEO code.
+        'tiers' => [
+            'trial' => [
+                'tracked_targets' => env('SEO_RANK_TRIAL_TARGETS'),
+                'cadence_days' => env('SEO_RANK_TRIAL_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_TRIAL_CAP_MICROS'),
+            ],
+            'core' => [
+                'tracked_targets' => env('SEO_RANK_CORE_TARGETS'),
+                'cadence_days' => env('SEO_RANK_CORE_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_CORE_CAP_MICROS'),
+            ],
+            'growth' => [
+                'tracked_targets' => env('SEO_RANK_GROWTH_TARGETS'),
+                'cadence_days' => env('SEO_RANK_GROWTH_CADENCE_DAYS'),
+                'monthly_cap_micros' => env('SEO_RANK_GROWTH_CAP_MICROS'),
+            ],
+        ],
+
+        // Hours a target must wait between paid MANUAL refreshes. Longer only.
+        'manual_cooldown_hours' => env('SEO_RANK_MANUAL_COOLDOWN_HOURS'),
+
+        // Aggregate ceilings (micro-USD). Lower only.
+        'workspace_monthly_cap_micros' => env('SEO_RANK_WORKSPACE_MONTHLY_CAP_MICROS'),
+        'global_daily_cap_micros' => env('SEO_RANK_GLOBAL_DAILY_CAP_MICROS'),
+        'global_monthly_cap_micros' => env('SEO_RANK_GLOBAL_MONTHLY_CAP_MICROS'),
+
+        // Retention of observations, in months.
+        'retention_months' => env('SEO_RANK_RETENTION_MONTHS'),
+
+        // Bounded queue behaviour.
+        'max_submit_attempts' => env('SEO_RANK_MAX_SUBMIT_ATTEMPTS'),
+        'max_poll_hours' => env('SEO_RANK_MAX_POLL_HOURS'),
+    ],
+
 ];

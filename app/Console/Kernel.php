@@ -231,6 +231,16 @@
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
 
+            // SEO Keyword Rank Tracking V1 — paid provider pipeline. Registered
+            // unconditionally; each job owns its own fail-closed master switch
+            // (seo.rank_tracking.enabled, default OFF). The hourly tick only
+            // RESERVES budgeted runs; the five-minute sweep moves them along and
+            // can create no new spend; pruning is the 13-month retention.
+            $schedule->job(new \App\Jobs\Seo\ScheduleSeoRankChecks())->hourly()->withoutOverlapping();
+            $schedule->job(new \App\Jobs\Seo\ProcessSeoRankChecks())->everyFiveMinutes()->withoutOverlapping();
+            $schedule->job(new \App\Jobs\Seo\PruneSeoRankObservations())->dailyAt('03:40');
+            $schedule->command('seo:rank-sync-locations')->weeklyOn(1, '04:20')->withoutOverlapping();
+
             // PR #295 Correction Round 1, item 6 — the one canonical
             // mechanism that advances a submitted carrier registration.
             // Never on a page render; 15 minutes is far more responsive

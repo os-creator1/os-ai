@@ -93,6 +93,104 @@ final class SeoConfig
         return $this->bounded('seo.audit.manual_rerun_cooldown_seconds', 60, 5, 3600);
     }
 
+    // -----------------------------------------------------------------
+    // Rank tracking (paid provider) — micro-USD integers, fail closed.
+    // "LowerOnly": the documented default IS the ceiling; config may only
+    // reduce it. A malformed value yields the default, never "off".
+    // -----------------------------------------------------------------
+
+    public const RANK_TIERS = ['trial', 'core', 'growth'];
+
+    /** Master switch. Only a literal true / "true" / "1" enables; anything else is OFF. */
+    public function rankTrackingEnabled(): bool
+    {
+        $v = config('seo.rank_tracking.enabled');
+
+        return $v === true || $v === 1 || $v === '1' || (is_string($v) && strtolower($v) === 'true');
+    }
+
+    public function rankCostPerPageMicros(): int
+    {
+        return $this->bounded('seo.rank_tracking.cost_per_page_micros', 600, 100, 5000);
+    }
+
+    public function rankOrganicDepth(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.organic_depth', 100, 10);
+    }
+
+    public function rankLocalDepth(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.local_depth', 10, 10);
+    }
+
+    /** @return array{tracked_targets: int, cadence_days: int, monthly_cap_micros: int} */
+    public function rankTier(string $tier): array
+    {
+        $defaults = [
+            'trial' => [5, 3, 500_000],
+            'core' => [5, 1, 1_500_000],
+            'growth' => [20, 1, 4_500_000],
+        ];
+
+        // An unknown tier gets the most restrictive tier, never an open one.
+        $tier = array_key_exists($tier, $defaults) ? $tier : 'trial';
+        [$targets, $cadence, $cap] = $defaults[$tier];
+
+        return [
+            'tracked_targets' => $this->lowerOnly("seo.rank_tracking.tiers.{$tier}.tracked_targets", $targets, 1),
+            'cadence_days' => $this->atLeast("seo.rank_tracking.tiers.{$tier}.cadence_days", $cadence, 30),
+            'monthly_cap_micros' => $this->lowerOnly("seo.rank_tracking.tiers.{$tier}.monthly_cap_micros", $cap, 1),
+        ];
+    }
+
+    public function rankManualCooldownHours(): int
+    {
+        return $this->atLeast('seo.rank_tracking.manual_cooldown_hours', 24, 168);
+    }
+
+    public function rankWorkspaceMonthlyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.workspace_monthly_cap_micros', 25_000_000, 1);
+    }
+
+    public function rankGlobalDailyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.global_daily_cap_micros', 10_000_000, 1);
+    }
+
+    public function rankGlobalMonthlyCapMicros(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.global_monthly_cap_micros', 150_000_000, 1);
+    }
+
+    public function rankRetentionMonths(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.retention_months', 13, 1);
+    }
+
+    public function rankMaxSubmitAttempts(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.max_submit_attempts', 3, 1);
+    }
+
+    public function rankMaxPollHours(): int
+    {
+        return $this->lowerOnly('seo.rank_tracking.max_poll_hours', 24, 1);
+    }
+
+    /** Valid range is [min, default]: the value can only be lowered. */
+    private function lowerOnly(string $key, int $default, int $min): int
+    {
+        return $this->bounded($key, $default, $min, $default);
+    }
+
+    /** Valid range is [default, max]: the value can only be raised (e.g. slower cadence, longer cooldown). */
+    private function atLeast(string $key, int $default, int $max): int
+    {
+        return $this->bounded($key, $default, $default, $max);
+    }
+
     private function bounded(string $key, int $default, int $min, int $max): int
     {
         $configured = config($key);

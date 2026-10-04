@@ -220,7 +220,7 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $expectedCore = [
             'ads_basic_visibility', 'ai_coo_basic', 'automations', 'calendar',
             'conversations', 'crm', 'forms', 'packages_products', 'payments_contracts',
-            'seo_basic_visibility', 'website_generation',
+            'seo_basic_visibility', 'seo_rank_tracking', 'website_generation',
         ];
         sort($expectedCore);
 
@@ -237,9 +237,9 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $expectedAgency = array_merge($expectedGrowth, ['agency_package_capabilities', 'prospect_outreach', 'white_label']);
         sort($expectedAgency);
 
-        $this->assertCount(11, $expectedCore);
-        $this->assertCount(15, $expectedGrowth);
-        $this->assertCount(18, $expectedAgency);
+        $this->assertCount(12, $expectedCore);
+        $this->assertCount(16, $expectedGrowth);
+        $this->assertCount(19, $expectedAgency);
 
         $this->assertSame($expectedCore, $coreKeys, 'Core feature-key set mismatch.');
         $this->assertSame($expectedGrowth, $growthKeys, 'Growth feature-key set mismatch (must equal exact Core + 4).');
