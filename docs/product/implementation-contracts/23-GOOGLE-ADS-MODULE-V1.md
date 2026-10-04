@@ -210,7 +210,7 @@ Meta/Microsoft Ads, campaign creation, automatic budget/bidding changes, PMax as
 
 ## 18. UI shell (Phase 3A) — routes, access matrix, extension points
 
-**Routes** (`routes/customer.php`). Bare entry `customer.ads.index` (`/ads`; 404 while neither Ads feature is Available; zero / one / many entitled Businesses behave like `seo.index`). Fixed tenant-free callback `customer.ads.oauth.callback` (`/ads/oauth/callback`; signed state, product claim `google_ads`, actor must be the initiator, nonce consumed before the code exchange). Business-scoped group `{workspaceUid}/businesses/{businessUid}/ads` named `customer.workspaces.businesses.ads.*`: `index` (Overview), `series` (JSON, throttle 60/min), `budget`, `settings` (GET) + `settings.update` (POST), `connect` (POST), `accounts` (GET) + `accounts.select` (POST), `disconnect` (POST), `refresh` (POST). Reserved for the next UI slice: `campaigns.*`, `keywords.*`, `search-terms.*`, `leads.*`, `recommendations.*`.
+**Routes** (`routes/customer.php`). Bare entry `customer.ads.index` (`/ads`; 404 while neither Ads feature is Available; zero / one / many entitled Businesses behave like `seo.index`). Fixed tenant-free callback `customer.ads.oauth.callback` (`/ads/oauth/callback`; signed state, product claim `google_ads`, actor must be the initiator, nonce consumed before the code exchange). Business-scoped group `{workspaceUid}/businesses/{businessUid}/ads` named `customer.workspaces.businesses.ads.*`: `index` (Overview), `series` (JSON, throttle 60/min), `budget`, `settings` (GET) + `settings.update` (POST), `connect` (POST), `accounts` (GET) + `accounts.select` (POST), `disconnect` (POST), `refresh` (POST). The data pages and mutations added in Phase 3B (`campaigns.*`, `keywords.*`, `search-terms.*`, `leads.*`, `recommendations.*`) are specified in §19.
 
 **Access matrix.** Tenancy and entitlement failures are 404. A missing capability is the application-wide authorization failure (401), checked only after tenancy.
 
@@ -226,3 +226,60 @@ Meta/Microsoft Ads, campaign creation, automatic budget/bidding changes, PMax as
 **View As.** Reads stay viewable. `connect`, `accounts`, `accounts.select`, `disconnect`, `settings.update`, `refresh` and the callback are prohibited by name, and EVERY non-GET route under `customer.workspaces.businesses.ads.` is prohibited by pattern (`ViewAsProhibitedActions::NON_GET_PROHIBITED_PREFIXES`), so mutation routes added later are covered on registration. `customer.ads.index` redirects to the viewed Business's Overview.
 
 **Extension points for later pages.** `ResolvesAdsBusinessTenancy` (`resolveAdsTenancy`, `resolveAdsModuleTenancy`, `resolveAdsAccount`, `adsViewData`), the shared partials `customer.business.ads._header` (title, currency, sub-navigation, freshness) / `_freshness` / `_empty-state`, and `CustomerMenuBuilder::adsMenuItem()` which shows each child only when its route exists.
+
+## 19. Data pages and actions (Phase 3B)
+
+All pages below are **google_ads_module only** (a Core Business gets 404), then `view_google_ads`; every action needs `manage_google_ads`. They read **cached normalised tables only**: no GET calls Google, and changing the period, sort, filter or page never does. Absent figures are a dash, never 0; provider strings (campaign / ad group / keyword / search-term text) are escaped; Google's own ids never appear in markup or URLs (rows are addressed by `uid`, or by a local search-term row id). Each page renders the shared header (title, currency, sub-navigation, freshness line) and the standard empty state when `adsState` is not `ready`.
+
+### 19.1 Routes (`customer.workspaces.businesses.ads.*`)
+
+| Name | Method + path (under `.../ads`) | Controller | Notes |
+|---|---|---|---|
+| `campaigns.index` | GET `/campaigns` | `AdsCampaignsController@listing` | period, sort, dir, status, page |
+| `campaigns.show` | GET `/campaigns/{campaignUid}` | `AdsCampaignsController@detail` | unknown / foreign / malformed uid => 404 |
+| `keywords.index` | GET `/keywords` | `AdsKeywordsController@listing` | period, campaign, status, sort, dir, page |
+| `search-terms.index` | GET `/search-terms` | `AdsSearchTermsController@listing` | period, class, campaign, sort, dir, page |
+| `leads.index` | GET `/leads` | `AdsLeadsController@listing` | period, page |
+| `recommendations.index` | GET `/recommendations` | `AdsRecommendationsController@listing` | period |
+| `campaigns.pause` / `campaigns.resume` | POST `/campaigns/{campaignUid}/pause` and `/resume` | `AdsMutationController` | throttle 20/min |
+| `keywords.pause` / `keywords.resume` | POST `/keywords/{keywordUid}/pause` and `/resume` | `AdsMutationController` | throttle 20/min |
+| `search-terms.negative.preview` | POST `/search-terms/negative/preview` | `AdsMutationController@previewNegative` | server-rendered confirmation; no provider call, no write |
+| `search-terms.negative.store` | POST `/search-terms/negative` | `AdsMutationController@storeNegative` | the confirmed mutation |
+| `search-terms.ignore` / `search-terms.unignore` | POST `/search-terms/ignore` and `/unignore` | `AdsMutationController` | local classification only |
+
+Controller methods are named `listing` / `detail` because `CustomerBaseController` already declares `index` / `show`. Every non-GET route is View-As prohibited by the existing `customer.workspaces.businesses.ads.` prefix rule (§18); nothing was added to `ViewAsProhibitedActions`.
+
+### 19.2 Query input
+
+`GoogleAdsListInput` validates `period`, `sort`, `dir`, `page`, `status`, `class` and `campaign` against the readers' own whitelists; anything invalid, unknown, an array, or a campaign uid that is not one of the account's own campaigns silently becomes the default (period `last_30`, sort `spend` descending, text sorts ascending, no filter, page 1). A hand-edited URL never errors and never reaches SQL. The query a page was viewed with is carried through an action as a re-whitelisted `q` field and the origin as `from` (`campaigns|keywords|search-terms|campaign`); the redirect after an action is always a route generated from those, never a URL from the request.
+
+### 19.3 Pages
+
+* **Campaigns**: Campaign (links to detail) | Status | Daily budget (+ Shared badge) | Spend | Clicks | Conversions | Cost per conversion | Conv. rate | Value (Google; only when some row has a positive value) | Action (Pause / Resume when the actor can manage). The action opens a dialog stating exactly what changes (`Pause campaign X? It will stop showing ads in Google Ads until resumed.`).
+* **Campaign detail**: KPI cards, a trend chart (server data embedded in the page, the same Apex pattern as the Overview, with a "Show daily figures" table fallback), the campaign **daily** budget facts (average daily spend, utilisation, shared flag; explicitly separate from the Business monthly target, which lives on Budget), ad groups, the top keywords and search terms with links to the full pages filtered to the campaign, and a Conversion data card (Google conversions + Google value). Ad-group sums are sums of keyword-level rows (the sync stores no ad-group level) and the page says so.
+* **Keywords**: Keyword | Match type | Campaign / ad group | Status | Spend | Clicks | Conversions | Cost per conversion | Conv. rate | Quality Score (only when a shown row has a stored non-null score) | Action. Campaign and status filters. A separate collapsed, read-only **Negative keywords** list. Pause / resume apply only to positive ad-group keywords (the service validates).
+* **Search terms**: Search term | Campaign / ad group | Matched keyword | Spend | Clicks | Conversions | Cost per conversion | State | Actions. State chips: Potential waste (amber) / Converting (green) / Unreviewed / Excluded / Ignored, from the single classifier in `GoogleAdsSearchTermReader`. Class tabs with a count each (one aggregate read per class), a campaign filter, and the waste summary card (`USD 43.00 spent across 6 search terms with no conversions`) from `wasteSummary` (hidden when there is none; terms an enabled negative already covers are reported separately and not counted).
+* **Leads & conversions**: an explainer card, then two separate blocks. *Google conversions*: by campaign, in the Ads account currency. *Business OS outcomes*: summary chips (leads, with a Google click ID, campaign tags only, source not captured) and a paginated table Lead (links to the existing contact page `businesses.people.show`) | How they arrived | Source tags (first-touch `utm_campaign` / `utm_term` as tag text) | Entry surface | Landing page | CRM stage | Booked? | Opportunity value (CRM money in the **Business** currency, never summed or compared with Ads-currency amounts). No row ever names a Google campaign or keyword: a click id proves a Google click, not the campaign; matching arrives with offline conversion import (§17).
+* **Recommendations**: cards from `GoogleAdsRecommendationFactReader` worded by `GoogleAdsRecommendationPresenter` (title, evidence lines, "Based on your cached Google Ads data for <period>; deterministic rule." (pacing facts say "this month"), and one link to the owning page: `review_search_terms` -> Search terms with `class=potential_waste`, `review_campaign` -> campaign detail, `review_budget` -> Budget). Neutral / amber / green styling only, never red. **No dismiss / snooze / apply and nothing stored**: recommendation lifecycle belongs to the Opportunity Engine (D7, §12). No facts shows "Nothing to flag right now" with the insufficient-data explanation.
+* **Overview teaser**: the "Money wasted?" card (hidden by 3A until the page existed) now appears for a Business entitled to the module when there is actionable waste, and links to Search terms.
+
+### 19.4 Mutations over HTTP
+
+Order: tenancy + `google_ads_module` entitlement (404), then `manage_google_ads` (401), then **one** `GoogleAdsMutationService` call. A request carries only local identifiers (campaign / keyword uid, a local `google_ads_search_terms.id`); the service re-resolves them inside the Business's selected account, so a foreign uid, a Google id, or a term id of another Business is a 404 with zero provider calls. The negative-keyword text is **never** read from the request: it is the cached term row's text.
+
+**Add negative** is two steps. `negative.preview` (a POST, so a refresh cannot re-send anything) renders a confirmation from `NegativeKeywordPreview`: `Search term: "<term>"`, `Will be excluded from: <Campaign or Ad group name>`, `Match: exact|phrase`, radios for match (exact default; **broad is never offered or accepted**) and scope (campaign default and safest; ad group when the term has one), a warning that disables confirming when the negative already exists, and "Nothing changes in Google Ads until you press Add negative keyword". Changing a radio re-submits to the preview (automatically with JavaScript, via an "Update preview" button without), so what is shown is what is confirmed. `negative.store` then calls `addNegativeKeyword`. Not built: "Add as keyword".
+
+Outcome flashes (fixed copy; provider text never reaches the page): succeeded -> success; **awaiting confirmation** -> "Google didn't confirm this change. We'll verify it on the next update. Nothing was changed twice." (title "Pending confirmation"); deferred -> warning; failed -> error; already in that state / already excluded / already in progress -> info with no provider call. A refused request that is not a 404 (removed entity, keyword that cannot be paused, invalid text, connection not active) is a calm error flash.
+
+**Pending confirmation marker.** `GoogleAdsPendingConfirmations` marks a campaign, keyword or search-term row "Pending confirmation" while its ledger operation (`business_google_operations`, joined through `google_ads_mutations`, scoped by Business and account) is `unknown`; at most two small queries per page. The reconciler clears it by resolving the operation.
+
+**Double submit.** The forms disable their buttons on the first submit (a convenience); the real guarantee is the service's dedupe: a resubmit is answered from the ledger and never sent twice.
+
+**Ignore / Un-ignore** (`GoogleAdsSearchTermReview`) is not a provider mutation and has no ledger row. It sets `review_state` of that term's cached rows within one campaign and ad group of the selected account (Business + account scoped; another campaign's identical term is untouched) and is reversible. Because the sync stores new days as `unreviewed`, the classifier treats a term as ignored when ANY cached row of that term / campaign / ad group is ignored, so days arriving later do not silently un-ignore it. It needs `manage_google_ads`.
+
+### 19.5 Decisions
+
+* `GoogleAdsSearchTermRow::internal` gained `search_term_id` (one cached row of that term / campaign / ad group) so a confirmation can name the cached row; `LeadAttributionReader` rows gained `contact.uid` (for the contact link). Both additive.
+* The campaign detail trend uses server data embedded in the page rather than a new series route (the Overview's `series` route remains the only chart endpoint).
+* Search-term class counts are computed per tab with the existing reader (six small aggregate reads) rather than a new counting query.
+* Known limit carried from §9 / §12: the `potential waste` classification uses whole-period totals, so a very short period can flag a term that a longer one would not.

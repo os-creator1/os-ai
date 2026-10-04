@@ -72,6 +72,23 @@ trait ResolvesAdsBusinessTenancy
     }
 
     /**
+     * The whole preamble of a full-module READ page in one call: tenancy
+     * (google_ads_module only, so Core is a 404) THEN `view_google_ads`, then
+     * the shared view data. The page renders the empty state when the
+     * returned `adsState` is not 'ready'.
+     *
+     * @return array<string, mixed>
+     */
+    protected function resolveAdsModulePage(string $workspaceUid, string $businessUid, string $activeKey): array
+    {
+        [$workspace, $business] = $this->resolveAdsModuleTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('view_google_ads');
+
+        return $this->adsViewData($workspace, $business, $activeKey);
+    }
+
+    /**
      * Workspace -> Business -> active Business, with NO entitlement step.
      * Used only by Disconnect, mirroring the GBP precedent (contract §39.4):
      * stored credentials must never be trapped by a plan change.

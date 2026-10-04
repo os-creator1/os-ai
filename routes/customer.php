@@ -1294,15 +1294,32 @@
         | PATTERN (ViewAsProhibitedActions), so the later mutation routes are
         | covered the moment they are registered.
         |
-        | RESERVED for the next UI slice (not registered here): campaigns.*,
-        | keywords.*, search-terms.*, leads.*, recommendations.*. The sidebar
-        | shows each child only once its route exists.
+        | Data pages and mutations: campaigns.*, keywords.*, search-terms.*,
+        | leads.*, recommendations.* (contract 23 §19). The sidebar
+        | shows each child once its route exists.
         |----------------------------------------------------------------------
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/ads')->name('businesses.ads.')->group(function () {
             Route::get('/', 'Business\AdsController@overview')->name('index');
             Route::get('/series', 'Business\AdsController@series')->middleware('throttle:60,1')->name('series');
             Route::get('/budget', 'Business\AdsController@budget')->name('budget');
+            // Full-module data pages (contract 23 §19): google_ads_module only, view_google_ads.
+            Route::get('/campaigns', 'Business\AdsCampaignsController@listing')->name('campaigns.index');
+            Route::get('/campaigns/{campaignUid}', 'Business\AdsCampaignsController@detail')->name('campaigns.show');
+            Route::get('/keywords', 'Business\AdsKeywordsController@listing')->name('keywords.index');
+            Route::get('/search-terms', 'Business\AdsSearchTermsController@listing')->name('search-terms.index');
+            Route::get('/leads', 'Business\AdsLeadsController@listing')->name('leads.index');
+            Route::get('/recommendations', 'Business\AdsRecommendationsController@listing')->name('recommendations.index');
+
+            // Safe mutations (contract 23 §6): manage_google_ads, throttled, View-As prohibited by prefix.
+            Route::post('/campaigns/{campaignUid}/pause', 'Business\AdsMutationController@pauseCampaign')->middleware('throttle:20,1')->name('campaigns.pause');
+            Route::post('/campaigns/{campaignUid}/resume', 'Business\AdsMutationController@resumeCampaign')->middleware('throttle:20,1')->name('campaigns.resume');
+            Route::post('/keywords/{keywordUid}/pause', 'Business\AdsMutationController@pauseKeyword')->middleware('throttle:20,1')->name('keywords.pause');
+            Route::post('/keywords/{keywordUid}/resume', 'Business\AdsMutationController@resumeKeyword')->middleware('throttle:20,1')->name('keywords.resume');
+            Route::post('/search-terms/negative/preview', 'Business\AdsMutationController@previewNegative')->middleware('throttle:20,1')->name('search-terms.negative.preview');
+            Route::post('/search-terms/negative', 'Business\AdsMutationController@storeNegative')->middleware('throttle:20,1')->name('search-terms.negative.store');
+            Route::post('/search-terms/ignore', 'Business\AdsMutationController@ignoreTerm')->middleware('throttle:20,1')->name('search-terms.ignore');
+            Route::post('/search-terms/unignore', 'Business\AdsMutationController@unignoreTerm')->middleware('throttle:20,1')->name('search-terms.unignore');
 
             Route::get('/settings', 'Business\AdsConnectionController@settings')->name('settings');
             Route::post('/settings', 'Business\AdsConnectionController@saveSettings')->middleware('throttle:20,1')->name('settings.update');

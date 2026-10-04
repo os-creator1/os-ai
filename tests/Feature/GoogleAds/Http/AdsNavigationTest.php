@@ -16,9 +16,9 @@ use Tests\TestCase;
  * child whose route exists, a Business with neither feature sees nothing, the
  * parent needs `view_google_ads`, and the entry sits directly after SEO.
  *
- * Children whose pages are built later (Campaigns, Keywords, Search terms,
- * Leads & conversions, Recommendations) are absent until their route exists —
- * the same item()/route-existence rule every entry uses.
+ * Every child is shown only when its route exists AND the Business holds the
+ * entitlement it needs (the same item()/route-existence rule every entry uses):
+ * Core sees Overview and Settings; Growth/Agency see all eight.
  */
 class AdsNavigationTest extends TestCase
 {
@@ -53,11 +53,11 @@ class AdsNavigationTest extends TestCase
         $this->assertSame(['ads', 'ads-overview', 'ads-settings'], $keys);
     }
 
-    public function test_a_growth_business_sees_every_child_whose_route_exists(): void
+    public function test_a_growth_business_sees_every_ads_page(): void
     {
         $keys = $this->adsKeysFor(WorkspacePlanTier::Growth);
 
-        $this->assertSame(['ads', 'ads-overview', 'ads-budget', 'ads-settings'], $keys, 'The not-yet-built pages are absent until their routes exist.');
+        $this->assertSame(['ads', ...self::ADS_CHILDREN], $keys, 'Overview, Campaigns, Keywords, Search terms, Leads, Budget, Recommendations, Settings.');
     }
 
     public function test_an_agency_business_sees_the_same_children_as_growth(): void
@@ -132,6 +132,12 @@ class AdsNavigationTest extends TestCase
         $this->assertContains('ads-budget', $this->activeMenuKeys($budget));
         $this->assertNotContains('ads-overview', $this->activeMenuKeys($budget));
 
+        foreach (['campaigns' => 'ads-campaigns', 'keywords' => 'ads-keywords', 'search-terms' => 'ads-search-terms', 'leads' => 'ads-leads', 'recommendations' => 'ads-recommendations'] as $page => $key) {
+            $html = $this->get(route('customer.workspaces.businesses.ads.' . $page . '.index', [$workspace->uid, $business->uid]))->assertOk()->getContent();
+            $this->assertContains($key, $this->activeMenuKeys($html), "[{$page}] lights its own menu child");
+            $this->assertNotContains('ads-overview', $this->activeMenuKeys($html));
+        }
+
         $settings = $this->get(route('customer.workspaces.businesses.ads.settings', [$workspace->uid, $business->uid]))->assertOk()->getContent();
         $this->assertContains('ads-settings', $this->activeMenuKeys($settings));
     }
@@ -145,11 +151,17 @@ class AdsNavigationTest extends TestCase
         $this->assertStringContainsString('data-nav="overview"', $core);
         $this->assertStringContainsString('data-nav="settings"', $core);
         $this->assertStringNotContainsString('data-nav="budget"', $core);
+        foreach (['campaigns', 'keywords', 'search-terms', 'leads', 'recommendations'] as $page) {
+            $this->assertStringNotContainsString('data-nav="' . $page . '"', $core, "Core is never offered [{$page}]");
+        }
 
         [$growthCustomer, $growthBusiness, $growthWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'Growth Studio', 'Growth Account');
         $this->authenticateAs($growthCustomer);
 
         $growth = $this->get(route('customer.workspaces.businesses.ads.index', [$growthWorkspace->uid, $growthBusiness->uid]))->assertOk()->getContent();
         $this->assertStringContainsString('data-nav="budget"', $growth);
+        foreach (['campaigns', 'keywords', 'search-terms', 'leads', 'recommendations'] as $page) {
+            $this->assertStringContainsString('data-nav="' . $page . '"', $growth, "Growth is offered [{$page}]");
+        }
     }
 }

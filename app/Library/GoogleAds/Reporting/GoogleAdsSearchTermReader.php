@@ -119,7 +119,7 @@ final class GoogleAdsSearchTermReader
 
     private function query(GoogleAdsAccount $account, GoogleAdsPeriod $period, ?string $class, ?string $campaignUid): Builder
     {
-        $grouped = DB::table('google_ads_search_terms')
+        $grouped = DB::table('google_ads_search_terms as s')
             ->where('business_id', $account->business_id)
             ->where('google_ads_account_id', $account->id)
             ->whereBetween('metric_date', [$period->fromDate(), $period->toDate()])
@@ -132,7 +132,14 @@ final class GoogleAdsSearchTermReader
                 . "MAX(CASE WHEN targeting_status IN ('EXCLUDED','ADDED_EXCLUDED') THEN 1 ELSE 0 END) AS is_excluded, "
                 . "MAX(CASE WHEN targeting_status IN ('ADDED','ADDED_EXCLUDED') THEN 1 ELSE 0 END) AS is_added, "
                 . 'MAX(CASE WHEN targeting_status IS NOT NULL THEN 1 ELSE 0 END) AS has_status, '
-                . "MAX(CASE WHEN review_state = 'ignored' THEN 1 ELSE 0 END) AS is_ignored, "
+                // "Ignored" is a decision about the term in its campaign / ad group, so ANY
+                // ignored row of that term (any date) counts: days that arrive after the
+                // owner ignored it are stored unreviewed and must not un-ignore it.
+                . 'MAX(s.id) AS row_id, '
+                . 'MAX(CASE WHEN EXISTS (SELECT 1 FROM google_ads_search_terms x WHERE x.business_id = s.business_id '
+                . 'AND x.google_ads_account_id = s.google_ads_account_id AND x.term_hash = s.term_hash '
+                . 'AND x.google_ads_campaign_id = s.google_ads_campaign_id AND x.google_ads_ad_group_id = s.google_ads_ad_group_id '
+                . "AND x.review_state = 'ignored') THEN 1 ELSE 0 END) AS is_ignored, "
                 . 'MAX(matched_keyword_text) AS matched_keyword_text, MAX(matched_keyword_match_type) AS matched_keyword_match_type'
             );
 
@@ -225,7 +232,7 @@ final class GoogleAdsSearchTermReader
                 classification: GoogleAdsSearchTermClass::from((string) $row->term_class),
                 alreadyNegative: $covered,
                 totals: GoogleAdsMetricTotals::fromRow($row),
-                internal: ['campaign_id' => (int) $row->google_ads_campaign_id, 'ad_group_id' => (int) $row->google_ads_ad_group_id],
+                internal: ['campaign_id' => (int) $row->google_ads_campaign_id, 'ad_group_id' => (int) $row->google_ads_ad_group_id, 'search_term_id' => (int) $row->row_id],
             );
         }
 

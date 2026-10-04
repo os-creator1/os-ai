@@ -34,7 +34,7 @@ class LeadAttributionReader
     /**
      * One page of leads, newest conversion first.
      *
-     * Row: contact{id,name,phone}, level, first_touch, last_touch (null unless a
+     * Row: contact{id,uid,name,phone}, level, first_touch, last_touch (null unless a
      * different last touch exists), entry_surface, landing_page, captured_at,
      * opportunity{stage,status,value_minor,currency}|null, booked,
      * subject{type,id} (the contact's latest conversion in the period).
@@ -214,7 +214,7 @@ class LeadAttributionReader
             $opportunity = $opportunities->get($id);
 
             $rows[] = [
-                'contact' => ['id' => $id, 'name' => $contacts[$id]['name'] ?? null, 'phone' => $contacts[$id]['phone'] ?? null],
+                'contact' => ['id' => $id, 'uid' => $contacts[$id]['uid'] ?? null, 'name' => $contacts[$id]['name'] ?? null, 'phone' => $contacts[$id]['phone'] ?? null],
                 'level' => $this->level($mine),
                 'first_touch' => $first === null ? null : $this->touch($first),
                 'last_touch' => $last === null ? null : $this->touch($last),

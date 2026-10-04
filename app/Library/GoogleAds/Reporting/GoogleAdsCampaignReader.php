@@ -67,6 +67,24 @@ final class GoogleAdsCampaignReader
         return $this->page($account, $period, $status, 'spend', 'desc', 1, $limit)->items;
     }
 
+    /**
+     * uid => name of the account's campaigns (no metrics): the filter dropdown
+     * and the whitelist for a `campaign` query parameter.
+     *
+     * @return array<string, string>
+     */
+    public function options(GoogleAdsAccount $account, int $limit = 200): array
+    {
+        return GoogleAdsCampaign::query()
+            ->where('business_id', $account->business_id)
+            ->where('google_ads_account_id', $account->id)
+            ->orderBy('name')->orderBy('id')
+            ->limit(max(1, min(500, $limit)))
+            ->pluck('name', 'uid')
+            ->map(fn ($name): string => (string) $name)
+            ->all();
+    }
+
     public function find(GoogleAdsAccount $account, string $campaignUid, GoogleAdsPeriod $period): ?GoogleAdsCampaignRow
     {
         $row = $this->query($account, $period, null)->where('c.uid', $campaignUid)->first();

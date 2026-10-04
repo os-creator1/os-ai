@@ -18,7 +18,7 @@ use App\Enums\GoogleAds\GoogleAdsSearchTermStatus;
  */
 final class GoogleAdsSearchTermRow
 {
-    /** @param  array{campaign_id: int, ad_group_id: int}  $internal */
+    /** @param  array{campaign_id: int, ad_group_id: int, search_term_id: int}  $internal */
     public function __construct(
         public readonly string $term,
         public readonly string $termHash,
