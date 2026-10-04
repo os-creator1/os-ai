@@ -180,7 +180,7 @@ trait CreatesGrowthFixtures
                 'uid' => (string) \Illuminate\Support\Str::uuid(),
                 'business_document_version_id' => $versionId,
                 'sequence' => $i + 1,
-                'kind' => 'full',
+                'kind' => $item[3] ?? 'full',
                 'amount_minor' => $item[0],
                 'currency_code' => 'USD',
                 'due_at' => isset($item[1]) ? now()->addDays($item[1]) : null,

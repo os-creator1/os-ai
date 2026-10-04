@@ -30,7 +30,7 @@
                             <div class="flex-grow-1">
                                 <p class="fw-bold mb-25" data-role="growth-item-title">{{ $item['title'] }}</p>
                                 @if(! empty($item['summary']))
-                                    <p class="mb-25 text-muted" data-role="growth-item-summary">{{ $item['summary'] }}</p>
+                                    <p class="mb-25" data-role="growth-item-summary">{{ $item['summary'] }}</p>
                                 @endif
                                 <p class="mb-0 text-caption" data-role="growth-item-context">{{ $item['headline'] }}</p>
                             </div>

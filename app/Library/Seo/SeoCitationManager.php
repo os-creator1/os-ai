@@ -365,11 +365,7 @@ final class SeoCitationManager
      */
     private function appliesToCountry(SeoCitationDirectory $directory, BusinessLocation $location): bool
     {
-        if ($directory->isCustom() || $directory->country_scope === null || trim((string) $directory->country_scope) === '') {
-            return true;
-        }
-
-        return strtoupper(trim((string) $directory->country_scope)) === strtoupper(trim((string) $location->country_code));
+        return SeoCitationApplicability::appliesToCountry($directory, $location);
     }
 
     /**
@@ -502,9 +498,7 @@ final class SeoCitationManager
             // OFFERED = new, actionable. A platform directory must be active, core or recommended by the
             // niche, AND apply to THIS Location's country (a recommendation never overrides that). A custom
             // directory is governed only by its own Business/Location scope.
-            $offered = $directory->is_active
-                && ($directory->isCustom()
-                    || (($directory->is_platform_core || $recommendation !== null) && $this->appliesToCountry($directory, $location)));
+            $offered = SeoCitationApplicability::isOffered($directory, $recommendation, $location);
 
             // Anything else is shown only where the Business already holds a
             // record for it (history), and is then read-only.

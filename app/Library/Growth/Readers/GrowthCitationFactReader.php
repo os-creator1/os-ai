@@ -9,9 +9,12 @@ use App\Enums\Seo\SeoNapFieldResult;
 use App\Library\Growth\GrowthFactReader;
 use App\Library\Growth\GrowthFactSet;
 use App\Library\Growth\GrowthThresholds;
+use App\Library\Seo\SeoCitationApplicability;
 use App\Library\Seo\SeoNapComparator;
 use App\Models\Business;
 use App\Models\BusinessLocation;
+use App\Models\SeoCitationDirectory;
+use App\Models\SeoNicheCitationRecommendation;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -23,8 +26,12 @@ use Illuminate\Support\Facades\DB;
  * exist. The comparator is pure, so comparing is not a query.
  *
  * "Important directory" = one of the first `citation_priority_directories`
- * ACTIVE directories in the platform's own sort order. There is no separate
- * importance flag, and Growth does not invent one.
+ * directories the Citations page itself OFFERS at that Location, in the
+ * platform's own sort order. What is offered (active, core or niche-recommended,
+ * and applicable to the Location's country) is decided by
+ * SeoCitationApplicability — the same rule the Citations page uses — so a US-only
+ * directory is never expected of a Location in another country. Growth invents no
+ * importance flag and no country logic of its own.
  *
  * Three states are kept apart on purpose (Growth Center §23):
  *   not checked   no row, or status not_started — NEVER a mismatch
@@ -62,20 +69,31 @@ final class GrowthCitationFactReader implements GrowthFactReader
             ->orderBy('id')
             ->get();
 
-        $directoryIds = DB::table('seo_citation_directories')
+        // Platform directories only (a Business's own custom directories are the owner's, not a
+        // platform priority), in the platform's order.
+        $directories = SeoCitationDirectory::query()
+            ->whereNull('business_id')
             ->where('is_active', true)
             ->orderBy('sort_order')
             ->orderBy('id')
-            ->limit($thresholds->get('citation_priority_directories'))
-            ->pluck('id');
+            ->get();
 
-        if ($locations->isEmpty() || $directoryIds->isEmpty()) {
+        $nicheKey = $business->industry?->value;
+        $recommendations = $nicheKey === null
+            ? collect()
+            : SeoNicheCitationRecommendation::query()
+                ->where('niche_key', $nicheKey)
+                ->where('is_enabled', true)
+                ->get()
+                ->keyBy('seo_citation_directory_id');
+
+        if ($locations->isEmpty() || $directories->isEmpty()) {
             return GrowthFactSet::available($this->domain(), ['locations' => []]);
         }
 
         $rows = DB::table('seo_citations')
             ->where('business_id', $business->id)
-            ->whereIn('seo_citation_directory_id', $directoryIds)
+            ->whereIn('seo_citation_directory_id', $directories->pluck('id'))
             ->get(['business_location_id', 'seo_citation_directory_id', 'status', 'listed_name', 'listed_phone', 'listed_address'])
             ->groupBy('business_location_id');
 
@@ -83,6 +101,10 @@ final class GrowthCitationFactReader implements GrowthFactReader
 
         foreach ($locations as $location) {
             $canonical = $this->nap->canonicalFor($business, $location);
+            $directoryIds = $directories
+                ->filter(fn (SeoCitationDirectory $d) => SeoCitationApplicability::isOffered($d, $recommendations->get($d->id), $location))
+                ->take($thresholds->get('citation_priority_directories'))
+                ->pluck('id');
             $byDirectory = ($rows->get($location->id) ?? collect())->keyBy('seo_citation_directory_id');
 
             $notChecked = 0;

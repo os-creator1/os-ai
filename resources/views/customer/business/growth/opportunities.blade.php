@@ -39,7 +39,7 @@
 
         <form method="GET" class="gc-filters" data-role="filters">
             <input type="hidden" name="state" value="{{ $state }}">
-            <input type="search" name="q" value="{{ $filters['q'] ?? '' }}" class="form-control form-control-sm" placeholder="Search opportunities" aria-label="Search opportunities" data-role="search">
+            <input type="search" name="q" value="{{ $filters['q'] ?? '' }}" class="form-control form-control-sm" placeholder="Search recommendations" aria-label="Search opportunities" data-role="search">
             <select name="category" class="form-select form-select-sm" aria-label="Category" data-role="filter-category">
                 <option value="">All categories</option>
                 @foreach($categories as $c)
