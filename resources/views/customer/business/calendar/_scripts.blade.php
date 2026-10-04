@@ -21,7 +21,11 @@
        tab) and picks how many days the week view shows from the width the
        grid actually has.
 
-    @verbatim is required: this is JavaScript, and Blade must not read it.
+    The script below sits in a verbatim block because it is JavaScript and
+    Blade must not read it. Do not write that directive's name inside this
+    comment: Blade pairs the first occurrence it finds with the closing one
+    before it looks for comments, which swallows this comment's terminator and
+    prints the whole comment and script as page text.
 --}}
 @verbatim
 <script>
