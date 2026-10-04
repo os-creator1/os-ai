@@ -119,7 +119,7 @@ class EntitlementEnumsTest extends TestCase
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(20, PlatformFeature::cases());
+        $this->assertCount(21, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 

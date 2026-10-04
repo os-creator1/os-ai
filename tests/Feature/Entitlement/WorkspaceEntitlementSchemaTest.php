@@ -239,9 +239,9 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $expectedAgency = array_merge($expectedGrowth, ['agency_package_capabilities', 'prospect_outreach', 'white_label']);
         sort($expectedAgency);
 
-        $this->assertCount(13, $expectedCore);
-        $this->assertCount(16, $expectedGrowth);
-        $this->assertCount(19, $expectedAgency);
+        $this->assertCount(12, $expectedCore);
+        $this->assertCount(17, $expectedGrowth);
+        $this->assertCount(20, $expectedAgency);
 
         $this->assertSame($expectedCore, $coreKeys, 'Core feature-key set mismatch.');
         $this->assertSame($expectedGrowth, $growthKeys, 'Growth feature-key set mismatch (must equal exact Core + 5).');
