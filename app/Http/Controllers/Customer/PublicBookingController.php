@@ -10,7 +10,10 @@ use App\Exceptions\Calendar\BookingRefusedException;
 use App\Library\GoogleAds\Attribution\LeadAttributionRecorder;
 use App\Http\Controllers\Controller;
 use App\Library\Calendar\AppointmentBookingService;
+use App\Library\Calendar\BookingLocationLabel;
 use App\Library\Calendar\CalendarLocationResolver;
+use App\Library\Calendar\Notifications\AppointmentNotificationScheduler;
+use App\Library\Calendar\Notifications\BookingNotificationReadiness;
 use App\Library\Calendar\PublicSlotFinder;
 use App\Library\Entitlement\CustomerAccountAccessGuard;
 use App\Library\Entitlement\EntitlementManager;
@@ -49,6 +52,8 @@ class PublicBookingController extends Controller
         private readonly AppointmentBookingService $booking,
         private readonly EloquentContactsRepository $contacts,
         private readonly LeadAttributionRecorder $attribution,
+        private readonly AppointmentNotificationScheduler $notifications,
+        private readonly BookingNotificationReadiness $notificationReadiness,
     ) {
     }
 
@@ -81,6 +86,9 @@ class PublicBookingController extends Controller
             'slots' => $slots,
             'brand' => $this->brand($type, $business, $location, $staffIds),
             'timezones' => $this->timezoneOptions(),
+            // The transactional-SMS consent box is offered only when texting is enabled for this
+            // Booking Type AND the Business could actually text (never a consent for a dead channel).
+            'offerSmsConsent' => $type->notifiesBySms() && $this->notificationReadiness->smsReady($type),
             'config' => [
                 'datesUrl' => route('public.booking.dates', [$type->public_booking_uuid]),
                 'slotsUrl' => route('public.booking.slots', [$type->public_booking_uuid]),
@@ -154,6 +162,7 @@ class PublicBookingController extends Controller
             'last_name' => ['required', 'string', 'max:120'],
             'email' => ['required', 'string', 'email:rfc', 'max:190'],
             'phone' => ['required', 'string', 'max:32'],
+            'sms_consent' => ['nullable', 'boolean'],
         ]);
         $validator->after(function ($validator) use ($request, $type): void {
             $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', (string) $request->input('phone')));
@@ -219,8 +228,19 @@ class PublicBookingController extends Controller
             LeadAttributionEntrySurface::Booking,
             $request,
         );
+        // Booking Notifications V1 — the Calendar's built-in confirmation and reminders, owed from
+        // the details the guest gave for THIS booking. Best-effort by design: the booking is already
+        // committed, so nothing here may fail it (a failure is logged and the due-sweep recovers).
+        // Consent counts only if the box was actually offered (texting enabled and ready).
+        $smsConsent = (bool) ($data['sms_consent'] ?? false) && $type->notifiesBySms() && $this->notificationReadiness->smsReady($type);
+        try {
+            $this->notifications->recordPublicBooking($appointment, $type, (string) $data['email'], (string) $data['phone'], $smsConsent);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
         $visitorTimezone = $this->visitorTimezone($request, $timezone, 'visitor_timezone');
-        $summary = $this->summary($type, $business, $location, $start, $visitorTimezone);
+        $summary = $this->summary($type, $business, $location, $start, $visitorTimezone)
+            + ['notice' => $this->noticeLine($type, (string) $data['email'], $smsConsent)];
         if ($wantsJson) {
             return $this->json(['status' => 'confirmed', 'booking' => $summary], 201);
         }
@@ -346,14 +366,7 @@ class PublicBookingController extends Controller
 
     private function whereLine(BusinessLocation $location): ?string
     {
-        if ($location->service_mode === \App\Enums\Business\BusinessServiceMode::Online) {
-            return 'Online';
-        }
-        $parts = $location->public_address
-            ? array_filter([$location->address_line_1, $location->city, $location->region])
-            : array_filter([$location->name]);
-
-        return $parts === [] ? null : implode(', ', $parts);
+        return BookingLocationLabel::for($location);
     }
 
     private function summary(BookingType $type, Business $business, BusinessLocation $location, Carbon $start, string $timezone): array
@@ -373,6 +386,20 @@ class PublicBookingController extends Controller
             'start' => $start->toIso8601ZuluString(),
             'end' => $end->toIso8601ZuluString(),
         ];
+    }
+
+    /** What the guest is told to expect, from what was actually arranged — nothing promised for a channel that is off. */
+    private function noticeLine(BookingType $type, string $email, bool $smsConsent): ?string
+    {
+        $parts = [];
+        if ($type->notifiesByEmail()) {
+            $parts[] = 'a confirmation email to ' . $email;
+        }
+        if ($smsConsent) {
+            $parts[] = 'a text message to your phone';
+        }
+
+        return $parts === [] ? null : 'We are sending ' . implode(' and ', $parts) . ', with reminders before your appointment.';
     }
 
     private function refused(bool $wantsJson, string $message, int $status = 422): RedirectResponse|JsonResponse

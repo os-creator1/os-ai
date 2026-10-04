@@ -96,8 +96,10 @@ shared custom-field/form system.
 Booking Type, Business, date, time range, timezone, duration and where, in the
 visitor's timezone. "Add to Google Calendar" is a plain link and "Download .ics"
 is built in the browser from the same summary; there is no new server
-infrastructure. No confirmation email or SMS is sent by this lane (none exists
-in the booking path), so the page does not claim one.
+infrastructure. This lane sent no confirmation (none existed in the booking path), so
+the page claimed none. **Superseded by `15-BOOKING-NOTIFICATIONS-V1.md`:** a booking now
+produces a confirmation email (and, with consent, a text) and reminders, and the page
+says only what was actually arranged for that booking.
 
 ## Branding
 

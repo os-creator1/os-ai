@@ -96,6 +96,9 @@
                     </div>
                     <div class="pb-field"><label for="email">Email</label><input id="email" type="email" name="email" value="{{ old('email') }}" autocomplete="email" inputmode="email" required><p class="pb-err" data-err="email" hidden></p></div>
                     <div class="pb-field"><label for="phone">Phone</label><input id="phone" type="tel" name="phone" value="{{ old('phone') }}" autocomplete="tel" inputmode="tel" required><p class="pb-err" data-err="phone" hidden></p></div>
+                    @if ($offerSmsConsent)
+                        <div class="pb-field"><label for="sms-consent" style="font-weight:400"><input id="sms-consent" type="checkbox" name="sms_consent" value="1" @checked(old('sms_consent')) style="width:auto;margin-right:8px">Text me the confirmation and reminders for this appointment. Message and data rates may apply. This is only for this booking and is not marketing consent.</label></div>
+                    @endif
                     <p class="pb-err" data-err="time" hidden></p>
                     <button type="submit" class="pb-btn" id="pb-submit">Confirm booking</button>
                 </form>
@@ -105,6 +108,7 @@
                 <div class="pb-check"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg></div>
                 <h2 class="pb-heading">You are booked</h2>
                 <p style="margin:0;color:var(--pb-muted)">Your appointment is confirmed. Keep this page for your details.</p>
+                <p id="pb-notice" data-role="booking-notice" style="margin:8px 0 0;color:var(--pb-muted)" hidden></p>
                 <div class="pb-summary"><dl id="pb-summary"></dl></div>
                 <div class="pb-actions">
                     <a class="pb-btn is-ghost" id="pb-gcal" target="_blank" rel="noopener">Add to Google Calendar</a>

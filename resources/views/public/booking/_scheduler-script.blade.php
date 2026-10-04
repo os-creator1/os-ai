@@ -20,7 +20,7 @@
         month: $('pb-month'), prev: $('pb-prev'), next: $('pb-next'), dow: $('pb-dow'), days: $('pb-days'),
         slots: $('pb-slots'), timesTitle: $('pb-times-title'), tz: $('pb-tz'), tzLabel: $('pb-tz-label'),
         form: $('pb-form'), picked: $('pb-picked'), alert: $('pb-alert'), submit: $('pb-submit'),
-        summary: $('pb-summary'), gcal: $('pb-gcal'), ics: $('pb-ics'), status: $('pb-status'),
+        summary: $('pb-summary'), notice: $('pb-notice'), gcal: $('pb-gcal'), ics: $('pb-ics'), status: $('pb-status'),
         backTime: $('pb-back-time'), backDate: $('pb-back-date')
     };
     var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -234,6 +234,7 @@
 
     function showConfirmation(b) {
         els.summary.innerHTML = '';
+        if (els.notice) { els.notice.textContent = b.notice || ''; els.notice.hidden = !b.notice; }
         [['What', b.type], ['Who', b.business], ['When', b.date], ['Time', b.time], ['Time zone', b.timezone.replace(/_/g, ' ')], ['Where', b.where], ['Details', b.instructions]]
             .forEach(function (row) {
                 if (!row[1]) { return; }

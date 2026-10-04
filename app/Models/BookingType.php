@@ -30,6 +30,9 @@ class BookingType extends Model
         'buffer_before_minutes',
         'buffer_after_minutes',
         'slot_interval_minutes',
+        'notify_email',
+        'notify_sms',
+        'reminder_offsets',
         'color',
         'is_active',
         'created_by_user_id',
@@ -42,6 +45,9 @@ class BookingType extends Model
         'buffer_before_minutes' => 'integer',
         'buffer_after_minutes' => 'integer',
         'slot_interval_minutes' => 'integer',
+        'notify_email' => 'boolean',
+        'notify_sms' => 'boolean',
+        'reminder_offsets' => 'array',
         'is_active' => 'boolean',
     ];
 
@@ -163,5 +169,56 @@ class BookingType extends Model
     public function isActive(): bool
     {
         return (bool) $this->is_active;
+    }
+
+    // Customer notifications (Booking Notifications V1). Reminder offsets are
+    // minutes BEFORE the start. NULL stored = the product defaults; an empty list
+    // stored = the owner deliberately turned reminders off.
+    public const DEFAULT_REMINDER_OFFSETS = [1440, 120];
+
+    /** The offsets the editor offers, in minutes, with their labels. */
+    public const REMINDER_OFFSET_OPTIONS = [
+        15 => '15 minutes before',
+        30 => '30 minutes before',
+        60 => '1 hour before',
+        120 => '2 hours before',
+        180 => '3 hours before',
+        360 => '6 hours before',
+        720 => '12 hours before',
+        1440 => '24 hours before',
+        2880 => '48 hours before',
+        4320 => '3 days before',
+        10080 => '1 week before',
+    ];
+
+    public const MAX_REMINDERS = 4;
+
+    /** A freshly created model has not re-read the column default yet, hence the null fallback. */
+    public function notifiesByEmail(): bool
+    {
+        return (bool) ($this->notify_email ?? true);
+    }
+
+    public function notifiesBySms(): bool
+    {
+        return (bool) ($this->notify_sms ?? false);
+    }
+
+    /**
+     * The effective reminder offsets: positive, distinct, largest first.
+     *
+     * @return list<int>
+     */
+    public function reminderOffsetMinutes(): array
+    {
+        $stored = $this->reminder_offsets;
+        $offsets = is_array($stored) ? $stored : self::DEFAULT_REMINDER_OFFSETS;
+        $offsets = array_values(array_unique(array_filter(
+            array_map('intval', $offsets),
+            static fn (int $minutes): bool => $minutes > 0,
+        )));
+        rsort($offsets);
+
+        return $offsets;
     }
 }

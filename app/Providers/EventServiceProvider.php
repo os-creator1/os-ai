@@ -29,6 +29,7 @@ use App\Events\Website\WebsitePublished;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Forms\FormSubmissionRecorded;
 use App\Listeners\Automation\Workflow\EnrollFromAppointmentEvent;
+use App\Listeners\Calendar\KeepAppointmentNotificationsInStep;
 use App\Listeners\Automation\Workflow\EnrollFromContactTagEvent;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromFormSubmission;
@@ -193,11 +194,16 @@ class EventServiceProvider extends ServiceProvider
         AppointmentScheduled::class => [
             EnrollFromAppointmentEvent::class,
         ],
+        // Booking Notifications V1 — the Calendar's built-in confirmation/reminder
+        // ledger follows cancels and reschedules. Beside the Automations listener,
+        // never instead of it.
         AppointmentCancelled::class => [
             EnrollFromAppointmentEvent::class,
+            KeepAppointmentNotificationsInStep::class . '@handleCancelled',
         ],
         AppointmentRescheduled::class => [
             EnrollFromAppointmentEvent::class,
+            KeepAppointmentNotificationsInStep::class . '@handleRescheduled',
         ],
         // Unified Business Home §9.3 (AI-3) — cached COO insights stop being
         // shown when their facts stop holding. Invalidation queues nothing;

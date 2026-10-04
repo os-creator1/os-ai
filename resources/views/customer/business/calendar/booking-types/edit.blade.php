@@ -33,6 +33,7 @@
     <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.booking-types.update', $withType) }}">
         @csrf
         @include('customer.business.calendar.booking-types._settings-fields', ['bookingType' => $bookingType])
+        @include('customer.business.calendar.booking-types._notification-fields', ['bookingType' => $bookingType, 'notificationReadiness' => $notificationReadiness])
         <x-button type="submit" variant="primary" icon="check" class="mb-2">Save changes</x-button>
     </form>
 
