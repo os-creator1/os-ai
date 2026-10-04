@@ -755,9 +755,87 @@ class TextMessagingController extends CustomerBaseController
     /**
      * @param  array{state: string, phoneNumber: ?string, textingAvailable: bool, mediaAvailable: bool, registration: ?BusinessMessagingRegistration, campaignAssignmentStatus: ?string, campaignAssignmentFailureReason: ?string, retainedNumbers: Collection<int, BusinessMessagingNumber>, portOutRequestsByNumberId: array<int, ?BusinessMessagingNumberPortOutRequest>}  $situation
      */
+    /**
+     * Which Locations use this Business's number.
+     *
+     * The number is Business-level; a workflow limited to Locations can only text
+     * through it once the owner says which Locations it speaks for. Changing that
+     * changes what the Business sends as, so it takes the same owner-or-account-manager
+     * authority as registration, AND reach of every Location (a person who sees only
+     * some Locations cannot decide for the rest). Locations are chosen by uid and
+     * resolved inside this Business: another Business's uid is simply not found.
+     */
+    public function updateNumberLocations(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid);
+        $this->authorizeRegistrationMutation($business);
+
+        $locationAuthority = app(\App\Library\Automation\Workflow\WorkflowLocationAuthority::class);
+
+        if (! $locationAuthority->hasFullReach((int) Auth::id(), $business)) {
+            throw new AuthorizationException('Only someone with access to every location can choose which locations use the number.');
+        }
+
+        $validated = $request->validate([
+            'location_uids' => ['nullable', 'array', 'max:100'],
+            'location_uids.*' => ['string', 'max:64'],
+        ]);
+
+        $number = $this->primaryNumberFor($business);
+
+        if ($number === null) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Add a phone number first.');
+        }
+
+        $uids = array_values(array_unique($validated['location_uids'] ?? []));
+        $locations = \App\Models\BusinessLocation::query()
+            ->where('business_id', (int) $business->id)
+            ->whereIn('uid', $uids)
+            ->get(['id', 'uid']);
+
+        if ($locations->count() !== count($uids)) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'One of those locations could not be found.');
+        }
+
+        try {
+            $this->identities->assignLocations($number, $business, $locations->pluck('id')->map(fn ($id): int => (int) $id)->all());
+        } catch (\InvalidArgumentException) {
+            return $this->textMessagingError($workspaceUid, $businessUid, 'Choose active locations of this business.');
+        }
+
+        return redirect()->route('customer.workspaces.businesses.text-messaging.show', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => $locations->isEmpty()
+                ? 'Your number is no longer limited to particular locations.'
+                : 'Saved. Your number is now used by the locations you chose.',
+        ]);
+    }
+
     private function renderReady(string $workspaceUid, string $businessUid, array $situation): View
     {
+        $business = $this->resolveBusinessTenancy($workspaceUid, $businessUid)[1];
+        $number = $this->primaryNumberFor($business);
+        $locations = \App\Models\BusinessLocation::query()
+            ->where('business_id', (int) $business->id)
+            ->where('lifecycle_state', \App\Enums\Business\BusinessLocationLifecycleState::Active->value)
+            ->orderBy('name')->orderBy('id')
+            ->get(['id', 'uid', 'name']);
+        $assigned = $number === null ? [] : $this->identities->assignedLocationIds($number);
+
         return view('customer.settings.text-messaging.states.ready', [
+            // Shown only when there is a real choice to make (several Locations) and
+            // the person may make it (owner / account manager with full reach).
+            'locationChoices' => $locations->count() > 1 && $number !== null
+                && app(\App\Library\Automation\Workflow\WorkflowLocationAuthority::class)->hasFullReach((int) Auth::id(), $business)
+                && $this->shell->currentContext(Auth::user())->canManageWorkspace()
+                ? $locations->map(fn ($location): array => [
+                    'uid' => (string) $location->uid,
+                    'name' => (string) ($location->name ?: 'Unnamed location'),
+                    'checked' => in_array((int) $location->id, $assigned, true),
+                ])->all()
+                : [],
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'phoneNumber' => $situation['phoneNumber'],

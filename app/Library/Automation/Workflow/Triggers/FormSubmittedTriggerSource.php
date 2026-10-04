@@ -34,8 +34,8 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
 {
     protected function assertServes(WorkflowTriggerType $triggerType): void
     {
-        if ($triggerType !== WorkflowTriggerType::FormSubmitted) {
-            throw new \InvalidArgumentException('The form trigger source serves only the form-submitted trigger.');
+        if (! in_array($triggerType, [WorkflowTriggerType::FormSubmitted, WorkflowTriggerType::QuestionnaireSubmitted], true)) {
+            throw new \InvalidArgumentException('The form trigger source serves only the form-submitted and questionnaire-submitted triggers.');
         }
     }
 
@@ -58,6 +58,13 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
             return $this->skip($result, self::SKIPPED_NO_FACT);
         }
 
+        // A QUESTIONNAIRE is a form whose pinned version has two or more pages (Forms
+        // V1 has one definition for both). "A questionnaire is submitted" narrows
+        // "a form is submitted" to exactly those; the one-page form never fires it.
+        if ($this->triggerType === WorkflowTriggerType::QuestionnaireSubmitted && $context->pages < 2) {
+            return $this->skip($result, self::SKIPPED_NO_FACT);
+        }
+
         $formId = $context->formId;
 
         return $this->enrollListening(
@@ -67,6 +74,9 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
             $context->occurrenceKey(),
             // "Any form" when the filter is absent; otherwise exactly that form.
             fn (array $config): bool => ($wanted = self::filterId($config['form_id'] ?? null)) === null || $wanted === $formId,
+            null,
+            // The immutable submission's own Location, read from its row above.
+            $context->locationId,
         );
     }
 
@@ -80,7 +90,7 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
     {
         $key = (string) $enrollment->trigger_occurrence_key;
 
-        if ($enrollment->trigger_type !== WorkflowTriggerType::FormSubmitted
+        if ($enrollment->trigger_type !== $this->triggerType
             || ! str_starts_with($key, FormSubmittedTriggerContext::OCCURRENCE_PREFIX)) {
             return null;
         }
@@ -97,12 +107,14 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
      */
     private function contextFor(int $businessId, \Closure $locate): ?FormSubmittedTriggerContext
     {
-        $query = DB::table('form_submissions as s')->where('s.business_id', $businessId);
+        $query = DB::table('form_submissions as s')
+            ->join('form_versions as fv', 'fv.id', '=', 's.form_version_id')
+            ->where('s.business_id', $businessId);
         $locate($query);
 
         $row = $query->first([
             's.id', 's.uid', 's.business_id', 's.business_location_id', 's.form_id', 's.form_version_id',
-            's.contact_id', 's.crm_opportunity_id',
+            's.contact_id', 's.crm_opportunity_id', 'fv.pages',
         ]);
 
         if ($row === null) {
@@ -118,6 +130,8 @@ class FormSubmittedTriggerSource extends FoundationTriggerSource
             submissionUid: (string) $row->uid,
             contactId: $row->contact_id === null ? null : (int) $row->contact_id,
             opportunityId: $row->crm_opportunity_id === null ? null : (int) $row->crm_opportunity_id,
+            // The pinned version's page count; a version that predates pages is one.
+            pages: max(1, count((array) (is_string($row->pages) ? json_decode($row->pages, true) : $row->pages))),
         );
     }
 }

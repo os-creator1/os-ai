@@ -260,7 +260,7 @@ final class DocumentManager
      * `link_delivery_failed_at` and the owner re-sends the link
      * (resendLink()).
      */
-    public function send(BusinessDocument $document, ?array $channels = null, ?string $message = null, ?int $expectedLockVersion = null): BusinessDocument
+    public function send(BusinessDocument $document, ?array $channels = null, ?string $message = null, ?int $expectedLockVersion = null, ?string $origin = null): BusinessDocument
     {
         $channels = $this->dispatcher()->normalize($channels);
         $this->lastDelivery = [];
@@ -376,7 +376,7 @@ final class DocumentManager
         // plaintext never to be stored or recoverable — the default queue
         // connection here is `database`, so an unencrypted payload would sit
         // in `jobs`, and in `failed_jobs` indefinitely on any failure.
-        DB::afterCommit(function () use ($result, $version, $plaintextToken, $channels, $message) {
+        DB::afterCommit(function () use ($result, $version, $plaintextToken, $channels, $message, $origin) {
             $this->lastDelivery = $this->dispatcher()->dispatch($result, $plaintextToken, $channels, $message);
 
             DocumentSent::dispatch(
@@ -386,6 +386,7 @@ final class DocumentManager
                 (int) $result->business_id,
                 (int) $result->business_location_id,
                 (int) $result->contact_id,
+                $origin,
             );
         });
 

@@ -639,7 +639,12 @@
 
             if (! is_string($quickSendKey) || $quickSendKey === '') {
                 $quickSendKey = 'managed:quicksend:' . ($input['business_id'] ?? '0')
-                    . ':' . hash('sha256', $phone . '|' . (string) $message . '|' . (string) $sender_id);
+                    . ':' . hash('sha256', $phone . '|' . (string) $message . '|' . (string) $sender_id
+                        // Automations only: a send that speaks for a Location is a
+                        // different send from the same text for another one.
+                        . (($input['location_send_context'] ?? null) instanceof \App\Library\Messaging\DTO\LocationSendContext
+                            ? $input['location_send_context']->keyFragment()
+                            : ''));
             }
 
             $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
@@ -674,6 +679,11 @@
                 // fail closed, never silently fall through to whatever
                 // legacy/BYO server this Business also happens to have.
                 (bool) ($input['require_managed'] ?? false),
+                // Automations — the Location this send must provably speak for. Absent
+                // for every other caller (unchanged).
+                ($input['location_send_context'] ?? null) instanceof \App\Library\Messaging\DTO\LocationSendContext
+                    ? $input['location_send_context']
+                    : null,
             );
 
             if ($managedResult !== null) {

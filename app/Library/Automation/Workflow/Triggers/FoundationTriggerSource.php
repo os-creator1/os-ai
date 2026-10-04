@@ -67,6 +67,10 @@ abstract class FoundationTriggerSource implements TriggerSource
      * @param \Closure(array<string, mixed>): bool|null $admits trigger-node filter
      * @param array{workflow_id: int, depth: int}|null $cause the automation step
      *        that produced this fact, when one did
+     * @param int|null $locationId the FACT's own Location, as its domain recorded
+     *        it (never the Contact's current one unless the fact is the Contact).
+     *        EnrollmentService pins it, and refuses it for a workflow bound to
+     *        another Location — or bound at all, when this is null.
      * @param array{enrolled: int, skipped: array<string, int>} $result
      *
      * @return array{enrolled: int, skipped: array<string, int>}
@@ -78,6 +82,7 @@ abstract class FoundationTriggerSource implements TriggerSource
         string $occurrenceKey,
         ?\Closure $admits = null,
         ?array $cause = null,
+        ?int $locationId = null,
     ): array {
         $contact = $contactId === null
             ? null
@@ -102,7 +107,7 @@ abstract class FoundationTriggerSource implements TriggerSource
                 continue;
             }
 
-            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth);
+            $enrollment = $this->enrollments->enroll($workflow, $contact, $occurrenceKey, $depth, $locationId);
 
             // Null is EnrollmentService's own refusal: the same fact replayed, the
             // contact still part-way through, the workflow paused since.

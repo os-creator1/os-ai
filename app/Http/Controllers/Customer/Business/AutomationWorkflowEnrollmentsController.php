@@ -8,6 +8,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Automations\Workflow\ManualEnrollmentRequest;
 use App\Jobs\Automation\Workflow\EnrollWorkflowContact;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
+use App\Library\Timeline\Sources\AutomationActivitySource;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationStepRun;
 use App\Models\Contacts;
@@ -55,7 +56,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ->where('workflow_id', (int) $workflow->id)
                 ->where('business_id', (int) $business->id)
                 // One query for every row's contact, never one per row.
-                ->with('contact:id,uid')
+                ->with('contact:id,uid,phone')
                 ->orderByDesc('id')
                 ->paginate(self::PAGE_SIZE);
 
@@ -63,10 +64,13 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 'enrollments' => $page->getCollection()->map(fn (AutomationEnrollment $e): array => [
                     'uid' => $e->uid,
                     'contact_uid' => $e->contact?->uid,
+                    // The number, as the Test panel shows people: never an id.
+                    'contact_label' => $e->contact === null ? null : (string) $e->contact->phone,
                     'status' => $e->status->value,
                     'status_label' => $e->status->label(),
                     'step_count' => (int) $e->step_count,
                     'exit_reason' => $e->exit_reason,
+                    'exit_reason_label' => AutomationActivitySource::reason($e->exit_reason),
                     'enrolled_at' => $e->enrolled_at?->toIso8601String(),
                     'resume_at' => $e->resume_at?->toIso8601String(),
                     'completed_at' => $e->completed_at?->toIso8601String(),
@@ -120,6 +124,7 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                     // never a provider body, a credential or the full message.
                     'result' => $s->safe_result_summary,
                     'error' => $s->safe_error_summary,
+                    'error_label' => $s->safe_error_summary === null ? null : (AutomationActivitySource::reason($s->safe_error_summary) ?? 'This step could not run.'),
                     'started_at' => $s->started_at?->toIso8601String(),
                     'completed_at' => $s->completed_at?->toIso8601String(),
                 ])->values(),
@@ -170,12 +175,28 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
             $contacts = Contacts::query()
                 ->where('business_id', (int) $business->id)
                 ->whereIn('uid', $uids)
-                ->get(['id', 'uid']);
+                ->get(['id', 'uid', 'location_id']);
 
             if ($contacts->count() !== count($uids)) {
                 // Unknown and foreign are deliberately indistinguishable, and
                 // nothing has been enqueued yet, so nothing is partly honoured.
                 return $this->notFound();
+            }
+
+            // A Location-bound workflow takes only contacts of its own Location.
+            // EnrollmentService would refuse the others silently, one queued job at
+            // a time; saying so now, before anything is queued, beats a request that
+            // reports "queued" and then quietly enrolls fewer people.
+            $scope = \App\Models\AutomationWorkflowVersion::query()
+                ->whereKey((int) $workflow->published_version_id)
+                ->where('workflow_id', (int) $workflow->id)
+                ->first()?->scope();
+
+            if ($scope !== null
+                && $contacts->contains(fn ($contact): bool => ! $scope->allows($contact->location_id === null ? null : (int) $contact->location_id))) {
+                return response()->json([
+                    'message' => 'This workflow only runs for contacts at its own locations. Choose contacts from those locations.',
+                ], 422);
             }
 
             // One server-derived identity for this deliberate request. It becomes

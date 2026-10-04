@@ -186,13 +186,16 @@ class CrmOpportunityService
      * (idempotent); a deal anywhere else raises CrmStageConflictException instead of
      * being silently dragged from a stage the caller never saw. Null = unconditional,
      * as the detail page's form has always been.
+     * @param string|null $origin an opaque causation reference for the event this
+     *        emits (the Automations engine passes `automation_step_run:{id}`); null
+     *        for a person's own move. Never read here.
      *
      * @return bool false when the deal was already in that stage (nothing changed)
      * @throws CrmStageConflictException
      */
-    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null, ?CrmPipelineStage $expectedFrom = null): bool
+    public function moveToStage(CrmOpportunity $opportunity, CrmPipelineStage $to, ?int $actorUserId = null, ?CrmPipelineStage $expectedFrom = null, ?string $origin = null): bool
     {
-        return DB::transaction(function () use ($opportunity, $to, $actorUserId, $expectedFrom): bool {
+        return DB::transaction(function () use ($opportunity, $to, $actorUserId, $expectedFrom, $origin): bool {
             $locked = $this->lock($opportunity);
 
             if ((int) $to->business_id !== (int) $locked->business_id || (int) $to->pipeline_id !== (int) $locked->pipeline_id) {
@@ -225,6 +228,7 @@ class CrmOpportunityService
                 ...$this->eventArguments($locked, $to, $history, $actorUserId),
                 fromStageId: $from->id,
                 fromStageSemanticKey: $from->semantic_key,
+                origin: $origin,
             );
 
             $opportunity->setRawAttributes($locked->getAttributes(), true);

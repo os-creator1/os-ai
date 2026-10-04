@@ -7,7 +7,10 @@ use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\PhoneNumberType;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
+use App\Enums\Business\BusinessLocationLifecycleState;
+use App\Library\Messaging\DTO\LocationSendContext;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\BusinessMessagingIdentity;
 use App\Models\BusinessMessagingNumber;
 use Illuminate\Database\QueryException;
@@ -146,6 +149,105 @@ class BusinessMessagingIdentityResolver
         }
 
         return $candidates->first();
+    }
+
+    /**
+     * Whether this number may speak for the Location a send is pinned to — the
+     * one rule the managed dispatcher and Automations' preflight both apply, so a
+     * text is never sent from a number nothing can show belongs to its Location.
+     *
+     *   The number is ASSIGNED to Locations (Text messaging settings)
+     *       → it serves exactly those: the send must be pinned to one of them.
+     *   The number is the Business-level one it always was (no assignment)
+     *       → a Business with at most one active Location: that Location speaks
+     *         for it implicitly (a send may be pinned to it, or to none);
+     *       → a Business with several: only an UNRESTRICTED (Business-wide)
+     *         workflow may use it, as before. A workflow limited to Locations
+     *         cannot prove the number is its own, so it is refused.
+     */
+    public function numberServes(BusinessMessagingNumber $number, Business $business, LocationSendContext $context): bool
+    {
+        $assigned = $this->assignedLocationIds($number);
+
+        if ($assigned !== []) {
+            return $context->locationId !== null && in_array($context->locationId, $assigned, true);
+        }
+
+        $active = $this->activeLocationIds($business);
+
+        if (count($active) <= 1) {
+            return $context->locationId === null || in_array($context->locationId, $active, true);
+        }
+
+        return ! $context->scopeBound;
+    }
+
+    /** @return list<int> the Locations this number is assigned to (empty: Business-level) */
+    public function assignedLocationIds(BusinessMessagingNumber $number): array
+    {
+        return DB::table('business_messaging_number_locations')
+            ->where('business_messaging_number_id', (int) $number->id)
+            ->orderBy('business_location_id')
+            ->pluck('business_location_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+    }
+
+    /** @return list<int> the Business's active Location ids */
+    public function activeLocationIds(Business $business): array
+    {
+        return BusinessLocation::query()
+            ->where('business_id', (int) $business->id)
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+    }
+
+    /**
+     * Replace the Locations this number is used by. Every id must be an active
+     * Location of the number's own Business; anything else is refused. An empty
+     * list returns the number to Business level.
+     *
+     * @param list<int> $locationIds
+     *
+     * @throws \InvalidArgumentException a Location that is not an active one of this Business
+     */
+    public function assignLocations(BusinessMessagingNumber $number, Business $business, array $locationIds): void
+    {
+        $wanted = array_values(array_unique(array_map('intval', $locationIds)));
+        $valid = array_intersect($wanted, $this->activeLocationIds($business));
+
+        if (count($valid) !== count($wanted)) {
+            throw new \InvalidArgumentException('A number can only be used by active locations of its own business.');
+        }
+
+        $owner = (int) DB::table('business_messaging_identities')
+            ->where('id', (int) $number->business_messaging_identity_id)
+            ->value('business_id');
+
+        if ($owner !== (int) $business->id) {
+            throw new \InvalidArgumentException('That number does not belong to this business.');
+        }
+
+        DB::transaction(function () use ($number, $business, $wanted): void {
+            DB::table('business_messaging_number_locations')
+                ->where('business_messaging_number_id', (int) $number->id)
+                ->delete();
+
+            $now = Carbon::now();
+
+            foreach ($wanted as $locationId) {
+                DB::table('business_messaging_number_locations')->insert([
+                    'business_messaging_number_id' => (int) $number->id,
+                    'business_id' => (int) $business->id,
+                    'business_location_id' => $locationId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        });
     }
 
     /**

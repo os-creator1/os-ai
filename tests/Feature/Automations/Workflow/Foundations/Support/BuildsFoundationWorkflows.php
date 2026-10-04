@@ -77,6 +77,12 @@ trait BuildsFoundationWorkflows
     }
 
     /** @return array{key: string, type: string, config: array<string, mixed>} */
+    protected function waitMinutes(int $minutes): array
+    {
+        return ['key' => (string) Str::uuid(), 'type' => 'wait', 'config' => ['mode' => 'duration', 'amount' => $minutes, 'unit' => 'minutes']];
+    }
+
+    /** @return array{key: string, type: string, config: array<string, mixed>} */
     protected function addTagStep(int $tagId): array
     {
         return ['key' => (string) Str::uuid(), 'type' => 'add_tag', 'config' => ['tag_id' => $tagId]];

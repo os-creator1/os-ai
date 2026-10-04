@@ -5,38 +5,48 @@
     exactly: trigger_type, enrollment_policy(+source), failure_policy, and the
     trigger-specific fields. Only WorkflowTriggerType cases with a real producer
     are offered — contact created, a contact date, added by hand, and (V2-F)
-    "Customer sends a text" (`message_received`) — plus the merged foundations'
-    after-commit facts: a tag added or removed, a form submitted, an appointment
-    booked, cancelled or rescheduled. There is no Payment, Document or Proposal
-    trigger, because those integrations are separate lanes.
+    "Customer sends a text" (`message_received`) — plus the domains' own after-commit
+    facts: a tag added or removed, a form or questionnaire submitted, an appointment
+    booked, cancelled or rescheduled, a proposal or document sent or signed, a payment
+    that succeeds or fails. Each is the owning domain's durable event, never a browser
+    redirect.
 --}}
 @php
     // Grouped the way a person thinks about them. The opportunity triggers are
     // CRM sales deals (crm_*), never the Advisor's recommendations.
     $triggerChoiceGroups = [
-        'contacts' => [
+        'crm' => [
             ['value' => 'contact_created', 'icon' => 'user-plus'],
-            ['value' => 'message_received', 'icon' => 'message-square-reply'],
-            ['value' => 'contact_date_reached', 'icon' => 'calendar-clock'],
-            ['value' => 'manual_enrollment', 'icon' => 'hand'],
-        ],
-        'opportunities' => [
             ['value' => 'opportunity_created', 'icon' => 'briefcase-business'],
             ['value' => 'opportunity_stage_changed', 'icon' => 'arrow-right-left'],
             ['value' => 'opportunity_won', 'icon' => 'trophy'],
             ['value' => 'opportunity_lost', 'icon' => 'circle-x'],
-        ],
-        'tags' => [
             ['value' => 'contact_tag_added', 'icon' => 'tag'],
             ['value' => 'contact_tag_removed', 'icon' => 'tag'],
         ],
+        'messaging' => [
+            ['value' => 'message_received', 'icon' => 'message-square-reply'],
+        ],
         'forms' => [
             ['value' => 'form_submitted', 'icon' => 'clipboard-list'],
+            ['value' => 'questionnaire_submitted', 'icon' => 'list-checks'],
         ],
-        'appointments' => [
+        'calendar' => [
             ['value' => 'appointment_scheduled', 'icon' => 'calendar-check'],
-            ['value' => 'appointment_cancelled', 'icon' => 'calendar-x'],
             ['value' => 'appointment_rescheduled', 'icon' => 'calendar-clock'],
+            ['value' => 'appointment_cancelled', 'icon' => 'calendar-x'],
+        ],
+        'documents' => [
+            ['value' => 'document_sent', 'icon' => 'file-text'],
+            ['value' => 'document_signed', 'icon' => 'file-signature'],
+        ],
+        'payments' => [
+            ['value' => 'payment_succeeded', 'icon' => 'circle-check'],
+            ['value' => 'payment_failed', 'icon' => 'circle-alert'],
+        ],
+        'manual_time' => [
+            ['value' => 'manual_enrollment', 'icon' => 'hand'],
+            ['value' => 'contact_date_reached', 'icon' => 'calendar-clock'],
         ],
     ];
 @endphp
@@ -147,19 +157,57 @@
         </p>
     </div>
 
-    {{-- "Form submitted" — one optional filter, this Business's forms only
+    {{-- "Form submitted" and "Questionnaire submitted" — one optional filter, this
+         Business's forms (or, for a questionnaire, only those of two or more pages)
          (drawer.js, catalogs.forms). --}}
-    <div class="wf-field-group" data-trigger-section="form_submitted" hidden>
+    <div class="wf-field-group" data-trigger-section="form_submitted questionnaire_submitted" hidden>
         <div class="wf-field">
             <label class="wf-field__label">{{ __('automations.v2.trigger_form.form_filter') }}</label>
             <select class="form-select" data-field="form_id" data-role="wf-form-filter-select"></select>
         </div>
         <p class="wf-help" data-role="wf-no-forms" hidden>{{ __('automations.v2.trigger_form.no_forms') }}</p>
+    </div>
+    <div class="wf-field-group" data-trigger-note="form_submitted" hidden>
         <p class="wf-help">
             <x-ds-icon name="info" size="16" />
             <span>{{ __('automations.v2.trigger_form.form_note') }}</span>
         </p>
     </div>
+    <div class="wf-field-group" data-trigger-note="questionnaire_submitted" hidden>
+        <p class="wf-help">
+            <x-ds-icon name="info" size="16" />
+            <span>{{ __('automations.v2.trigger_form.questionnaire_note') }}</span>
+        </p>
+    </div>
+
+    {{-- Document and payment triggers — one optional filter: the kind of document
+         (a proposal or contract, or an invoice). --}}
+    <div class="wf-field-group" data-trigger-section="document_sent document_signed payment_succeeded payment_failed" hidden>
+        <div class="wf-field">
+            <label class="wf-field__label">{{ __('automations.v2.trigger_form.document_kind') }}</label>
+            <select class="form-select" data-field="document_kind" data-role="wf-document-kind-select">
+                <option value="">{{ __('automations.v2.trigger_form.any_document') }}</option>
+                <option value="proposal">{{ __('automations.v2.trigger_form.kind_proposal') }}</option>
+                <option value="invoice">{{ __('automations.v2.trigger_form.kind_invoice') }}</option>
+            </select>
+        </div>
+    </div>
+    @foreach (['document_sent', 'document_signed'] as $documentTrigger)
+        <div class="wf-field-group" data-trigger-note="{{ $documentTrigger }}" hidden>
+            <p class="wf-help">
+                <x-ds-icon name="info" size="16" />
+                <span>{{ __('automations.v2.trigger_form.document_note') }}</span>
+            </p>
+        </div>
+    @endforeach
+    @foreach (['payment_succeeded', 'payment_failed'] as $paymentTrigger)
+        <div class="wf-field-group" data-trigger-note="{{ $paymentTrigger }}" hidden>
+            <p class="wf-help">
+                <x-ds-icon name="info" size="16" />
+                <span>{{ __('automations.v2.trigger_form.payment_note') }}</span>
+            </p>
+        </div>
+    @endforeach
 
     @foreach (['appointment_scheduled', 'appointment_cancelled', 'appointment_rescheduled'] as $appointmentTrigger)
         <div class="wf-field-group" data-trigger-note="{{ $appointmentTrigger }}" hidden>
@@ -177,6 +225,35 @@
         </p>
     </div>
 
+    {{-- WHERE IT APPLIES — the whole business, ONE Location, or a chosen list of
+         them. Options are this Business's own Locations the actor reaches
+         (drawer.js, catalogs.locations). A limited workflow only ever starts from
+         facts of those Locations, and every run is still pinned to the ONE Location of
+         the fact that started it; changing the scope means publishing again, never
+         editing a live version. There is no per-step Location. --}}
+    <fieldset class="wf-field" data-role="wf-scope">
+        <legend class="wf-field__label">{{ __('automations.v2.trigger_form.location_scope') }}</legend>
+        <div class="wf-choices" data-role="wf-scope-choices">
+            @foreach (['business', 'one', 'selected'] as $scopeMode)
+                <label class="wf-choice">
+                    <input type="radio" class="wf-choice__input" name="wf-scope-mode" value="{{ $scopeMode }}">
+                    <span class="wf-choice__text">
+                        <span class="wf-choice__title">{{ __('automations.v2.trigger_form.scope_mode_' . $scopeMode) }}</span>
+                        <span class="wf-choice__description">{{ __('automations.v2.trigger_form.scope_mode_' . $scopeMode . '_help') }}</span>
+                    </span>
+                </label>
+            @endforeach
+        </div>
+        <p class="wf-help" data-role="wf-scope-business-note" hidden>{{ __('automations.v2.trigger_form.scope_business_note') }}</p>
+        <div class="wf-field" data-role="wf-scope-one-fields" hidden>
+            <select class="form-select" data-field="business_location_id" data-role="wf-location-scope-select" aria-label="{{ __('automations.v2.trigger_form.scope_choose_location') }}"></select>
+        </div>
+        <div class="wf-field" data-role="wf-scope-selected-fields" hidden>
+            <div data-role="wf-location-scope-list" aria-label="{{ __('automations.v2.trigger_form.scope_choose_locations') }}"></div>
+        </div>
+        <p class="wf-help" data-role="wf-scope-no-locations" hidden>{{ __('automations.v2.trigger_form.scope_no_locations') }}</p>
+        <p class="wf-help mb-0">{{ __('automations.v2.trigger_form.location_scope_help') }}</p>
+    </fieldset>
     <div class="wf-field">
         <label class="wf-field__label">{{ __('automations.v2.trigger_form.enrollment_policy') }}</label>
         <select class="form-select" data-field="enrollment_policy" data-role="wf-enrollment-policy">

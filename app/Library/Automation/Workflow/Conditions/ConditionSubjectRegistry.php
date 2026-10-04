@@ -10,6 +10,7 @@ use App\Library\Automation\Workflow\Conditions\Subjects\ContactIdentitySubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactInGroupSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactRepliedSinceEnrollmentSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactSubscribedSubject;
+use App\Library\Automation\Workflow\Conditions\Subjects\TriggerFactSubject;
 use App\Library\Automation\Workflow\Contracts\ConditionSubject;
 use App\Enums\CustomFields\CustomFieldType;
 use App\Library\CustomFields\CustomFieldValueCodec;
@@ -39,8 +40,14 @@ use Illuminate\Support\Facades\DB;
  * parameterised boolean ("has tag" / "does not have tag"), read from the
  * canonical `contact_tags` membership.
  *
- * WHAT IS DELIBERATELY ABSENT. Opportunity, Forms, Booking, Payment and Pipeline
- * subjects are excluded by §10 and are not stubbed here.
+ * `opportunity.*`, `document.*`, `payment.status` and `appointment.status` arrived
+ * with the cross-domain actions: they read the fact behind the journey (and the
+ * Contact's own deal) live through FactConditionReader, and each is a fixed key with
+ * fixed operators and a closed set of operand values.
+ *
+ * WHAT IS DELIBERATELY ABSENT. Free-form Forms answers and Booking details are not
+ * subjects, and there is no expression language: a condition is only ever a key this
+ * class knows.
  *
  * READS ARE BOUNDED. Evaluating five conditions must not cost five round trips,
  * so the two things every subject needs — the contact's stored values, and the
@@ -72,6 +79,43 @@ class ConditionSubjectRegistry
 
     /** V2-F — has the contact written to the Business since entering this journey? */
     public const REPLIED_SINCE_ENROLLMENT = 'contact.replied_since_enrollment';
+
+    /*
+     * The fact-backed subjects: what the CRM deal, the document, the payment and the
+     * appointment behind a journey currently say (FactConditionReader). Each is a
+     * fixed key with fixed operators — still no expression language.
+     */
+    public const OPPORTUNITY_STAGE = 'opportunity.stage';
+
+    public const OPPORTUNITY_STATUS = 'opportunity.status';
+
+    public const DOCUMENT_STATUS = 'document.status';
+
+    public const DOCUMENT_SIGNED = 'document.signed';
+
+    public const DOCUMENT_PAID = 'document.paid';
+
+    public const PAYMENT_STATUS = 'payment.status';
+
+    public const APPOINTMENT_STATUS = 'appointment.status';
+
+    /**
+     * Each fact subject's value type, operator family and — for the text ones — the
+     * closed set of values its operand may be. The values are the owning domains' own
+     * enum values, restated because this table must answer without a database.
+     *
+     * @var array<string, array{type: string, operators: string, values?: list<string>}>
+     */
+    public const FACT_SUBJECTS = [
+        self::OPPORTUNITY_STAGE => ['type' => 'reference', 'operators' => 'reference'],
+        self::OPPORTUNITY_STATUS => ['type' => 'text', 'operators' => 'reference', 'values' => ['open', 'won', 'lost']],
+        self::DOCUMENT_STATUS => ['type' => 'text', 'operators' => 'reference', 'values' => ['draft', 'sent', 'signed', 'paid', 'expired', 'void']],
+        self::DOCUMENT_SIGNED => ['type' => 'boolean', 'operators' => 'boolean'],
+        self::DOCUMENT_PAID => ['type' => 'boolean', 'operators' => 'boolean'],
+        self::PAYMENT_STATUS => ['type' => 'text', 'operators' => 'reference', 'values' => ['created', 'requires_action', 'processing', 'succeeded', 'failed', 'canceled']],
+        self::APPOINTMENT_STATUS => ['type' => 'text', 'operators' => 'reference', 'values' => ['scheduled', 'cancelled', 'completed', 'no_show']],
+    ];
+
 
     /**
      * `contact.custom_field:{field_id}` — the LEGACY contact-group field subject.
@@ -140,6 +184,12 @@ class ConditionSubjectRegistry
             return new ContactRepliedSinceEnrollmentSubject();
         }
 
+        $factSubject = $this->factSubject($key);
+
+        if ($factSubject !== null) {
+            return $factSubject;
+        }
+
         $tagId = self::tagId($key);
 
         if ($tagId !== null) {
@@ -149,6 +199,78 @@ class ConditionSubjectRegistry
         $fieldId = self::customFieldId($key);
 
         return $fieldId === null ? null : new ContactCustomFieldSubject($fieldId, $this);
+    }
+
+    private function factSubject(string $key): ?ConditionSubject
+    {
+        $meta = self::FACT_SUBJECTS[$key] ?? null;
+
+        if ($meta === null) {
+            return null;
+        }
+
+        $reader = app(FactConditionReader::class);
+
+        $read = match ($key) {
+            self::OPPORTUNITY_STAGE => fn (Contacts $contact, $enrollment) => $reader->opportunityStage($enrollment, $contact),
+            self::OPPORTUNITY_STATUS => fn (Contacts $contact, $enrollment) => $reader->opportunityStatus($enrollment, $contact),
+            self::DOCUMENT_STATUS => fn (Contacts $contact, $enrollment) => $reader->documentStatus($enrollment),
+            self::DOCUMENT_SIGNED => fn (Contacts $contact, $enrollment) => $reader->documentSigned($enrollment),
+            self::DOCUMENT_PAID => fn (Contacts $contact, $enrollment) => $reader->documentPaid($enrollment),
+            self::PAYMENT_STATUS => fn (Contacts $contact, $enrollment) => $reader->paymentStatus($enrollment),
+            default => fn (Contacts $contact, $enrollment) => $reader->appointmentStatus($enrollment),
+        };
+
+        return new TriggerFactSubject(
+            $key,
+            $meta['type'],
+            $meta['operators'] === 'boolean' ? ConditionOperator::forBoolean() : ConditionOperator::forReference(),
+            $read,
+        );
+    }
+
+    /**
+     * Whether this fact subject's OPERAND is acceptable, decided without a database:
+     * a stage id is a positive integer and every other text subject takes one of its
+     * closed set of values. Null when it is (or when the key is not a fact subject).
+     */
+    public static function operandProblem(string $key, mixed $operand): ?string
+    {
+        if ($key === self::OPPORTUNITY_STAGE) {
+            return (is_int($operand) || (is_string($operand) && ctype_digit($operand))) && (int) $operand > 0
+                ? null
+                : 'needs a stage to compare against';
+        }
+
+        $values = self::FACT_SUBJECTS[$key]['values'] ?? null;
+
+        if ($values === null) {
+            return null;
+        }
+
+        return is_string($operand) && in_array($operand, $values, true) ? null : 'needs one of its known values';
+    }
+
+    /**
+     * Whether the workflow's trigger can ever give this subject something to read —
+     * a document condition on a workflow that does not start from a document reads
+     * nothing, ever, so publishing it would be a silent "no" on every journey.
+     * Returns a sentence, or null when the pairing makes sense.
+     */
+    public static function triggerProblem(string $key, ?\App\Enums\Automation\Workflow\WorkflowTriggerType $trigger): ?string
+    {
+        $needs = match ($key) {
+            self::DOCUMENT_STATUS, self::DOCUMENT_SIGNED, self::DOCUMENT_PAID => ['document', fn ($t): bool => $t->hasDocumentFact()],
+            self::PAYMENT_STATUS => ['payment', fn ($t): bool => $t->isPayment()],
+            self::APPOINTMENT_STATUS => ['appointment', fn ($t): bool => $t->isAppointment()],
+            default => null,
+        };
+
+        if ($needs === null || ($trigger !== null && $needs[1]($trigger))) {
+            return null;
+        }
+
+        return sprintf('checks %s details, which this workflow\'s trigger does not provide', $needs[0] === 'document' ? 'proposal or invoice' : $needs[0]);
     }
 
     public function isRegistered(string $key, ?int $businessId = null): bool
@@ -172,6 +294,7 @@ class ConditionSubjectRegistry
             || $key === self::SUBSCRIBED
             || $key === self::IN_GROUP
             || $key === self::REPLIED_SINCE_ENROLLMENT
+            || array_key_exists($key, self::FACT_SUBJECTS)
             || self::tagId($key) !== null
             || self::businessFieldKey($key) !== null
             || self::customFieldId($key) !== null;
@@ -271,6 +394,10 @@ class ConditionSubjectRegistry
             return ConditionOperator::forReference();
         }
 
+        if (isset(self::FACT_SUBJECTS[$key])) {
+            return self::FACT_SUBJECTS[$key]['operators'] === 'boolean' ? ConditionOperator::forBoolean() : ConditionOperator::forReference();
+        }
+
         return null;
     }
 
@@ -308,7 +435,7 @@ class ConditionSubjectRegistry
     /** @return list<string> the non-parameterised keys, for the builder and tests. */
     public function staticKeys(): array
     {
-        return [...array_keys(self::IDENTITY_SUBJECTS), self::SUBSCRIBED, self::IN_GROUP, self::REPLIED_SINCE_ENROLLMENT];
+        return [...array_keys(self::IDENTITY_SUBJECTS), self::SUBSCRIBED, self::IN_GROUP, self::REPLIED_SINCE_ENROLLMENT, ...array_keys(self::FACT_SUBJECTS)];
     }
 
     /**

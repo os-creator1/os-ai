@@ -24,7 +24,7 @@
 @section('content')
     @php
         $recipeLabels = [];
-        foreach (['welcome_new_contact', 'notify_team_new_contact', 'check_in_after_days', 'date_reminder'] as $recipeKey) {
+        foreach (['welcome_new_contact', 'notify_team_new_contact', 'check_in_after_days', 'date_reminder', 'new_lead_follow_up', 'booking_follow_up', 'proposal_follow_up', 'signed_to_payment', 'payment_complete'] as $recipeKey) {
             $recipeLabels[$recipeKey] = [
                 'title' => __('automations.v2.recipes.' . $recipeKey),
                 'description' => __('automations.v2.recipes.' . $recipeKey . '_description'),
@@ -34,6 +34,8 @@
 
     <div id="wf-chooser" class="wf-chooser" data-role="wf-chooser" data-create-url="{{ $basePath }}">
         <script type="application/json" id="wf-recipe-labels">{!! json_encode($recipeLabels, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) !!}</script>
+        {{-- What the account can use, so a recipe it cannot run is shown disabled with the reason. --}}
+        <script type="application/json" id="wf-capabilities" data-unavailable-prefix="{{ __('automations.v2.recipes.unavailable_prefix') }}">{!! json_encode($capabilities ?? [], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) !!}</script>
 
         <div class="wf-chooser__name">
             <label class="wf-field__label" for="wf-chooser-name">{{ __('automations.v2.chooser.name_label') }}</label>

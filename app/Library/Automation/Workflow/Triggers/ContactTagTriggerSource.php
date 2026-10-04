@@ -42,7 +42,7 @@ use Illuminate\Support\Facades\DB;
 class ContactTagTriggerSource extends FoundationTriggerSource
 {
     /** The causation reference TagManager callers attach for an automation write. */
-    public const ORIGIN_PREFIX = 'automation_step_run:';
+    public const ORIGIN_PREFIX = TriggerCause::ORIGIN_PREFIX;
 
     protected function assertServes(WorkflowTriggerType $triggerType): void
     {
@@ -54,7 +54,7 @@ class ContactTagTriggerSource extends FoundationTriggerSource
     /** The causation reference for one claimed step run. */
     public static function originFor(int $stepRunId): string
     {
-        return self::ORIGIN_PREFIX . $stepRunId;
+        return TriggerCause::originFor($stepRunId);
     }
 
     /**
@@ -97,38 +97,22 @@ class ContactTagTriggerSource extends FoundationTriggerSource
             // "Any tag" when the filter is absent; otherwise exactly that tag.
             fn (array $config): bool => ($wanted = self::filterId($config['tag_id'] ?? null)) === null || $wanted === $tagId,
             $this->causeOf($event),
+            // The Location is the Contact's AS OF the mutation, which the event
+            // captured under TagManager's row lock — never the tag's (it has none)
+            // and never re-read from the Contact now. A Location-bound workflow
+            // takes only exactly this; a Contact with none enrolls no bound one.
+            $event->locationId,
         );
     }
 
     /**
      * The workflow and depth of the automation step that made this change, or
-     * null for a person's own change — or for a reference that does not resolve
-     * to a step run inside this Business, which is treated as no mark at all.
+     * null for a person's own change. See TriggerCause.
      *
      * @return array{workflow_id: int, depth: int}|null
      */
     private function causeOf(ContactTagEvent $event): ?array
     {
-        $origin = (string) $event->origin;
-
-        if (! str_starts_with($origin, self::ORIGIN_PREFIX)) {
-            return null;
-        }
-
-        $stepRunId = substr($origin, strlen(self::ORIGIN_PREFIX));
-
-        if (! ctype_digit($stepRunId) || (int) $stepRunId <= 0) {
-            return null;
-        }
-
-        $producer = DB::table('automation_step_runs as s')
-            ->join('automation_enrollments as e', 'e.id', '=', 's.enrollment_id')
-            ->where('s.id', (int) $stepRunId)
-            ->where('e.business_id', $event->businessId)
-            ->first(['e.workflow_id', 'e.causation_depth']);
-
-        return $producer === null
-            ? null
-            : ['workflow_id' => (int) $producer->workflow_id, 'depth' => (int) $producer->causation_depth];
+        return TriggerCause::resolve($event->origin, $event->businessId);
     }
 }

@@ -120,6 +120,7 @@ class ManagedDispatchDelegate
         ?string $sendUid = null,
         ?int $conversationBoxId = null,
         bool $requireManaged = false,
+        ?\App\Library\Messaging\DTO\LocationSendContext $location = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
             return null;
@@ -188,6 +189,7 @@ class ManagedDispatchDelegate
             $operationKey,
             $mediaUrls,
             $quantity,
+            $location,
         );
 
         if ($result->accepted) {

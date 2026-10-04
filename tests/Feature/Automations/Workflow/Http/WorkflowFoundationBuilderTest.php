@@ -100,8 +100,8 @@ class WorkflowFoundationBuilderTest extends TestCase
             $this->assertStringContainsString('data-role="' . $role . '"', $trigger[1]);
         }
 
-        // Payments, documents and proposals are other lanes: not offered.
-        foreach (['payment', 'invoice', 'proposal', 'contract_signed'] as $forbidden) {
+        // Unsupported vocabulary stays out (document and payment triggers are offered, by their own tests).
+        foreach (['contract_signed', 'payment_received'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $trigger[1]);
         }
 
@@ -147,7 +147,7 @@ class WorkflowFoundationBuilderTest extends TestCase
         $this->assertSame([$myForm], array_column($catalogs['forms'], 'id'));
         $this->assertNotContains($theirForm, array_column($catalogs['forms'], 'id'));
         $this->assertSame(['id', 'name', 'archived'], array_keys($catalogs['tags'][0]), 'Ids, names and the archive flag only.');
-        $this->assertSame(['id', 'name', 'lifecycle'], array_keys($catalogs['forms'][0]));
+        $this->assertSame(['id', 'name', 'lifecycle', 'pages'], array_keys($catalogs['forms'][0]), 'Plus the page count, so the builder can tell a questionnaire from a form.');
         $this->assertTrue((bool) collect($catalogs['tags'])->firstWhere('id', $archived->id)['archived'], 'An archived tag is flagged, so the picker can hide it.');
 
         $this->assertCount(1, $reads, 'Tags and forms cost no query of their own: they ride the one reference-catalog statement.');

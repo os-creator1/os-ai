@@ -2001,6 +2001,11 @@
             // metrics live here now, never on the Results page).
             Route::get('/delivery-usage', 'Business\TextMessagingController@deliveryUsage')->name('delivery-usage');
 
+            // STATE 3 — which Locations use this number. Lets a workflow limited to
+            // Locations prove its text speaks for them (see
+            // BusinessMessagingIdentityResolver::numberServes).
+            Route::put('/number/locations', 'Business\TextMessagingController@updateNumberLocations')->name('number.locations.update');
+
             // STATE 3 — port a number out (messaging contract §13.4). Records
             // and tracks the request only; see PortOutRequestManager.
             Route::post('/number/port-out', 'Business\TextMessagingController@requestPortOut')->name('number.port-out.request');

@@ -29,6 +29,14 @@ class NodeRegistryCoexistenceTest extends TestCase
         'send_email',
         'add_tag',
         'remove_tag',
+        // Cross-domain actions: the CRM service, the Calendar page, the Forms link,
+        // DocumentManager.
+        'move_opportunity',
+        'send_booking_link',
+        'send_form',
+        'send_questionnaire',
+        'create_send_proposal',
+        'request_payment',
         'wait',
         'if_else',
         'end',
@@ -47,7 +55,7 @@ class NodeRegistryCoexistenceTest extends TestCase
         $this->assertEqualsCanonicalizing(
             self::LAUNCH_NODE_TYPES,
             $registry->registeredTypes(),
-            'The registry must hold exactly the ten launch executors — no gaps, no strays.',
+            'The registry must hold exactly the launch executors — no gaps, no strays.',
         );
     }
 
@@ -113,6 +121,6 @@ class NodeRegistryCoexistenceTest extends TestCase
         $registry = new NodeTypeRegistry();
         $canonical = array_map(static fn (WorkflowNodeType $type) => $type->value, $registry->all());
 
-        $this->assertCount(10, $canonical, 'Exactly the launch vocabulary plus the three merged-foundation actions — no other node type.');
+        $this->assertCount(16, $canonical, 'The launch vocabulary, the three merged-foundation actions and the six cross-domain actions — no other node type.');
     }
 }

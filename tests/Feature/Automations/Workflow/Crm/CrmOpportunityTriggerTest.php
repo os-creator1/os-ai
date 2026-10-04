@@ -129,6 +129,8 @@ class CrmOpportunityTriggerTest extends TestCase
             'from_stage_id' => null,
             'to_stage_id' => null,
             'outcome' => null,
+            // The deal's own Location (this fixture's deal has none).
+            'location_id' => $deal->location_id === null ? null : (int) $deal->location_id,
         ], $context->toArray());
 
         Bus::assertDispatched(AdvanceWorkflowEnrollment::class, 1);

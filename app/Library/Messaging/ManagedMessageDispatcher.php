@@ -78,6 +78,7 @@ class ManagedMessageDispatcher
         string $operationKey,
         array $mediaUrls = [],
         string $quantity = '1',
+        ?\App\Library\Messaging\DTO\LocationSendContext $location = null,
     ): OutboundMessageResult {
         // §4.4 — the platform kill switch, enforced HERE and not only inside
         // TelnyxMessagingAdapter's constructor.
@@ -135,6 +136,17 @@ class ManagedMessageDispatcher
         // Fails closed on zero or several active primary numbers — there is
         // deliberately no "first number" fallback.
         $number = $this->resolver->resolvePrimaryNumber($identity);
+
+        // A caller that must speak for a Location (Automations) passes it, and the
+        // number must be provably that Location's — checked BEFORE any operation row,
+        // measurement or provider call, exactly like every other pre-flight refusal.
+        // A caller that passes none is unchanged.
+        if ($location !== null && ! $this->resolver->numberServes($number, $business, $location)) {
+            throw new MessagingIdentityConflictException(sprintf(
+                'Number [%d] cannot be shown to belong to the Location this message is for.',
+                (int) $number->id,
+            ));
+        }
 
         // Review correction — the SAME fail-closed check
         // TextMessagingController::situation()'s own Ready gate applies,

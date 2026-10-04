@@ -30,6 +30,7 @@ const ENDED_WORDS = {
 
 const REFUSED_WORDS = {
     contact_belongs_to_another_business: 'That contact is not part of this business.',
+    contact_outside_workflow_location: 'That contact is not at this workflow’s location, so it would never run for them.',
     workflow_cannot_be_walked: 'This workflow can’t be tested until the highlighted problems are fixed.',
     version_has_no_business: 'This workflow can’t be tested right now.',
 }

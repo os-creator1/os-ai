@@ -9,7 +9,9 @@ use App\Library\Automation\Workflow\Contracts\NodeExecutor;
 use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
+use App\Library\Workspace\LocationAccessGuard;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
 use App\Models\User;
 use App\Notifications\WorkflowInternalNotification;
@@ -53,6 +55,7 @@ class InternalNotificationNodeExecutor implements NodeExecutor
     public function __construct(
         private readonly WorkspaceMembershipRepository $memberships,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinesses,
+        private readonly LocationAccessGuard $locations,
     ) {
     }
 
@@ -80,7 +83,7 @@ class InternalNotificationNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::skipped('rendered_content_empty');
         }
 
-        $recipients = $this->recipients($business);
+        $recipients = $this->recipients($business, $enrollment->business_location_id === null ? null : (int) $enrollment->business_location_id);
 
         if ($recipients === []) {
             // Nobody can see this Business. Not a failure — there is simply no
@@ -113,9 +116,15 @@ class InternalNotificationNodeExecutor implements NodeExecutor
      * The Business owner plus every active member who can see this Business,
      * each exactly once.
      *
+     * LOCATION. For a journey pinned to a Location the notification names that
+     * Location's contact and workflow, so a member is told only if the platform's
+     * own Location ACL (LocationAccessGuard — never a second reach algorithm) lets
+     * them into THAT Location. The owner always is. A journey with no pinned
+     * Location keeps the Business-level audience.
+     *
      * @return array<int, User> keyed by user id, which is what makes it a set
      */
-    private function recipients(Business $business): array
+    private function recipients(Business $business, ?int $locationId = null): array
     {
         $recipients = [];
 
@@ -130,6 +139,10 @@ class InternalNotificationNodeExecutor implements NodeExecutor
         if ($workspace === null) {
             return $recipients;
         }
+
+        $location = $locationId === null
+            ? null
+            : BusinessLocation::query()->where('business_id', (int) $business->id)->find($locationId);
 
         foreach ($this->memberships->activeForWorkspace($workspace) as $membership) {
             // Defence in depth: activeForWorkspace() already filters is_active,
@@ -149,6 +162,11 @@ class InternalNotificationNodeExecutor implements NodeExecutor
             $userId = (int) $membership->user_id;
 
             if (isset($recipients[$userId])) {
+                continue;
+            }
+
+            // Pinned Location: unproven or inaccessible means not told.
+            if ($locationId !== null && ($location === null || ! $this->locations->userCanAccessLocation($userId, $location))) {
                 continue;
             }
 

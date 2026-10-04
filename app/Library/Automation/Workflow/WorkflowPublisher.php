@@ -11,6 +11,7 @@ use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Enums\Automation\Workflow\WorkflowVersionState;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
+use App\Models\Business;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -38,8 +39,10 @@ use Illuminate\Validation\ValidationException;
  */
 class WorkflowPublisher
 {
-    public function __construct(private readonly WorkflowCompiler $compiler)
-    {
+    public function __construct(
+        private readonly WorkflowCompiler $compiler,
+        private readonly WorkflowLocationAuthority $locationAuthority,
+    ) {
     }
 
     /**
@@ -79,6 +82,18 @@ class WorkflowPublisher
                 ]);
             }
 
+            // THE ACTOR'S LOCATION AUTHORITY, against the very draft being promoted.
+            // A person with selected Locations cannot publish a workflow bound to one
+            // they cannot reach, nor a Business-wide one (authority over every
+            // Location). A publish with no actor (system, tests) has none to check.
+            if ($publishedByUserId !== null) {
+                $business = Business::query()->find((int) $locked->business_id);
+
+                if ($business !== null) {
+                    $this->locationAuthority->assertMayPublish($publishedByUserId, $business, (array) ($draft->definition ?? []));
+                }
+            }
+
             $errors = $this->compiler->validate($draft);
 
             if ($errors !== []) {
@@ -90,6 +105,7 @@ class WorkflowPublisher
             $nodeCount = $this->compiler->compile($draft);
 
             $triggerConfig = $this->triggerConfig($draft);
+            $scope = WorkflowLocationScope::fromTriggerConfig($triggerConfig);
 
             // (1) Retire the version that was live. MUST precede (2).
             $previousId = $locked->published_version_id;
@@ -115,9 +131,27 @@ class WorkflowPublisher
                 'enrollment_policy' => EnrollmentPolicy::from((string) $triggerConfig['enrollment_policy']),
                 'enrollment_policy_source' => EnrollmentPolicySource::from((string) $triggerConfig['enrollment_policy_source']),
                 'failure_policy' => FailurePolicy::from((string) $triggerConfig['failure_policy']),
+                // The Location scope, proved by the compiler above, pinned for the
+                // life of this version. The runtime reads this column, never the
+                // node config it came from.
+                'business_location_id' => $scope->singleId(),
+                'scope_mode' => $scope->mode(),
                 'published_at' => Carbon::now(),
                 'published_by_user_id' => $publishedByUserId,
             ])->save();
+
+            // The Locations of a selected scope, written once with the version.
+            if ($scope->mode() === WorkflowLocationScope::SELECTED) {
+                DB::table('automation_workflow_version_locations')->insert(array_map(
+                    fn (int $locationId): array => [
+                        'version_id' => (int) $draft->getKey(),
+                        'business_id' => (int) $draft->business_id,
+                        'business_location_id' => $locationId,
+                        'created_at' => Carbon::now(),
+                    ],
+                    $scope->ids(),
+                ));
+            }
 
             // (3) Point the workflow at it. A paused workflow that publishes
             // becomes live again, which is what the button says it does.

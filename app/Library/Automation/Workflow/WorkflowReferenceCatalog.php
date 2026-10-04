@@ -33,7 +33,10 @@ final class WorkflowReferenceCatalog
      * @param array<int, array{id: int, name: string, archived: bool}> $pipelines CRM sales pipelines, keyed by id, in board order
      * @param array<int, array{id: int, pipeline_id: int, name: string, semantic_key: ?string, archived: bool}> $stages CRM stages, keyed by id, in board order
      * @param array<int, array{id: int, name: string, archived: bool}> $tags contact tags, keyed by id, in name order
-     * @param array<int, array{id: int, name: string, lifecycle: string}> $forms forms, keyed by id, in name order
+     * @param array<int, array{id: int, name: string, lifecycle: string, pages: int}> $forms forms, keyed by id, in name order; `pages` is the current version's page count (1 = a form, 2+ = a questionnaire)
+     * @param array<int, array{id: int, name: string, active: bool}> $locations the Business's Locations, keyed by id, in name order
+     * @param array<int, array{id: int, name: string, location_id: int, active: bool}> $bookingTypes booking types, keyed by id; each belongs to one Location
+     * @param array<int, array{id: int, name: string, type: string, price_minor: int|null, active: bool}> $catalogItems catalog products, packages and services, keyed by id
      */
     public function __construct(
         public readonly int $businessId,
@@ -44,6 +47,9 @@ final class WorkflowReferenceCatalog
         private readonly array $tags = [],
         private readonly array $forms = [],
         private readonly array $customFields = [],
+        private readonly array $locations = [],
+        private readonly array $bookingTypes = [],
+        private readonly array $catalogItems = [],
     ) {
     }
 
@@ -114,6 +120,31 @@ final class WorkflowReferenceCatalog
     }
 
     // ---------------------------------------------------------------
+    // Locations — what a workflow can be bound to
+    // ---------------------------------------------------------------
+
+    /**
+     * The Location, when it belongs to this Business — active or archived.
+     * Foreign and nonexistent read the same: absent.
+     *
+     * @return array{id: int, name: string, active: bool}|null
+     */
+    public function location(int $locationId): ?array
+    {
+        return $this->locations[$locationId] ?? null;
+    }
+
+    /**
+     * Every Location of the Business, archived ones flagged, for the scope picker.
+     *
+     * @return list<array{id: int, name: string, active: bool}>
+     */
+    public function locations(): array
+    {
+        return array_values($this->locations);
+    }
+
+    // ---------------------------------------------------------------
     // Contact tags and forms (Business-wide; never Location-scoped here)
     // ---------------------------------------------------------------
 
@@ -141,7 +172,7 @@ final class WorkflowReferenceCatalog
     /**
      * The form, when it belongs to this Business, in any lifecycle state.
      *
-     * @return array{id: int, name: string, lifecycle: string}|null
+     * @return array{id: int, name: string, lifecycle: string, pages: int}|null
      */
     public function form(int $formId): ?array
     {
@@ -151,7 +182,7 @@ final class WorkflowReferenceCatalog
     /**
      * Every form of the Business, for the "Form submitted" trigger's filter.
      *
-     * @return list<array{id: int, name: string, lifecycle: string}>
+     * @return list<array{id: int, name: string, lifecycle: string, pages: int}>
      */
     public function forms(): array
     {
@@ -181,6 +212,43 @@ final class WorkflowReferenceCatalog
     public function customFields(): array
     {
         return array_values($this->customFields);
+    }
+
+    // ---------------------------------------------------------------
+    // Booking types and catalog items (the resources the link and document
+    // actions point at)
+    // ---------------------------------------------------------------
+
+    /**
+     * The booking type, when it belongs to this Business through its Location.
+     *
+     * @return array{id: int, name: string, location_id: int, active: bool}|null
+     */
+    public function bookingType(int $bookingTypeId): ?array
+    {
+        return $this->bookingTypes[$bookingTypeId] ?? null;
+    }
+
+    /** @return list<array{id: int, name: string, location_id: int, active: bool}> */
+    public function bookingTypes(): array
+    {
+        return array_values($this->bookingTypes);
+    }
+
+    /**
+     * The catalog item, when it belongs to this Business — archived or not.
+     *
+     * @return array{id: int, name: string, type: string, price_minor: int|null, active: bool}|null
+     */
+    public function catalogItem(int $catalogItemId): ?array
+    {
+        return $this->catalogItems[$catalogItemId] ?? null;
+    }
+
+    /** @return list<array{id: int, name: string, type: string, price_minor: int|null, active: bool}> */
+    public function catalogItems(): array
+    {
+        return array_values($this->catalogItems);
     }
 
     // ---------------------------------------------------------------

@@ -47,7 +47,7 @@
                 </x-slot:action>
             </x-empty-state>
         @else
-            <x-table :headers="[__('automations.v2.list.column_name'), __('automations.v2.list.column_status'), __('automations.v2.list.column_updated'), '']" data-role="wf-list-table">
+            <x-table :headers="[__('automations.v2.list.column_name'), __('automations.v2.list.column_status'), __('automations.v2.list.column_scope'), __('automations.v2.list.column_updated'), '']" data-role="wf-list-table">
                 @foreach ($rows as $workflow)
                     @php($status = is_object($workflow->status ?? null) ? $workflow->status->value : ($workflow->status ?? 'draft'))
                     <tr data-role="wf-list-row" data-workflow-uid="{{ $workflow->uid }}">
@@ -68,6 +68,10 @@
                                 @default
                                     <x-badge variant="neutral">{{ __('automations.v2.list.status_draft') }}</x-badge>
                             @endswitch
+                        </td>
+                        <td data-role="wf-list-scope">
+                            @php($scopeName = is_array($workflow) ? ($workflow['scope_location_name'] ?? null) : ($workflow->scope_location_name ?? null))
+                            {{ $scopeName ?? __('automations.v2.list.scope_business') }}
                         </td>
                         <td>
                             @php($updatedAt = $workflow->updated_at ?? null)

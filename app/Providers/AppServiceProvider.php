@@ -346,6 +346,16 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class));
 
+                    // Cross-domain actions: each calls its owning domain's canonical
+                    // seam (CRM service, Calendar's public page, Forms' deployment
+                    // link, DocumentManager) and none reaches a provider itself.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\MoveOpportunityNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendBookingLinkNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendFormNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendQuestionnaireNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\CreateSendProposalNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\RequestPaymentNodeExecutor::class));
+
                     return $registry;
                 },
             );
@@ -393,10 +403,28 @@
                         ));
                     }
 
-                    $registry->register($app->make(
-                        \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
-                        ['triggerType' => \App\Enums\Automation\Workflow\WorkflowTriggerType::FormSubmitted],
-                    ));
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::FormSubmitted,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::QuestionnaireSubmitted,
+                    ] as $formTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+                            ['triggerType' => $formTrigger],
+                        ));
+                    }
+
+                    // Documents and payments — one source instance per trigger type.
+                    foreach ([
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::DocumentSent,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::DocumentSigned,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::PaymentSucceeded,
+                        \App\Enums\Automation\Workflow\WorkflowTriggerType::PaymentFailed,
+                    ] as $documentTrigger) {
+                        $registry->register($app->make(
+                            \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+                            ['triggerType' => $documentTrigger],
+                        ));
+                    }
 
                     foreach ([
                         \App\Enums\Automation\Workflow\WorkflowTriggerType::AppointmentScheduled,

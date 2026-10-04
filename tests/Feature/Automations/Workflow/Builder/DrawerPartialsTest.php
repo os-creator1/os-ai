@@ -128,8 +128,10 @@ class DrawerPartialsTest extends TestCase
         // in customer words, never as its internal key.
         $this->assertStringContainsString('value="contact.replied_since_enrollment">Customer replied<', $body);
 
-        // Never invented — no Lead/Booking/Form/Payment/Tag/Pipeline domain.
-        foreach (['lead.', 'booking.', 'form.', 'payment.', 'tag.', 'pipeline.', 'opportunity.'] as $forbidden) {
+        // Never invented — no Lead/Booking/Form/Tag/Pipeline domain. (The opportunity.,
+        // document. and payment. subjects are the trigger-fact subjects of the
+        // cross-domain triggers; the drawer drops them when the trigger cannot supply them.)
+        foreach (['lead.', 'booking.', 'form.', 'tag.', 'pipeline.'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $body, "If/Else must never offer an unsupported subject domain ({$forbidden}).");
         }
     }
@@ -157,7 +159,8 @@ class DrawerPartialsTest extends TestCase
         $this->assertEqualsCanonicalizing($ingestable, $offered[1], 'The builder offers exactly the triggers something in the product reports.');
         $this->assertStringContainsString('Customer sends a text', $body, 'message_received is offered in customer words.');
 
-        foreach (['payment', 'invoice', 'proposal', 'contract_signed', 'document'] as $forbidden) {
+        // Payment, document and proposal triggers are real now; only unsupported words stay out.
+        foreach (['contract_signed', 'payment_received'] as $forbidden) {
             $this->assertStringNotContainsStringIgnoringCase($forbidden, $body);
         }
     }

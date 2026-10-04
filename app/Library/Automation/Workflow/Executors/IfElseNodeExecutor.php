@@ -156,6 +156,17 @@ class IfElseNodeExecutor implements NodeExecutor
                 ->exists();
         }
 
+        if ($key === ConditionSubjectRegistry::OPPORTUNITY_STAGE) {
+            // A stage that is not this Business's reads as false for "is" AND for
+            // "is not": a forged reference asserts nothing.
+            $stageId = is_int($operand) || (is_string($operand) && ctype_digit($operand)) ? (int) $operand : 0;
+
+            return $stageId > 0 && \App\Models\CrmPipelineStage::query()
+                ->whereKey($stageId)
+                ->where('business_id', (int) $business->id)
+                ->exists();
+        }
+
         $tagId = ConditionSubjectRegistry::tagId($key);
 
         if ($tagId !== null) {

@@ -94,6 +94,13 @@ class RuntimeCompletionTest extends TestCase
             WorkflowNodeType::SendEmail->value => \App\Library\Automation\Workflow\Executors\SendEmailNodeExecutor::class,
             WorkflowNodeType::AddTag->value => \App\Library\Automation\Workflow\Executors\AddTagNodeExecutor::class,
             WorkflowNodeType::RemoveTag->value => \App\Library\Automation\Workflow\Executors\RemoveTagNodeExecutor::class,
+            // Cross-domain actions (CRM service, Calendar page, Forms link, DocumentManager).
+            WorkflowNodeType::MoveOpportunity->value => \App\Library\Automation\Workflow\Executors\MoveOpportunityNodeExecutor::class,
+            WorkflowNodeType::SendBookingLink->value => \App\Library\Automation\Workflow\Executors\SendBookingLinkNodeExecutor::class,
+            WorkflowNodeType::SendForm->value => \App\Library\Automation\Workflow\Executors\SendFormNodeExecutor::class,
+            WorkflowNodeType::SendQuestionnaire->value => \App\Library\Automation\Workflow\Executors\SendQuestionnaireNodeExecutor::class,
+            WorkflowNodeType::CreateSendProposal->value => \App\Library\Automation\Workflow\Executors\CreateSendProposalNodeExecutor::class,
+            WorkflowNodeType::RequestPayment->value => \App\Library\Automation\Workflow\Executors\RequestPaymentNodeExecutor::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -140,6 +147,12 @@ class RuntimeCompletionTest extends TestCase
             WorkflowTriggerType::ContactTagAdded->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
             WorkflowTriggerType::ContactTagRemoved->value => \App\Library\Automation\Workflow\Triggers\ContactTagTriggerSource::class,
             WorkflowTriggerType::FormSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            WorkflowTriggerType::QuestionnaireSubmitted->value => \App\Library\Automation\Workflow\Triggers\FormSubmittedTriggerSource::class,
+            // Documents and payments — one source class, registered per trigger type.
+            WorkflowTriggerType::DocumentSent->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::DocumentSigned->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::PaymentSucceeded->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
+            WorkflowTriggerType::PaymentFailed->value => \App\Library\Automation\Workflow\Triggers\DocumentTriggerSource::class,
             WorkflowTriggerType::AppointmentScheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
             WorkflowTriggerType::AppointmentCancelled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
             WorkflowTriggerType::AppointmentRescheduled->value => \App\Library\Automation\Workflow\Triggers\AppointmentTriggerSource::class,
@@ -165,8 +178,8 @@ class RuntimeCompletionTest extends TestCase
 
         $this->assertSame($executors, app(NodeExecutorRegistry::class));
         $this->assertSame($sources, app(TriggerSourceRegistry::class));
-        $this->assertCount(10, $executors->registeredTypes());
-        $this->assertCount(14, $sources->registeredTypes());
+        $this->assertCount(16, $executors->registeredTypes());
+        $this->assertCount(19, $sources->registeredTypes());
     }
 
     // =================================================================

@@ -82,6 +82,8 @@ class MessagingSchemaInvariantsTest extends TestCase
         'database/migrations/2026_09_12_100006_complete_legacy_ai_messaging_schema.php',
         'database/migrations/2026_10_08_120000_create_business_messaging_number_port_out_requests_table.php',
         'database/migrations/2026_10_09_120001_create_business_messaging_number_lifecycle_events_table.php',
+        // Automations V1: which Locations a managed number serves (FK onto the numbers table).
+        'database/migrations/2026_10_28_090003_create_business_messaging_number_locations_table.php',
     ];
 
     private function business(): Business
@@ -746,6 +748,7 @@ class MessagingSchemaInvariantsTest extends TestCase
                 'ai_box_campaign_map',
                 'business_messaging_number_port_out_requests',
                 'business_messaging_number_lifecycle_events',
+                'business_messaging_number_locations',
             ] as $table) {
                 $this->assertFalse(
                     Schema::connection($target)->hasTable($table),

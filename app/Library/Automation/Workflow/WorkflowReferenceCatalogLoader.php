@@ -50,6 +50,8 @@ class WorkflowReferenceCatalogLoader
                 'contact_group_fields.is_phone as field_is_phone',
                 DB::raw('null as stage_semantic_key'),
                 DB::raw('null as child_archived_at'),
+                DB::raw('null as extra_int'),
+                DB::raw('null as extra_text'),
             ]);
 
         $crm = DB::table('crm_pipelines')
@@ -68,6 +70,8 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as field_is_phone'),
                 'crm_pipeline_stages.semantic_key as stage_semantic_key',
                 'crm_pipeline_stages.archived_at as child_archived_at',
+                DB::raw('null as extra_int'),
+                DB::raw('null as extra_text'),
             ]);
 
         // Contact tags and forms: one row each, in the parent columns (a tag's
@@ -88,6 +92,8 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as field_is_phone'),
                 DB::raw('null as stage_semantic_key'),
                 DB::raw('null as child_archived_at'),
+                DB::raw('null as extra_int'),
+                DB::raw('null as extra_text'),
             ]);
 
         $form = DB::table('forms')
@@ -105,6 +111,77 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as field_is_phone'),
                 DB::raw('null as stage_semantic_key'),
                 DB::raw('null as child_archived_at'),
+                // The page count of the form's CURRENT version: one page is a form, two
+                // or more a questionnaire (Forms V1 has one definition for both). A
+                // version that predates pages reads as one page.
+                DB::raw('COALESCE((SELECT JSON_LENGTH(fv.pages) FROM form_versions fv WHERE fv.form_id = forms.id AND fv.version = forms.current_version LIMIT 1), 1) as extra_int'),
+                DB::raw('null as extra_text'),
+            ]);
+
+        // The Business's Locations: one row each. Its lifecycle state rides in
+        // `field_type`, as a form's does.
+        $location = DB::table('business_locations')
+            ->where('business_locations.business_id', $businessId)
+            ->select([
+                DB::raw("'location' as source"),
+                DB::raw('0 as parent_position'),
+                'business_locations.id as parent_id',
+                DB::raw("COALESCE(business_locations.name, '') as parent_name"),
+                DB::raw('null as parent_archived_at'),
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                'business_locations.lifecycle_state as field_type',
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+                DB::raw('null as extra_int'),
+                DB::raw('null as extra_text'),
+            ]);
+
+        // Booking types: a booking type belongs to one Location (booking_types has no
+        // business_id of its own, so the Business is read through that Location). The
+        // Location rides in `extra_int` and whether it is active in `extra_text`.
+        $booking = DB::table('booking_types')
+            ->join('business_locations as bt_loc', 'bt_loc.id', '=', 'booking_types.business_location_id')
+            ->where('bt_loc.business_id', $businessId)
+            ->select([
+                DB::raw("'booking_type' as source"),
+                DB::raw('0 as parent_position'),
+                'booking_types.id as parent_id',
+                'booking_types.name as parent_name',
+                DB::raw('null as parent_archived_at'),
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                DB::raw('null as field_type'),
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+                'booking_types.business_location_id as extra_int',
+                DB::raw("CASE WHEN booking_types.is_active = 1 THEN '1' ELSE '0' END as extra_text"),
+            ]);
+
+        // Catalog items (products, packages, services): the type rides in
+        // `field_type`, the unit price in `extra_int` and the lifecycle state in
+        // `extra_text`; an archived item is flagged by its archive time.
+        $catalog = DB::table('catalog_items')
+            ->where('catalog_items.business_id', $businessId)
+            ->select([
+                DB::raw("'catalog_item' as source"),
+                DB::raw('0 as parent_position'),
+                'catalog_items.id as parent_id',
+                'catalog_items.name as parent_name',
+                'catalog_items.archived_at as parent_archived_at',
+                DB::raw('0 as child_position'),
+                DB::raw('null as child_id'),
+                DB::raw('null as child_name'),
+                'catalog_items.type as field_type',
+                DB::raw('null as field_is_phone'),
+                DB::raw('null as stage_semantic_key'),
+                DB::raw('null as child_archived_at'),
+                'catalog_items.price_minor as extra_int',
+                'catalog_items.lifecycle_state as extra_text',
             ]);
 
         // Business-wide Custom Fields (Contact scope), archived ones flagged: the
@@ -131,9 +208,9 @@ class WorkflowReferenceCatalogLoader
             ]);
 
         // Contact groups by name (as before); pipelines and their stages in the
-        // order the CRM board shows them; tags and forms by name; custom fields
+        // order the CRM board shows them; tags, forms and Locations by name; custom fields
         // in their configured order.
-        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)->unionAll($custom)
+        $rows = $contact->unionAll($crm)->unionAll($tag)->unionAll($form)->unionAll($custom)->unionAll($location)->unionAll($booking)->unionAll($catalog)
             ->orderBy('source')
             ->orderBy('parent_position')
             ->orderBy('parent_name')
@@ -149,6 +226,9 @@ class WorkflowReferenceCatalogLoader
         $tags = [];
         $forms = [];
         $customFields = [];
+        $locations = [];
+        $bookingTypes = [];
+        $catalogItems = [];
 
         foreach ($rows as $row) {
             $parentId = (int) $row->parent_id;
@@ -163,6 +243,39 @@ class WorkflowReferenceCatalogLoader
                     'type' => (string) $row->field_type,
                     'archived' => $row->parent_archived_at !== null,
                     'options' => is_array($options) ? array_values($options) : [],
+                ];
+
+                continue;
+            }
+
+            if ($row->source === 'booking_type') {
+                $bookingTypes[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'location_id' => (int) $row->extra_int,
+                    'active' => (string) $row->extra_text === '1',
+                ];
+
+                continue;
+            }
+
+            if ($row->source === 'catalog_item') {
+                $catalogItems[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'type' => (string) $row->field_type,
+                    'price_minor' => $row->extra_int === null ? null : (int) $row->extra_int,
+                    'active' => (string) $row->extra_text === 'active' && $row->parent_archived_at === null,
+                ];
+
+                continue;
+            }
+
+            if ($row->source === 'location') {
+                $locations[$parentId] = [
+                    'id' => $parentId,
+                    'name' => (string) $row->parent_name,
+                    'active' => (string) $row->field_type === \App\Enums\Business\BusinessLocationLifecycleState::Active->value,
                 ];
 
                 continue;
@@ -183,6 +296,7 @@ class WorkflowReferenceCatalogLoader
                     'id' => $parentId,
                     'name' => (string) $row->parent_name,
                     'lifecycle' => (string) $row->field_type,
+                    'pages' => max(1, (int) $row->extra_int),
                 ];
 
                 continue;
@@ -227,6 +341,6 @@ class WorkflowReferenceCatalogLoader
 
         ksort($fields);
 
-        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms, $customFields);
+        return new WorkflowReferenceCatalog($businessId, $groups, $fields, $pipelines, $stages, $tags, $forms, $customFields, $locations, $bookingTypes, $catalogItems);
     }
 }

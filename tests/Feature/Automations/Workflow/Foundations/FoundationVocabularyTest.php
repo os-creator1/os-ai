@@ -45,9 +45,14 @@ class FoundationVocabularyTest extends TestCase
     private const NEW_TRIGGERS = [
         'contact_tag_added', 'contact_tag_removed', 'form_submitted',
         'appointment_scheduled', 'appointment_cancelled', 'appointment_rescheduled',
+        // Documents, payments and questionnaires: each the owning domain's own durable event.
+        'document_sent', 'document_signed', 'payment_succeeded', 'payment_failed', 'questionnaire_submitted',
     ];
 
-    private const NEW_NODES = ['send_email', 'add_tag', 'remove_tag'];
+    private const NEW_NODES = [
+        'send_email', 'add_tag', 'remove_tag',
+        'move_opportunity', 'send_booking_link', 'send_form', 'send_questionnaire', 'create_send_proposal', 'request_payment',
+    ];
 
     // =================================================================
     // 20. The historical vocabulary is untouched
