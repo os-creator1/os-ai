@@ -227,7 +227,7 @@ is the only writer; every change is audited on the ledger with `actor_user_id`.
 
 ## 16. Metrics (Overview, real data only)
 
-Active prospects, replies (distinct prospects with an inbound), calls booked, reply rate = replied ÷ messaged, booking rate = booked ÷ replied. No estimates.
+Active prospects, replies (distinct prospects with an inbound), calls booked, reply rate = replied ÷ contacted (texted or texted us), booking rate = booked ÷ replied. No estimates.
 
 ## 17. Out of scope / remaining
 
@@ -249,3 +249,34 @@ Where the engine (`App\Library\AgencyOutreach`, `App\Jobs\Outreach`, `HandleOutr
 - **Follow-up (§11).** "Not sent" splits into *closed* (booked, rejected / opted out, replied since the link, Blacklists, prospect not active, follow-ups off, a failed or blocked send: `followup_cancelled_at` is set) and *held* (AI paused, campaign paused, not yet due, Business / entitlement unavailable: left pending, retried by the sweeper). Held follow-ups write no ledger row, so the five-minute sweeper cannot spam the ledger.
 - **`script_version`.** A first customised save is already version 2 (the column default 1 means "the neutral defaults"); it bumps only when script/answer text actually changes.
 - **API shape.** `AgencyOutreachBusinessResolver::forWorkspace`, `OutreachScriptRenderer::render` / `unknownTokens`, `OutreachScriptManager::save`, `OutreachScriptTokens::canonicalise`, `OutreachScriptDefaults::all`, `OutreachStopClassifier::classify`, `OutreachIntentClassifier::classify` and `OutreachStageMachine::decide` are static (callable as `Class::method()` or on an injected instance); `OutreachScript::forWorkspace` is a static factory.
+
+## Implementation notes (readiness, UI and acceptance)
+
+- **Name and tabs.** The sidebar item and page headings say **Outreach**; the route names, URL prefix (`/prospecting`) and the `ProspectOutreach` entitlement are unchanged. Tabs: Overview, Prospects, Conversations, Campaigns, Script & Settings. The BYO channel pages are no longer a tab; they are linked from the Campaigns page, and the old Agent Setup page from Script & Settings. The two pinned shell tests that named the old label were updated (`CustomerShellNavigationTest`, `CustomerShellTranslationTest`) and the `Outreach` locale key added.
+- **Readiness is re-checked at send time (§12).** `OutreachEligibility` re-reads `MessagingReadinessReader::situation()` under the member lock. A number or verification that is not `ready` refuses the send with `no_sending_number` / `verification_incomplete` (no outbound row, the reason on the inbound ledger row) and holds any paused send instead of cancelling it. A campaign that was Active while everything was fine therefore stops the moment the number or its verification is not.
+- **Wallet gate.** An empty balance only blocks while the `messaging_transport` meter is metered with an active rate (contract §7). Unmetered, sending is not billed, a zero balance is "ready" and no cost is shown. Debt, suspended billing, paused paid activity and an invalid payer always block.
+- **Per-segment billing (platform-wide).** `ManagedTransportBilling` is called by `ManagedMessageDispatcher::dispatch()` for every managed send (Conversations, Automations, Campaigns, Outreach). It is a no-op until the platform owner creates the `messaging_transport` meter and activates a rate with the existing rate tooling; **no price is chosen by this work**. `ChatBoxController` maps the refusal to "insufficient balance".
+- **Metrics (§16).** Reply rate is replied ÷ **contacted** (a prospect we texted or who texted us), so it can never exceed 100% when a prospect replies before any text of ours was delivered.
+- **Calendar link.** The Script & Settings page can fill the calendar URL from an active Booking Type of the Agency's own Business. Conversational scheduling is shown disabled ("coming later") and is not storable in V1.
+- **Deep link.** `?open=<uid>` on the canonical Conversations page opens that conversation once the list has loaded (best effort when it is not on the first page).
+
+### Browser acceptance (local, 2026-10-04)
+
+Two Agencies on one server, each with its own Workspace, own Business, managed number, approved verification, funded wallet and script (A: photo booth rentals, 9% commission, Google Maps; B: dental implant consultations, flat monthly price). The messaging provider was the fake adapter and the model was off; everything else was the real stack (real pages, forms, queue, dispatcher, billing, ledger).
+
+| # | Check | Result |
+|---|---|---|
+| 1-6 | Script page; edit Message 1/2/3, calendar link and pricing answer; save | persisted across reload, legacy `{{…}}` tokens stored canonical |
+| 7-9 | Prospect asks price / location; reply is the FAQ answer then the exact stage text | A: "Our commission is 9%. I work with photobooth rentals…" ; B: "A flat 499 dollars per month, no contracts. Open to a 15 minute call…" |
+| 10 | Agency B never sees A's text, number, wallet, prospects | none; A's workspace/campaign URLs with B's session answer 404 |
+| 11-12 | Call ask, then booking-link message | message 2 then message 3 with each Agency's own calendar URL, stage 1→2→3→4 |
+| 13 | Follow-up | scheduled +24h; made due and swept: sent once, second sweep sent nothing |
+| 14 | Rejection ("not interested") | stage 99, "Rejected", no `Blacklists` row |
+| 15 | STOP | stage 99, `Blacklists` row for B's Business only, follow-up cancelled, nothing sent afterwards, a due follow-up never fires |
+| 16-17 | Manual takeover and resume (UI buttons) | Pause: "Manual", reply held (`manual_hold`), audit row; Resume: replies again |
+| 18 | Booked (Mark booked in the UI) | later replies get no AI message |
+| - | Wallets / numbers | each send used its own Business's number and wallet; A's and B's balances moved independently |
+| - | Insufficient balance | reply `paused / insufficient_balance`, nothing sent, Overview shows "Paused — add funds"; after funding, resume sent it exactly once under the same key |
+| - | Unverified number | Overview/Campaign page names the blocker; a reply while unverified is not sent (this found and fixed the send-time gate above) |
+
+Not exercised in the browser (covered by tests): an owner's manual reply through the canonical Conversations composer (the local server has no provider credentials), the "Resume sending" button's provider call, no-number readiness, and the AI path for an unclassified question.
