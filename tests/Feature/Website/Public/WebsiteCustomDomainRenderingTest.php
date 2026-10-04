@@ -831,6 +831,8 @@ class WebsiteCustomDomainRenderingTest extends TestCase
     public function test_the_websites_own_quote_form_submission_still_works_on_a_custom_domain(): void
     {
         [, $business] = $this->entitledTenant();
+        // Forms V1: a form carries its Location, and a form with none accepts nothing.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $website = $this->createWebsite($business);
         $form = $website->forms()->create([
             'business_id' => $website->business_id,
@@ -838,6 +840,7 @@ class WebsiteCustomDomainRenderingTest extends TestCase
             'name' => 'Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
             'submit_label' => 'Send',
+            'location_id' => \App\Models\BusinessLocation::where('business_id', $business->id)->value('id'),
         ]);
         $home = $this->homePage($website, [
             'sections' => [$this->section('hero'), $this->section('form', ['form_uid' => $form->uid])],

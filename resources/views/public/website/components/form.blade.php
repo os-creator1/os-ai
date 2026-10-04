@@ -35,8 +35,13 @@
             @if (session('status') === 'success' && ! empty(session('message')))
                 <p class="website-form-success" role="status">{{ session('message') }}</p>
             @endif
+            @if (isset($errors) && $errors->any())
+                <p class="website-form-error" role="alert">{{ $errors->first() }}</p>
+            @endif
             <form method="POST" action="{{ route('public.website.form.submit', [$website->public_id, $websiteForm['uid'], $pageUid]) }}" class="website-form-fields">
                 @csrf
+                {{-- One token per page render: the same token posted again (double-click, browser or network retry) is the SAME submission. --}}
+                <input type="hidden" name="{{ \App\Library\Website\WebsiteFormSubmissionService::TOKEN_FIELD }}" value="{{ \Illuminate\Support\Str::uuid() }}">
                 <input type="text" name="{{ \App\Library\Website\WebsiteFormSubmissionService::HONEYPOT_FIELD }}" value="" tabindex="-1" autocomplete="off" class="website-form-honeypot" aria-hidden="true">
                 @foreach ($websiteForm['fields'] as $field)
                     <div class="website-form-field">

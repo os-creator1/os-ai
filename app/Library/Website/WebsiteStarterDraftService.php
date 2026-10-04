@@ -761,6 +761,11 @@ final class WebsiteStarterDraftService
                 'name' => 'Photo Booth Quote Request',
                 'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
                 'submit_label' => 'Request a quote',
+                // Forms V1: a form with no Location accepts nothing (fail
+                // closed). The only Location knowable at creation time is the
+                // Business's single Active one (Contract 08B §5); a
+                // multi-Location Business sets it on the Forms screen.
+                'location_id' => \App\Models\Contacts::singleActiveLocationIdFor($website->business_id),
             ],
         );
     }

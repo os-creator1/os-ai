@@ -44,6 +44,8 @@ class GuidedGenerationContactFormSubmissionTest extends TestCase
     public function test_a_visitor_can_submit_the_guided_generated_contact_pages_form(): void
     {
         [$customer, $business] = $this->entitledTenant();
+        // Forms V1: a generated form is Location-bound, and a form with no Location accepts nothing.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->seed(WebsiteTemplateSeeder::class);
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
         $website = $this->createWebsite($business);
@@ -76,6 +78,8 @@ class GuidedGenerationContactFormSubmissionTest extends TestCase
     public function test_a_visitor_can_submit_the_rebuilt_contact_pages_form_after_republishing(): void
     {
         [$customer, $business] = $this->entitledTenant();
+        // Forms V1: a generated form is Location-bound, and a form with no Location accepts nothing.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->seed(WebsiteTemplateSeeder::class);
         $template = WebsiteTemplate::findActiveOrFail('photo_booth_modern');
         // The deterministic starter draft creates and publishes the real

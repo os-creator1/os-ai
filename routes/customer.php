@@ -1919,6 +1919,8 @@
 
             Route::get('/forms', 'Business\WebsiteFormsController@home')->name('forms.index');
             Route::post('/forms', 'Business\WebsiteFormsController@store')->name('forms.store');
+            Route::get('/forms/{formUid}/edit', 'Business\WebsiteFormsController@edit')->name('forms.edit');
+            Route::put('/forms/{formUid}', 'Business\WebsiteFormsController@update')->name('forms.update');
             Route::get('/forms/{formUid}/submissions', 'Business\WebsiteFormsController@submissions')->name('forms.submissions');
 
             Route::get('/domains', 'Business\WebsiteDomainController@home')->name('domains.index');

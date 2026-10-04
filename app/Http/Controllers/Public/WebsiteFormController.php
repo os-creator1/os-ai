@@ -69,6 +69,8 @@ class WebsiteFormController extends Controller
             $request->except(['_token']),
             $page['is_home'] ? null : $page['slug'],
             $request->ip(),
+            (int) $website->published_revision_id,
+            $pageUid,
         );
 
         return redirect()->back()->with([
