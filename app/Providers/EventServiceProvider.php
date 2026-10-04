@@ -89,6 +89,13 @@ class EventServiceProvider extends ServiceProvider
         ],
         \App\Events\DocumentFullyPaid::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleFullyPaid',
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleFullyPaid',
+        ],
+        // Growth Center — a failed payment is the one document event that
+        // CREATES a finding at once; the debounced trigger keeps a burst of
+        // events to one evaluation per window.
+        \App\Events\DocumentPaymentFailed::class => [
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handlePaymentFailed',
         ],
         \App\Events\DocumentExpired::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleExpired',
@@ -153,9 +160,11 @@ class EventServiceProvider extends ServiceProvider
         ],
         CrmOpportunityWon::class => [
             EnrollFromCrmOpportunityEvent::class,
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleCrmDealClosed',
         ],
         CrmOpportunityLost::class => [
             EnrollFromCrmOpportunityEvent::class,
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleCrmDealClosed',
         ],
         // Automations V2 — the merged foundations' after-commit facts. Each domain
         // emits and knows nothing of workflows; these queued listeners hand each
@@ -204,6 +213,8 @@ class EventServiceProvider extends ServiceProvider
             // swallows its own failures so a publish can never fail
             // because SEO analysis could not be queued.
             QueueSeoAuditOnWebsitePublished::class,
+            // Growth Center — publishing resolves "website not published".
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleWebsitePublished',
         ],
         GoogleBusinessProfileConnected::class => [
             InvalidateCooInsights::class.'@handleGoogleBusinessProfileConnected',

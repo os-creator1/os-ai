@@ -59,6 +59,7 @@ use App\Library\Opportunity\Exceptions\RunNotActiveException;
 use App\Library\Opportunity\Exceptions\RunNotFoundException;
 use App\Library\Opportunity\Exceptions\UnsupportedOpportunityTypeException;
 use App\Models\Business;
+use App\Models\BusinessLocation;
 use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
@@ -254,7 +255,7 @@ class OpportunityManager
 
             $this->assertCandidateRanges($data);
             $this->assertNoTemplateParameters($data);
-            $this->assertNullContext($data);
+            $locationId = OpportunityContext::assertShape($data->context, $typeDefinition['context_validator'] ?? null);
             $this->assertNoActionParameters($data);
             $this->assertGoalKeysAreValid($data, $typeDefinition);
 
@@ -266,6 +267,9 @@ class OpportunityManager
                 );
             }
 
+            $this->assertLocationBelongsToBusiness($locationId, $locked->business_id);
+            $contextKey = OpportunityContext::keyFor($locationId);
+
             $evidence = $this->evidenceValidator->validate($data->evidence, $typeDefinition, $now);
 
             $fingerprintVersion = (int) config('opportunity.fingerprint_version', 1);
@@ -274,7 +278,7 @@ class OpportunityManager
                 $locked->business_id,
                 $locked->worker_key,
                 $data->type,
-                null,
+                $data->context,
                 $fingerprintVersion,
             );
 
@@ -290,7 +294,7 @@ class OpportunityManager
                     );
                 }
             } else {
-                $this->assertIdentityMatches($existingCandidate, $locked, $data, $fingerprintValue, $fingerprintVersion);
+                $this->assertIdentityMatches($existingCandidate, $locked, $data, $fingerprintValue, $fingerprintVersion, $contextKey);
             }
 
             $storedGoalKeys = $this->resolveStoredGoalKeys($business);
@@ -311,7 +315,7 @@ class OpportunityManager
             $candidate = $this->candidateRepository->upsertMutableFields($locked->id, $fingerprintValue, [
                 'type' => $data->type,
                 'fingerprint_version' => $fingerprintVersion,
-                'context_key' => null,
+                'context_key' => $contextKey,
                 'title' => $typeDefinition['title_template'],
                 'summary' => $typeDefinition['summary_template'],
                 'impact' => $data->impact,
@@ -434,9 +438,21 @@ class OpportunityManager
      * this is deliberately not an idempotent no-op. Never touches
      * freshness, action fields, or any evidence/scoring field.
      */
-    public function dismiss(Opportunity $opportunity, Customer $customer): Opportunity
+    /**
+     * Growth Center lane: the owner may say WHY, from a closed list. Only a
+     * key from DISMISS_REASONS is ever honoured — it becomes a fixed
+     * server-side note, never a client-supplied string.
+     */
+    public const DISMISS_REASONS = [
+        'not_relevant' => 'Dismissed: not relevant to this business.',
+        'already_handled' => 'Dismissed: already handled.',
+        'intentional' => 'Dismissed: intentional.',
+        'other' => 'Dismissed: other reason.',
+    ];
+
+    public function dismiss(Opportunity $opportunity, Customer $customer, ?string $reasonKey = null): Opportunity
     {
-        return DB::transaction(function () use ($opportunity, $customer) {
+        return DB::transaction(function () use ($opportunity, $customer, $reasonKey) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
             $locked = $this->assertOpportunityOwnership($customer, $locked);
 
@@ -445,6 +461,7 @@ class OpportunityManager
                 OpportunityTransitionActorType::Customer,
                 $customer->user_id,
                 'customer_dismissed',
+                $reasonKey !== null ? (self::DISMISS_REASONS[$reasonKey] ?? null) : null,
             );
         });
     }
@@ -482,6 +499,7 @@ class OpportunityManager
         OpportunityTransitionActorType $actorType,
         int $actorUserId,
         string $reasonCode,
+        ?string $safeNote = null,
     ): Opportunity {
         if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
             throw new InvalidOpportunityStateException(
@@ -507,7 +525,7 @@ class OpportunityManager
             'opportunity_run_id' => null,
             'action_execution_id' => null,
             'reason_code' => $reasonCode,
-            'safe_note' => null,
+            'safe_note' => $safeNote,
         ]);
 
         OpportunityDismissed::dispatch($locked->id, $locked->business_id, $actorUserId, $fromStatus->value);
@@ -2348,10 +2366,27 @@ class OpportunityManager
         }
     }
 
-    private function assertNullContext(OpportunityCandidateData $data): void
+    /**
+     * A Location context is only trusted when the Location really belongs to
+     * the run's Business. Without this a producer bug could mint an
+     * Opportunity under another tenant's Location and leak it through that
+     * Location's ACL filter.
+     */
+    private function assertLocationBelongsToBusiness(?int $locationId, int $businessId): void
     {
-        if ($data->context !== null) {
-            throw new InvalidOpportunityCandidateException('context must be null for the current RFC-002 types.');
+        if ($locationId === null) {
+            return;
+        }
+
+        $belongs = BusinessLocation::query()
+            ->whereKey($locationId)
+            ->where('business_id', $businessId)
+            ->exists();
+
+        if (! $belongs) {
+            throw new InvalidOpportunityCandidateException(
+                "Location [{$locationId}] does not belong to Business [{$businessId}]."
+            );
         }
     }
 
@@ -2403,12 +2438,13 @@ class OpportunityManager
         OpportunityCandidateData $data,
         string $fingerprintValue,
         int $fingerprintVersion,
+        ?string $contextKey,
     ): void {
         if ($existing->opportunity_run_id !== $locked->id
             || $existing->type !== $data->type
             || $existing->fingerprint_version !== $fingerprintVersion
             || $existing->fingerprint !== $fingerprintValue
-            || $existing->context_key !== null) {
+            || $existing->context_key !== $contextKey) {
             throw new ImmutableCandidateIdentityMismatchException(
                 "Re-staged candidate for run [{$locked->id}] has a mismatched immutable identity field."
             );
@@ -2480,11 +2516,15 @@ class OpportunityManager
             );
         }
 
-        if ($candidate->context_key !== null) {
-            throw new InvalidOpportunityCandidateException(
-                "Candidate [{$candidate->id}] context_key must be null for the current RFC-002 types."
-            );
-        }
+        // The persisted key must be one the type's declared validator
+        // permits: null for a Business-wide type, null or a Location key for
+        // a Location-scoped one. contextFromKey() rejects anything else.
+        $contextValue = OpportunityContext::contextFromKey($candidate->context_key);
+        OpportunityContext::assertShape($contextValue, $typeDefinition['context_validator'] ?? null);
+        $this->assertLocationBelongsToBusiness(
+            OpportunityContext::locationIdFromKey($candidate->context_key),
+            $lockedRun->business_id,
+        );
 
         if ($candidate->title !== $typeDefinition['title_template'] || $candidate->summary !== $typeDefinition['summary_template']) {
             throw new InvalidOpportunityCandidateException(
@@ -2518,7 +2558,7 @@ class OpportunityManager
             $lockedRun->business_id,
             $lockedRun->worker_key,
             $candidate->type,
-            null,
+            $contextValue,
             $fingerprintVersion,
         );
 
@@ -2643,6 +2683,7 @@ class OpportunityManager
     {
         $opportunity = $this->opportunityRepository->create([
             'business_id' => $lockedRun->business_id,
+            'location_id' => OpportunityContext::locationIdFromKey($candidate->context_key),
             'worker_key' => $lockedRun->worker_key->value,
             'type' => $candidate->type,
             'fingerprint_version' => $candidate->fingerprint_version,
@@ -2721,6 +2762,7 @@ class OpportunityManager
 
         $isRecurrence = false;
         $isActionRevision = false;
+        $isCooldownReopen = false;
 
         if ($existing->status === OpportunityStatus::InProgress) {
             $activeExecution = $this->actionExecutionRepository->findActiveForOpportunity($existing->id);
@@ -2747,6 +2789,18 @@ class OpportunityManager
             // branch below and stays awaiting_approval.
             $isActionRevision = true;
             $updates['status'] = OpportunityStatus::Open->value;
+        } elseif ($existing->status === OpportunityStatus::Dismissed
+            && $this->dismissCooldownHasElapsed($existing, $now)) {
+            // Growth Center lane: a dismissal is a "not now", never a
+            // permanent suppression. A type that declares
+            // `dismiss_cooldown_days` comes back as a NEW occurrence once the
+            // cooldown has passed AND this successful run re-confirmed the
+            // problem. Types without it (every business_advisor type) keep
+            // the original dismissed-stays-dismissed behaviour.
+            $isCooldownReopen = true;
+            $updates['status'] = OpportunityStatus::Open->value;
+            $updates['occurrence_number'] = $existing->occurrence_number + 1;
+            $updates['dismissed_at'] = null;
         }
         // open / awaiting_approval with an unchanged hash / snoozed /
         // dismissed / continuously-current completed: status,
@@ -2766,6 +2820,21 @@ class OpportunityManager
                 'opportunity_run_id' => $lockedRun->id,
                 'action_execution_id' => null,
                 'reason_code' => 'recurrence_detected',
+                'safe_note' => null,
+            ]);
+        }
+
+        if ($isCooldownReopen) {
+            $this->createTransition([
+                'opportunity_id' => $existing->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Dismissed->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::Worker->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => $lockedRun->id,
+                'action_execution_id' => null,
+                'reason_code' => 'dismiss_cooldown_elapsed',
                 'safe_note' => null,
             ]);
         }
@@ -2809,6 +2878,17 @@ class OpportunityManager
         }
 
         OpportunityReaffirmed::dispatch($existing->id, $lockedRun->business_id, $lockedRun->id, $lockedRun->worker_key->value);
+    }
+
+    private function dismissCooldownHasElapsed(Opportunity $existing, Carbon $now): bool
+    {
+        $cooldownDays = OpportunityTypeRegistry::get($existing->worker_key->value, $existing->type)['dismiss_cooldown_days'] ?? null;
+
+        if ($cooldownDays === null || $existing->dismissed_at === null) {
+            return false;
+        }
+
+        return $existing->dismissed_at->copy()->addDays((int) $cooldownDays)->lte($now);
     }
 
     /**

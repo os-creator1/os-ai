@@ -155,6 +155,15 @@
                 '--page=' . (int) config('opportunity.sweep_page', 100),
             ])->dailyAt('03:10')->withoutOverlapping();
 
+            // Growth Center — the daily full evaluation, after the Business
+            // Advisor sweep so profile gaps are settled first. Same contract:
+            // the command owns the engine-enabled no-op, is bounded by
+            // --limit/--page, and is idempotent per Business per day.
+            $schedule->command('growth:evaluate', [
+                '--limit=' . (int) config('growth.evaluation.sweep_limit', 500),
+                '--page=' . (int) config('growth.evaluation.sweep_page', 100),
+            ])->dailyAt('03:40')->withoutOverlapping();
+
             // Implementation Contract 17 §12.F — the three document sweeps.
             // Registered unconditionally for exactly the reason the snooze
             // sweep above is: each command owns the documents.enabled no-op,

@@ -1338,3 +1338,32 @@ Explicitly out of scope for RFC-002, deferred to future RFCs:
 - Google Analytics / Search Console or other analytics integrations
 - Automatic execution of any unapproved Business-data mutation
 - Any generalized recurrence policy beyond the single narrow rule defined in §19
+
+---
+
+## Amendment 1 — Growth Center lane (`agent/growth-center-opportunity-engine-v1`)
+
+The sales / website / seo / reputation workers listed above as *out of scope for
+the original milestones* now own the Growth Center rules registered in
+`GrowthRuleRegistry`. The engine changed in four **additive** ways; every
+`business_advisor` behaviour in this RFC is unchanged:
+
+1. **Location context.** A type may declare `context_validator = 'location'`; its
+   context is `null` or `['business_location_id' => id]` (`OpportunityContext`).
+   `context_key = 'location:<id>'`, the fingerprint includes the context, and
+   `opportunities.location_id` (nullable) is set from it. The manager verifies the
+   Location belongs to the run's Business. Types without the validator still
+   require `context = null` (§26).
+2. **Dismiss cooldown.** A type may declare `dismiss_cooldown_days`; a dismissed
+   Opportunity re-confirmed by a later successful run after the cooldown reopens
+   as a new occurrence (transition reason `dismiss_cooldown_elapsed`). Types
+   without it keep §29's dismissed-stays-dismissed behaviour.
+3. **Dismiss reason.** `dismiss()` accepts an optional key from the closed
+   `OpportunityManager::DISMISS_REASONS`, stored as a fixed `safe_note`.
+4. **Advisor-queue isolation.** The customer Advisor/COO/Home read path
+   (`paginateForCustomer`, `topForCustomer`) is restricted to
+   `worker_key = business_advisor`; Growth Opportunities are read only through
+   `GrowthOpportunityReader`, which applies Location ACL in SQL.
+
+Full design, rule list, score algorithm and deferrals:
+`docs/product/GROWTH-CENTER-OPPORTUNITY-ENGINE-V1.md`.

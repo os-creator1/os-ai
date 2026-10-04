@@ -1249,6 +1249,38 @@
         });
 
         /*
+        |----------------------------------------------------------------------
+        | Growth Center — the evidence-first "what is holding growth back" surface.
+        |
+        | A READER of the canonical Opportunity Engine, the stored Growth Score
+        | history and the Daily Brief. Gate chain: Workspace -> Business ->
+        | userCanAccessBusiness() -> active Business -> the AI COO entitlement
+        | (404 on any failure, never 403) -> the `business_advisor` capability.
+        | Location access is applied inside GrowthOpportunityReader, in SQL,
+        | before any list or count. Mutations (snooze/dismiss/reopen) go through
+        | OpportunityManager; there is no route that writes another module's data.
+        |
+        | Distinct from the CRM sales-deal "Opportunities" board, which lives under
+        | .../opportunities; this surface lives under .../growth.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/growth')->name('businesses.growth.')->group(function () {
+            Route::get('/', 'Business\GrowthCenterController@overview')->name('index');
+            Route::get('/brief', 'Business\GrowthCenterController@briefPage')->name('brief');
+            Route::get('/score', 'Business\GrowthCenterController@score')->name('score');
+            Route::get('/insights', 'Business\GrowthCenterController@insights')->name('insights');
+            Route::get('/advisor', 'Business\GrowthCenterController@advisor')->name('advisor');
+            Route::post('/advisor', 'Business\GrowthCenterController@ask')->middleware('throttle:10,1')->name('advisor.ask');
+            Route::get('/opportunities', 'Business\GrowthCenterController@opportunities')->name('opportunities.index');
+            Route::get('/opportunities/{opportunityUid}', 'Business\GrowthCenterController@show')->name('opportunities.show');
+            Route::get('/opportunities/{opportunityUid}/go', 'Business\GrowthCenterController@go')->name('opportunities.go');
+            Route::post('/opportunities/{opportunityUid}/snooze', 'Business\GrowthCenterController@snooze')->middleware('throttle:30,1')->name('opportunities.snooze');
+            Route::post('/opportunities/{opportunityUid}/dismiss', 'Business\GrowthCenterController@dismiss')->middleware('throttle:30,1')->name('opportunities.dismiss');
+            Route::post('/opportunities/{opportunityUid}/reopen', 'Business\GrowthCenterController@reopen')->middleware('throttle:30,1')->name('opportunities.reopen');
+            Route::post('/refresh', 'Business\GrowthCenterController@refresh')->middleware('throttle:6,1')->name('refresh');
+        });
+
+        /*
         |----------------------------------------------------------------
         | Global Search (Blueprint §7/§24) — the top-bar search across
         | Contacts, Opportunities, Conversations and transactional

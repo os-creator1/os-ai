@@ -242,7 +242,7 @@ final class CustomerMenuBuilder
         // Results is not a top-level Business entry (V1 Master Product Blueprint §7): Home's
         // "See details" opens it, and it keeps Home lit while the owner is there. Its routes,
         // controller and permission (`view_reports`) are unchanged.
-        $items = [$this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])];
+        $items = [$this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.growth.', 'customer.workspaces.businesses.analytics.', 'customer.analytics.'])];
 
         $items = array_merge($items, $this->businessModuleItems($user, $scoped, $current));
 
