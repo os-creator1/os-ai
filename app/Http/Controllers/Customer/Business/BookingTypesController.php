@@ -200,6 +200,12 @@ class BookingTypesController extends Controller
             'name' => ['required', 'string', 'max:120'],
             'description' => ['nullable', 'string'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:1440'],
+            'meeting_instructions' => ['nullable', 'string', 'max:2000'],
+            'booking_window_days' => ['sometimes', 'integer', 'min:1', 'max:365'],
+            'minimum_notice_minutes' => ['sometimes', 'integer', 'min:0', 'max:43200'],
+            'buffer_before_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'buffer_after_minutes' => ['sometimes', 'integer', 'min:0', 'max:240'],
+            'slot_interval_minutes' => ['sometimes', 'integer', 'in:'.implode(',', BookingType::SLOT_INTERVALS)],
             'color' => ['nullable', 'string', 'max:16'],
             'is_active' => ['sometimes', 'boolean'],
         ]);

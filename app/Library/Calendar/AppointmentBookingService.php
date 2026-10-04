@@ -100,11 +100,13 @@ class AppointmentBookingService
             $bookingType, $location, $staffUserId, $contactId, $startAt, $createdByUserId, $crmOpportunityId
         ): Appointment {
             // Tier 0, FIRST: the Booking Type row, never the caller's model.
-            $endAt = $this->endFor($this->lockBookingTypeForBooking($bookingType, $location), $startAt);
+            $lockedType = $this->lockBookingTypeForBooking($bookingType, $location);
+            $endAt = $this->endFor($lockedType, $startAt);
 
             $this->locks->lockAscending([$staffUserId]);
 
-            $this->assertBookable($bookingType, $location, $staffUserId, $startAt, $endAt);
+            // The LOCKED row's buffers, never the caller's possibly stale model.
+            $this->assertBookable($lockedType, $location, $staffUserId, $startAt, $endAt);
 
             return $this->insert(
                 $bookingType,
@@ -192,7 +194,8 @@ class AppointmentBookingService
         ): Appointment {
             // Tier 0 first (the Booking Type row, re-derived under a shared
             // lock), then tier 1, held for the whole assignment.
-            $endAt = $this->endFor($this->lockBookingTypeForBooking($bookingType, $location), $startAt);
+            $lockedType = $this->lockBookingTypeForBooking($bookingType, $location);
+            $endAt = $this->endFor($lockedType, $startAt);
 
             $state = $this->lockRoundRobinState($bookingType);
 
@@ -210,7 +213,10 @@ class AppointmentBookingService
                     continue;
                 }
 
-                if ($this->conflicts->hasConflict($candidateId, $startAt, $endAt)) {
+                if ($this->conflicts->hasConflict(
+                    $candidateId, $startAt, $endAt, null,
+                    $lockedType->bufferBeforeMinutes(), $lockedType->bufferAfterMinutes()
+                )) {
                     continue;
                 }
 
@@ -473,7 +479,10 @@ class AppointmentBookingService
             throw StaffNotAvailableException::forStaff($staffUserId, $this->format($startAt), $this->format($endAt));
         }
 
-        if ($this->conflicts->hasConflict($staffUserId, $startAt, $endAt, $ignoreAppointmentId)) {
+        if ($this->conflicts->hasConflict(
+            $staffUserId, $startAt, $endAt, $ignoreAppointmentId,
+            $bookingType->bufferBeforeMinutes(), $bookingType->bufferAfterMinutes()
+        )) {
             throw AppointmentSlotUnavailableException::forStaff(
                 $staffUserId,
                 $this->format($startAt),
@@ -507,13 +516,14 @@ class AppointmentBookingService
         $row = DB::table('booking_types')
             ->where('id', $bookingType->id)
             ->sharedLock()
-            ->first(['id', 'is_active', 'duration_minutes', 'business_location_id']);
+            ->first(['id', 'is_active', 'duration_minutes', 'business_location_id', 'buffer_before_minutes', 'buffer_after_minutes']);
 
         if ($row === null || ! (bool) $row->is_active || (int) $row->business_location_id !== (int) $location->id) {
             throw BookingTypeNotBookableException::forBookingType((int) $bookingType->id);
         }
 
-        return $row;
+        // A model, so callers read buffers through the same accessors as everywhere else.
+        return BookingType::hydrate([(array) $row])->first();
     }
 
     /**

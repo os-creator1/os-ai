@@ -2,6 +2,7 @@
 
 namespace App\Library\Calendar;
 
+use App\Models\BookingType;
 use App\Models\BusinessLocation;
 use App\Models\StaffAvailabilityRule;
 use Illuminate\Support\Carbon;
@@ -29,21 +30,45 @@ use Illuminate\Support\Carbon;
  */
 class PublicSlotFinder
 {
-    /** A guest may book from today through today + 30 days (Business date). */
-    public const HORIZON_DAYS = 30;
-
     public function __construct(
         private readonly StaffAvailabilityCalculator $availability,
         private readonly BookingConflictDetector $conflicts,
     ) {
     }
 
-    /** First and last bookable Business dates (Y-m-d) in the Business timezone. */
-    public function window(string $businessTimezone): array
+    /** First and last bookable Business dates (Y-m-d): today through today + the type's booking window. */
+    public function window(string $businessTimezone, BookingType $type): array
     {
         $today = Carbon::now($businessTimezone)->startOfDay();
 
-        return [$today->toDateString(), $today->copy()->addDays(self::HORIZON_DAYS)->toDateString()];
+        return [$today->toDateString(), $today->copy()->addDays($type->windowDays())->toDateString()];
+    }
+
+    /**
+     * The earliest start a guest may be offered: strictly after now, and no
+     * sooner than the type's minimum notice. Decided here, on the server, in UTC.
+     */
+    public function earliestStart(BookingType $type): Carbon
+    {
+        return now()->utc()->addMinutes($type->minimumNoticeMinutes());
+    }
+
+    /** Is this Business-local time a start the type's interval would offer? */
+    public function onGrid(string $time, BookingType $type): bool
+    {
+        [$h, $m] = array_map('intval', explode(':', $time));
+
+        return (($h * 60) + $m) % max(1, $type->slotIntervalMinutes()) === 0;
+    }
+
+    /** May a guest book exactly this instant (a Business date + resolved start)? */
+    public function mayBook(BookingType $type, string $businessTimezone, string $date, Carbon $start): bool
+    {
+        [$first, $last] = $this->window($businessTimezone, $type);
+
+        return $date >= $first && $date <= $last
+            && $start->greaterThan(now()->utc())
+            && $start->greaterThanOrEqualTo($this->earliestStart($type));
     }
 
     /**
@@ -56,7 +81,7 @@ class PublicSlotFinder
      */
     public function slotsForDay(
         BusinessLocation $location,
-        int $durationMinutes,
+        BookingType $type,
         array $staffIds,
         string $visitorDate,
         string $visitorTimezone,
@@ -64,12 +89,12 @@ class PublicSlotFinder
     ): array {
         $weekdays = $this->weekdaysByStaff($location, $staffIds);
         $slots = [];
-        foreach ($this->candidates($visitorDate, $visitorTimezone, $businessTimezone, $weekdays) as $candidate) {
-            if ($this->isOffered($location, $durationMinutes, $candidate['staff'], $candidate['start'])) {
+        foreach ($this->candidates($type, $visitorDate, $visitorTimezone, $businessTimezone, $weekdays) as $candidate) {
+            if ($this->isOffered($location, $type, $candidate['staff'], $candidate['start'])) {
                 $slots[] = [
                     'start' => $candidate['start']->toIso8601ZuluString(),
                     'label' => $candidate['start']->copy()->setTimezone($visitorTimezone)->format('g:i A'),
-                    'end_label' => $candidate['start']->copy()->addMinutes($durationMinutes)->setTimezone($visitorTimezone)->format('g:i A'),
+                    'end_label' => $candidate['start']->copy()->addMinutes((int) $type->duration_minutes)->setTimezone($visitorTimezone)->format('g:i A'),
                     'date' => $candidate['date'],
                     'time' => $candidate['time'],
                 ];
@@ -89,7 +114,7 @@ class PublicSlotFinder
      */
     public function availableDates(
         BusinessLocation $location,
-        int $durationMinutes,
+        BookingType $type,
         array $staffIds,
         string $month,
         string $visitorTimezone,
@@ -99,8 +124,8 @@ class PublicSlotFinder
         $first = Carbon::createFromFormat('!Y-m-d', $month.'-01', $visitorTimezone);
         $dates = [];
         for ($day = $first->copy(); $day->month === $first->month; $day->addDay()) {
-            foreach ($this->candidates($day->toDateString(), $visitorTimezone, $businessTimezone, $weekdays) as $candidate) {
-                if ($this->isOffered($location, $durationMinutes, $candidate['staff'], $candidate['start'])) {
+            foreach ($this->candidates($type, $day->toDateString(), $visitorTimezone, $businessTimezone, $weekdays) as $candidate) {
+                if ($this->isOffered($location, $type, $candidate['staff'], $candidate['start'])) {
                     $dates[] = $day->toDateString();
                     break;
                 }
@@ -118,10 +143,12 @@ class PublicSlotFinder
      * @param  array<int, array<int, true>>  $weekdays  staff id => day_of_week set
      * @return list<array{start: Carbon, date: string, time: string, staff: list<int>}>
      */
-    private function candidates(string $visitorDate, string $visitorTimezone, string $businessTimezone, array $weekdays): array
+    private function candidates(BookingType $type, string $visitorDate, string $visitorTimezone, string $businessTimezone, array $weekdays): array
     {
-        [$firstDate, $lastDate] = $this->window($businessTimezone);
+        [$firstDate, $lastDate] = $this->window($businessTimezone, $type);
         $now = now()->utc();
+        $earliest = $this->earliestStart($type);
+        $interval = max(1, $type->slotIntervalMinutes());
         $center = Carbon::createFromFormat('!Y-m-d', $visitorDate, $businessTimezone);
         $found = [];
         for ($offset = -2; $offset <= 2; $offset++) {
@@ -134,10 +161,10 @@ class PublicSlotFinder
             if ($staff === []) {
                 continue;
             }
-            foreach (range(0, 47) as $step) {
-                $time = sprintf('%02d:%02d', intdiv($step, 2), ($step % 2) * 30);
+            for ($minute = 0; $minute < 1440; $minute += $interval) {
+                $time = sprintf('%02d:%02d', intdiv($minute, 60), $minute % 60);
                 $start = $this->instantFor($date, $time, $businessTimezone);
-                if ($start === null || $start->lessThanOrEqualTo($now)
+                if ($start === null || $start->lessThanOrEqualTo($now) || $start->lessThan($earliest)
                     || $start->copy()->setTimezone($visitorTimezone)->toDateString() !== $visitorDate) {
                     continue;
                 }
@@ -150,12 +177,14 @@ class PublicSlotFinder
     }
 
     /** @param list<int> $staffIds */
-    private function isOffered(BusinessLocation $location, int $durationMinutes, array $staffIds, Carbon $start): bool
+    private function isOffered(BusinessLocation $location, BookingType $type, array $staffIds, Carbon $start): bool
     {
-        $end = $start->copy()->addMinutes($durationMinutes);
+        $end = $start->copy()->addMinutes((int) $type->duration_minutes);
         foreach ($staffIds as $staffId) {
             if ($this->availability->isAvailable($staffId, $location, $start, $end)
-                && ! $this->conflicts->hasConflict($staffId, $start, $end)) {
+                && ! $this->conflicts->hasConflict(
+                    $staffId, $start, $end, null, $type->bufferBeforeMinutes(), $type->bufferAfterMinutes()
+                )) {
                 return true;
             }
         }

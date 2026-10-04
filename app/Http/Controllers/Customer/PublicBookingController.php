@@ -58,7 +58,7 @@ class PublicBookingController extends Controller
             [$year, $month, $dayOfMonth] = array_map('intval', explode('-', $date));
             abort_unless(checkdate($month, $dayOfMonth, $year), 404);
             $day = Carbon::createFromFormat('!Y-m-d', $date, $timezone);
-            [$first, $last] = $this->slots->window($timezone);
+            [$first, $last] = $this->slots->window($timezone, $type);
             abort_unless($date >= $first && $date <= $last, 404);
         }
 
@@ -66,7 +66,7 @@ class PublicBookingController extends Controller
         // date's slots are rendered here, in the Business timezone.
         $staffIds = $this->eligibleStaffIds($type, $location);
         $slots = isset($day)
-            ? $this->slots->slotsForDay($location, (int) $type->duration_minutes, $staffIds,
+            ? $this->slots->slotsForDay($location, $type, $staffIds,
                 $day->toDateString(), $timezone, $timezone)
             : [];
 
@@ -98,7 +98,7 @@ class PublicBookingController extends Controller
         $month = $request->query('month');
         abort_unless(is_string($month) && preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $month), 404);
 
-        [$first, $last] = $this->slots->window($businessTimezone);
+        [$first, $last] = $this->slots->window($businessTimezone, $type);
         $from = Carbon::now($visitorTimezone)->toDateString();
         $to = Carbon::createFromFormat('!Y-m-d', $last, $businessTimezone)->endOfDay()
             ->setTimezone($visitorTimezone)->toDateString();
@@ -106,7 +106,7 @@ class PublicBookingController extends Controller
         $monthEnd = Carbon::createFromFormat('!Y-m-d', $monthStart, $visitorTimezone)->endOfMonth()->toDateString();
         $available = ($monthEnd < $from || $monthStart > $to)
             ? []
-            : $this->slots->availableDates($location, (int) $type->duration_minutes,
+            : $this->slots->availableDates($location, $type,
                 $this->eligibleStaffIds($type, $location), $month, $visitorTimezone, $businessTimezone);
 
         return $this->json([
@@ -133,7 +133,7 @@ class PublicBookingController extends Controller
         return $this->json([
             'date' => $date,
             'timezone' => $visitorTimezone,
-            'slots' => $this->slots->slotsForDay($location, (int) $type->duration_minutes,
+            'slots' => $this->slots->slotsForDay($location, $type,
                 $this->eligibleStaffIds($type, $location), $date, $visitorTimezone, $businessTimezone),
         ]);
     }
@@ -151,12 +151,12 @@ class PublicBookingController extends Controller
             'email' => ['required', 'string', 'email:rfc', 'max:190'],
             'phone' => ['required', 'string', 'max:32'],
         ]);
-        $validator->after(function ($validator) use ($request): void {
+        $validator->after(function ($validator) use ($request, $type): void {
             $phone = trim(str_replace(['+', '-', '(', ')', ' '], '', (string) $request->input('phone')));
             if (! $validator->errors()->has('phone') && ($phone === '' || strlen($phone) > 32 || ! ctype_digit($phone))) {
                 $validator->errors()->add('phone', 'Enter a valid phone number.');
             }
-            if (! $validator->errors()->has('time') && ! in_array(substr((string) $request->input('time'), 3), ['00', '30'], true)) {
+            if (! $validator->errors()->has('time') && ! $this->slots->onGrid((string) $request->input('time'), $type)) {
                 $validator->errors()->add('time', 'Choose an available time.');
             }
         });
@@ -168,7 +168,7 @@ class PublicBookingController extends Controller
         $data = $validator->validated();
         $timezone = $this->timezoneFor($business);
         $start = $this->slots->instantFor($data['date'], $data['time'], $timezone);
-        if ($start === null || $start->lessThanOrEqualTo(now()->utc()) || $start->greaterThan(now()->addDays(31)->utc())) {
+        if ($start === null || ! $this->slots->mayBook($type, $timezone, $data['date'], $start)) {
             return $this->refused($wantsJson, 'Choose an available time.');
         }
 
@@ -263,6 +263,8 @@ class PublicBookingController extends Controller
         )->allowed, 404);
         abort_unless($type->isActive() && (int) $type->business_location_id === (int) $location->id, 404);
         abort_if($this->eligibleStaffIds($type, $location) === [], 404);
+        // Settings that cannot produce slots fail closed like every other refusal.
+        abort_if($type->schedulingProblem() !== null, 404);
         $this->timezoneFor($business);
 
         return [$type, $location, $business];
@@ -324,6 +326,7 @@ class PublicBookingController extends Controller
             'accent' => $color,
             'staff' => $staff ? trim($staff->first_name.' '.$staff->last_name) : null,
             'where' => $this->whereLine($location),
+            'instructions' => $type->meeting_instructions,
         ];
     }
 
@@ -348,6 +351,7 @@ class PublicBookingController extends Controller
             'type' => $type->name,
             'business' => $business->name,
             'where' => $this->whereLine($location),
+            'instructions' => $type->meeting_instructions,
             'date' => $local->format('l, F j, Y'),
             'time' => $local->format('g:i A').' – '.$end->copy()->setTimezone($timezone)->format('g:i A'),
             'timezone' => $timezone,
