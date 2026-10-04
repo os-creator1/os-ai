@@ -58,5 +58,22 @@
                 </div>
             </div>
         </div>
+
+        <div class="card" id="administrator-history">
+            <div class="card-header"><h4 class="card-title">Recent changes to this administrator</h4></div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>When</th><th>By</th><th>What</th><th>Reason</th></tr></thead>
+                    <tbody>
+                    @forelse ($history as $h)
+                        <tr><td>{{ $h->created_at->toDayDateTimeString() }}</td><td>{{ $h->actor?->email }}</td><td>{{ $h->summary }}</td><td>{{ $h->reason }}</td></tr>
+                    @empty
+                        <tr><td colspan="4" class="text-muted text-center py-2">No recorded changes yet.</td></tr>
+                    @endforelse
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-body"><a href="{{ route('admin.platform-owner.audit', ['type' => 'administrator']) }}">Open the full audit log</a></div>
+        </div>
     </section>
 @endsection

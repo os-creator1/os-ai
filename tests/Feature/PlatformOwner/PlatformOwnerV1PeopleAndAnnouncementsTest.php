@@ -277,6 +277,20 @@ class PlatformOwnerV1PeopleAndAnnouncementsTest extends TestCase
         $this->assertSame([$b->id], $row->payload['roles_after']);
     }
 
+    public function test_the_administrator_page_shows_its_own_audit_history_and_refuses_non_administrators(): void
+    {
+        $this->owner();
+        $role = Role::create(['name' => 'Viewer', 'status' => true]);
+        $admin = User::create(['uid' => (string) \Illuminate\Support\Str::uuid(), 'first_name' => 'Hi', 'last_name' => 'Story', 'email' => 'hist@example.test', 'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin']);
+        $this->put(route('admin.administrators.update', $admin->uid), ['first_name' => 'Hi', 'last_name' => 'Story', 'roles' => [$role->id]])->assertSessionHasNoErrors();
+
+        $html = $this->get(route('admin.administrators.show', $admin->uid))->assertOk()->getContent();
+        $this->assertStringContainsString('Updated administrator hist@example.test (roles changed)', $html);
+
+        $customer = $this->customerUser();
+        $this->get(route('admin.administrators.show', $customer->uid))->assertNotFound();
+    }
+
     public function test_an_administrator_can_be_deactivated_with_a_reason_but_not_oneself(): void
     {
         $owner = $this->owner();
@@ -352,6 +366,17 @@ class PlatformOwnerV1PeopleAndAnnouncementsTest extends TestCase
         $this->get(route('admin.platform-announcements.index', ['status' => 'scheduled']))->assertSee('Maintenance tonight');
         $drafts = $this->get(route('admin.platform-announcements.index', ['status' => 'draft']))->getContent();
         $this->assertStringNotContainsString('Maintenance tonight', substr($drafts, strpos($drafts, 'admin-platform-announcements-index')));
+    }
+
+    public function test_save_and_schedule_without_a_time_keeps_the_draft_and_asks_for_the_time(): void
+    {
+        $this->owner();
+
+        $this->post(route('admin.platform-announcements.store'), $this->draftData(['submit' => 'schedule']))
+            ->assertSessionHasErrors('scheduled_at');
+
+        $a = PlatformAnnouncement::query()->sole();
+        $this->assertSame(PlatformAnnouncementStatus::Draft, $a->status, 'Saved as a draft, not silently scheduled.');
     }
 
     public function test_scheduling_in_the_past_and_empty_content_are_refused(): void

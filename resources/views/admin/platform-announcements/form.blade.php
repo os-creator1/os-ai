@@ -69,7 +69,7 @@
                             <input class="form-control" type="datetime-local" id="expires_at" name="expires_at" value="{{ old('expires_at', $a->expires_at?->setTimezone(config('app.timezone'))->format('Y-m-d\TH:i')) }}">
                         </div>
                     </div>
-                    <p class="text-muted">Times are in {{ config('app.timezone') }}. Save as a draft to keep working, or schedule it for the time above.</p>
+                    <p class="text-muted">Times are in {{ config('app.timezone') }}. The send time is only used when you choose <strong>Save &amp; schedule</strong>; <strong>Save draft</strong> keeps the message without sending it.</p>
                     <button class="btn btn-outline-primary" type="submit" name="submit" value="draft">Save draft</button>
                     <button class="btn btn-primary" type="submit" name="submit" value="schedule">Save &amp; schedule</button>
                     <a class="btn btn-flat-secondary" href="{{ route('admin.platform-announcements.index') }}">Back</a>

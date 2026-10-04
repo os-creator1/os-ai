@@ -42,6 +42,7 @@ class PlatformOwnerController extends AdminBaseController
 
         return view('admin.platform-owner.overview', [
             'overview' => $this->overview->overview(),
+            'readiness' => app(\App\Library\PlatformOwner\PlatformProviderReadiness::class)->all(),
             'recentActions' => $recent,
             'actors' => $this->support->actorLabels($recent),
             'breadcrumbs' => $this->breadcrumbs('Overview'),

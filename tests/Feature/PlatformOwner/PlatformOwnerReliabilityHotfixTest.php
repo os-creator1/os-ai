@@ -197,11 +197,17 @@ class PlatformOwnerReliabilityHotfixTest extends TestCase
         $this->assertStringContainsString('data-feather="edit"', $row['action']);
     }
 
-    public function test_administrators_and_roles_views_declare_the_action_column_without_client_side_edit_delete_keys(): void
+    /**
+     * Platform Owner V1 final replaced the DataTables list of administrators and
+     * roles with server-rendered tables, so the old client-side action-column
+     * hazard (edit/delete keys read by the browser) no longer exists. This pins
+     * that it stays gone.
+     */
+    public function test_administrators_and_roles_views_are_server_rendered_without_client_side_edit_delete_keys(): void
     {
         foreach (['AdminRoles', 'Administrator'] as $dir) {
             $source = file_get_contents(resource_path("views/admin/{$dir}/index.blade.php"));
-            $this->assertStringContainsString('{"data": "action"', $source);
+            $this->assertStringNotContainsString('DataTable', $source);
             $this->assertStringNotContainsString("full['edit']", $source);
             $this->assertStringNotContainsString("full['delete']", $source);
         }

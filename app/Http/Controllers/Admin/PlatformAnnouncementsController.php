@@ -110,7 +110,13 @@ class PlatformAnnouncementsController extends Controller
     /** Save and, if the schedule button was used, schedule in the same step. */
     private function afterSave(Request $request, PlatformAnnouncement $a, string $message): RedirectResponse
     {
-        if ($request->filled('scheduled_at') && $request->input('submit') === 'schedule') {
+        if ($request->input('submit') === 'schedule') {
+            if (! $request->filled('scheduled_at')) {
+                // The announcement itself was saved; only the schedule is missing.
+                return redirect()->route('admin.platform-announcements.edit', $a->uid)
+                    ->withErrors(['scheduled_at' => __('Pick the time to send it, then schedule again. Your changes are saved as a draft.')]);
+            }
+
             try {
                 $this->manager->schedule((int) Auth::id(), $a, $this->scheduledAt($request));
             } catch (ValidationException $e) {

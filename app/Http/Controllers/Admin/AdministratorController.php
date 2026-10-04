@@ -267,7 +267,13 @@ class AdministratorController extends AdminBaseController
         $languages = Language::where('status', 1)->get();
         $roles = $this->roles->getAllowedRoles();
 
-        return view('admin.Administrator.show', compact('breadcrumbs', 'administrator', 'languages', 'roles', 'get_roles'));
+        abort_unless($administrator->is_admin, 404);
+
+        $history = \App\Models\PlatformAdminAction::query()->with('actor:id,first_name,last_name,email')
+            ->where('subject_type', 'administrator')->where('subject_ref', $administrator->uid)
+            ->orderByDesc('id')->limit(15)->get();
+
+        return view('admin.Administrator.show', compact('breadcrumbs', 'administrator', 'languages', 'roles', 'get_roles', 'history'));
     }
 
     /**
