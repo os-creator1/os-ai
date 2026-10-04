@@ -53,7 +53,7 @@ class EntitlementManagerOverrideTest extends TestCase
         $workspace = $this->assignedWorkspace();
 
         $this->expectException(UnavailablePlatformFeatureOverrideException::class);
-        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::MetaAdsModule, WorkspaceEntitlementOverrideState::Allow, $this->createAdmin(), 'Reason.');
+        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::AgencyPackageCapabilities, WorkspaceEntitlementOverrideState::Allow, $this->createAdmin(), 'Reason.');
     }
 
     public function test_deny_override_for_unavailable_feature_is_permitted(): void

@@ -111,6 +111,25 @@
             'category'     => 'Google Ads',
             'default'      => false,
         ],
+        // Meta Ads Module V1 (contract 24 §8), parallel to Google's.
+        // view_meta_ads defaults TRUE (the idempotent backfill migration
+        // 2026_10_29_200002 grants it to existing customers). manage_meta_ads
+        // is credential-class — connect, choose the ad account, disconnect,
+        // settings, refresh and every pause/resume — so it defaults FALSE, is
+        // NEVER backfilled to true, and the account owner grants it explicitly.
+        // Category 'Ads' (the provider-neutral module name). Google's category
+        // label stays 'Google Ads': it is part of the persisted permission
+        // catalog shown to owners, so it is left untouched.
+        'view_meta_ads'         => [
+            'display_name' => 'view_meta_ads',
+            'category'     => 'Ads',
+            'default'      => true,
+        ],
+        'manage_meta_ads'       => [
+            'display_name' => 'manage_meta_ads',
+            'category'     => 'Ads',
+            'default'      => false,
+        ],
         /*
          * Implementation Contract 16 §6/§12.E — Packages & Products. ONE
          * capability for the whole module, the simple single-key shape

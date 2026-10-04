@@ -68,8 +68,9 @@ class EntitlementManagerDecisionTest extends TestCase
     {
         ['workspace' => $workspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
 
-        // Forms V1 flipped Planned -> Available; MetaAdsModule is the still-Planned exemplar.
-        $decision = app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::MetaAdsModule->value, $this->createAdmin());
+        // Forms V1 flipped Planned -> Available, Meta Ads V1 flipped MetaAdsModule;
+        // AgencyPackageCapabilities is the still-Planned exemplar.
+        $decision = app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::AgencyPackageCapabilities->value, $this->createAdmin());
 
         $this->assertFalse($decision->allowed);
         $this->assertSame('platform_feature_unavailable', $decision->reason);
@@ -192,7 +193,7 @@ class EntitlementManagerDecisionTest extends TestCase
         $admin = $this->createAdmin();
 
         $this->expectException(\App\Exceptions\Entitlement\UnavailablePlatformFeatureOverrideException::class);
-        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::MetaAdsModule, WorkspaceEntitlementOverrideState::Allow, $admin, 'Should be rejected.');
+        app(EntitlementManager::class)->createOrChangeOverride($workspace, PlatformFeature::AgencyPackageCapabilities, WorkspaceEntitlementOverrideState::Allow, $admin, 'Should be rejected.');
     }
 
     public function test_suspended_status_denies_even_complimentary(): void

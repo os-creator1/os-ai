@@ -597,7 +597,7 @@ final class GoogleAdsMutationService
 
             $entitled = $workspace !== null
                 && $workspace->is_active
-                && $this->entitlements->decide($workspace, $business, PlatformFeature::GoogleAdsModule->value, (int) $actor->id)->allowed;
+                && (new \App\Library\Ads\AdsFeatureAccess($this->entitlements))->hasFullModule($workspace, $business, (int) $actor->id);
         } catch (Throwable) {
             $entitled = false;
         }

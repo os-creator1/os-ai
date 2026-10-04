@@ -25,7 +25,7 @@ class WorkspacePlanPageTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
-    private const MACHINE_KEYS = ['crm', 'conversations', 'automations', 'website_generation', 'google_business_profile_module', 'prospect_outreach', 'seo_module', 'google_ads_module', 'meta_ads_module'];
+    private const MACHINE_KEYS = ['crm', 'conversations', 'automations', 'website_generation', 'google_business_profile_module', 'prospect_outreach', 'seo_module', 'google_ads_module', 'meta_ads_module', 'ads_module'];
 
     public function test_growth_resolves_to_the_growth_assignment_with_human_feature_names(): void
     {

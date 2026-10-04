@@ -240,6 +240,21 @@ class ViewAsRouteBoundaryTest extends TestCase
         $this->assertContains('customer.workspaces.businesses.locations.allocations.', ViewAsProhibitedActions::PREFIXES);
     }
 
+    public function test_meta_ads_callback_is_prohibited_and_denied_by_name_and_prefix(): void
+    {
+        // Meta Ads V1 (contract 24 §8): the fixed Meta callback, listed exactly and by prefix.
+        $this->assertContains('customer.ads.meta.oauth.callback', ViewAsProhibitedActions::EXACT);
+        $this->assertContains('customer.ads.meta.oauth.', ViewAsProhibitedActions::PREFIXES);
+        $this->assertContains('customer.ads.meta.oauth.', ViewAsRouteClassification::DENIED_PREFIXES);
+
+        // Guarded: once the UI lane registers the Meta / Overview routes none may be unclassified.
+        foreach (['customer.ads.meta.oauth.callback', 'customer.workspaces.businesses.ads.overview', 'customer.workspaces.businesses.ads.meta.index'] as $name) {
+            if (Route::has($name)) {
+                $this->assertNotSame(ViewAsRouteClass::Unclassified, app(ViewAsRouteClassification::class)->classifyByName($name), $name);
+            }
+        }
+    }
+
     public function test_reads_that_stay_available_while_viewing_are_only_the_listed_ones(): void
     {
         $prohibited = app(ViewAsProhibitedActions::class);
