@@ -33,6 +33,12 @@ class FormFieldMapping
         'select' => ['select', 'multi_select', 'text'],
         'checkbox' => ['boolean'],
         'date' => ['date'],
+        'number' => ['number', 'text'],
+        'currency' => ['currency', 'number', 'text'],
+        'datetime' => ['datetime', 'text'],
+        'radio' => ['select', 'text'],
+        'multi_select' => ['multi_select'],
+        'yes_no' => ['text', 'select'],
     ];
 
     public function __construct(private readonly CustomFieldDefinitionManager $definitions)
@@ -76,7 +82,7 @@ class FormFieldMapping
             ));
         }
 
-        if ($field['type'] === FormFieldType::Select->value && $definition->fieldType()->hasOptions()) {
+        if (FormFieldType::from($field['type'])->hasOptions() && $definition->fieldType()->hasOptions()) {
             $choices = array_map(static fn (array $option): string => mb_strtolower($option['label']), $definition->optionList());
 
             foreach ($field['options'] as $option) {

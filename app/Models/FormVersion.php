@@ -46,6 +46,7 @@ class FormVersion extends Model
         'submit_label',
         'success_message',
         'pages',
+        'design',
         'fields',
         'create_opportunity',
         'opportunity_pipeline_id',
@@ -55,6 +56,7 @@ class FormVersion extends Model
     protected $casts = [
         'version' => 'integer',
         'pages' => 'array',
+        'design' => 'array',
         'fields' => 'array',
         'create_opportunity' => 'boolean',
     ];
@@ -126,6 +128,33 @@ class FormVersion extends Model
         return array_values(array_filter(
             $this->fields ?? [],
             fn (array $field) => ($field['page'] ?? $first) === $pageKey
+        ));
+    }
+
+    /**
+     * The form style, never null: a version that never set one has no overrides
+     * and renders with the platform defaults.
+     *
+     * @return array{accent?: string, background?: string, button_align?: string, radius?: string, width?: string}
+     */
+    public function style(): array
+    {
+        $design = $this->getAttribute('design');
+
+        return is_array($design) ? $design : [];
+    }
+
+    /**
+     * Only the elements that collect an answer (headings, paragraphs, dividers and
+     * spacers carry none), in the form's order.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function inputFields(): array
+    {
+        return array_values(array_filter(
+            $this->fields ?? [],
+            fn (array $field) => \App\Enums\Forms\FormFieldType::from($field['type'])->isInput()
         ));
     }
 

@@ -422,10 +422,9 @@ final class FormSubmissionService
             return [null, FormContactResolution::None];
         }
 
-        $nameKey = $fields->firstWhere('contact_name', true)['key'] ?? null;
         $emailKey = $fields->firstWhere('type', FormFieldType::Email->value)['key'] ?? null;
 
-        [$first, $last] = $this->splitName((string) ($nameKey === null ? '' : ($values[$nameKey] ?? '')));
+        [$first, $last] = $this->personName($context->version->fields ?? [], $values);
 
         $details = array_filter([
             'FIRST_NAME' => $first,
@@ -455,8 +454,7 @@ final class FormSubmissionService
             return null;
         }
 
-        $nameKey = collect($context->version->fields)->firstWhere('contact_name', true)['key'] ?? null;
-        $name = $nameKey === null ? '' : trim((string) ($values[$nameKey] ?? ''));
+        $name = trim(implode(' ', array_filter($this->personName($context->version->fields ?? [], $values))));
         $title = Str::limit(trim(($name !== '' ? $name.' — ' : '').$context->form->name), CrmOpportunityService::TITLE_MAX, '');
 
         try {
@@ -510,13 +508,35 @@ final class FormSubmissionService
         foreach ($fields as $field) {
             $key = $field['key'];
             $type = FormFieldType::from($field['type']);
+
+            // Headings, paragraphs, dividers and spacers collect nothing.
+            if (! $type->isInput()) {
+                continue;
+            }
+
             $required = (bool) $field['required'];
             $raw = $input[$key] ?? null;
             $data[$key] = is_string($raw) ? (trim($raw) === '' ? null : trim($raw)) : $raw;
             $labels[$key] = $field['label'];
             $presence = $required ? 'required' : 'nullable';
 
+            if ($type === FormFieldType::MultiSelect) {
+                // An array of the owner's own options, nothing else.
+                $data[$key] = is_array($raw) ? array_values(array_unique(array_filter($raw, 'is_string'))) : null;
+                $rules[$key] = $required ? ['required', 'array', 'min:1'] : ['nullable', 'array'];
+                $rules[$key.'.*'] = ['string', Rule::in($field['options'])];
+                $labels[$key.'.*'] = $field['label'];
+
+                continue;
+            }
+
             $rules[$key] = match ($type) {
+                FormFieldType::Number => [$presence, 'numeric', 'between:-1000000000,1000000000'],
+                FormFieldType::Currency => [$presence, 'numeric', 'min:0', 'max:1000000000', 'decimal:0,2'],
+                FormFieldType::DateTime => [$presence, 'date_format:Y-m-d\TH:i'],
+                FormFieldType::Radio => [$presence, 'string', Rule::in($field['options'])],
+                FormFieldType::YesNo => [$presence, 'string', Rule::in(['Yes', 'No'])],
+                FormFieldType::ConsentTransactional, FormFieldType::ConsentMarketing => $required ? ['accepted'] : ['nullable', 'boolean'],
                 FormFieldType::Text => [$presence, 'string', 'max:'.self::TEXT_MAX],
                 FormFieldType::Textarea => [$presence, 'string', 'max:'.self::TEXTAREA_MAX],
                 FormFieldType::Email => [$presence, 'string', 'email', 'max:'.self::EMAIL_MAX],
@@ -529,6 +549,7 @@ final class FormSubmissionService
                 FormFieldType::Select => [$presence, 'string', Rule::in($field['options'])],
                 FormFieldType::Checkbox => $required ? ['accepted'] : ['nullable', 'boolean'],
                 FormFieldType::Date => [$presence, 'date_format:Y-m-d'],
+                FormFieldType::MultiSelect, FormFieldType::Heading, FormFieldType::Paragraph, FormFieldType::Divider, FormFieldType::Spacer => [],
             };
         }
 
@@ -537,17 +558,54 @@ final class FormSubmissionService
         $values = [];
         foreach ($fields as $field) {
             $key = $field['key'];
+            $type = FormFieldType::from($field['type']);
+
+            if (! $type->isInput()) {
+                continue;
+            }
+
             $value = $validated[$key] ?? null;
 
-            $values[$key] = match (FormFieldType::from($field['type'])) {
-                FormFieldType::Checkbox => filter_var($value, FILTER_VALIDATE_BOOLEAN),
-                FormFieldType::Phone => $value === null ? null : (preg_replace('/\D+/', '', (string) $value) ?: null),
-                FormFieldType::Email => $value === null ? null : mb_strtolower((string) $value),
+            $values[$key] = match (true) {
+                $type->isBoolean() => filter_var($value, FILTER_VALIDATE_BOOLEAN),
+                $type === FormFieldType::Phone => $value === null ? null : (preg_replace('/\D+/', '', (string) $value) ?: null),
+                $type === FormFieldType::Email => $value === null ? null : mb_strtolower((string) $value),
+                $type === FormFieldType::Number => $value === null ? null : (str_contains((string) $value, '.') ? (float) $value : (int) $value),
+                $type === FormFieldType::Currency => $value === null ? null : number_format((float) $value, 2, '.', ''),
+                // The owner's own option order, whatever order the browser posted.
+                $type === FormFieldType::MultiSelect => $value === null || $value === [] ? null : array_values(array_intersect($field['options'], $value)),
                 default => $value,
             };
         }
 
         return $values;
+    }
+
+    /**
+     * The person's first and last name from the version's EXPLICIT markers: one
+     * full-name question (split on the first space), or separate first-name and
+     * last-name questions. Never guessed from a label.
+     *
+     * @param  list<array<string, mixed>>  $fields
+     * @param  array<string, mixed>  $values
+     * @return array{0: string, 1: string}
+     */
+    private function personName(array $fields, array $values): array
+    {
+        $collection = collect($fields);
+        $fullKey = $collection->firstWhere('contact_name', true)['key'] ?? null;
+
+        if ($fullKey !== null) {
+            return $this->splitName((string) ($values[$fullKey] ?? ''));
+        }
+
+        $firstKey = $collection->firstWhere('contact_part', 'first_name')['key'] ?? null;
+        $lastKey = $collection->firstWhere('contact_part', 'last_name')['key'] ?? null;
+
+        return [
+            $firstKey === null ? '' : trim((string) ($values[$firstKey] ?? '')),
+            $lastKey === null ? '' : trim((string) ($values[$lastKey] ?? '')),
+        ];
     }
 
     /**

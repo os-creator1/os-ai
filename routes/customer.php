@@ -1729,6 +1729,14 @@
             Route::post('/{formUid}/activate', 'Business\FormsController@activate')->name('activate');
             Route::post('/{formUid}/deactivate', 'Business\FormsController@deactivate')->name('deactivate');
             Route::post('/{formUid}/locations/{locationUid}', 'Business\FormsController@setLocation')->name('locations.set');
+
+            // Visual builder: autosave + preview are JSON; Notifications and
+            // Analytics are read-only tabs. Submissions is the existing list
+            // filtered to this form (submissions.index?form=<uid>).
+            Route::post('/{formUid}/builder', 'Business\FormBuilderController@save')->name('builder.save');
+            Route::post('/{formUid}/builder/preview', 'Business\FormBuilderController@preview')->name('builder.preview');
+            Route::get('/{formUid}/notifications', 'Business\FormBuilderController@notifications')->name('notifications');
+            Route::get('/{formUid}/analytics', 'Business\FormBuilderController@analytics')->name('analytics');
         });
 
         /*

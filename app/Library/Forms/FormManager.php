@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Forms\FormDeploymentSource;
 use App\Enums\Forms\FormLifecycleState;
 use App\Library\Forms\Exceptions\FormRuleException;
+use App\Library\Forms\Exceptions\FormStaleVersionException;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Form;
@@ -69,15 +70,23 @@ final class FormManager
     /**
      * @param  array<string, mixed>  $input
      */
-    public function update(Business $business, Form $form, array $input, ?int $actorUserId = null): Form
+    public function update(Business $business, Form $form, array $input, ?int $actorUserId = null, ?int $expectedVersion = null): Form
     {
         $name = $this->definitions->name($input['name'] ?? null);
         // The current version's questions: a mapping it already holds may be kept
         // even if its custom field has since been archived (never newly added).
         $content = $this->definitions->content($business, $input, $form->currentVersion()?->fields ?? []);
 
-        return DB::transaction(function () use ($business, $form, $name, $content, $actorUserId): Form {
+        return DB::transaction(function () use ($business, $form, $name, $content, $actorUserId, $expectedVersion): Form {
             $locked = $this->lock($business, $form);
+
+            // The visual builder autosaves: it names the version it was editing, and
+            // a save on top of any other version is refused under the lock (a stale
+            // tab must never silently overwrite a newer edit). A caller that does not
+            // name one (the classic form post) keeps the last-write-wins behaviour.
+            if ($expectedVersion !== null && $expectedVersion !== (int) $locked->current_version) {
+                throw new FormStaleVersionException((int) $locked->current_version);
+            }
 
             $locked->forceFill(['name' => $name]);
 
@@ -228,6 +237,7 @@ final class FormManager
             'submit_label' => $content['submit_label'],
             'success_message' => $content['success_message'],
             'pages' => $content['pages'],
+            'design' => $content['design'] ?? null,
             'fields' => $content['fields'],
             'create_opportunity' => $content['create_opportunity'],
             'opportunity_pipeline_id' => $content['opportunity_pipeline_id'],

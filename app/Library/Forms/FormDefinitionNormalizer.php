@@ -20,7 +20,12 @@ use Illuminate\Support\Str;
  * more (Blueprint §16). There is deliberately NO branching or conditional engine:
  * pages are shown in their stored order, always.
  *
- * BOUNDED ON PURPOSE: at most MAX_PAGES pages, MAX_FIELDS_PER_PAGE fields on a
+ * FIELDS ARE ELEMENTS. A field is an input (an answer), a consent (an input that
+ * records an explicit agreement) or a content block (heading, paragraph, divider,
+ * spacer — presentation only). See FormFieldType. Only inputs count toward the
+ * question limits; content blocks have their own small bound.
+ *
+ * BOUNDED ON PURPOSE: at most MAX_PAGES pages, MAX_FIELDS_PER_PAGE inputs on a
  * page and MAX_FIELDS in total, one closed type set, at most one phone field (the
  * Contact identity key) and at most one "contact name" field across the WHOLE
  * definition. This is a lead/questionnaire form, not an application builder.
@@ -34,7 +39,9 @@ use Illuminate\Support\Str;
  *
  * The normalized array is also what the content hash is taken over, so two
  * saves with the same meaning always hash the same — key order, blank rows and
- * whitespace never create a version.
+ * whitespace never create a version. Every optional key (a mapping, a placeholder,
+ * the form `design`, …) is present ONLY when set, so a definition that uses none
+ * of them hashes exactly as it did before they existed.
  */
 final class FormDefinitionNormalizer
 {
@@ -44,9 +51,24 @@ final class FormDefinitionNormalizer
 
     public const MAX_FIELDS = 40;
 
+    /** Content blocks (heading/paragraph/divider/spacer) in the whole definition. */
+    public const MAX_BLOCKS = 30;
+
     public const NAME_MAX = 120;
 
     public const LABEL_MAX = 120;
+
+    /** A paragraph's text, which is its `label`. */
+    public const PARAGRAPH_MAX = 1000;
+
+    /** A consent statement is its `label`; it may need to be a full sentence or two. */
+    public const CONSENT_MAX = 500;
+
+    public const PLACEHOLDER_MAX = 120;
+
+    public const HELP_MAX = 300;
+
+    public const DEFAULT_MAX = 200;
 
     public const PAGE_TITLE_MAX = 120;
 
@@ -67,7 +89,15 @@ final class FormDefinitionNormalizer
     /** Request-input names the public form itself uses; a field may never shadow one. */
     public const RESERVED_KEYS = ['form_hp', 'operation_token', 'location_uid', 'page'];
 
+    public const BUTTON_ALIGNS = ['left', 'center', 'right', 'full'];
+
+    public const RADII = ['none', 'sm', 'md', 'lg'];
+
+    public const WIDTHS = ['narrow', 'medium', 'wide'];
+
     private const KEY_PATTERN = '/^[a-z][a-z0-9_]{0,31}$/';
+
+    private const COLOR_PATTERN = '/^#[0-9a-fA-F]{6}$/';
 
     public function name(mixed $name): string
     {
@@ -82,7 +112,7 @@ final class FormDefinitionNormalizer
 
     /**
      * @param  array<string, mixed>  $input
-     * @return array{intro: ?string, submit_label: string, success_message: string, pages: list<array{key: string, title: ?string}>, fields: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>, create_opportunity: bool, opportunity_pipeline_id: ?int}
+     * @return array<string, mixed> intro, submit_label, success_message, pages, fields, create_opportunity, opportunity_pipeline_id and — only when set — design
      */
     public function content(Business $business, array $input, array $previousFields = []): array
     {
@@ -112,7 +142,7 @@ final class FormDefinitionNormalizer
             }
         }
 
-        return [
+        $content = [
             'intro' => $this->optionalText($input['intro'] ?? null, self::INTRO_MAX, 'The introduction'),
             'submit_label' => $this->boundedText($input['submit_label'] ?? null, self::SUBMIT_LABEL_MAX, self::DEFAULT_SUBMIT_LABEL, 'The button label'),
             'success_message' => $this->boundedText($input['success_message'] ?? null, self::SUCCESS_MESSAGE_MAX, self::DEFAULT_SUCCESS_MESSAGE, 'The thank-you message'),
@@ -121,6 +151,13 @@ final class FormDefinitionNormalizer
             'create_opportunity' => $createOpportunity,
             'opportunity_pipeline_id' => $pipelineId,
         ];
+
+        $design = $this->design($input['design'] ?? null);
+        if ($design !== []) {
+            $content['design'] = $design;
+        }
+
+        return $content;
     }
 
     /**
@@ -134,7 +171,56 @@ final class FormDefinitionNormalizer
     }
 
     /**
-     * @return array{0: list<array{key: string, title: ?string}>, 1: list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>}
+     * The lightweight Form Style: a few closed choices, never free CSS. Returns
+     * only the keys that were actually set (in a fixed order), so "no style" is
+     * the empty array and is not stored.
+     *
+     * @return array<string, string>
+     */
+    public function design(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $design = [];
+
+        foreach (['accent', 'background'] as $colorKey) {
+            $color = trim((string) ($raw[$colorKey] ?? ''));
+
+            if ($color === '') {
+                continue;
+            }
+
+            if (preg_match(self::COLOR_PATTERN, $color) !== 1) {
+                throw new FormRuleException('Colors must look like #1a73e8.');
+            }
+
+            $design[$colorKey] = strtolower($color);
+        }
+
+        foreach (['button_align' => self::BUTTON_ALIGNS, 'radius' => self::RADII, 'width' => self::WIDTHS] as $choiceKey => $allowed) {
+            $choice = trim((string) ($raw[$choiceKey] ?? ''));
+
+            if ($choice === '') {
+                continue;
+            }
+
+            if (! in_array($choice, $allowed, true)) {
+                throw new FormRuleException('That form style choice is not available.');
+            }
+
+            $design[$choiceKey] = $choice;
+        }
+
+        // Fixed order, whatever order they were submitted in.
+        $order = ['accent', 'background', 'button_align', 'radius', 'width'];
+
+        return array_intersect_key(array_replace(array_flip($order), $design), $design);
+    }
+
+    /**
+     * @return array{0: list<array{key: string, title: ?string}>, 1: list<array<string, mixed>>}
      */
     private function pagesAndFields(mixed $rawPages, mixed $rawFields, Business $business, array $previousFields): array
     {
@@ -164,7 +250,9 @@ final class FormDefinitionNormalizer
         $pages = [];
         $ordered = [];
         foreach ($used as $key => $page) {
-            if (count($byPage[$key]) > self::MAX_FIELDS_PER_PAGE) {
+            $inputsOnPage = count(array_filter($byPage[$key], fn (array $field) => FormFieldType::from($field['type'])->isInput()));
+
+            if ($inputsOnPage > self::MAX_FIELDS_PER_PAGE) {
                 throw new FormRuleException('A page can have at most '.self::MAX_FIELDS_PER_PAGE.' questions.');
             }
 
@@ -172,19 +260,57 @@ final class FormDefinitionNormalizer
             array_push($ordered, ...$byPage[$key]);
         }
 
-        if (count($ordered) > self::MAX_FIELDS) {
+        $inputs = array_filter($ordered, fn (array $field) => FormFieldType::from($field['type'])->isInput());
+
+        if ($inputs === []) {
+            throw new FormRuleException('Add at least one question.');
+        }
+
+        if (count($inputs) > self::MAX_FIELDS) {
             throw new FormRuleException('A form can have at most '.self::MAX_FIELDS.' questions in total.');
         }
 
-        if (collect($ordered)->where('type', FormFieldType::Phone->value)->count() > 1) {
+        if (count($ordered) - count($inputs) > self::MAX_BLOCKS) {
+            throw new FormRuleException('A form can have at most '.self::MAX_BLOCKS.' headings, paragraphs, dividers and spacers in total.');
+        }
+
+        $this->assertIdentityRules($ordered);
+
+        return [$pages, $ordered];
+    }
+
+    /**
+     * The whole-definition rules about which questions identify the person.
+     *
+     * @param  list<array<string, mixed>>  $ordered
+     */
+    private function assertIdentityRules(array $ordered): void
+    {
+        $fields = collect($ordered);
+
+        if ($fields->where('type', FormFieldType::Phone->value)->count() > 1) {
             throw new FormRuleException('A form can have only one phone number question.');
         }
 
-        if (collect($ordered)->where('contact_name', true)->count() > 1) {
+        if ($fields->where('contact_name', true)->count() > 1) {
             throw new FormRuleException('Only one question can be used as the person\'s name.');
         }
 
-        return [$pages, $ordered];
+        foreach (['first_name' => 'first name', 'last_name' => 'last name'] as $part => $words) {
+            if ($fields->where('contact_part', $part)->count() > 1) {
+                throw new FormRuleException('Only one question can be used as the person\'s '.$words.'.');
+            }
+        }
+
+        if ($fields->contains('contact_name', true) && $fields->contains(fn (array $field) => isset($field['contact_part']))) {
+            throw new FormRuleException('Use either one full-name question or separate first- and last-name questions, not both.');
+        }
+
+        foreach ([FormFieldType::ConsentTransactional, FormFieldType::ConsentMarketing] as $consent) {
+            if ($fields->where('type', $consent->value)->count() > 1) {
+                throw new FormRuleException('A form can have only one '.mb_strtolower($consent->label()).' question.');
+            }
+        }
     }
 
     /**
@@ -245,7 +371,7 @@ final class FormDefinitionNormalizer
 
     /**
      * @param  array<string, array<string, mixed>>  $declared
-     * @return list<array{key: string, label: string, type: string, required: bool, options: list<string>, contact_name: bool, page: string}>
+     * @return list<array<string, mixed>>
      */
     private function fields(array $rawFields, array $declared, string $firstPageKey, Business $business, array $previousFields): array
     {
@@ -268,25 +394,37 @@ final class FormDefinitionNormalizer
 
             $label = trim((string) ($raw['label'] ?? ''));
 
-            // A blank row is an unused spare row in the editor, not an error.
-            if ($label === '') {
+            $type = FormFieldType::tryFrom((string) ($raw['type'] ?? ''));
+
+            // A blank row is an unused spare row in the editor, not an error. A
+            // divider or spacer is legitimately blank.
+            if ($label === '' && ! ($type?->allowsEmptyLabel() ?? false)) {
                 continue;
             }
 
-            if (mb_strlen($label) > self::LABEL_MAX) {
-                throw new FormRuleException('A question label can be at most '.self::LABEL_MAX.' characters.');
-            }
-
-            $type = FormFieldType::tryFrom((string) ($raw['type'] ?? ''));
             if ($type === null) {
                 throw new FormRuleException('"'.$label.'" has an unknown answer type.');
             }
 
+            $labelMax = match (true) {
+                $type === FormFieldType::Paragraph => self::PARAGRAPH_MAX,
+                $type->isConsent() => self::CONSENT_MAX,
+                default => self::LABEL_MAX,
+            };
+
+            if (mb_strlen($label) > $labelMax) {
+                throw new FormRuleException(match (true) {
+                    $type === FormFieldType::Paragraph => 'A paragraph can be at most '.$labelMax.' characters.',
+                    $type->isConsent() => 'A consent statement can be at most '.$labelMax.' characters.',
+                    default => 'A question label can be at most '.$labelMax.' characters.',
+                });
+            }
+
             $key = trim((string) ($raw['key'] ?? ''));
-            $key = $key === '' ? $this->keyFromLabel($label, $seen) : $key;
+            $key = $key === '' ? $this->keyFromLabel($label !== '' ? $label : $type->value, $seen) : $key;
 
             if (preg_match(self::KEY_PATTERN, $key) !== 1 || in_array($key, self::RESERVED_KEYS, true)) {
-                throw new FormRuleException('"'.$label.'" has an invalid internal key.');
+                throw new FormRuleException('"'.($label !== '' ? $label : $type->label()).'" has an invalid internal key.');
             }
 
             if (isset($seen[$key])) {
@@ -297,7 +435,7 @@ final class FormDefinitionNormalizer
             $page = trim((string) ($raw['page'] ?? ''));
             $page = $page === '' ? $firstPageKey : $page;
             if (! isset($declared[$page])) {
-                throw new FormRuleException('"'.$label.'" is on a page that does not exist.');
+                throw new FormRuleException('"'.($label !== '' ? $label : $type->label()).'" is on a page that does not exist.');
             }
 
             $contactName = (bool) ($raw['contact_name'] ?? false);
@@ -305,12 +443,27 @@ final class FormDefinitionNormalizer
                 throw new FormRuleException('Only a short-text question can be used as the person\'s name.');
             }
 
+            $contactPart = trim((string) ($raw['contact_part'] ?? ''));
+            if ($contactPart !== '') {
+                if (! in_array($contactPart, ['first_name', 'last_name'], true)) {
+                    throw new FormRuleException('"'.$label.'" has an unknown contact detail.');
+                }
+
+                if ($type !== FormFieldType::Text) {
+                    throw new FormRuleException('Only a short-text question can be used as the person\'s first or last name.');
+                }
+
+                if ($contactName) {
+                    throw new FormRuleException('"'.$label.'" cannot be both the full name and a part of it.');
+                }
+            }
+
             $field = [
                 'key' => $key,
                 'label' => $label,
                 'type' => $type->value,
-                'required' => (bool) ($raw['required'] ?? false),
-                'options' => $type === FormFieldType::Select ? $this->options($label, $raw['options'] ?? []) : [],
+                'required' => $type->isInput() && (bool) ($raw['required'] ?? false),
+                'options' => $type->hasOptions() ? $this->options($label, $raw['options'] ?? []) : [],
                 'contact_name' => $contactName,
                 'page' => $page,
             ];
@@ -321,6 +474,10 @@ final class FormDefinitionNormalizer
             $uid = trim((string) ($raw['custom_field_uid'] ?? ''));
 
             if ($uid !== '') {
+                if (! $type->isInput() || $type->isConsent()) {
+                    throw new FormRuleException('"'.($label !== '' ? $label : $type->label()).'" cannot be saved to a contact field.');
+                }
+
                 if (isset($mapped[$uid])) {
                     throw new FormRuleException('Two questions are set to save to the same contact field.');
                 }
@@ -334,14 +491,69 @@ final class FormDefinitionNormalizer
                 );
             }
 
+            // Optional presentation keys — present only when set.
+            if ($type->isInput() && ! $type->isConsent()) {
+                $placeholder = $this->optionalText($raw['placeholder'] ?? null, self::PLACEHOLDER_MAX, 'A placeholder');
+                if ($placeholder !== null && in_array($type, [FormFieldType::Text, FormFieldType::Textarea, FormFieldType::Email, FormFieldType::Phone, FormFieldType::Number, FormFieldType::Currency, FormFieldType::Select], true)) {
+                    $field['placeholder'] = $placeholder;
+                }
+            }
+
+            if ($type->isInput()) {
+                $help = $this->optionalText($raw['help'] ?? null, self::HELP_MAX, 'Help text');
+                if ($help !== null) {
+                    $field['help'] = $help;
+                }
+
+                if (($raw['width'] ?? null) === 'half') {
+                    $field['width'] = 'half';
+                }
+
+                $default = $this->defaultValue($type, $raw['default'] ?? null, $field['options'], $label);
+                if ($default !== null) {
+                    $field['default'] = $default;
+                }
+            }
+
+            if ($contactPart !== '') {
+                $field['contact_part'] = $contactPart;
+            }
+
             $fields[] = $field;
         }
 
-        if ($fields === []) {
-            throw new FormRuleException('Add at least one question.');
+        return $fields;
+    }
+
+    /**
+     * A default value, only where it is safe: plain text-like answers and a
+     * choice that is one of the owner's own options. Never for consent (a
+     * consent is never pre-checked) or a checkbox, and never for a date (a
+     * stale default date silently becomes the answer).
+     *
+     * @param  list<string>  $options
+     */
+    private function defaultValue(FormFieldType $type, mixed $raw, array $options, string $label): ?string
+    {
+        if (! in_array($type, [FormFieldType::Text, FormFieldType::Textarea, FormFieldType::Select, FormFieldType::Radio, FormFieldType::Number, FormFieldType::Currency], true)) {
+            return null;
         }
 
-        return $fields;
+        $value = $this->optionalText($raw, self::DEFAULT_MAX, 'A default value');
+
+        if ($value === null) {
+            return null;
+        }
+
+        if ($type->hasOptions() && ! in_array($value, $options, true)) {
+            throw new FormRuleException('The default for "'.$label.'" must be one of its options.');
+        }
+
+        if (in_array($type, [FormFieldType::Number, FormFieldType::Currency], true) && ! is_numeric($value)) {
+            throw new FormRuleException('The default for "'.$label.'" must be a number.');
+        }
+
+        return $value;
     }
 
     /**

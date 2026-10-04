@@ -84,7 +84,7 @@ final class FormSubmissionReader
             ->where('business_id', $business->id)
             ->whereIn('business_location_id', $locationIds)
             ->when($form !== null, fn ($q) => $q->where('form_id', $form->id))
-            ->with(['form:id,uid,name', 'location:id,uid,name', 'contact:id,uid,phone'])
+            ->with(['form:id,uid,name', 'location:id,uid,name', 'contact:id,uid,phone', 'version:id,form_id,version,pages,fields'])
             ->orderByDesc('id');
 
         return $query->paginate(self::PAGE_SIZE, ['*'], 'page', max(1, $page));
