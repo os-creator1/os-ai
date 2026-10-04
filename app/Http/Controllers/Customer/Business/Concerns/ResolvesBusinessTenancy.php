@@ -99,6 +99,36 @@ trait ResolvesBusinessTenancy
     }
 
     /**
+     * resolveEntitledBusinessTenancy() for a gate that ANY of several features
+     * opens (Ads: basic visibility OR the full module under any of its keys).
+     * One tenancy pass, then the same per-key answer (menu snapshot when the
+     * key is gated there, decide() otherwise); 404 when none allows.
+     *
+     * @param  list<string>  $featureKeys
+     * @return array{0: Workspace, 1: Business}
+     */
+    protected function resolveAnyEntitledBusinessTenancy(string $workspaceUid, string $businessUid, array $featureKeys): array
+    {
+        [$context, $workspace, $business] = $this->resolveBusinessTenancyWithContext($workspaceUid, $businessUid, true);
+
+        try {
+            foreach ($featureKeys as $featureKey) {
+                $allowed = $context !== null && in_array($featureKey, CustomerMenuBuilder::ENTITLEMENT_GATED_FEATURES, true)
+                    ? app(CustomerShellComposer::class)->currentMenuEntitlements($context)->allows($featureKey)
+                    : app(EntitlementManager::class)->decide($workspace, $business, $featureKey, (int) Auth::id())->allowed;
+
+                if ($allowed) {
+                    return [$workspace, $business];
+                }
+            }
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        }
+
+        abort(404);
+    }
+
+    /**
      * @return array{0: ?CustomerContext, 1: Workspace, 2: Business}
      */
     private function resolveBusinessTenancyWithContext(string $workspaceUid, string $businessUid, bool $requireActive): array

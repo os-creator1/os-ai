@@ -20,9 +20,12 @@ enum PlatformFeature: string
     case AiCooBasic = 'ai_coo_basic';
     case SeoBasicVisibility = 'seo_basic_visibility';
     case AdsBasicVisibility = 'ads_basic_visibility';
+    // Provider-neutral full Ads capability (Meta Ads V1 contract 24 §8, M10).
+    case AdsModule = 'ads_module';
     case SeoModule = 'seo_module';
     case GoogleAdsModule = 'google_ads_module';
     case GoogleBusinessProfileModule = 'google_business_profile_module';
+    // Legacy synonym of AdsModule; kept valid. Resolved by AdsFeatureAccess.
     case MetaAdsModule = 'meta_ads_module';
     case WhiteLabel = 'white_label';
     case AgencyPackageCapabilities = 'agency_package_capabilities';

@@ -129,7 +129,11 @@ final class PlatformFeatureRegistry
         PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Available,
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
+        // Meta Ads V1 (contract 24 §8, M10): ads_module is the provider-neutral
+        // full Ads capability; google_ads_module / meta_ads_module stay valid
+        // legacy synonyms, all resolved by App\Library\Ads\AdsFeatureAccess.
+        PlatformFeature::AdsModule->value => PlatformFeatureAvailability::Available,
+        PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Available,
         // Agency V1 completion — Planned -> Available, meeting the evidentiary
         // bar every flip here is held to: a real, executable, Workspace-scoped
         // surface now exists (AgencyWhiteLabelController over

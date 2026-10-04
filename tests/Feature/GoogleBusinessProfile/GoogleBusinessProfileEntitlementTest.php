@@ -116,7 +116,8 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         }
 
         foreach ([
-            PlatformFeature::MetaAdsModule,
+            PlatformFeature::AgencyPackageCapabilities,
+            // (MetaAdsModule left this list at the Meta Ads V1 flip.)
             // (Forms left this list at the Forms V1 flip — intentional and unrelated to GBP.)
         ] as $planned) {
             $this->assertFalse(

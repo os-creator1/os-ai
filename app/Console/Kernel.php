@@ -22,6 +22,7 @@
     use App\Console\Commands\WarmDashboardCache;
     use App\Jobs\Ai\ExpireStaleAiReservations;
     use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
+    use App\Jobs\MetaAds\SweepMetaAdsSyncs;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Messaging\RefreshPendingCampaignAssignments;
@@ -239,6 +240,11 @@
             // the 00:00 daily jobs. withoutOverlapping() stops a slow sweep
             // stacking on the next tick.
             $schedule->job(new SweepGoogleAdsSyncs())->dailyAt('02:40')->withoutOverlapping();
+
+            // Meta Ads Module V1 (contract 24 §6) — the same shape for Meta,
+            // 30 minutes after Google's sweep so the two never overlap, and
+            // with its own call budget, breaker and quota.
+            $schedule->job(new SweepMetaAdsSyncs())->dailyAt('03:10')->withoutOverlapping();
 
             // PR #295 Correction Round 1, item 6 — the one canonical
             // mechanism that advances a submitted carrier registration.

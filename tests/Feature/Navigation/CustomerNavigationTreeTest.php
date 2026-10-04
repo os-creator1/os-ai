@@ -60,7 +60,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         // Contract 18 §5.1 — seo_basic_visibility is Core+Growth+Agency, so
         // the SEO entry (Overview, Search keywords) is offered even here.
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'ads', 'ads-overview', 'ads-settings', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'ads', 'ads-google', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
@@ -109,7 +109,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'ads', 'ads-overview', 'ads-budget', 'ads-settings', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'ads', 'ads-google', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 

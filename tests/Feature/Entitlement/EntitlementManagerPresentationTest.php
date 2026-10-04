@@ -303,7 +303,12 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::AdsBasicVisibility->value, $result);
         $this->assertArrayHasKey(PlatformFeature::GoogleAdsModule->value, $result);
 
-        $this->assertCount(14, $result);
+        // Meta Ads V1 (contract 24 §8, M10): the neutral AdsModule and the legacy
+        // MetaAdsModule synonym both flipped to Available and are packaged too.
+        $this->assertArrayHasKey(PlatformFeature::AdsModule->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::MetaAdsModule->value, $result);
+
+        $this->assertCount(16, $result);
     }
 
     /**

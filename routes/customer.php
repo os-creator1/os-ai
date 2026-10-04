@@ -600,6 +600,16 @@
         ->name('ads.oauth.callback');
 
     /*
+    | Meta Ads OAuth callback — ONE FIXED, TENANT-FREE URI (contract 24 §3).
+    | Same rules as the Google callback above: the Business comes ONLY from
+    | the signed single-use state (product claim `meta_ads`); no code/token
+    | ever reaches a URL, flash or log. See Business\MetaAdsConnectionController::callback().
+    */
+    Route::get('ads/meta/oauth/callback', 'Business\MetaAdsConnectionController@callback')
+        ->middleware('throttle:20,1')
+        ->name('ads.meta.oauth.callback');
+
+    /*
     |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
@@ -1328,6 +1338,35 @@
             Route::post('/accounts/select', 'Business\AdsConnectionController@selectAccount')->middleware('throttle:20,1')->name('accounts.select');
             Route::post('/disconnect', 'Business\AdsConnectionController@disconnect')->name('disconnect');
             Route::post('/refresh', 'Business\AdsConnectionController@refresh')->middleware('throttle:10,1')->name('refresh');
+
+            // Cross-channel Ads Overview (Meta Ads V1, contract 24 §9): per-provider cached figures, never blended.
+            Route::get('/overview', 'Business\Ads\AdsOverviewController@overview')->name('overview');
+
+            // Meta Ads (contract 24). Tenancy/entitlement 404; view_meta_ads for reads, manage_meta_ads
+            // for connect/accounts/select/settings/refresh/pause/resume. Non-GET is View-As prohibited by prefix.
+            Route::get('/meta', 'Business\MetaAdsController@overview')->name('meta.index');
+            Route::get('/meta/series', 'Business\MetaAdsController@series')->middleware('throttle:60,1')->name('meta.series');
+            Route::get('/meta/campaigns', 'Business\MetaAdsCampaignsController@listing')->name('meta.campaigns.index');
+            Route::get('/meta/campaigns/{campaignUid}', 'Business\MetaAdsCampaignsController@detail')->name('meta.campaigns.show');
+            Route::get('/meta/ad-sets', 'Business\MetaAdsAdSetsController@listing')->name('meta.ad-sets.index');
+            Route::get('/meta/ads', 'Business\MetaAdsAdsController@listing')->name('meta.ads.index');
+            Route::get('/meta/recommendations', 'Business\MetaAdsRecommendationsController@listing')->name('meta.recommendations.index');
+            Route::get('/meta/leads', 'Business\MetaAdsLeadsController@listing')->name('meta.leads.index');
+
+            Route::post('/meta/campaigns/{campaignUid}/pause', 'Business\MetaAdsMutationController@campaignPause')->middleware('throttle:20,1')->name('meta.campaigns.pause');
+            Route::post('/meta/campaigns/{campaignUid}/resume', 'Business\MetaAdsMutationController@campaignResume')->middleware('throttle:20,1')->name('meta.campaigns.resume');
+            Route::post('/meta/ad-sets/{adSetUid}/pause', 'Business\MetaAdsMutationController@adSetPause')->middleware('throttle:20,1')->name('meta.ad-sets.pause');
+            Route::post('/meta/ad-sets/{adSetUid}/resume', 'Business\MetaAdsMutationController@adSetResume')->middleware('throttle:20,1')->name('meta.ad-sets.resume');
+            Route::post('/meta/ads/{adUid}/pause', 'Business\MetaAdsMutationController@adPause')->middleware('throttle:20,1')->name('meta.ads.pause');
+            Route::post('/meta/ads/{adUid}/resume', 'Business\MetaAdsMutationController@adResume')->middleware('throttle:20,1')->name('meta.ads.resume');
+
+            Route::get('/meta/settings', 'Business\MetaAdsConnectionController@settings')->name('meta.settings');
+            Route::post('/meta/settings', 'Business\MetaAdsConnectionController@saveSettings')->middleware('throttle:20,1')->name('meta.settings.update');
+            Route::post('/meta/connect', 'Business\MetaAdsConnectionController@connect')->middleware('throttle:10,1')->name('meta.connect');
+            Route::get('/meta/accounts', 'Business\MetaAdsConnectionController@accounts')->middleware('throttle:20,1')->name('meta.accounts');
+            Route::post('/meta/accounts/select', 'Business\MetaAdsConnectionController@selectAccount')->middleware('throttle:20,1')->name('meta.accounts.select');
+            Route::post('/meta/disconnect', 'Business\MetaAdsConnectionController@disconnect')->name('meta.disconnect');
+            Route::post('/meta/refresh', 'Business\MetaAdsConnectionController@refresh')->middleware('throttle:10,1')->name('meta.refresh');
         });
 
         /*

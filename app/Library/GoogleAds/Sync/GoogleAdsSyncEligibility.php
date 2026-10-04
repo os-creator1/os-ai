@@ -98,10 +98,11 @@ class GoogleAdsSyncEligibility
     {
         try {
             // A background run has no human actor; the actor argument is audit-only.
+            // Basic visibility OR the full module under any of its keys (AdsFeatureAccess).
             $decisions = $this->entitlements->snapshotBusinessFeatureDecisions(
                 $workspace,
                 $business,
-                [PlatformFeature::AdsBasicVisibility->value, PlatformFeature::GoogleAdsModule->value],
+                \App\Library\Ads\AdsFeatureAccess::anyAdsKeys(),
                 0,
             );
         } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {

@@ -77,7 +77,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertSame($expected, $actual);
     }
 
-    public function test_platform_feature_has_exactly_nineteen_cases_matching_rfc_004_slice_a_and_slice_3(): void
+    public function test_platform_feature_has_exactly_twenty_cases_matching_rfc_004_slice_a_and_slice_3(): void
     {
         $expected = [
             'crm',
@@ -89,6 +89,8 @@ class EntitlementEnumsTest extends TestCase
             'ai_coo_basic',
             'seo_basic_visibility',
             'ads_basic_visibility',
+            // Meta Ads V1 (contract 24 §8, M10): the provider-neutral full Ads key.
+            'ads_module',
             'seo_module',
             'google_ads_module',
             'google_business_profile_module',
@@ -116,7 +118,7 @@ class EntitlementEnumsTest extends TestCase
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(19, PlatformFeature::cases());
+        $this->assertCount(20, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 
