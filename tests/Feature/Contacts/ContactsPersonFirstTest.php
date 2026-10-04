@@ -145,6 +145,8 @@ class ContactsPersonFirstTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->authenticateAs($owner);
 
         $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
@@ -174,6 +176,8 @@ class ContactsPersonFirstTest extends TestCase
         $otherAccount = $this->otherBusinessOf($owner);
         $other = $otherAccount['business'];
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->authenticateAs($owner);
 
         $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
@@ -397,6 +401,8 @@ class ContactsPersonFirstTest extends TestCase
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$owner, $business, $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Account ' . $tier->value);
             $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
             // The contact that used to exhaust the phantom quota.
             $this->person($group, ['FIRST_NAME' => 'Ana']);
             $this->authenticateAs($owner);
@@ -459,6 +465,8 @@ class ContactsPersonFirstTest extends TestCase
     {
         [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
         $group = $this->group($business, 'Customers');
+        // Contacts are Location-bound: a Business needs a Location to add one.
+        \App\Models\BusinessLocation::create(['business_id' => $business->id, 'service_mode' => 'storefront', 'country_code' => 'US']);
         $this->person($group, ['FIRST_NAME' => 'Ana']);
         $this->person($group, ['FIRST_NAME' => 'Bruno']);
         $this->giveActiveSmsSubscriptionWithExhaustedContactQuota($owner);

@@ -70,7 +70,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'pipelines' => $pipelines,
             'pipeline' => $pipeline,
             'filters' => $filters,
-            'board' => $this->board->board($business, $pipeline, $filters),
+            'board' => $this->board->board($business, $pipeline, $filters, (int) Auth::id()),
         ]);
     }
 
@@ -87,14 +87,14 @@ class CrmOpportunitiesController extends CustomerBaseController
 
         $pipeline = $pipelines->firstWhere('uid', (string) $request->query('pipeline', old('pipeline'))) ?? $pipelines->first();
         $contactUid = (string) $request->query('contact', (string) old('contact'));
-        $contact = $contactUid !== '' ? $this->contacts->findForBusiness($business, $contactUid) : null;
+        $contact = $contactUid !== '' ? $this->contacts->findForBusiness($business, $contactUid, (int) Auth::id()) : null;
 
         return view('customer.crm.create', [
             'pipelines' => $pipelines,
             'pipeline' => $pipeline,
             'stages' => $pipeline->activeStages()->get(),
             'startingStage' => $this->opportunities->startingStage($pipeline),
-            'contact' => $contact === null ? null : ($this->contacts->summaries($business, [(int) $contact->id])[(int) $contact->id] ?? null),
+            'contact' => $contact === null ? null : ($this->contacts->summaries($business, [(int) $contact->id], (int) Auth::id())[(int) $contact->id] ?? null),
         ]);
     }
 
@@ -114,7 +114,9 @@ class CrmOpportunitiesController extends CustomerBaseController
         ]);
 
         $pipeline = $this->pipeline($business, $data['pipeline']);
-        $contact = $this->contacts->findForBusiness($business, $data['contact']);
+        // A Contact at a Location the actor cannot reach is, for them, simply not a
+        // contact of this Business: the same answer as an unknown uid.
+        $contact = $this->contacts->findForBusiness($business, $data['contact'], (int) Auth::id());
 
         if ($contact === null) {
             return back()->withInput()->withErrors(['contact' => 'Choose a contact of this Business.']);
@@ -146,7 +148,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'pipeline' => $pipeline,
             'stage' => CrmPipelineStage::query()->where('business_id', $business->id)->find($opportunity->stage_id) ?? abort(404),
             'stages' => $pipeline->activeStages()->get(),
-            'contact' => $opportunity->contact_id === null ? null : ($this->contacts->summaries($business, [(int) $opportunity->contact_id])[(int) $opportunity->contact_id] ?? null),
+            'contact' => $opportunity->contact_id === null ? null : ($this->contacts->summaries($business, [(int) $opportunity->contact_id], (int) Auth::id())[(int) $opportunity->contact_id] ?? null),
             'history' => $opportunity->history()->with('actor:id,first_name,last_name')->limit(100)->get(),
         ]);
     }
@@ -299,7 +301,7 @@ class CrmOpportunitiesController extends CustomerBaseController
             'results' => array_map(fn (array $contact) => [
                 'id' => $contact['uid'],
                 'text' => $contact['name'] !== null ? $contact['name'] . ' · ' . $contact['phone'] : $contact['phone'],
-            ], $this->contacts->search($business, $search, 20)),
+            ], $this->contacts->search($business, $search, 20, (int) Auth::id())),
         ]);
     }
 

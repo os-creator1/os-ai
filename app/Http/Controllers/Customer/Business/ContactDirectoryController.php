@@ -57,7 +57,7 @@ class ContactDirectoryController extends CustomerBaseController
         $search = mb_substr(trim((string) $request->query('q', '')), 0, 100);
 
         return view('customer.people.index', [
-            'contacts' => $this->directory->page($business, $search),
+            'contacts' => $this->directory->page($business, $search, (int) Auth::id()),
             'search' => $search,
         ]);
     }
@@ -67,7 +67,9 @@ class ContactDirectoryController extends CustomerBaseController
         [$workspace, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
         $this->authorize('view_contact');
 
-        $contact = $this->directory->findForBusiness($business, $contactUid);
+        // A Contact at a Location the actor cannot reach answers exactly like an
+        // unknown uid: knowing the uid never bypasses the Location ACL (Addendum §4).
+        $contact = $this->directory->findForBusiness($business, $contactUid, (int) Auth::id());
         abort_if($contact === null, 404);
 
         return view('customer.people.show', [

@@ -863,7 +863,14 @@
             $saved_ids = [];
             foreach ($input['fields'] as $item) {
 
-                $field = ContactGroupFields::findByUid($item['uid']);
+                // A field is looked up INSIDE this list. A uid that names another
+                // list's field — another Business's included — or none at all is
+                // treated as a new field of THIS list: knowing a foreign field's uid
+                // never lets a save rewrite, re-home or (below) delete it.
+                $field = ContactGroupFields::query()
+                    ->where('contact_group_id', $contactGroups->id)
+                    ->where('uid', $item['uid'])
+                    ->first();
                 if ( ! $field) {
                     $field                   = new ContactGroupFields();
                     $field->contact_group_id = $contactGroups->id;
@@ -886,6 +893,10 @@
                     }
 
                     $field->fill($item);
+
+                    // `contact_group_id` is mass-assignable: a posted value must never
+                    // move a field into (or out of) a list other than this one.
+                    $field->contact_group_id = $contactGroups->id;
 
                 } else {
                     $field->label         = $item['label'];
@@ -918,6 +929,7 @@
             ContactGroups $contactGroups,
             array $input,
             ContactCreationSource $creationSource = ContactCreationSource::Other,
+            ?int $locationId = null,
         )
         {
             $messages = [];
@@ -937,17 +949,29 @@
             $rules['PHONE'] = [
                 'required',
                 new Phone($phone),
-                Rule::unique('contacts')->where(function ($query) use ($contactGroups) {
-                    return $query->where('group_id', $contactGroups->id);
+                // Identity is Business + Location + normalized phone (Blueprint §10)
+                // when the caller names the Location the Contact is being created at:
+                // the same number in another list of that Location is the same
+                // Contact, and the same number at another Location is a separate one.
+                // A caller that names none keeps the per-list rule.
+                Rule::unique('contacts')->where(function ($query) use ($contactGroups, $locationId) {
+                    return $locationId === null
+                        ? $query->where('group_id', $contactGroups->id)
+                        : $query->where('business_id', $contactGroups->business_id)->where('location_id', $locationId);
                 }),
             ];
 
-            $validator = Validator::make($input, $rules, $messages);
+            // The number is validated in the form it is stored and matched in
+            // (digits only), so "+1 (415) 555-0151" is the SAME contact as
+            // "14155550151": the per-list unique rule must see the normalized value,
+            // or a re-typed number would slip past it, match the existing row below,
+            // and silently overwrite that contact's details and re-subscribe it.
+            $validator = Validator::make(array_merge($input, ['PHONE' => $phone]), $rules, $messages);
 
 
-            $subscriber = $contactGroups->subscribers()->firstOrNew([
-                'phone' => trim($phone),
-            ]);
+            $subscriber = $contactGroups->subscribers()->firstOrNew(
+                $locationId === null ? ['phone' => trim($phone)] : ['phone' => trim($phone), 'location_id' => $locationId]
+            );
 
             if ($subscriber->isListedInBlacklist()) {
                 $validator->after(function ($validator) {
@@ -971,7 +995,7 @@
                 // Contact, so its Location is resolved now, once, from the
                 // group's own Business. An existing (re-saved) subscriber
                 // keeps whatever location_id it already has.
-                $subscriber->location_id = Contacts::singleActiveLocationIdFor($contactGroups->business_id);
+                $subscriber->location_id = $locationId ?? Contacts::singleActiveLocationIdFor($contactGroups->business_id);
             }
 
             $subscriber->save();

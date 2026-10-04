@@ -10,6 +10,7 @@
     use App\Jobs\ImportContacts;
     use App\Jobs\ReplicateContacts;
     use App\Library\ContactGroupFieldMapping;
+    use App\Library\Crm\CrmLocationScope;
     use App\Library\CrmRouting;
     use App\Library\Entitlement\CustomerAccountAccessGuard;
     use App\Library\StringHelper;
@@ -183,6 +184,81 @@
 
             return $location !== null
                 && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
+        }
+
+        /**
+         * The Location axis of a LIST of a group's Contacts: the Contacts of
+         * `$group` the acting user may reach, with the Location reach pushed into
+         * SQL (CrmLocationScope). A Contact at a Location the actor cannot reach is
+         * simply not in the list — never fetched, never exported, never touched.
+         * A group with no Business (legacy) has no Location axis and is unchanged.
+         */
+        private function reachableContacts(ContactGroups $group): \Illuminate\Database\Eloquent\Builder
+        {
+            $query = Contacts::query()->where('contacts.group_id', $group->id);
+
+            $business = $group->business_id !== null ? Business::find($group->business_id) : null;
+
+            if ($business !== null) {
+                app(CrmLocationScope::class)->restrict($query, $business, (int) Auth::id(), 'contacts.location_id');
+            }
+
+            return $query;
+        }
+
+        /**
+         * A client-supplied bulk selection (uids), narrowed to the group's
+         * Contacts the actor may act on. Foreign-Location, foreign-group, stale and
+         * malformed ids are dropped silently — the same shape ownedGroupUids()
+         * gives a selection of groups — so a bulk action can never reach a record a
+         * single-record action would refuse.
+         *
+         * @return array<int, string>
+         */
+        private function reachableContactUids(ContactGroups $group, mixed $uids): array
+        {
+            $uids = array_values(array_map('strval', array_filter((array) $uids, 'is_scalar')));
+
+            if ($uids === []) {
+                return [];
+            }
+
+            return $this->reachableContacts($group)->whereIn('contacts.uid', $uids)->pluck('contacts.uid')->all();
+        }
+
+        /**
+         * The Location a Contact added through the app is created at (Blueprint
+         * §5/§10: a Contact belongs to exactly one Location). One reachable Active
+         * Location is used automatically; several require the actor to choose one of
+         * THEIR reachable ones (`location` = the Location uid); none refuses. A
+         * forged or unreachable Location is refused, never substituted. A legacy
+         * group with no Business has no Location axis.
+         *
+         * @return array{0: ?int, 1: ?string} [location id, error]
+         */
+        private function newContactLocation(ContactGroups $group, Request $request): array
+        {
+            $business = $group->business_id !== null ? Business::find($group->business_id) : null;
+
+            if ($business === null) {
+                return [null, null];
+            }
+
+            $options = app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id());
+
+            if ($options->isEmpty()) {
+                return [null, __('locale.contacts.no_location_available')];
+            }
+
+            if ($options->count() === 1 && ! $request->filled('location')) {
+                return [(int) $options->first()->id, null];
+            }
+
+            $chosen = $options->firstWhere('uid', (string) $request->input('location'));
+
+            return $chosen === null
+                ? [null, __('locale.contacts.choose_a_location')]
+                : [(int) $chosen->id, null];
         }
 
         /**
@@ -869,7 +945,10 @@
                 ['name' => __('locale.contacts.new_contact')],
             ];
 
-            return view('customer.Contacts.create', compact('breadcrumbs', 'contact'));
+            $business  = $contact->business_id !== null ? Business::find($contact->business_id) : null;
+            $locations = $business !== null ? app(CrmLocationScope::class)->selectableLocations($business, (int) Auth::id()) : collect();
+
+            return view('customer.Contacts.create', compact('breadcrumbs', 'contact', 'locations'));
         }
 
         /**
@@ -893,7 +972,13 @@
             // the create_contact permission. It is NOT an opt-in, so it must
             // never match an opt-in-filtered workflow, and the source says so
             // explicitly rather than being inferred downstream.
-            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::Manual);
+            [$locationId, $locationError] = $this->newContactLocation($contact, $request);
+
+            if ($locationError !== null) {
+                return back()->withInput()->withErrors(['location' => $locationError]);
+            }
+
+            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::Manual, $locationId);
 
             if (is_null($subscriber)) {
                 return back()->withInput()->withErrors($validator);
@@ -1040,7 +1125,7 @@
 
             $this->authorize('update_contact');
 
-            $subscriber = Contacts::where('group_id', $contact->id)->where('customer_id', Auth::user()->id)->where('uid', $request->input('contact_id'))->first();
+            $subscriber = Contacts::where('group_id', $contact->id)->where('uid', $request->input('contact_id'))->first();
             if ($subscriber && $this->locationAccessible($subscriber)) {
 
                 $breadcrumbs = [
@@ -1091,7 +1176,7 @@
 
             $this->authorize('update_contact');
 
-            $subscriber = Contacts::where('group_id', $contact->id)->where('customer_id', Auth::user()->id)->where('uid', $request->input('contact_id'))->first();
+            $subscriber = Contacts::where('group_id', $contact->id)->where('uid', $request->input('contact_id'))->first();
 
             if ( ! $subscriber || ! $this->locationAccessible($subscriber)) {
                 return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
@@ -1333,7 +1418,7 @@
             }
 
             $action = $request->get('action');
-            $ids    = $request->get('ids');
+            $ids    = $this->reachableContactUids($contact, $request->get('ids'));
 
             switch ($action) {
                 case 'destroy':
@@ -1443,7 +1528,7 @@
          */
 
 
-        public function contactsGenerator($group_id, $headers = null): string
+        public function contactsGenerator($group_id, $headers = null, bool $actorLocationScoped = false): string
         {
             // Step 1: Fetch the group (if not found, throw an exception)
             $group = ContactGroups::findOrFail($group_id);
@@ -1482,8 +1567,10 @@
             // Insert headers into the CSV
             $writer->insertOne($headers);
 
-            // Step 6: Process subscribers in chunks to reduce memory usage
-            Contacts::where('group_id', $group_id)
+            // Step 6: Process subscribers in chunks to reduce memory usage. A request
+            // made on behalf of a person exports only the Contacts at Locations that
+            // person may reach.
+            ($actorLocationScoped ? $this->reachableContacts($group) : Contacts::where('group_id', $group_id))
                 ->chunk(1000, function ($subscribers) use ($writer, $group, $headers) {
                     // Prepare records for insertion
                     $records = [];
@@ -1551,7 +1638,7 @@
             $this->authorize('view_contact');
 
             try {
-                $file_name = $this->contactsGenerator($contact->id, $request->get('contact_fields'));
+                $file_name = $this->contactsGenerator($contact->id, $request->get('contact_fields'), true);
 
                 return response()->download($file_name);
             } catch (IOException|InvalidArgumentException|UnsupportedTypeException|WriterNotOpenedException|Exception $e) {
@@ -2315,7 +2402,14 @@
                 ->whereIn('id', $contactGroupIds)
                 ->pluck('id');
 
-            $total = Contacts::whereIn('group_id', $ownedGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
+            $counted = Contacts::whereIn('contacts.group_id', $ownedGroupIds)->where('contacts.status', Contacts::STATUS_SUBSCRIBE);
+
+            // A Business request counts only the Contacts at Locations the actor may reach.
+            if ($business !== null) {
+                app(CrmLocationScope::class)->restrict($counted, $business, (int) Auth::id(), 'contacts.location_id');
+            }
+
+            $total = $counted->count();
 
             if ($total)
                 return $total;
