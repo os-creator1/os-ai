@@ -428,6 +428,31 @@
             // context-free copy and every reservation would fail closed.
             $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
 
+            // Google Ads Module V1 (contract 23 §2 / §5). The call budget is a
+            // singleton for the same reason as the GBP one above. The three
+            // provider interfaces resolve to the real HTTP clients, or — only
+            // when GOOGLE_ADS_DRIVER=fake, which GoogleAdsConfig refuses in
+            // production — to ONE shared FakeGoogleAdsClient preloaded with the
+            // deterministic PhotoBoothFixture (so auth, read and mutation see the
+            // same in-memory provider). Tests may still swap their own instance in
+            // via app()->instance(), exactly like the GBP suites.
+            $this->app->singleton(\App\Library\GoogleAds\GoogleAdsConfig::class);
+            $this->app->singleton(\App\Library\GoogleAds\GoogleAdsCallBudget::class);
+            $this->app->singleton(\App\Library\GoogleAds\FakeGoogleAdsClient::class, fn ($app) => (new \App\Library\GoogleAds\FakeGoogleAdsClient(
+                $app->make(\App\Library\GoogleAds\GoogleAdsCallBudget::class),
+                $app->make(\App\Library\GoogleAds\GoogleAdsConfig::class),
+            ))->usePhotoBoothFixture());
+
+            foreach ([
+                \App\Library\GoogleAds\Contracts\GoogleAdsAuthClient::class => \App\Library\GoogleAds\HttpGoogleAdsAuthClient::class,
+                \App\Library\GoogleAds\Contracts\GoogleAdsReadClient::class => \App\Library\GoogleAds\HttpGoogleAdsReadClient::class,
+                \App\Library\GoogleAds\Contracts\GoogleAdsMutationClient::class => \App\Library\GoogleAds\HttpGoogleAdsMutationClient::class,
+            ] as $contract => $http) {
+                $this->app->bind($contract, fn ($app) => $app->make(\App\Library\GoogleAds\GoogleAdsConfig::class)->driver() === \App\Library\GoogleAds\GoogleAdsConfig::DRIVER_FAKE
+                    ? $app->make(\App\Library\GoogleAds\FakeGoogleAdsClient::class)
+                    : $app->make($http));
+            }
+
             // Conversations — the contact activity timeline. Its sources, in
             // merge order, and the contact panel's optional sections (none
             // registered yet). Email, forms, invoices, payments, bookings or a

@@ -163,6 +163,23 @@
             'redirect'      => env('GOOGLE_BUSINESS_PROFILE_REDIRECT'),
         ],
 
+        /*
+        |--------------------------------------------------------------------------
+        | Google Ads (Module V1, contract 23 §2)
+        |--------------------------------------------------------------------------
+        |
+        | A DEDICATED OAuth client for the sensitive adwords scope — never the
+        | Socialite `google` client and never the Business Profile client. The
+        | redirect must equal the one fixed `ads/oauth/callback` URL exactly.
+        | The optional developer token and all tuning live in config/google_ads.php.
+        |
+        */
+        'google_ads' => [
+            'client_id'     => env('GOOGLE_ADS_CLIENT_ID'),
+            'client_secret' => env('GOOGLE_ADS_CLIENT_SECRET'),
+            'redirect'      => env('GOOGLE_ADS_REDIRECT'),
+        ],
+
         'github' => [
             'active'        => env('SOCIALITE_GITHUB'),
             'client_id'     => env('GITHUB_CLIENT_ID'),
