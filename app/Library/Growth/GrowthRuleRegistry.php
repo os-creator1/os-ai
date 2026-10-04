@@ -14,6 +14,7 @@ use App\Library\Growth\Rules\DocumentRules;
 use App\Library\Growth\Rules\ReputationRules;
 use App\Library\Growth\Rules\SeoRules;
 use App\Library\Growth\Rules\WebsiteNotPublishedRule;
+use App\Library\Growth\Rules\WebsitePackageOutOfSyncRule;
 
 /**
  * THE closed registry of Growth rules (Growth Center §3-4).
@@ -29,8 +30,7 @@ use App\Library\Growth\Rules\WebsiteNotPublishedRule;
  * OpportunityActionRegistry read it through typeDefinitionsFor() /
  * actionDefinitions(), which keeps their own public API unchanged.
  *
- * DEFERRED (no canonical data on main — see the V1 doc, "Rules deferred"):
- *   website.package_out_of_sync        no catalog-sync state on the Website
+ * DEFERRED (no canonical data — see the V1 doc, "Rules deferred"):
  *   seo.rank_just_outside_top_10       no rank observations
  *   seo.meaningful_rank_drop           no rank observations
  *   ads.zero_conversion_spend          no Google Ads module
@@ -67,6 +67,7 @@ final class GrowthRuleRegistry
             BookingRules::lowAvailability(),
             // Website / SEO / local presence
             new WebsiteNotPublishedRule(),
+            new WebsitePackageOutOfSyncRule(),
             SeoRules::technical(),
             new SeoRules(),
             new CitationRules(),

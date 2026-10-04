@@ -96,7 +96,7 @@ Verdict per rule (`GrowthRuleOutcome`): **Finding** (per Location) · **Passing*
 **Insufficient** (population below the rule's minimum). Only Finding/Passing are
 scored.
 
-### Implemented rules (18 of the 25 requested)
+### Implemented rules (19 of the 25 requested)
 
 | # | Key | Worker | Category | Impact · urgency · effort | Conf. | Min sample |
 |---|---|---|---|---|---|---|
@@ -111,6 +111,7 @@ scored.
 | 5 | `booking.type_not_ready:v1` | sales | Bookings | 4 · 3 · 2 | 1.0 | 1 active type |
 | 6 | `booking.low_near_term_availability:v1` | sales | Bookings | 3 · 3 · 2 | 1.0 | 1 Location with ready staff |
 | 7 | `website.not_published:v1` | website | Website | 5 · 3 · 3 | 1.0 | always judgeable |
+| 8 | `website.package_out_of_sync:v1` | website | Website | 3 · 2 · 2 | 1.0 | a published Website |
 | 9 | `seo.technical_findings:v1` | seo | SEO | 4 if any critical else 2 · 2 · 3 | 1.0 | an audit has run |
 | 10 | `seo.keywords_not_covered:v1` | seo | SEO | 3 · 2 · 3 | 0.8 | ≥1 keyword **and** a published site |
 | 19 | `citations.needs_attention:v1` | seo | Local presence | 3 · 2 · 2 | 1.0 | a Location with ≥1 recorded listing |
@@ -120,7 +121,7 @@ scored.
 | 25 | `automations.repeated_failures:v1` | sales | Automations (not scored) | 3 · 4 · 2 | 1.0 | 5 workflow attempts |
 
 (# = position in the original 25‑rule list.) Business-wide rules are
-`website.not_published`, `seo.technical_findings` and
+`website.not_published`, `website.package_out_of_sync`, `seo.technical_findings` and
 `automations.repeated_failures`; all others are one Opportunity **per Location**
 (Location-less records collapse to a Business-wide one).
 
@@ -138,7 +139,6 @@ ledger): no rating, count, sentiment, gating or reward is read or implied.
 
 | Rule | Missing seam |
 |---|---|
-| 8 `website.package_out_of_sync` | The published Website snapshot carries no catalog/package prices; there is no catalog-sync state to read. (Activates with the website package-staleness branch.) |
 | 11 rank 11–20, 12 meaningful rank drop | No rank-observation store on main. |
 | 13 ads zero-conversion spend, 14 CPL above target, 15 budget over-pacing, 16 search-term waste | No Google Ads module/facts on main. |
 | Search Console CTR | No Search Console data on main. |
@@ -250,11 +250,11 @@ evaluation are independent of deal/conversation/document/Location counts.
 | `GrowthCrmFactReader` | `crm` | open `crm_opportunities` (+ last history), 7-day new-lead windows | `crm` |
 | `GrowthConversationFactReader` | `conversations` | `chat_boxes` ⨝ `chat_box_messages` (direction + `send_status`) | `conversations` |
 | `GrowthBookingFactReader` | `booking` | booking types, staff, availability rules, next-7-day appointments | `calendar` |
-| `GrowthWebsiteFactReader` | `website` | `websites` | `website_generation` |
+| `GrowthWebsiteFactReader` | `website` | `websites` + the Website module's own `WebsiteCatalogReferences::staleness()` (package sync) | `website_generation` |
 | `GrowthSeoFactReader` | `seo` | `SeoKeywordCoverageReader`, `SeoPublishedContentReader`, `SeoAuditPageReader` | `seo_module` |
 | `GrowthReputationFactReader` | `reviews` | review links + request ledger | `seo_module` |
-| `GrowthCitationFactReader` | `citations` | directories + citations via `SeoNapComparator` | `seo_module` |
-| `GrowthDocumentFactReader` | `documents` | documents, current-version schedule items, failed payments | `payments_contracts` |
+| `GrowthCitationFactReader` | `citations` | the directories the Citations page OFFERS at each Location (`SeoCitationApplicability`: active, core or niche-recommended, country-applicable) + citations via `SeoNapComparator` | `seo_module` |
+| `GrowthDocumentFactReader` | `documents` | documents, current-version schedule items (a Balance item still ahead of its due date is the scheduled balance request's job, not "signed but unpaid"), failed payments | `payments_contracts` |
 | `GrowthAutomationFactReader` | `automations` | failed `automation_step_runs` / `automation_executions` (7 d) | `automations` |
 | `GrowthUnavailableFactReader` | `ads`, `rank`, `search_console` | nothing | — |
 
@@ -372,9 +372,27 @@ unreachable through the viewed one. No cross-client Agency score (deferred).
 
 ## 15. Surface
 
-Sidebar **Growth** (one item; "Opportunities" stays the CRM board). Tabs:
-**Overview** (score ring + "based on N of 9", movement, tiles, "What should I do
-today?", what's working, recent changes, nine category cards) · **Opportunities**
+**Home IS the Growth Center** (integrated V1). There is no Growth sidebar entry and no top-level
+Results: the Business sidebar is Home, Opportunities (the CRM board), Contacts, Conversations,
+Calendar, Automations, Website, SEO, Forms, Packages & Products, Payments & Contracts, Settings.
+Home's first band (`GrowthHomeBand`, `customer.dashboard.bands.growth`) shows "Needs your attention"
+(the top three open recommendations: plain title, one-line explanation, factual context, one action;
+no confidence / impact / rule ids), "What's working" (≤3 passing rules), **Business health** (the
+Growth Score as a secondary figure, e.g. "47 ↓23 in 14 days", linking to the score page) and an
+"Ask Advisor" link. When it renders it replaces the older next-best-move band (one recommendation
+voice). The Business snapshot below it (new leads, bookings, collected/outstanding money, reply
+workload) is the existing canonical Home analytics — Growth adds no second analytics.
+Customer-facing wording is **Recommendations** (the CRM board keeps "Opportunities"; internal
+names are unchanged). The old Growth overview URL (`.../growth`) redirects to Home. The deep routes
+stay deep-linkable and are reached from Home: recommendations list, recommendation detail, score,
+insights, advisor. **Results** is no longer in the sidebar; its URLs are kept for compatibility
+and its owner-outcome figures live in Home's snapshot. Home's Growth band reads the same Growth
+readers as the deep pages; Location ACL is applied in SQL, so a restricted staff member sees only
+their Locations' recommendations and no Business-wide score. Home's read budget for this band is
+four statements (Location ACL ids, top list, latest score, one count only when the list is full).
+
+Deep-page tabs: **Home** · **Recommendations** · **Score** · **Insights** · **Advisor**. Content:
+**Score** (formula, per-rule table, thresholds, nine category cards) · **Recommendations**
 (All open / High impact / New / In progress / Snoozed / Resolved / Dismissed,
 search, category, source, location) · **Opportunity detail** (why, evidence,
 affected records, what to do, what to expect, history, snooze/dismiss/reopen) ·
@@ -399,12 +417,12 @@ Growth funnel view and **leak detection** (lead → contacted → booked → pro
 conversion drop-offs: no canonical attribution/visitor instrumentation, and the
 sample-size and baseline rules in the brief need a period-over-period history the
 snapshots only just begin to accumulate) · attribution ("Ads campaign → leads →
-bookings → $") · Home "Top 3 Growth opportunities" (Home lane not stacked; reader is ready) ·
+bookings → $") ·
 AI COO next-best-move consuming Growth Opportunities (needs a Location-ACL-aware
 seam in `CooInsightFactsReader`; today the COO is intentionally isolated from
 Growth rows) · sidebar badge · email/SMS digest · executable one-click fixes ·
 "Did this help?" outcome tracking · Ads rules · rank rules · Search Console rules
-· package-sync rule · slow-response trend · forms rules · per-Business thresholds
+· slow-response trend · forms rules · per-Business thresholds
 and category preferences · cross-client Agency Portfolio score · competitor
 intelligence, causal attribution, forecasting.
 

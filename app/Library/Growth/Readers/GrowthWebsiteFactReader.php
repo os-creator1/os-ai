@@ -8,6 +8,8 @@ use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Growth\GrowthFactReader;
 use App\Library\Growth\GrowthFactSet;
 use App\Library\Growth\GrowthThresholds;
+use App\Library\Website\WebsiteCatalogReferences;
+use App\Models\Website;
 use App\Models\Business;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -26,12 +28,18 @@ use Illuminate\Support\Facades\DB;
  * `has_external_site` matters: a Business that runs its marketing from a site
  * it hosts elsewhere must not be told its platform Website is unpublished.
  *
- * DEFERRED, because current main has no canonical seam for them: package /
- * catalog price sync state (the Website snapshot carries no catalog prices)
- * and "high-priority service area page not published".
+ * Package sync (`package_changed_count`, `package_removed_count`) is the
+ * Website module's own verdict, WebsiteCatalogReferences::staleness() — Growth
+ * counts what it reports and compares nothing itself.
+ *
+ * DEFERRED: "high-priority service area page not published" (no canonical seam).
  */
 final class GrowthWebsiteFactReader implements GrowthFactReader
 {
+    public function __construct(private readonly WebsiteCatalogReferences $catalogReferences)
+    {
+    }
+
     public function domain(): string
     {
         return 'website';
@@ -47,12 +55,21 @@ final class GrowthWebsiteFactReader implements GrowthFactReader
         $website = DB::table('websites')
             ->where('business_id', $business->id)
             ->first(['status', 'published_revision_id']);
+        $published = $website !== null && $website->status === 'published' && $website->published_revision_id !== null;
+        $staleness = ['changed' => [], 'removed' => []];
+
+        if ($published) {
+            $model = Website::query()->where('business_id', $business->id)->first();
+            $staleness = $model !== null ? $this->catalogReferences->staleness($model) : $staleness;
+        }
 
         return GrowthFactSet::available($this->domain(), [
             'has_external_site' => trim((string) $business->website_url) !== '',
             'exists' => $website !== null,
             'status' => $website?->status,
-            'published' => $website !== null && $website->status === 'published' && $website->published_revision_id !== null,
+            'published' => $published,
+            'package_changed_count' => count($staleness['changed']),
+            'package_removed_count' => count($staleness['removed']),
         ]);
     }
 }

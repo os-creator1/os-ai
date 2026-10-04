@@ -100,4 +100,32 @@ class GrowthFinalSeamsTest extends TestCase
         $this->assertLessThan($us + 1, $ca + 0, 'a non-US Location is never expected to list on US-only directories');
         $this->assertSame($ca, $facts[$canada->id]['not_checked'] + $facts[$canada->id]['needs_attention'], 'every offered directory is "not checked" until the owner records it');
     }
+
+    public function test_the_website_package_sync_rule_reads_the_website_modules_own_verdict(): void
+    {
+        $item = app(\App\Library\Catalog\CatalogItemManager::class)->create($this->business, ['type' => 'package', 'name' => 'Essential Booth', 'price_minor' => 69900, 'currency_code' => 'USD']);
+        $websiteId = DB::table('websites')->insertGetId([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'public_id' => (string) \Illuminate\Support\Str::uuid(), 'business_id' => $this->business->id,
+            'name' => 'Spark', 'status' => 'draft', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $revisionId = DB::table('website_revisions')->insertGetId([
+            'uid' => (string) \Illuminate\Support\Str::uuid(), 'website_id' => $websiteId, 'version_number' => 1, 'schema_version' => 1,
+            'created_by' => (int) DB::table('users')->value('id'), 'created_at' => now()->subDay(),
+            'snapshot' => json_encode(['pages' => [['uid' => 'p1', 'slug' => 'packages', 'sections' => [['type' => 'services', 'data' => ['items' => [['catalog_item_uid' => $item->uid, 'name' => 'Essential Booth']]]]]]], 'assets' => []]),
+        ]);
+        DB::table('websites')->where('id', $websiteId)->update(['status' => 'published', 'published_revision_id' => $revisionId]);
+
+        // Published AFTER the last catalog change: in sync, so no finding (and the rule counts as passing).
+        DB::table('catalog_items')->where('id', $item->id)->update(['updated_at' => now()->subDays(2)]);
+        $this->assertEmpty($this->growthOpportunities('website.package_out_of_sync:v1'));
+
+        // The catalog moves on after publishing: the Website module says out of sync, Growth reports it.
+        DB::table('catalog_items')->where('id', $item->id)->update(['updated_at' => now()]);
+        $this->evaluateGrowth();
+        $found = $this->growthOpportunities('website.package_out_of_sync:v1');
+
+        $this->assertCount(1, $found);
+        $this->assertSame(1, $found->first()->evidence[0]['observed_value']['count']);
+        $this->assertSame('website', $found->first()->worker_key->value);
+    }
 }
