@@ -757,7 +757,8 @@ class SeoRankProviderTest extends TestCase
 
         $ready = $this->provider()->readyTasksByTag('organic');
 
-        $this->assertSame(['run-1' => 'task-aaaaaaaa', 'run-2' => 'task-bbbbbbbb'], $ready);
+        // Documented structure: `tag` is a TOP-LEVEL field of each row; a tag nested under `data` is not read.
+        $this->assertSame(['run-1' => 'task-aaaaaaaa'], $ready);
         $this->assertSame('GET', $this->sent()[0]->method());
         $this->assertSame('https://api.dataforseo.com/v3/serp/google/organic/tasks_ready', $this->sent()[0]->url());
     }

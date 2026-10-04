@@ -315,13 +315,37 @@ class SeoRankHttpTest extends TestCase
         $this->assertStringContainsString('Google · mobile', $this->cell($html, $keyword, 'Search location'));
         $this->assertSame([], $this->role($html, 'rank-paused-notice'));
 
-        // Master switch off: nothing can be checked, so the page says paused, not "waiting".
+        // Master switch off: nothing can be checked, so the page says UNAVAILABLE — it is
+        // neither "waiting" nor a spend pause ("usage period resets" would be untrue).
         config(['seo.rank_tracking.enabled' => false]);
         $html = $this->index($workspace, $business);
 
-        $this->assertSame('budget_paused', $this->rowState($html, $keyword));
-        $this->assertSame('Budget paused', $this->cell($html, $keyword, 'Organic'));
-        $this->assertStringContainsString('Rank checks paused until your usage period resets', (string) $this->first($html, 'rank-paused-notice'));
+        $this->assertSame('unavailable', $this->rowState($html, $keyword));
+        $this->assertSame('Checks unavailable', $this->cell($html, $keyword, 'Organic'));
+        $this->assertStringContainsString('Rank checks are not available right now', (string) $this->first($html, 'rank-unavailable-notice'));
+        $this->assertSame([], $this->role($html, 'rank-paused-notice'));
+    }
+
+    public function test_the_switch_on_but_credentials_missing_is_also_unavailable_and_makes_no_provider_call(): void
+    {
+        [$owner, $business, $workspace] = $this->coreTenant();
+        $keyword = $this->keyword($owner, $business);
+        $target = $this->track($owner, $business, $keyword);
+        \App\Library\Seo\Rank\Provider\FakeSeoRankProvider::$configured = false;
+        $this->authenticateAsSeoCustomer($owner);
+
+        $html = $this->index($workspace, $business);
+
+        $this->assertSame('unavailable', $this->rowState($html, $keyword));
+        $this->assertNotSame([], $this->role($html, 'rank-unavailable-notice'));
+
+        // Check now is refused with the unavailable copy and creates no run, ledger row or call.
+        $this->post($this->u('rank-targets.check', $workspace, $business, $target->uid))
+            ->assertRedirect()
+            ->assertSessionHas('message', 'Rank checks are not available right now. Your existing results stay visible.');
+        $this->assertSame(0, SeoRankCheckRun::query()->count());
+        $this->assertSame(0, SeoRankProviderLedger::query()->count());
+        $this->assertSame(0, \App\Library\Seo\Rank\Provider\FakeSeoRankProvider::$submitCalls);
     }
 
     public function test_a_pending_first_check_shows_checking(): void
@@ -1121,7 +1145,18 @@ class SeoRankHttpTest extends TestCase
 
         $this->assertSame('$1.4500', $this->first($html, 'month-total'), 'actual overrides the reservation; released and other months count nothing.');
         $this->assertSame('$1.4500', $this->first($html, 'today-total'));
-        $this->assertSame('ON', $this->first($html, 'provider-switch'));
+        $this->assertSame('Enabled', $this->first($html, 'provider-switch'));
+
+        config(['seo.rank_tracking.enabled' => false]);
+        $off = (string) $this->get(route('admin.seo-rank-cost.index'))->assertOk()->getContent();
+        $this->assertSame('Disabled', $this->first($off, 'provider-switch'));
+        $this->assertStringContainsString('No paid checks will run', $off);
+
+        config(['seo.rank_tracking.enabled' => true]);
+        \App\Library\Seo\Rank\Provider\FakeSeoRankProvider::$configured = false;
+        $unconfigured = (string) $this->get(route('admin.seo-rank-cost.index'))->assertOk()->getContent();
+        $this->assertStringContainsString('credentials not configured', $unconfigured);
+        \App\Library\Seo\Rank\Provider\FakeSeoRankProvider::$configured = true;
         $this->assertStringContainsString('2 provider tasks', $html);
         $this->assertStringContainsString('organic_serp', $html);
 

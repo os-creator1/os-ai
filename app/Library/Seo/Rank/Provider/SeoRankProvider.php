@@ -19,6 +19,12 @@ interface SeoRankProvider
     public function key(): string;
 
     /**
+     * Whether credentials/endpoint are present so a call could even be attempted.
+     * Local config check only — never a network call, never reveals a secret.
+     */
+    public function isConfigured(): bool;
+
+    /**
      * Queue one task. Returns only after the provider has ACCEPTED it.
      *
      * @throws SeoRankProviderException  outcome Rejected = provider definitively

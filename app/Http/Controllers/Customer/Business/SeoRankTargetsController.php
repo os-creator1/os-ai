@@ -182,6 +182,7 @@ class SeoRankTargetsController extends CustomerBaseController
             'recent' => $series->reverse()->take(20)->values(),
             'coverage' => $coverage,
             'searchConsole' => $this->searchConsole->forKeyword($business, $target->keyword),
+            'unavailable' => $this->budget->providerState() !== SeoRankTrackingBudget::PROVIDER_ENABLED,
             'pausedBySpend' => $this->budget->isPausedBySpend($business),
             'canTrack' => $this->entitlement->planFor($business) !== null,
         ]);
@@ -200,6 +201,12 @@ class SeoRankTargetsController extends CustomerBaseController
     {
         if ($decisions === []) {
             return 'Add a website domain or a business phone number so we can find your listing in the results.';
+        }
+
+        foreach ($decisions as $d) {
+            if ($d->isUnavailable()) {
+                return 'Rank checks are not available right now. Your existing results stay visible.';
+            }
         }
 
         foreach ($decisions as $d) {

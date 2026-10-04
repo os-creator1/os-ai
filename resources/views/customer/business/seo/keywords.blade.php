@@ -63,6 +63,10 @@
         <x-alert variant="danger" class="mb-2" data-role="keyword-errors">{{ $errors->first() }}</x-alert>
     @endif
 
+    @if($rankUnavailable)
+        <x-alert variant="neutral" class="mb-2" data-role="rank-unavailable-notice">Rank checks are not available right now, so no checks will run. Your existing results stay visible.</x-alert>
+    @endif
+
     @if($rankPaused)
         <x-alert variant="warning" class="mb-2" data-role="rank-paused-notice">Rank checks paused until your usage period resets. Your latest results stay visible.</x-alert>
     @endif

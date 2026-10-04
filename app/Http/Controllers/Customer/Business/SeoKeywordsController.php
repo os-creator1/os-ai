@@ -90,6 +90,7 @@ class SeoKeywordsController extends CustomerBaseController
         return view('customer.business.seo.keywords', [
             'rank' => $rank,
             'rankPlan' => $rankPlan,
+            'rankUnavailable' => $rankPlan !== null && ! $this->rankBudget->enabled(),
             'rankPaused' => $rankPlan !== null && $this->rankBudget->isPausedBySpend($business),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,

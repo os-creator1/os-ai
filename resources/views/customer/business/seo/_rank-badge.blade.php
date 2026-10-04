@@ -17,6 +17,8 @@
 @if($obs === null)
     @if($state === SeoRankDashboardReader::STATE_CHECKING)
         <x-badge variant="accent" data-role="rank-state" data-state="checking">Checking…</x-badge>
+    @elseif($state === SeoRankDashboardReader::STATE_UNAVAILABLE)
+        <x-badge variant="neutral" data-role="rank-state" data-state="unavailable">Checks unavailable</x-badge>
     @elseif($state === SeoRankDashboardReader::STATE_BUDGET_PAUSED)
         <x-badge variant="warning" data-role="rank-state" data-state="budget-paused">Budget paused</x-badge>
     @elseif($state === SeoRankDashboardReader::STATE_PAUSED)

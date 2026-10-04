@@ -30,6 +30,7 @@ final class SeoRankDashboardReader
     public const STATE_CHECKING = 'checking';
     public const STATE_WAITING = 'waiting';
     public const STATE_BUDGET_PAUSED = 'budget_paused';
+    public const STATE_UNAVAILABLE = 'unavailable';
     public const STATE_ACTIVE = 'active';
 
     public function __construct(
@@ -75,6 +76,8 @@ final class SeoRankDashboardReader
             ->all();
 
         $paused = $this->budget->isPausedBySpend($business, $now);
+        // Provider switched off / not configured: no check can run, and that is NOT a spend pause.
+        $unavailable = ! $this->budget->enabled();
         $byKeyword = $targets->groupBy('seo_keyword_id');
         $rows = [];
 
@@ -88,7 +91,7 @@ final class SeoRankDashboardReader
             }
 
             foreach ($keywordTargets as $target) {
-                $rows[] = $this->targetRow($keyword, $target, $summaries[$target->id] ?? [], isset($openTargetIds[$target->id]), $failedTargetIds[$target->id] ?? null, $paused);
+                $rows[] = $this->targetRow($keyword, $target, $summaries[$target->id] ?? [], isset($openTargetIds[$target->id]), $failedTargetIds[$target->id] ?? null, $paused, $unavailable);
             }
         }
 
@@ -115,7 +118,7 @@ final class SeoRankDashboardReader
      * @param array<string, array{current: SeoRankObservation|null, previous: SeoRankObservation|null, best: int|null}> $summary
      * @return array<string, mixed>
      */
-    private function targetRow(SeoKeyword $keyword, SeoRankTarget $target, array $summary, bool $open, mixed $failedAt, bool $paused): array
+    private function targetRow(SeoKeyword $keyword, SeoRankTarget $target, array $summary, bool $open, mixed $failedAt, bool $paused, bool $unavailable): array
     {
         $organic = $summary[SeoRankCheckType::Organic->value] ?? ['current' => null, 'previous' => null, 'best' => null];
         $local = $summary[SeoRankCheckType::Local->value] ?? ['current' => null, 'previous' => null, 'best' => null];
@@ -124,6 +127,7 @@ final class SeoRankDashboardReader
         $state = match (true) {
             $target->tracking_state === SeoRankTrackingState::Stopped => self::STATE_PAUSED,
             $open => self::STATE_CHECKING,
+            ! $hasObservation && $unavailable => self::STATE_UNAVAILABLE,
             ! $hasObservation && $paused => self::STATE_BUDGET_PAUSED,
             ! $hasObservation => self::STATE_WAITING,
             default => self::STATE_ACTIVE,

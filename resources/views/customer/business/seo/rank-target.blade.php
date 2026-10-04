@@ -53,6 +53,10 @@
 
     <x-flash-alert class="mb-2" />
 
+    @if($unavailable)
+        <x-alert variant="neutral" class="mb-2" data-role="rank-unavailable-notice">Rank checks are not available right now, so no checks will run. Your existing results stay visible.</x-alert>
+    @endif
+
     @if($pausedBySpend)
         <x-alert variant="warning" class="mb-2" data-role="rank-paused-notice">Rank checks paused until your usage period resets. Your latest results stay visible.</x-alert>
     @endif

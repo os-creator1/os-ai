@@ -48,6 +48,16 @@ final class DataForSeoRankProvider implements SeoRankProvider
         return self::KEY;
     }
 
+    public function isConfigured(): bool
+    {
+        $login = config('seo.rank_tracking.dataforseo.login');
+        $password = config('seo.rank_tracking.dataforseo.password');
+        $base = config('seo.rank_tracking.dataforseo.base_url');
+
+        return is_string($login) && $login !== '' && is_string($password) && $password !== ''
+            && is_string($base) && str_starts_with($base, 'https://');
+    }
+
     public function submit(SeoRankTaskRequest $request): SeoRankTaskSubmission
     {
         $this->assertRequestSafe($request);
@@ -186,7 +196,8 @@ final class DataForSeoRankProvider implements SeoRankProvider
                 continue;
             }
 
-            $tag = $row['tag'] ?? ($row['data']['tag'] ?? null);
+            // Documented structure: `tag` is a top-level field of each tasks_ready row.
+            $tag = $row['tag'] ?? null;
 
             if (is_string($tag) && $tag !== '') {
                 $ready[$tag] = $row['id'];

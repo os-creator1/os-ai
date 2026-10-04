@@ -348,11 +348,11 @@ class SeoRankHistoryTest extends TestCase
         $this->assertSame(SeoRankDashboardReader::STATE_WAITING, $this->rowFor($built, $waitingK)['state']);
         $this->assertSame(SeoRankDashboardReader::STATE_ACTIVE, $this->rowFor($built, $activeK)['state']);
 
-        // Provider switched off / spend paused: a target with no observation yet is budget_paused.
+        // Provider switched off: a target with no observation yet is UNAVAILABLE — not a spend pause.
         config(['seo.rank_tracking.enabled' => false]);
         $paused = $this->dashboard($business, $keywords);
-        $this->assertSame(SeoRankDashboardReader::STATE_BUDGET_PAUSED, $this->rowFor($paused, $waitingK)['state']);
-        $this->assertTrue($this->rowFor($paused, $waitingK)['budget_paused']);
+        $this->assertSame(SeoRankDashboardReader::STATE_UNAVAILABLE, $this->rowFor($paused, $waitingK)['state']);
+        $this->assertFalse($this->rowFor($paused, $waitingK)['budget_paused']);
         // Rows that already have data or are stopped keep their own state.
         $this->assertSame(SeoRankDashboardReader::STATE_ACTIVE, $this->rowFor($paused, $activeK)['state']);
         $this->assertSame(SeoRankDashboardReader::STATE_PAUSED, $this->rowFor($paused, $pausedK)['state']);

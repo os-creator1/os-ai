@@ -439,7 +439,9 @@ class SeoRankBudgetTest extends TestCase
         $this->assertSame(['disabled', 'disabled'], $this->reasons($this->plan($target)));
         $this->assertSame(['disabled', 'disabled'], $this->reasons($this->manual($target, (int) $owner->user_id)));
         $this->assertNothingCreated();
-        $this->assertTrue(app(SeoRankTrackingBudget::class)->isPausedBySpend($target->business));
+        // Provider off is "unavailable", not a spend pause (spend-only semantics).
+        $this->assertFalse(app(SeoRankTrackingBudget::class)->isPausedBySpend($target->business));
+        $this->assertSame('disabled', app(SeoRankTrackingBudget::class)->providerState());
     }
 
     public function test_a_malformed_master_switch_is_off(): void

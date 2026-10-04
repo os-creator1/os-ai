@@ -51,7 +51,12 @@ final class SeoRankBudgetDecision
             self::WORKSPACE_CAP,
             self::GLOBAL_DAILY_CAP,
             self::GLOBAL_MONTHLY_CAP,
-            self::DISABLED,
         ], true);
+    }
+
+    /** The provider is switched off or not configured: not a spend pause. */
+    public function isUnavailable(): bool
+    {
+        return $this->reason === self::DISABLED;
     }
 }

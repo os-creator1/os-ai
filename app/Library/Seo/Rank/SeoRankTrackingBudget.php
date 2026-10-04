@@ -7,6 +7,7 @@ use App\Enums\Seo\SeoRankRunState;
 use App\Enums\Seo\SeoRankTrackingState;
 use App\Enums\Seo\SeoRankTrigger;
 use App\Library\Seo\Rank\Provider\DataForSeoRankProvider;
+use App\Library\Seo\Rank\Provider\SeoRankProvider;
 use App\Library\Seo\SeoConfig;
 use App\Models\Business;
 use App\Models\SeoRankCheckRun;
@@ -41,15 +42,34 @@ class SeoRankTrackingBudget
 {
     private const CLOSED_STATES = [SeoRankRunState::Completed, SeoRankRunState::FailedTerminal];
 
+    public const PROVIDER_ENABLED = 'enabled';
+    public const PROVIDER_DISABLED = 'disabled';
+    public const PROVIDER_NOT_CONFIGURED = 'not_configured';
+
     public function __construct(
         private readonly SeoConfig $config,
         private readonly SeoRankEntitlement $entitlement,
+        private readonly SeoRankProvider $provider,
     ) {
+    }
+
+    /**
+     * The deployment state of paid tracking: the master switch must be on AND the
+     * provider must hold credentials. Anything else is closed — no reservation, no
+     * submit, no call. Never exposes a credential.
+     */
+    public function providerState(): string
+    {
+        if (! $this->config->rankTrackingEnabled()) {
+            return self::PROVIDER_DISABLED;
+        }
+
+        return $this->provider->isConfigured() ? self::PROVIDER_ENABLED : self::PROVIDER_NOT_CONFIGURED;
     }
 
     public function enabled(): bool
     {
-        return $this->config->rankTrackingEnabled();
+        return $this->providerState() === self::PROVIDER_ENABLED;
     }
 
     /** Estimated cost of one run at a given depth, from provider cost FACTS in config. */
@@ -286,17 +306,15 @@ class SeoRankTrackingBudget
     }
 
     /**
-     * Would a NEW paid check for this Business be refused for spend right now?
-     * Read-only; used for the "paused until your usage period resets" copy.
+     * Would a NEW paid check for this Business be refused for SPEND right now?
+     * Read-only; used for the "paused until your usage period resets" copy. It does
+     * not consider the provider switch/credentials (see providerState()).
      */
     public function isPausedBySpend(Business $business, ?CarbonImmutable $now = null): bool
     {
         $now ??= CarbonImmutable::now('UTC');
 
-        if (! $this->enabled()) {
-            return true;
-        }
-
+        // Spend only. Provider unavailability is a separate state (providerState()).
         $plan = $this->entitlement->planFor($business, $now);
 
         if ($plan === null) {

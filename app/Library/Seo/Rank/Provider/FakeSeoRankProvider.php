@@ -38,6 +38,7 @@ final class FakeSeoRankProvider implements SeoRankProvider
         self::$completeImmediately = true;
         self::$costMicros = null;
         self::$locations = [];
+        self::$configured = true;
         self::$sequence = 0;
     }
 
@@ -52,9 +53,16 @@ final class FakeSeoRankProvider implements SeoRankProvider
         self::$tasks[$taskId]['ready'] = true;
     }
 
+    public static bool $configured = true;
+
     public function key(): string
     {
         return DataForSeoRankProvider::KEY;
+    }
+
+    public function isConfigured(): bool
+    {
+        return self::$configured;
     }
 
     public function submit(SeoRankTaskRequest $request): SeoRankTaskSubmission

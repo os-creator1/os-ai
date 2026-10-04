@@ -14,7 +14,10 @@
                     <input type="text" id="rank-cost-month" name="month" class="form-control" value="{{ $month }}" placeholder="YYYY-MM" maxlength="7">
                 </div>
                 <div class="col-auto"><button class="btn btn-primary" type="submit">Show</button></div>
-                <div class="col-auto text-caption">Provider switch: <strong data-role="provider-switch">{{ $enabled ? 'ON' : 'OFF' }}</strong></div>
+                <div class="col-auto text-caption" data-role="provider-state" data-state="{{ $providerState }}">Provider:
+                    <strong data-role="provider-switch">{{ match ($providerState) { 'enabled' => 'Enabled', 'not_configured' => 'Disabled (switch on, credentials not configured)', default => 'Disabled' } }}</strong>
+                    <span class="d-block">{{ $enabled ? 'Scheduled checks run.' : 'No paid checks will run; stored results stay visible to customers.' }}</span>
+                </div>
             </form>
         </x-card>
 

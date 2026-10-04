@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Library\Seo\Rank\SeoRankTrackingBudget;
 use App\Library\Seo\SeoConfig;
 use App\Models\SeoRankProviderLedger;
 use Illuminate\Contracts\View\View;
@@ -20,7 +21,7 @@ class SeoRankCostController extends AdminBaseController
 {
     private const BUSINESSES_PER_PAGE = 25;
 
-    public function __construct(private readonly SeoConfig $config)
+    public function __construct(private readonly SeoConfig $config, private readonly SeoRankTrackingBudget $budget)
     {
     }
 
@@ -54,7 +55,8 @@ class SeoRankCostController extends AdminBaseController
 
         return view('admin.seo-rank-cost.index', [
             'month' => $month,
-            'enabled' => $this->config->rankTrackingEnabled(),
+            'enabled' => $this->budget->enabled(),
+            'providerState' => $this->budget->providerState(),
             'totals' => $totals,
             'byOperation' => $byOperation,
             'byWorkspace' => $byWorkspace,

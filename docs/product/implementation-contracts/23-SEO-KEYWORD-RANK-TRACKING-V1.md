@@ -76,11 +76,13 @@ Result structure used: organic items `type: organic` with `rank_group`, `domain`
 (pending), `40102` no results (completed, empty). Provider-reported `cost` (USD) is
 converted to integer micro-USD.
 
-**Live acceptance note.** The local-finder docs expose `cid`, `domain` and `phone`
-but no `place_id`; the `tasks_ready` row's `tag` location was read defensively
-(`tag` or `data.tag`). The paths above are documented, but the live-response parsing
-must be confirmed with one sandbox + minimal paid request before production use
-(see §17).
+**Payload shapes (per current official docs).** `tasks_ready` rows carry `tag` as a
+**top-level** field of each `tasks[0].result[]` row (not under `data`); the same holds
+for the `local_finder/tasks_ready` endpoint. Local Finder items are `type: local_pack`
+with `rank_group`, `rank_absolute`, `title`, `domain`, `phone`, `url`, `cid` and `rating`;
+there is no `place_id` or `feature_id`. These shapes are pinned by sanitized regression
+fixtures (`SeoRankClosureTest`). They have NOT yet been confirmed against a live
+response — see §17 for the live acceptance gate.
 
 ## 4. Cost model and ceilings
 
@@ -268,6 +270,36 @@ controls, rank routes 404).
 `GET /admin/seo-rank-cost` (platform admin only, read-only) answers "how much did rank
 tracking cost this month?": month and day totals vs caps, by operation, status,
 Workspace/Agency and Business, from the ledger.
+
+## 16a. Production activation (deployment state)
+
+Paid tracking is **fail-closed and OFF by default**. It runs only when BOTH hold:
+
+1. `SEO_RANK_TRACKING_ENABLED=true` (master switch; anything other than a literal
+   true/1 is off), and
+2. the provider holds credentials: `DATAFORSEO_LOGIN` (the DataForSEO account login,
+   normally the account email) and `DATAFORSEO_PASSWORD` (the **API password**, which is
+   generated in the DataForSEO dashboard under *API Access* — it is NOT the website
+   login password). `DATAFORSEO_BASE_URL` defaults to `https://api.dataforseo.com`.
+
+`SeoRankTrackingBudget::providerState()` reports `enabled`, `disabled` (switch off) or
+`not_configured` (switch on, credentials missing). Anything but `enabled` means: no
+reservation, no submit, no provider call; existing history stays readable; the customer
+sees "Rank checks are not available right now" (never a spend-pause message and never a
+provider detail); the Platform Owner page shows `Provider: Disabled` (with "credentials
+not configured" when applicable). No secret is ever displayed.
+
+Activation checklist: set the three env values; run `php artisan config:clear`; run
+`php artisan seo:rank-sync-locations` once (free endpoint) so the city picker has
+locations; ensure the scheduler (`schedule:run` every minute) and a queue worker run; open
+`/admin/seo-rank-cost` and confirm `Provider: Enabled`. To use the DataForSEO **Sandbox**
+(free, dummy results, identical response structure, same credentials) set
+`DATAFORSEO_BASE_URL=https://sandbox.dataforseo.com`. Sandbox proves integration shape
+only; ranks it returns are not real.
+
+Agency aggregate cap: the default $25/month (`rankWorkspaceMonthlyCapMicros`) is an
+**operator safety ceiling**, not a commercial promise of $25 of usage and not a price.
+It can only be lowered by config. V1 does not redesign billing around it.
 
 ## 17. Verification status and deferred work
 
