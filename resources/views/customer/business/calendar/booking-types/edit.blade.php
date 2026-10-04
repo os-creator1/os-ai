@@ -58,6 +58,29 @@
         </form>
     </x-card>
 
+    <x-card title="Public booking page" class="mb-2" data-section="public-booking-page">
+        @if ($readiness['ready'])
+            <p class="text-caption">Share this link. Customers pick a date and time, enter their details and are booked into the calendar.</p>
+            <a href="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}" target="_blank" rel="noopener"
+               class="d-inline-flex align-items-center gap-1 mb-1" data-role="open-public-page">
+                Open booking page
+                <x-ds-icon name="external-link" size="13" aria-hidden="true" />
+            </a>
+            <input class="form-control form-control-sm" type="text" readonly
+                   aria-label="Public booking link for {{ $bookingType->name }}"
+                   value="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}">
+        @else
+            <x-alert variant="warning" class="mb-1" data-role="public-page-not-ready">
+                Customers cannot book this yet. {{ $readiness['reason'] }}
+            </x-alert>
+        @endif
+        <p class="text-caption mt-1 mb-0">
+            Times start every 30 minutes within each person's working hours, from now up to 30 days ahead,
+            and are shown in the customer's time zone. Appointments are held at
+            <strong>{{ $location->name ?: 'this location' }}</strong>.
+        </p>
+    </x-card>
+
     <x-card title="Status" class="mb-2">
         <form method="POST" action="{{ route('customer.workspaces.businesses.calendar.booking-types.active', $withType) }}">
             @csrf

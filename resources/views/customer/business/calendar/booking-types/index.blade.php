@@ -53,7 +53,11 @@
                                     </x-badge>
                                 </td>
                                 <td>
-                                    @if ($bookingType->is_active)
+                                    @if ($bookingType->is_active && ! ($readiness[$bookingType->id]['ready'] ?? false))
+                                        <span class="text-caption" data-role="booking-link-unavailable">
+                                            Not bookable yet. {{ $readiness[$bookingType->id]['reason'] ?? '' }}
+                                        </span>
+                                    @elseif ($bookingType->is_active)
                                         <a href="{{ route('public.booking.show', [$bookingType->public_booking_uuid]) }}" target="_blank" rel="noopener"
                                            class="d-inline-flex align-items-center gap-1 mb-1">
                                             Open booking page
