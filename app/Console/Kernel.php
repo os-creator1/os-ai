@@ -21,6 +21,7 @@
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
     use App\Jobs\Ai\ExpireStaleAiReservations;
+    use App\Jobs\GoogleAds\SweepGoogleAdsSyncs;
     use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
     use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Messaging\RefreshPendingCampaignAssignments;
@@ -230,6 +231,14 @@
             // distribution". Manual refresh remains the primary mechanism.
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
+
+            // Google Ads Module V1 contract §5 — the daily, staggered Ads read
+            // sync sweep. It only queues per-account jobs (deduplicated, behind
+            // the project circuit breaker); registered unconditionally like the
+            // GBP sweep and at a fixed off-peak time so it never coincides with
+            // the 00:00 daily jobs. withoutOverlapping() stops a slow sweep
+            // stacking on the next tick.
+            $schedule->job(new SweepGoogleAdsSyncs())->dailyAt('02:40')->withoutOverlapping();
 
             // PR #295 Correction Round 1, item 6 — the one canonical
             // mechanism that advances a submitted carrier registration.

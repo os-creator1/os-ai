@@ -31,6 +31,8 @@ use App\Models\BusinessGoogleOperation;
  */
 final class GoogleAdsOperationLedger
 {
+    public const NOT_APPLIED = 'not_applied';
+
     public function __construct(private readonly GoogleBusinessProfileOperationLedger $shared)
     {
     }
@@ -84,6 +86,16 @@ final class GoogleAdsOperationLedger
                 : GoogleAdsProviderException::UNEXPECTED_RESPONSE,
             $summary,
         );
+    }
+
+    /**
+     * Mutation reconciliation only: a previously `unknown` mutate whose
+     * freshly synced Google state shows it was NOT applied. Closed
+     * classification `not_applied` (fits failure_classification varchar(32)).
+     */
+    public function failNotApplied(BusinessGoogleOperation $operation, ?string $summary = null): BusinessGoogleOperation
+    {
+        return $this->close($operation, GoogleOperationStatus::Failed, self::NOT_APPLIED, $summary);
     }
 
     private function close(BusinessGoogleOperation $operation, GoogleOperationStatus $status, string $classification, ?string $summary): BusinessGoogleOperation

@@ -128,7 +128,7 @@ final class PlatformFeatureRegistry
         PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Available,
         PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
         // Agency V1 completion — Planned -> Available, meeting the evidentiary
         // bar every flip here is held to: a real, executable, Workspace-scoped

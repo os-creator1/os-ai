@@ -453,6 +453,13 @@
                     : $app->make($http));
             }
 
+            // Sync observers: unknown (ambiguous) mutations are reconciled
+            // against freshly synced Google state, never replayed.
+            $this->app->tag(
+                [\App\Library\GoogleAds\Mutations\ReconcileMutationsAfterSync::class],
+                \App\Library\GoogleAds\Sync\GoogleAdsSyncCoordinator::OBSERVER_TAG,
+            );
+
             // Conversations — the contact activity timeline. Its sources, in
             // merge order, and the contact panel's optional sections (none
             // registered yet). Email, forms, invoices, payments, bookings or a

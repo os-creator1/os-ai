@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Customer;
 
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\GoogleAds\LeadAttributionEntrySurface;
+use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Exceptions\Calendar\BookingRefusedException;
+use App\Library\GoogleAds\Attribution\LeadAttributionRecorder;
 use App\Http\Controllers\Controller;
 use App\Library\Calendar\AppointmentBookingService;
 use App\Library\Calendar\BookingConflictDetector;
@@ -35,6 +38,7 @@ class PublicBookingController extends Controller
         private readonly BookingConflictDetector $conflicts,
         private readonly AppointmentBookingService $booking,
         private readonly EloquentContactsRepository $contacts,
+        private readonly LeadAttributionRecorder $attribution,
     ) {
     }
 
@@ -103,7 +107,7 @@ class PublicBookingController extends Controller
         }
 
         try {
-            $this->booking->bookWithRoundRobinContactResolver(
+            $appointment = $this->booking->bookWithRoundRobinContactResolver(
                 $type,
                 $start,
                 function () use ($location, $business, $data): int {
@@ -126,6 +130,17 @@ class PublicBookingController extends Controller
         } catch (BookingRefusedException $exception) {
             return back()->withInput()->withErrors(['time' => 'That time is no longer available. Choose another time.']);
         }
+
+        // Google Ads contract §10 — after commit, never able to fail the booking.
+        $this->attribution->record(
+            $business,
+            (int) $location->id,
+            (int) $appointment->contact_id,
+            LeadAttributionSubjectType::Appointment,
+            (int) $appointment->id,
+            LeadAttributionEntrySurface::Booking,
+            $request,
+        );
 
         return redirect()->route('public.booking.confirmed', [$type->public_booking_uuid]);
     }
