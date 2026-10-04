@@ -68,14 +68,23 @@ class AdsController extends CustomerBaseController
     {
         abort_unless($this->adsIsImplementedAndAvailable(), 404);
 
-        $this->authorize('view_google_ads');
+        // Either provider's read capability opens the bare entry (Meta Ads V1).
+        if (Gate::denies('view_google_ads')) {
+            $this->authorize('view_meta_ads');
+        }
 
         $accessible = $this->entitledBusinesses();
 
         if (count($accessible) === 1) {
             [$workspace, $business] = $accessible[0];
 
-            return redirect()->route('customer.workspaces.businesses.ads.index', [$workspace->uid, $business->uid]);
+            // Meta Ads V1: the single-business redirect lands on the cross-channel Overview.
+            return redirect()->route(
+                Route::has('customer.workspaces.businesses.ads.overview')
+                    ? 'customer.workspaces.businesses.ads.overview'
+                    : 'customer.workspaces.businesses.ads.index',
+                [$workspace->uid, $business->uid],
+            );
         }
 
         return view('customer.business.ads.entry', ['accessible' => $accessible]);
@@ -162,8 +171,7 @@ class AdsController extends CustomerBaseController
      */
     protected function adsIsImplementedAndAvailable(): bool
     {
-        return PlatformFeatureRegistry::isAvailable(PlatformFeature::AdsBasicVisibility->value)
-            || PlatformFeatureRegistry::isAvailable(PlatformFeature::GoogleAdsModule->value);
+        return \App\Library\Ads\AdsFeatureAccess::isImplementedAndAvailable();
     }
 
     /**

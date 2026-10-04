@@ -89,6 +89,8 @@ class EntitlementEnumsTest extends TestCase
             'ai_coo_basic',
             'seo_basic_visibility',
             'ads_basic_visibility',
+            // Meta Ads V1 (contract 24 §8, M10): the provider-neutral full Ads key.
+            'ads_module',
             'seo_module',
             'google_ads_module',
             'google_business_profile_module',

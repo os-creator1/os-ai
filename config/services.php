@@ -180,6 +180,21 @@
             'redirect'      => env('GOOGLE_ADS_REDIRECT'),
         ],
 
+        /*
+        |--------------------------------------------------------------------------
+        | Meta Ads (Module V1, contract 24)
+        |--------------------------------------------------------------------------
+        |
+        | The Meta app used for the Marketing API. The redirect must equal the one
+        | fixed `ads/meta/oauth/callback` URL. All tuning lives in config/meta_ads.php.
+        |
+        */
+        'meta_ads' => [
+            'app_id'     => env('META_ADS_APP_ID'),
+            'app_secret' => env('META_ADS_APP_SECRET'),
+            'redirect'   => env('META_ADS_REDIRECT_URI'),
+        ],
+
         'github' => [
             'active'        => env('SOCIALITE_GITHUB'),
             'client_id'     => env('GITHUB_CLIENT_ID'),

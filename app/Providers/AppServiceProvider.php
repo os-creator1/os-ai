@@ -494,6 +494,40 @@
                 \App\Library\GoogleAds\Sync\GoogleAdsSyncCoordinator::OBSERVER_TAG,
             );
 
+            // Meta Ads Module V1 (contract 24 §6 / §14). Same shape as the Google
+            // Ads block above: a singleton call budget that IS the call counter
+            // every Meta client reserves through, and the three provider
+            // interfaces resolving to the real HTTP clients or — only when
+            // META_ADS_DRIVER=fake, which MetaAdsConfig refuses in production —
+            // to ONE shared FakeMetaClient preloaded with the Photo Booth fixture.
+            $this->app->singleton(\App\Library\MetaAds\MetaAdsConfig::class);
+            $this->app->singleton(\App\Library\MetaAds\MetaAdsCallBudget::class);
+            $this->app->bind(
+                \App\Library\MetaAds\Contracts\MetaAdsCallCounter::class,
+                fn ($app) => $app->make(\App\Library\MetaAds\MetaAdsCallBudget::class),
+            );
+            $this->app->singleton(\App\Library\MetaAds\FakeMetaClient::class, fn ($app) => (new \App\Library\MetaAds\FakeMetaClient(
+                $app->make(\App\Library\MetaAds\MetaAdsCallBudget::class),
+                $app->make(\App\Library\MetaAds\MetaAdsConfig::class),
+            ))->usePhotoBoothFixture());
+
+            foreach ([
+                \App\Library\MetaAds\Contracts\MetaAuthClient::class => \App\Library\MetaAds\HttpMetaAuthClient::class,
+                \App\Library\MetaAds\Contracts\MetaReadClient::class => \App\Library\MetaAds\HttpMetaReadClient::class,
+                \App\Library\MetaAds\Contracts\MetaMutationClient::class => \App\Library\MetaAds\HttpMetaMutationClient::class,
+            ] as $contract => $http) {
+                $this->app->bind($contract, fn ($app) => $app->make(\App\Library\MetaAds\MetaAdsConfig::class)->driver() === \App\Library\MetaAds\MetaAdsConfig::DRIVER_FAKE
+                    ? $app->make(\App\Library\MetaAds\FakeMetaClient::class)
+                    : $app->make($http));
+            }
+
+            // Meta sync observers: unknown (ambiguous) pause/resume mutations
+            // are reconciled against freshly synced Meta state, never replayed.
+            $this->app->tag(
+                [\App\Library\MetaAds\Mutations\ReconcileMetaMutationsAfterSync::class],
+                \App\Library\MetaAds\Sync\MetaAdsSyncCoordinator::OBSERVER_TAG,
+            );
+
             // Conversations — the contact activity timeline. Its sources, in
             // merge order, and the contact panel's optional sections (none
             // registered yet). Email, forms, invoices, payments, bookings or a

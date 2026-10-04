@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Customer\Business\Concerns;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Library\Ads\AdsFeatureAccess;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleAds\GoogleAdsConnectionManager;
 use App\Library\GoogleAds\Sync\GoogleAdsFreshness;
@@ -28,10 +29,12 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * never learns whether they would have been permitted.
  *
  * TWO ENTITLEMENT SHAPES (no plan names anywhere — only feature keys):
- *   - resolveAdsTenancy():       ads_basic_visibility OR google_ads_module.
+ *   - resolveAdsTenancy():       ads_basic_visibility OR the full Ads module
+ *                                (AdsFeatureAccess: ads_module / google_ads_module /
+ *                                meta_ads_module).
  *                                Overview, Settings and the connection
  *                                actions: Core connects and reads.
- *   - resolveAdsModuleTenancy(): google_ads_module ONLY. Budget and every
+ *   - resolveAdsModuleTenancy(): the full Ads module ONLY (AdsFeatureAccess). Budget and every
  *                                page of the full module (Core gets 404).
  *
  * REUSE CONTRACT FOR LATER PAGES. A page that needs the selected account
@@ -50,17 +53,9 @@ trait ResolvesAdsBusinessTenancy
     protected function resolveAdsTenancy(string $workspaceUid, string $businessUid): array
     {
         // ads_basic_visibility is packaged into every plan that carries the
-        // module, so the first attempt answers for everyone except an
-        // override that grants only the module key.
-        try {
-            return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::AdsBasicVisibility->value);
-        } catch (HttpException $exception) {
-            if ($exception->getStatusCode() !== 404) {
-                throw $exception;
-            }
-        }
-
-        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleAdsModule->value);
+        // module; any of the full-module keys also opens the surface. One
+        // tenancy pass, first allowed key wins (AdsFeatureAccess owns the list).
+        return $this->resolveAnyEntitledBusinessTenancy($workspaceUid, $businessUid, AdsFeatureAccess::anyAdsKeys());
     }
 
     /**
@@ -68,12 +63,12 @@ trait ResolvesAdsBusinessTenancy
      */
     protected function resolveAdsModuleTenancy(string $workspaceUid, string $businessUid): array
     {
-        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleAdsModule->value);
+        return $this->resolveAnyEntitledBusinessTenancy($workspaceUid, $businessUid, AdsFeatureAccess::fullModuleKeys());
     }
 
     /**
      * The whole preamble of a full-module READ page in one call: tenancy
-     * (google_ads_module only, so Core is a 404) THEN `view_google_ads`, then
+     * (full module only, so Core is a 404) THEN `view_google_ads`, then
      * the shared view data. The page renders the empty state when the
      * returned `adsState` is not 'ready'.
      *
@@ -107,13 +102,7 @@ trait ResolvesAdsBusinessTenancy
      */
     protected function adsEntitlementAllows(Workspace $workspace, Business $business, int $userId): bool
     {
-        foreach ([PlatformFeature::AdsBasicVisibility, PlatformFeature::GoogleAdsModule] as $feature) {
-            if ($this->adsFeatureAllows($workspace, $business, $feature, $userId)) {
-                return true;
-            }
-        }
-
-        return false;
+        return app(AdsFeatureAccess::class)->hasAnyAds($workspace, $business, $userId);
     }
 
     protected function adsFeatureAllows(Workspace $workspace, Business $business, PlatformFeature $feature, int $userId): bool
@@ -171,7 +160,7 @@ trait ResolvesAdsBusinessTenancy
         $connection = $this->adsConnectionFor($business);
         $active = $connection !== null && $connection->isActive();
         $account = $active ? $this->resolveAdsAccount($business) : null;
-        $hasModule = $this->adsFeatureAllows($workspace, $business, PlatformFeature::GoogleAdsModule, (int) Auth::id());
+        $hasModule = app(AdsFeatureAccess::class)->hasFullModule($workspace, $business, (int) Auth::id());
 
         return [
             'workspaceUid' => (string) $workspace->uid,
@@ -183,6 +172,7 @@ trait ResolvesAdsBusinessTenancy
             'adsHasModule' => $hasModule,
             'adsCanManage' => Gate::allows('manage_google_ads'),
             'freshness' => $account === null ? null : app(GoogleAdsFreshness::class)->for($account),
+            'adsProviders' => $this->adsProviderSwitcher((string) $workspace->uid, (string) $business->uid),
             'adsNav' => $this->adsNavigation((string) $workspace->uid, (string) $business->uid, $hasModule, $activeKey),
             'adsActive' => $activeKey,
         ];
@@ -199,7 +189,7 @@ trait ResolvesAdsBusinessTenancy
     {
         $prefix = 'customer.workspaces.businesses.ads.';
 
-        // key => [label, route, requires google_ads_module]
+        // key => [label, route, requires the full Ads module]
         $definition = [
             'overview' => ['Overview', $prefix . 'index', false],
             'campaigns' => ['Campaigns', $prefix . 'campaigns.index', true],
@@ -224,6 +214,39 @@ trait ResolvesAdsBusinessTenancy
                 'url' => route($route, [$workspaceUid, $businessUid]),
                 'active' => $key === $activeKey,
             ];
+        }
+
+        return $items;
+    }
+
+    /**
+     * The provider switcher row (Meta Ads V1, contract 24 §8): Overview
+     * (cross-channel) | Google | Meta, each only when its route exists (the
+     * cross-channel and Meta routes are registered by later lanes). The
+     * header marks the active provider itself (its `$provider` include
+     * variable, default 'google') and hides the row when fewer than two
+     * providers exist, so a single-provider install looks exactly as before.
+     *
+     * @return list<array{key: string, label: string, url: string}>
+     */
+    protected function adsProviderSwitcher(string $workspaceUid, string $businessUid): array
+    {
+        $prefix = 'customer.workspaces.businesses.ads.';
+
+        $definition = [
+            'overview' => ['Overview', $prefix . 'overview'],
+            'google' => ['Google', $prefix . 'index'],
+            'meta' => ['Meta', $prefix . 'meta.index'],
+        ];
+
+        $items = [];
+
+        foreach ($definition as $key => [$label, $route]) {
+            if (! Route::has($route)) {
+                continue;
+            }
+
+            $items[] = ['key' => $key, 'label' => $label, 'url' => route($route, [$workspaceUid, $businessUid])];
         }
 
         return $items;

@@ -58,6 +58,10 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.ads.settings.update',
         'customer.workspaces.businesses.ads.refresh',
         'customer.ads.oauth.callback',
+        // Meta Ads V1 (contract 24 §8): the fixed Meta OAuth callback, and the account
+        // listing GET (it asks Meta for the client's ad accounts: a provider call, like Google's).
+        'customer.ads.meta.oauth.callback',
+        'customer.workspaces.businesses.ads.meta.accounts',
         // provider credentials and sending as the Business (Business Email)
         'customer.workspaces.businesses.email.connect',
         'customer.workspaces.businesses.email.disconnect',
@@ -112,6 +116,7 @@ final class ViewAsProhibitedActions
         'user.registers.',
         'customer.gbp.oauth.',
         'customer.ads.oauth.',
+        'customer.ads.meta.oauth.',
         'customer.email.oauth.',
         // Contract 21 §7 — the authenticated V1 signup re-entry and its hosted
         // Checkout return buy a lane-A plan for the ACTOR's own account. A View

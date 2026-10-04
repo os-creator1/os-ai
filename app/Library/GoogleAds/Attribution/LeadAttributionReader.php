@@ -39,16 +39,17 @@ class LeadAttributionReader
      * opportunity{stage,status,value_minor,currency}|null, booked,
      * subject{type,id} (the contact's latest conversion in the period).
      */
-    public function page(Business $business, CarbonInterface $from, CarbonInterface $to, int $page = 1, int $perPage = self::PER_PAGE): LengthAwarePaginator
+    public function page(Business $business, CarbonInterface $from, CarbonInterface $to, int $page = 1, int $perPage = self::PER_PAGE, ?array $firstTouchSources = null): LengthAwarePaginator
     {
         $perPage = max(1, min($perPage, 100));
         $page = max(1, $page);
 
-        $leads = $this->leadIds($business, $from, $to);
+        $leads = $this->leadIds($business, $from, $to, $firstTouchSources);
         $total = (int) DB::query()->fromSub($leads, 'l')->count();
 
         $ids = $total === 0 ? [] : DB::query()
             ->fromSub($this->events($business, $from, $to), 'e')
+            ->when($firstTouchSources !== null, fn (Builder $q) => $this->restrictToFirstTouchSources($q, $business, $firstTouchSources))
             ->groupBy('contact_id')
             ->orderByRaw('MAX(occurred_at) DESC')
             ->orderByDesc('contact_id')
@@ -126,9 +127,49 @@ class LeadAttributionReader
         return null;
     }
 
-    private function leadIds(Business $business, CarbonInterface $from, CarbonInterface $to): Builder
+    /**
+     * Distinct-contact lead count for the period, optionally only contacts
+     * whose FIRST touch carries one of the given utm_source tags (compared
+     * case-insensitively, exact match). Meta Ads V1 uses this for its
+     * tag-only Leads page.
+     *
+     * @param  list<string>|null  $firstTouchSources
+     */
+    public function leadCount(Business $business, CarbonInterface $from, CarbonInterface $to, ?array $firstTouchSources = null): int
     {
-        return DB::query()->fromSub($this->events($business, $from, $to), 'e')->select('contact_id')->distinct();
+        return (int) DB::query()->fromSub($this->leadIds($business, $from, $to, $firstTouchSources), 'l')->count();
+    }
+
+    private function leadIds(Business $business, CarbonInterface $from, CarbonInterface $to, ?array $firstTouchSources = null): Builder
+    {
+        $query = DB::query()->fromSub($this->events($business, $from, $to), 'e')->select('contact_id')->distinct();
+
+        return $firstTouchSources === null ? $query : $this->restrictToFirstTouchSources($query, $business, $firstTouchSources);
+    }
+
+    /**
+     * Keeps only contacts whose first-touch row (touch_role = 'first') has a
+     * utm_source equal, ignoring case, to one of $sources. An empty list
+     * matches nothing.
+     *
+     * @param  list<string>  $sources
+     */
+    private function restrictToFirstTouchSources(Builder $query, Business $business, array $sources): Builder
+    {
+        $sources = array_values(array_map(static fn (string $source): string => strtolower($source), $sources));
+
+        if ($sources === []) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereIn('contact_id', function ($sub) use ($business, $sources): void {
+            $sub->from('lead_attribution_touches')
+                ->select('contact_id')
+                ->where('business_id', $business->id)
+                ->where('touch_role', 'first')
+                ->whereNotNull('contact_id')
+                ->whereRaw('LOWER(utm_source) IN (' . implode(',', array_fill(0, count($sources), '?')) . ')', $sources);
+        });
     }
 
     /**

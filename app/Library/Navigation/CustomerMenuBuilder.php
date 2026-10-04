@@ -3,6 +3,7 @@
 namespace App\Library\Navigation;
 
 use App\Http\Controllers\Customer\Business\CrmOpportunitiesController;
+use App\Library\Ads\AdsFeatureAccess;
 use App\Library\Support\RequestScopedCache;
 use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
@@ -163,6 +164,11 @@ final class CustomerMenuBuilder
         // Nav gating only: every Ads route carries its own entitlement decision.
         'ads_basic_visibility',
         'google_ads_module',
+        // Meta Ads V1 (contract 24 §8, M10): the provider-neutral full-module key
+        // and its second legacy synonym. AdsFeatureAccess::gatedFeatureKeys()
+        // must stay a subset of this list (pinned by AdsFeatureAccessTest).
+        'ads_module',
+        'meta_ads_module',
     ];
 
     /**
@@ -561,49 +567,52 @@ final class CustomerMenuBuilder
     }
 
     /**
-     * Google Ads Module V1 (contract 23 §7) — the Ads group. Overview and
-     * Settings need `ads_basic_visibility` OR `google_ads_module` (Core
-     * connects and reads); Campaigns, Keywords, Search terms, Leads &
-     * conversions, Budget and Recommendations need `google_ads_module`. Every
-     * child needs `view_google_ads`, and every child is produced by the
-     * ordinary item()/entitled() pair, so a child whose route is not
-     * registered yet (the later pages) is silently absent.
+     * The Ads group — ONE sidebar parent for every advertising channel
+     * (Meta Ads V1 contract 24 §8, M1; supersedes contract 23 §7's eight
+     * Google children). Children: Overview (cross-channel), Google, Meta.
+     * Google's own pages (Campaigns, Keywords, ...) are reached from the
+     * provider sub-navigation in the shared `_header`, not from the sidebar.
      *
-     * Like seoMenuItem(), the parent exists exactly when its Overview child
-     * does, so the parent's own URL inherits Overview's route / capability /
-     * View-As rules by construction — there is no second policy to drift.
-     * Visibility is never authorization: every Ads route re-runs the full
-     * tenancy/entitlement/capability chain itself.
+     * Every child is produced by the ordinary item()/entitledAny() pair, so a
+     * child whose route is not registered (the cross-channel Overview and the
+     * Meta pages are registered by later lanes) is silently absent. Core
+     * (`ads_basic_visibility`) and Growth/Agency (full module) see the same
+     * three children; each provider limits its own sub-pages elsewhere.
+     * Capability per child: `view_google_ads` for Google, `view_meta_ads` for
+     * Meta, either for the cross-channel Overview.
+     *
+     * The parent exists exactly when at least one child does; its URL is the
+     * cross-channel Overview when that exists, else the first remaining child
+     * (the Google Overview — the previous behaviour). Visibility is never
+     * authorization: every Ads route re-runs the full tenancy / entitlement /
+     * capability chain itself.
      */
     private function adsMenuItem(User $user, array $scoped, string $current): ?MenuItem
     {
-        $any = ['ads_basic_visibility', 'google_ads_module'];
+        $prefix = 'customer.workspaces.businesses.ads.';
 
-        $overview = $this->entitledAny($any, $this->item($user, 'ads-overview', 'Overview', 'bar-chart-2', ['view_google_ads'], 'customer.workspaces.businesses.ads.index', $scoped, $current, [
-            'customer.workspaces.businesses.ads.index', 'customer.ads.',
+        $overview = $this->entitledAds($this->item($user, 'ads-overview', 'Overview', 'bar-chart-2', ['view_google_ads', 'view_meta_ads'], $prefix . 'overview', $scoped, $current, [
+            $prefix . 'overview',
         ]));
 
-        if ($overview === null) {
+        $google = $this->entitledAds($this->item($user, 'ads-google', 'Google', 'search', ['view_google_ads'], $prefix . 'index', $scoped, $current, [
+            $prefix . 'index', $prefix . 'series', $prefix . 'budget', $prefix . 'settings', $prefix . 'accounts', $prefix . 'connect', $prefix . 'disconnect', $prefix . 'refresh',
+            $prefix . 'campaigns.', $prefix . 'keywords.', $prefix . 'search-terms.', $prefix . 'leads.', $prefix . 'recommendations.',
+            'customer.ads.index', 'customer.ads.oauth.',
+        ]));
+
+        $meta = $this->entitledAds($this->item($user, 'ads-meta', 'Meta', 'share-2', ['view_meta_ads'], $prefix . 'meta.index', $scoped, $current, [
+            $prefix . 'meta.', 'customer.ads.meta.',
+        ]));
+
+        $children = array_values(array_filter([$overview, $google, $meta]));
+
+        if ($children === []) {
             return null;
         }
 
-        $growth = ['google_ads_module'];
-        $prefix = 'customer.workspaces.businesses.ads.';
-
-        $children = array_values(array_filter([
-            $overview,
-            $this->entitledAny($growth, $this->item($user, 'ads-campaigns', 'Campaigns', 'layers', ['view_google_ads'], $prefix . 'campaigns.index', $scoped, $current, [$prefix . 'campaigns.'])),
-            $this->entitledAny($growth, $this->item($user, 'ads-keywords', 'Keywords', 'hash', ['view_google_ads'], $prefix . 'keywords.index', $scoped, $current, [$prefix . 'keywords.'])),
-            $this->entitledAny($growth, $this->item($user, 'ads-search-terms', 'Search terms', 'search', ['view_google_ads'], $prefix . 'search-terms.index', $scoped, $current, [$prefix . 'search-terms.'])),
-            $this->entitledAny($growth, $this->item($user, 'ads-leads', 'Leads & conversions', 'users', ['view_google_ads'], $prefix . 'leads.index', $scoped, $current, [$prefix . 'leads.'])),
-            $this->entitledAny($growth, $this->item($user, 'ads-budget', 'Budget', 'wallet', ['view_google_ads'], $prefix . 'budget', $scoped, $current, [$prefix . 'budget'])),
-            $this->entitledAny($growth, $this->item($user, 'ads-recommendations', 'Recommendations', 'lightbulb', ['view_google_ads'], $prefix . 'recommendations.index', $scoped, $current, [$prefix . 'recommendations.'])),
-            $this->entitledAny($any, $this->item($user, 'ads-settings', 'Settings', 'settings', ['view_google_ads'], $prefix . 'settings', $scoped, $current, [$prefix . 'settings', $prefix . 'accounts'])),
-        ]));
-
-        return new MenuItem('ads', 'Ads', $overview->url, 'megaphone', false, $children);
+        return new MenuItem('ads', 'Ads', ($overview ?? $children[0])->url, 'megaphone', false, $children);
     }
-
     /**
      * Contract §8.3 — the Agency (or multi-Business) account frame. Shown
      * whenever no Business is selected.
@@ -1024,6 +1033,19 @@ final class CustomerMenuBuilder
         }
 
         return $this->entitlements->allows($featureKey) ? $item : null;
+    }
+
+    /**
+     * entitled() for an Ads entry: basic visibility OR the full Ads module
+     * under any of its keys (AdsFeatureAccess owns the synonym list).
+     */
+    private function entitledAds(?MenuItem $item): ?MenuItem
+    {
+        if ($item === null) {
+            return null;
+        }
+
+        return AdsFeatureAccess::menuHasAnyAds($this->entitlements) ? $item : null;
     }
 
     /**

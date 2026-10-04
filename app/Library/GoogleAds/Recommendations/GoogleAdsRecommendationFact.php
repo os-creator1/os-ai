@@ -37,6 +37,9 @@ namespace App\Library\GoogleAds\Recommendations;
  */
 final class GoogleAdsRecommendationFact
 {
+    /** Provider-aware identity for the Growth seam (contract 24 §13). Additive: nothing else changed. */
+    public const PROVIDER = 'google';
+
     /**
      * @param  array<string, scalar|null>  $evidence
      * @param  array{key: string, target_uid: ?string}  $suggestedAction
@@ -60,6 +63,7 @@ final class GoogleAdsRecommendationFact
     {
         return [
             'type' => $this->type->value,
+            'provider' => self::PROVIDER,
             'subject' => ['type' => $this->subjectType, 'uid' => $this->subjectUid, 'name' => $this->subjectName],
             'evidence' => $this->evidence,
             'suggested_action' => $this->suggestedAction,

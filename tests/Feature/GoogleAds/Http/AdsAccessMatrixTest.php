@@ -201,7 +201,8 @@ class AdsAccessMatrixTest extends TestCase
         [$customer, $business, $workspace] = $this->adsHttpTenant();
         $this->asAdsUser($customer);
 
-        $this->get(route('customer.ads.index'))->assertRedirect($this->adsUrl($workspace, $business));
+        // Meta Ads V1: the single-business redirect lands on the cross-channel Overview.
+        $this->get(route('customer.ads.index'))->assertRedirect(route('customer.workspaces.businesses.ads.overview', [$workspace->uid, $business->uid]));
     }
 
     public function test_the_bare_entry_shows_an_empty_state_when_no_business_is_entitled(): void
@@ -293,7 +294,49 @@ class AdsAccessMatrixTest extends TestCase
 
         $this->assertTrue($prohibited->isProhibitedRoute(Route::getRoutes()->getByName('customer.ads.oauth.callback'), 'GET'));
         $this->assertSame(ViewAsRouteClass::RedirectToViewed, $classification->classifyByName('customer.ads.index'));
-        $this->assertSame('customer.workspaces.businesses.ads.index', $classification->redirectTargetFor('customer.ads.index'));
+        $this->assertSame('customer.workspaces.businesses.ads.overview', $classification->redirectTargetFor('customer.ads.index'));
+    }
+
+    /**
+     * Meta Ads V1 (contract 24 §8): the Meta callback is prohibited and denied
+     * by name/prefix, the cross-channel Overview and Meta pages are business-
+     * addressed (BusinessScoped, viewable), every Meta write sits under the
+     * existing non-GET ads prefix. Synthetic routes pin the naming rules; the
+     * real (now registered) routes are re-checked at the end and in
+     * Tests\Feature\MetaAds\Http\MetaAdsAccessMatrixTest.
+     */
+    public function test_view_as_covers_the_meta_names_added_with_the_neutral_ads_shell(): void
+    {
+        $prohibited = app(ViewAsProhibitedActions::class);
+        $classification = app(ViewAsRouteClassification::class);
+
+        $callback = (new RoutingRoute('GET', 'ads/meta/oauth/callback', fn () => null))->name('customer.ads.meta.oauth.callback');
+        $this->assertTrue($prohibited->isProhibitedRoute($callback, 'GET'));
+        $this->assertSame(ViewAsRouteClass::Prohibited, $classification->classify($callback, 'GET'));
+
+        $future = (new RoutingRoute('GET', 'ads/meta/oauth/other', fn () => null))->name('customer.ads.meta.oauth.other');
+        $this->assertTrue($prohibited->isProhibitedRoute($future, 'GET'), 'the whole Meta OAuth prefix is prohibited');
+        $this->assertContains('customer.ads.meta.oauth.', ViewAsRouteClassification::DENIED_PREFIXES);
+
+        foreach (['overview', 'meta.index', 'meta.campaigns.index'] as $read) {
+            $route = (new RoutingRoute('GET', 'x/{workspaceUid}/{businessUid}/ads/' . $read, fn () => null))->name('customer.workspaces.businesses.ads.' . $read);
+            $this->assertFalse($prohibited->isProhibitedRoute($route, 'GET'), "[{$read}] stays viewable.");
+            $this->assertSame(ViewAsRouteClass::BusinessScoped, $classification->classify($route, 'GET'), "[{$read}] is business-addressed.");
+        }
+
+        foreach (['meta.connect', 'meta.accounts.select', 'meta.disconnect', 'meta.settings.update', 'meta.refresh', 'meta.campaigns.pause'] as $write) {
+            $route = (new RoutingRoute('POST', 'x/{workspaceUid}/{businessUid}/ads/' . $write, fn () => null))->name('customer.workspaces.businesses.ads.' . $write);
+            $this->assertTrue($prohibited->isProhibitedRoute($route, 'POST'), "[{$write}] is prohibited while viewing.");
+        }
+
+        // The bare entry redirects to the viewed Business's cross-channel Overview.
+        $this->assertSame('customer.workspaces.businesses.ads.overview', $classification->redirectTargetFor('customer.ads.index'));
+
+        $this->assertTrue($prohibited->isProhibitedRoute(Route::getRoutes()->getByName('customer.ads.meta.oauth.callback'), 'GET'));
+
+        foreach (['customer.workspaces.businesses.ads.overview', 'customer.workspaces.businesses.ads.meta.index'] as $name) {
+            $this->assertSame(ViewAsRouteClass::BusinessScoped, $classification->classifyByName($name), "[{$name}] must be business-addressed.");
+        }
     }
 
     public function test_view_as_prohibits_later_mutation_routes_by_pattern(): void
