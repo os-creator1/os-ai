@@ -32,6 +32,20 @@
                         <small class="text-muted">Link:</small>
                         <a href="{{ route('public.forms.show', [$deployment->uid]) }}" data-role="forms-public-link">{{ route('public.forms.show', [$deployment->uid]) }}</a>
                     </div>
+                    @php
+                        $embedUrl = route('public.forms.show', [$deployment->uid]);
+                        $embedCode = '<iframe src="' . $embedUrl . '" title="' . e($form->name ?? 'Form') . '" width="100%" height="720" style="border:0" loading="lazy"></iframe>';
+                    @endphp
+                    <div class="mt-1" data-role="forms-embed">
+                        <small class="text-muted">Embed on any web page:</small>
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control" readonly value="{{ $embedCode }}" data-role="forms-embed-code" onclick="this.select()" aria-label="Embed code for {{ $location->name ?: 'this location' }}">
+                            <div class="input-group-append">
+                                <button type="button" class="btn btn-outline-secondary" data-role="forms-embed-copy"
+                                    onclick="var i=this.closest('[data-role=forms-embed]').querySelector('input');i.select();navigator.clipboard&&navigator.clipboard.writeText(i.value);this.textContent='Copied';">Copy</button>
+                            </div>
+                        </div>
+                    </div>
                 @endif
             </li>
         @endforeach
