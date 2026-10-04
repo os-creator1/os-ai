@@ -183,6 +183,12 @@ final class PlatformFeatureRegistry
         // is unchanged; an unassigned, inactive, suspended or override-denied
         // Workspace is still refused by EntitlementManager exactly as before.
         PlatformFeature::PaymentsContracts->value => PlatformFeatureAvailability::Available,
+        // SEO Keyword Rank Tracking V1: a real Business-scoped surface exists
+        // (SeoRankTargetsController over SeoRankTargetManager and the budgeted
+        // check pipeline). Availability is code-level only: the provider master
+        // switch (seo.rank_tracking.enabled) still defaults OFF, so no paid call
+        // can happen until the operator enables it.
+        PlatformFeature::SeoRankTracking->value => PlatformFeatureAvailability::Available,
     ];
 
     /**

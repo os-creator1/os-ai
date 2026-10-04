@@ -6,6 +6,13 @@ use App\Exceptions\Seo\SeoKeywordException;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesSeoBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Seo\Rank\SeoRankDashboardReader;
+use App\Library\Seo\Rank\SeoRankEntitlement;
+use App\Library\Seo\Rank\SeoRankException;
+use App\Library\Seo\Rank\SeoRankLocationCatalog;
+use App\Library\Seo\Rank\SeoRankTargetManager;
+use App\Library\Seo\Rank\SeoRankTrackingBudget;
+use App\Jobs\Seo\ScheduleSeoRankChecks;
 use App\Library\Seo\SeoKeywordCoverageReader;
 use App\Library\Seo\SeoKeywordManager;
 use App\Library\Seo\SeoLocationScope;
@@ -51,6 +58,10 @@ class SeoKeywordsController extends CustomerBaseController
         private readonly SeoLocationScope $locationScope,
         private readonly SeoPublishedContentReader $publishedContent,
         private readonly SeoKeywordCoverageReader $coverage,
+        private readonly SeoRankDashboardReader $rankDashboard,
+        private readonly SeoRankEntitlement $rankEntitlement,
+        private readonly SeoRankTargetManager $rankTargets,
+        private readonly SeoRankTrackingBudget $rankBudget,
     ) {
     }
 
@@ -71,7 +82,16 @@ class SeoKeywordsController extends CustomerBaseController
         $keywords = $this->keywords->listVisible($actorId, $business, $accessibleIds);
         $active = $keywords->filter(fn (SeoKeyword $k) => $k->isActive());
 
+        // Rank tracking is its own entitlement: without it the page is still the
+        // keyword list with Website coverage, and rank columns show "—".
+        $rankPlan = $this->rankEntitlement->planFor($business);
+        $rank = $this->rankDashboard->build($business, $active->values(), $rankPlan);
+
         return view('customer.business.seo.keywords', [
+            'rank' => $rank,
+            'rankPlan' => $rankPlan,
+            'rankUnavailable' => $rankPlan !== null && ! $this->rankBudget->enabled(),
+            'rankPaused' => $rankPlan !== null && $this->rankBudget->isPausedBySpend($business),
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
@@ -92,9 +112,21 @@ class SeoKeywordsController extends CustomerBaseController
         $location = $this->resolveLocation($actorId, $business, $input['location_uid'] ?? null);
 
         try {
-            $this->keywords->create($actorId, $business, (string) $input['phrase'], $location);
+            $keyword = $this->keywords->create($actorId, $business, (string) $input['phrase'], $location);
         } catch (SeoKeywordException $e) {
             return $this->refused($workspaceUid, $businessUid, $e);
+        }
+
+        if (! empty($input['track_rank'])) {
+            return $this->done($workspaceUid, $businessUid, $this->trackNewKeyword($actorId, $business, $keyword->uid, $input['search_location_code'] ?? null));
+        }
+
+        // Allowance full: the form disables the checkbox, so say plainly that the
+        // keyword was saved WITHOUT rank tracking and why.
+        $plan = $this->rankEntitlement->planFor($business);
+
+        if ($plan !== null && $this->rankTargets->slotsUsed($business) >= $plan->trackedTargets) {
+            return $this->done($workspaceUid, $businessUid, "Keyword saved. Rank tracking off. {$plan->trackedTargets} of {$plan->trackedTargets} rank-tracked keywords are in use.");
         }
 
         return $this->done($workspaceUid, $businessUid, 'Keyword added.');
@@ -172,6 +204,8 @@ class SeoKeywordsController extends CustomerBaseController
     {
         return $request->validate([
             'phrase' => ['required', 'string', 'max:' . SeoKeywordManager::MAX_PHRASE_LENGTH],
+            'track_rank' => ['nullable', 'boolean'],
+            'search_location_code' => ['nullable', 'integer', 'min:1'],
             'location_uid' => ['nullable', 'string', 'max:64'],
         ]);
     }
@@ -192,6 +226,28 @@ class SeoKeywordsController extends CustomerBaseController
         abort_if($location === null, 404);
 
         return $location;
+    }
+
+    /**
+     * The keyword is ALREADY saved as an SEO keyword (it needs no paid slot). If
+     * the rank-tracking allowance is full, or the location is not usable, it
+     * simply stays untracked and the owner is told why.
+     */
+    private function trackNewKeyword(int $actorId, Business $business, string $keywordUid, mixed $locationCode): string
+    {
+        if (! is_int($locationCode) && ! (is_string($locationCode) && ctype_digit($locationCode))) {
+            return 'Keyword saved. Rank tracking off. Choose a search location from the list to track its rank.';
+        }
+
+        try {
+            $target = $this->rankTargets->track($actorId, $business, $keywordUid, (int) $locationCode);
+        } catch (SeoRankException $e) {
+            return 'Keyword saved. Rank tracking off. ' . $e->customerMessage();
+        }
+
+        ScheduleSeoRankChecks::dispatch($target->id);
+
+        return 'Keyword added and rank tracking started. The first check is on its way.';
     }
 
     private function done(string $workspaceUid, string $businessUid, string $message): RedirectResponse

@@ -428,6 +428,23 @@ class SeoFoundationBoundaryTest extends TestCase
             // It writes only THROUGH SeoKeywordManager; those call names are
             // not table writes (the manager's own writes are pinned separately).
             $code = (string) preg_replace('/\$this->keywords->(create|update|archive|reactivate)\s*\(/', '', $code);
+            // Rank Tracking V1 — THE ONE NARROW EXEMPTION. This controller may queue
+            // exactly one thing: the rank SCHEDULER job for the target the rank
+            // manager has just created, i.e. the literal statement
+            //     ScheduleSeoRankChecks::dispatch($target->id);
+            // That job holds no spend of its own: it asks SeoRankTrackingBudget for
+            // permission, which fails closed. It is NOT a general "controllers may
+            // queue work" allowance. The statement must appear EXACTLY ONCE (asserted
+            // here), only this literal is stripped, and every other dispatch / Queue /
+            // Bus / Http / provider reference in this file still fails the scan below.
+            // Submitting to the provider is never done from a controller on this path
+            // (see test_rank_controllers_never_call_the_provider_and_queue_only_budgeted_work).
+            $this->assertSame(
+                1,
+                preg_match_all('/\bScheduleSeoRankChecks::dispatch\(\$target->id\);/', $code),
+                'SeoKeywordsController must contain the rank-scheduler dispatch exactly once.'
+            );
+            $code = (string) preg_replace('/\bScheduleSeoRankChecks::dispatch\(\$target->id\);/', '', $code);
         }
 
         $this->assertNotSame('', $code);
@@ -462,6 +479,39 @@ class SeoFoundationBoundaryTest extends TestCase
                 basename($file) . ' must not match ' . $pattern . ' (Contract 18 §12).'
             );
         }
+    }
+
+    /**
+     * Guards the exemption above from becoming a hole: no controller may talk to
+     * the provider or use a vendor/network class, and the only jobs a rank
+     * controller may queue are the rank scheduler (no spend of its own) and, for
+     * "Check now", a submit for a run the budget authority has JUST reserved.
+     */
+    public function test_rank_controllers_never_call_the_provider_and_queue_only_budgeted_work(): void
+    {
+        $root = dirname(__DIR__, 3) . '/app/Http/Controllers/Customer/Business/';
+
+        foreach (['SeoKeywordsController.php', 'SeoRankTargetsController.php'] as $name) {
+            $code = $this->codeWithoutComments($root . $name);
+
+            foreach (['SeoRankProvider', 'DataForSeo', 'FakeSeoRankProvider', 'SeoRankCheckExecutor', '/\bHttp::/', 'GuzzleHttp', '/\bQueue::/', '/\bBus::/'] as $needle) {
+                $matched = str_starts_with($needle, '/') ? preg_match($needle, $code) === 1 : str_contains($code, $needle);
+                $this->assertFalse($matched, "{$name} must not reference {$needle}.");
+            }
+
+            preg_match_all('/([A-Za-z\\\\]+)::dispatch\(/', $code, $m);
+            $allowed = $name === 'SeoKeywordsController.php'
+                ? ['ScheduleSeoRankChecks']
+                : ['ScheduleSeoRankChecks', 'SubmitSeoRankCheck'];
+
+            foreach ($m[1] as $job) {
+                $this->assertContains($job, $allowed, "{$name} may not dispatch {$job}.");
+            }
+        }
+
+        // "Check now" submits only runs the budget authority created in this request.
+        $code = $this->codeWithoutComments($root . 'SeoRankTargetsController.php');
+        $this->assertStringContainsString('$decision->allowed && $decision->run !== null', $code);
     }
 
     public function test_the_keyword_manager_writes_only_seo_keywords(): void

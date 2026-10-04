@@ -1223,6 +1223,18 @@
             Route::post('/keywords/{keywordUid}/archive', 'Business\SeoKeywordsController@archive')->middleware('throttle:30,1')->name('keywords.archive');
             Route::post('/keywords/{keywordUid}/reactivate', 'Business\SeoKeywordsController@reactivate')->middleware('throttle:30,1')->name('keywords.reactivate');
 
+            // SEO Keyword Rank Tracking V1 — rank targets (keyword + search
+            // geography + device). Gated by the SeoRankTracking entitlement and
+            // view_seo / manage_seo; targets resolve only inside the Business and
+            // behind the keyword's Location ACL. "Check now" only queues work the
+            // budget authority has just reserved.
+            Route::get('/keywords/rank-locations', 'Business\SeoRankTargetsController@locationSearch')->middleware('throttle:60,1')->name('keywords.rank-locations');
+            Route::post('/keywords/{keywordUid}/rank/track', 'Business\SeoRankTargetsController@track')->middleware('throttle:30,1')->name('keywords.rank.track');
+            Route::get('/rank-targets/{targetUid}', 'Business\SeoRankTargetsController@show')->name('rank-targets.show');
+            Route::post('/rank-targets/{targetUid}/stop', 'Business\SeoRankTargetsController@stop')->middleware('throttle:30,1')->name('rank-targets.stop');
+            Route::post('/rank-targets/{targetUid}/restart', 'Business\SeoRankTargetsController@restart')->middleware('throttle:30,1')->name('rank-targets.restart');
+            Route::post('/rank-targets/{targetUid}/check', 'Business\SeoRankTargetsController@check')->middleware('throttle:10,1')->name('rank-targets.check');
+
             // Sub-slice 18F — Reviews: workflow tracking only (a manual review
             // link per Location and a request ledger with a cooldown). SEO
             // sends nothing and stores no review content. Reads need view_seo,

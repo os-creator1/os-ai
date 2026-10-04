@@ -79,4 +79,14 @@ enum PlatformFeature: string
      * feature.
      */
     case PaymentsContracts = 'payments_contracts';
+
+    /**
+     * SEO Keyword Rank Tracking V1 — the PAID third-party SERP rank-tracking
+     * capability (DataForSEO). Deliberately separate from SeoBasicVisibility /
+     * SeoModule so the paid provider surface is entitled, packaged and
+     * switched on its own. Packaged for Core, Growth and Agency; per-tier
+     * numeric limits live in config/seo.php (SeoConfig), never in plan-name
+     * checks.
+     */
+    case SeoRankTracking = 'seo_rank_tracking';
 }

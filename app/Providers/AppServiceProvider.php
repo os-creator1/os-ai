@@ -122,6 +122,12 @@
             // cached here ever survives past the request/test that wrote it.
             $this->app->singleton(\App\Library\Support\RequestScopedCache::class);
 
+            // SEO Keyword Rank Tracking V1 — the paid SERP provider boundary and
+            // the Search Console seam. Tests rebind SeoRankProvider to
+            // FakeSeoRankProvider; nothing else depends on a vendor class.
+            $this->app->singleton(\App\Library\Seo\Rank\Provider\SeoRankProvider::class, \App\Library\Seo\Rank\Provider\DataForSeoRankProvider::class);
+            $this->app->singleton(\App\Library\Seo\Rank\SeoSearchConsoleReader::class, \App\Library\Seo\Rank\NullSeoSearchConsoleReader::class);
+
             // Customer Experience Slice 3 §4.13 step 4 — the default
             // messaging-adapter binding, behind the adapter's own
             // fail-closed constructor check.
