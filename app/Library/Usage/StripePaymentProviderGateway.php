@@ -29,46 +29,32 @@ use UnexpectedValueException;
  */
 class StripePaymentProviderGateway implements PaymentProviderGateway
 {
-    private StripeClient $client;
+    private ?StripeClient $resolvedClient = null;
 
     /**
-     * M3 contract §19 — fails closed before any request is served: an
-     * unset/invalid mode, an empty secret/webhook secret/api_version, or a
-     * secret-key prefix (sk_test_/sk_live_) disagreeing with the
-     * configured mode, all throw here rather than silently proceeding
-     * with a live key while mode is test or vice versa.
+     * M3 contract §19 — still fails closed, but at the provider-action
+     * boundary rather than at construction: constructing this gateway (as
+     * every read-only page's dependency graph does) never requires valid
+     * credentials. Any actual provider call, and webhook verification,
+     * first runs PaymentProviderConfigurationStatus and throws on an
+     * unset/invalid mode, empty secret/webhook secret/api_version, or a
+     * secret-key prefix disagreeing with the configured mode.
      */
-    public function __construct()
+    private function assertConfigured(): void
     {
-        $mode = config('services.stripe.mode');
-        $secret = (string) config('services.stripe.secret');
-        $webhookSecret = config('services.stripe.webhook.secret');
-        $apiVersion = config('services.stripe.api_version');
+        $problem = PaymentProviderConfigurationStatus::problem();
 
-        if (! in_array($mode, ['test', 'live'], true)) {
-            throw new \RuntimeException('services.stripe.mode must be "test" or "live".');
+        if ($problem !== null) {
+            throw new \RuntimeException($problem);
         }
+    }
 
-        if ($secret === '') {
-            throw new \RuntimeException('services.stripe.secret must not be empty.');
-        }
+    private function client(): StripeClient
+    {
+        $this->assertConfigured();
 
-        if (blank($webhookSecret)) {
-            throw new \RuntimeException('services.stripe.webhook.secret must not be empty.');
-        }
-
-        if (blank($apiVersion)) {
-            throw new \RuntimeException('services.stripe.api_version must not be empty.');
-        }
-
-        $expectedPrefix = 'sk_'.$mode.'_';
-
-        if (! str_starts_with($secret, $expectedPrefix)) {
-            throw new \RuntimeException('services.stripe.secret does not match the configured services.stripe.mode.');
-        }
-
-        $this->client = new StripeClient([
-            'api_key' => $secret,
+        return $this->resolvedClient ??= new StripeClient([
+            'api_key' => (string) config('services.stripe.secret'),
             'stripe_version' => StripeApiVersion::current(),
         ]);
     }
@@ -76,13 +62,13 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
     public function createOrRetrieveCustomer(?string $existingProviderCustomerId, string $idempotencyKey): ProviderCustomerResult
     {
         if ($existingProviderCustomerId !== null) {
-            $customer = $this->call(fn () => $this->client->customers->retrieve($existingProviderCustomerId));
+            $customer = $this->call(fn () => $this->client()->customers->retrieve($existingProviderCustomerId));
 
             return new ProviderCustomerResult($customer->id, false);
         }
 
         $customer = $this->call(
-            fn () => $this->client->customers->create([], ['idempotency_key' => $idempotencyKey]),
+            fn () => $this->client()->customers->create([], ['idempotency_key' => $idempotencyKey]),
         );
 
         return new ProviderCustomerResult($customer->id, true);
@@ -91,7 +77,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
     public function createSetupIntent(string $providerCustomerId, string $idempotencyKey): SetupIntentResult
     {
         $setupIntent = $this->call(
-            fn () => $this->client->setupIntents->create([
+            fn () => $this->client()->setupIntents->create([
                 'customer' => $providerCustomerId,
                 'usage' => 'off_session',
             ], ['idempotency_key' => $idempotencyKey]),
@@ -102,14 +88,14 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
 
     public function retrieveSetupIntent(string $providerSetupIntentId): SetupIntentResult
     {
-        $setupIntent = $this->call(fn () => $this->client->setupIntents->retrieve($providerSetupIntentId));
+        $setupIntent = $this->call(fn () => $this->client()->setupIntents->retrieve($providerSetupIntentId));
 
         return new SetupIntentResult($setupIntent->id, null, $setupIntent->status, $setupIntent->payment_method ?? null);
     }
 
     public function retrievePaymentMethod(string $providerPaymentMethodId): PaymentMethodResult
     {
-        $paymentMethod = $this->call(fn () => $this->client->paymentMethods->retrieve($providerPaymentMethodId));
+        $paymentMethod = $this->call(fn () => $this->client()->paymentMethods->retrieve($providerPaymentMethodId));
         $card = $paymentMethod->card;
 
         return new PaymentMethodResult(
@@ -125,7 +111,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
 
     public function detachPaymentMethod(string $providerPaymentMethodId): void
     {
-        $this->call(fn () => $this->client->paymentMethods->detach($providerPaymentMethodId));
+        $this->call(fn () => $this->client()->paymentMethods->detach($providerPaymentMethodId));
     }
 
     public function createOffSessionPaymentIntent(
@@ -137,7 +123,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         array $metadata,
     ): PaymentIntentResult {
         $paymentIntent = $this->call(
-            fn () => $this->client->paymentIntents->create([
+            fn () => $this->client()->paymentIntents->create([
                 'amount' => $amountMinorUnits,
                 'currency' => strtolower($currencyCode),
                 'customer' => $providerCustomerId,
@@ -166,7 +152,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
      */
     public function retrievePaymentIntent(string $providerPaymentIntentId): PaymentIntentResult
     {
-        $paymentIntent = $this->call(fn () => $this->client->paymentIntents->retrieve($providerPaymentIntentId, [
+        $paymentIntent = $this->call(fn () => $this->client()->paymentIntents->retrieve($providerPaymentIntentId, [
             'expand' => ['latest_charge'],
         ]));
 
@@ -200,6 +186,8 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
 
     public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): WebhookVerificationResult
     {
+        $this->assertConfigured();
+
         try {
             $event = Webhook::constructEvent($rawBody, $signatureHeader, $webhookSecret);
         } catch (UnexpectedValueException|SignatureVerificationException) {
@@ -275,7 +263,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         }
 
         $session = $this->call(
-            fn () => $this->client->checkout->sessions->create($params, ['idempotency_key' => $idempotencyKey]),
+            fn () => $this->client()->checkout->sessions->create($params, ['idempotency_key' => $idempotencyKey]),
         );
 
         if (blank($session->url)) {
@@ -295,7 +283,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
     public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
     {
         $session = $this->call(
-            fn () => $this->client->checkout->sessions->retrieve($providerCheckoutSessionId, [
+            fn () => $this->client()->checkout->sessions->retrieve($providerCheckoutSessionId, [
                 'expand' => ['payment_intent.payment_method', 'payment_intent.latest_charge'],
             ]),
         );
@@ -323,7 +311,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         string $idempotencyKey,
     ): PaymentIntentResult {
         $paymentIntent = $this->call(
-            fn () => $this->client->paymentIntents->confirm($providerPaymentIntentId, [
+            fn () => $this->client()->paymentIntents->confirm($providerPaymentIntentId, [
                 'payment_method' => $providerPaymentMethodId,
             ], ['idempotency_key' => $idempotencyKey]),
         );

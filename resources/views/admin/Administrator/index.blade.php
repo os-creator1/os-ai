@@ -238,18 +238,7 @@
                         // Actions
                         targets: -1,
                         title: '{{ __('locale.labels.actions') }}',
-                        orderable: false,
-                        render: function (data, type, full) {
-                            return (
-                                '<span class="action-delete text-danger pe-1 cursor-pointer" data-id=' + full['delete'] + '>' +
-                                feather.icons['trash'].toSvg({class: 'font-medium-4'}) +
-                                '</span>' +
-
-                                '<a href="' + full['edit'] + '" class="text-primary">' +
-                                feather.icons['edit'].toSvg({class: 'font-medium-4'}) +
-                                '</a>'
-                            );
-                        }
+                        orderable: false
                     }
                 ],
                 dom: '<"d-flex justify-content-between align-items-center mx-0 row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>t<"d-flex justify-content-between mx-0 row"<"col-sm-12 col-md-6"i><"col-sm-12 col-md-6"p>>',

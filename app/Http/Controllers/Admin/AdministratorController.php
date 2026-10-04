@@ -20,7 +20,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
-use JetBrains\PhpStorm\NoReturn;
 use OpenSpout\Common\Exception\InvalidArgumentException;
 use OpenSpout\Common\Exception\IOException;
 use OpenSpout\Common\Exception\UnsupportedTypeException;
@@ -63,8 +62,7 @@ class AdministratorController extends AdminBaseController
     /**
      * @throws AuthorizationException
      */
-    #[NoReturn]
-    public function search(Request $request): void
+    public function search(Request $request): JsonResponse
     {
 
         $this->authorize('view administrator');
@@ -156,8 +154,7 @@ class AdministratorController extends AdminBaseController
                 </label>
               </div>";
 
-                $nestedData['edit'] = $edit;
-                $nestedData['delete'] = $delete;
+                $nestedData['action'] = $this->actionHtml($edit, $delete);
                 $data[] = $nestedData;
 
             }
@@ -170,9 +167,28 @@ class AdministratorController extends AdminBaseController
             'data' => $data,
         ];
 
-        echo json_encode($json_data);
-        exit();
+        return response()->json($json_data);
 
+    }
+
+    /**
+     * Server-rendered `action` cell for the DataTables contract: only the
+     * actions the current admin is authorized for are emitted, and both
+     * values are escaped. $edit is a URL, $delete a role/administrator uid.
+     */
+    private function actionHtml(?string $edit, ?string $delete): string
+    {
+        $html = '';
+
+        if ($delete !== null) {
+            $html .= '<span class="action-delete text-danger pe-1 cursor-pointer" data-id="'.e($delete).'"><i data-feather="trash" class="font-medium-4"></i></span>';
+        }
+
+        if ($edit !== null) {
+            $html .= '<a href="'.e($edit).'" class="text-primary"><i data-feather="edit" class="font-medium-4"></i></a>';
+        }
+
+        return $html;
     }
 
     /**
