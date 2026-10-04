@@ -100,9 +100,23 @@
             @endif
             @if (count($navigationPages ?? []) > 1)
                 <nav class="website-navigation" aria-label="Site pages">
-                    @foreach ($navigationPages as $navigationPage)
+                    {{-- A site with many pages (service and location pages) keeps the bar readable:
+                         the first pages stay inline, the rest fold into a "More" menu. --}}
+                    @php($navInline = array_slice(array_values($navigationPages), 0, 6))
+                    @php($navMore = array_slice(array_values($navigationPages), 6))
+                    @foreach ($navInline as $navigationPage)
                         <a href="{{ $navigationPage['url'] }}" @if (($page->uid ?? null) === $navigationPage['uid']) aria-current="page" @endif>{{ $navigationPage['title'] }}</a>
                     @endforeach
+                    @if (count($navMore) > 0)
+                        <details class="website-nav-more" @if (collect($navMore)->contains(fn ($p) => ($page->uid ?? null) === $p['uid'])) open @endif>
+                            <summary>More</summary>
+                            <div class="website-nav-more-list">
+                                @foreach ($navMore as $navigationPage)
+                                    <a href="{{ $navigationPage['url'] }}" @if (($page->uid ?? null) === $navigationPage['uid']) aria-current="page" @endif>{{ $navigationPage['title'] }}</a>
+                                @endforeach
+                            </div>
+                        </details>
+                    @endif
                 </nav>
             @endif
         </div>

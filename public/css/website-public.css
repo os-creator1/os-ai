@@ -96,6 +96,21 @@ a { color: var(--website-primary); }
 }
 .website-navigation a:hover { background: var(--website-surface-muted); color: var(--website-primary); }
 .website-navigation a[aria-current="page"] { color: var(--website-primary); font-weight: 700; }
+.website-nav-more { position: relative; }
+.website-nav-more summary {
+    cursor: pointer; list-style: none; padding: 0.5rem 0.75rem; font-weight: 500;
+    border-radius: var(--website-radius-sm);
+}
+.website-nav-more summary::-webkit-details-marker { display: none; }
+.website-nav-more summary::after { content: " \25BE"; }
+.website-nav-more summary:hover { background: var(--website-surface-muted); color: var(--website-primary); }
+.website-nav-more-list {
+    position: absolute; right: 0; top: 100%; z-index: 20; min-width: 16rem; max-width: 22rem;
+    display: flex; flex-direction: column; gap: 0.1rem; padding: 0.4rem;
+    background: var(--website-surface); border: 1px solid var(--website-border);
+    border-radius: var(--website-radius-sm); box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+}
+.website-nav-more-list a { white-space: normal; }
 
 .website-brand {
     font-weight: 800;
