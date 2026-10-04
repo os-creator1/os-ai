@@ -98,6 +98,42 @@ final class CrmBoard
     }
 
     /**
+     * The header total for one column, e.g. "3 · USD 1,200". The ONE spelling of it:
+     * the board renders it and the move endpoint returns it, so a canonical total
+     * pasted into a column header reads exactly like the server-rendered one.
+     */
+    public static function totalLabel(int $count, int $valueMinor, ?string $currency): string
+    {
+        return $count . ($valueMinor > 0 ? ' · ' . CrmMoney::format($valueMinor, $currency) : '');
+    }
+
+    /**
+     * Canonical count and value of the given stages under the board's current filters
+     * — what the move endpoint returns so the browser can correct two header
+     * numbers without re-rendering anything.
+     *
+     * @param  list<int>  $stageIds
+     * @return array<int, array{count: int, value_minor: int}> keyed by stage id
+     */
+    public function stageTotals(Business $business, CrmPipeline $pipeline, CrmBoardFilters $filters, array $stageIds): array
+    {
+        $rows = $this->filtered($business, $pipeline, $filters)
+            ->whereIn('stage_id', $stageIds)
+            ->groupBy('stage_id')
+            ->selectRaw('stage_id, count(*) as deals, coalesce(sum(value_minor), 0) as value_minor')
+            ->get()
+            ->keyBy('stage_id');
+
+        $totals = [];
+
+        foreach ($stageIds as $id) {
+            $totals[$id] = ['count' => (int) ($rows[$id]->deals ?? 0), 'value_minor' => (int) ($rows[$id]->value_minor ?? 0)];
+        }
+
+        return $totals;
+    }
+
+    /**
      * @param  list<int>  $stageIds
      * @param  Collection<int|string, object>  $totals
      * @param  Collection<int, CrmOpportunity>  $cards
@@ -126,6 +162,7 @@ final class CrmBoard
                     'uid' => (string) $deal->uid,
                     'title' => (string) $deal->title,
                     'value' => CrmMoney::format($deal->value_minor, $deal->currency_code),
+                    'value_minor' => (int) $deal->value_minor,
                     'status' => $deal->status,
                     'contact_status' => $deal->contact_status,
                     'stage_entered_at' => $deal->stage_entered_at,
