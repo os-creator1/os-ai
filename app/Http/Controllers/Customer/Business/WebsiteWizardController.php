@@ -158,7 +158,7 @@ class WebsiteWizardController extends CustomerBaseController
                     'workspaceUid' => $workspaceUid,
                     'businessUid' => $businessUid,
                     'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
-                    'selectedTemplateKey' => $response->website?->template_key,
+                    'selectedTemplateKey' => $response->website?->template_key ?? $this->blueprintTemplateKey($business),
                     'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
                 ]);
             }
@@ -180,7 +180,7 @@ class WebsiteWizardController extends CustomerBaseController
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'templates' => $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)),
-                'selectedTemplateKey' => $state->website?->template_key,
+                'selectedTemplateKey' => $state->website?->template_key ?? $this->blueprintTemplateKey($business),
                 'progress' => ['current' => 1, 'total' => 2, 'label' => 'Choose a style'],
             ]);
         }
@@ -1544,6 +1544,17 @@ class WebsiteWizardController extends CustomerBaseController
     /**
      * @return Collection<int, WebsiteTemplate>
      */
+    /**
+     * The Niche Blueprint's preferred template, offered only when this Business has not chosen
+     * a style yet and the Website really offers it. A suggestion for the picker, never a choice
+     * made for the owner, and never applied to an existing Website.
+     */
+    private function blueprintTemplateKey(Business $business): ?string
+    {
+        return app(\App\Library\Website\WebsiteBlueprintDefaults::class)
+            ->preferredTemplateKey($business, $this->templatesForNiche($this->questionnaireResolver->nicheKeyFor($business)));
+    }
+
     private function templatesForNiche(?string $nicheKey): Collection
     {
         return WebsiteTemplate::where('is_active', true)

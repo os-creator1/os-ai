@@ -140,13 +140,29 @@ class GuidedWebsiteGenerationClient
             ]);
         }
 
+        // Niche Blueprint defaults (Website seam): present only for a Business that has them, so the
+        // prompt is unchanged for everyone else. They are suggestions and never facts.
+        $nicheDefaults = app(\App\Library\Website\WebsiteBlueprintDefaults::class)->generationHints($business, $plan);
+
+        if ($nicheDefaults !== null) {
+            array_splice($instructions, -1, 0, [
+                'A "niche_defaults" object may be provided: suggestions about emphasis and which sections suit this kind of business. They never override confirmed_facts and never add facts; use suggested_sections only where that page\'s allowed_section_types permit it.',
+            ]);
+        }
+
+        $userPayload = [
+            'business_name' => $business->name,
+            'plan' => $planForPrompt,
+            'confirmed_facts' => $this->canonicalFacts($business),
+        ];
+
+        if ($nicheDefaults !== null) {
+            $userPayload['niche_defaults'] = $nicheDefaults;
+        }
+
         return [
             ['role' => 'system', 'content' => implode("\n", $instructions)],
-            ['role' => 'user', 'content' => json_encode([
-                'business_name' => $business->name,
-                'plan' => $planForPrompt,
-                'confirmed_facts' => $this->canonicalFacts($business),
-            ])],
+            ['role' => 'user', 'content' => json_encode($userPayload)],
         ];
     }
 

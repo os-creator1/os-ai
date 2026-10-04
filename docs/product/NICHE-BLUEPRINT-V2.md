@@ -224,9 +224,26 @@ app(\App\Library\NicheBlueprint\Workspace\BlueprintConfigReader::class)->website
 Validated at publish: `template_key` must be an active `website_templates.key`.
 If the final Website work renames template keys or changes the page/section
 vocabulary, the adapter needed is a mapping inside `WebsiteConfigComponentAdapter`
-(validation + a small translation in the reader) — no Website code changes. The
-Website setup flow should call the reader when proposing a template and
-default pages; nothing calls it yet.
+(validation + a small translation in the reader) — no Website code changes.
+
+### 12.1 How the Website consumes it (integrated)
+
+`App\Library\Website\WebsiteBlueprintDefaults` is the Website module's one consumer. It only
+translates and suggests; it never writes to a Website, so an existing or customised Website is never
+overwritten by a Blueprint, and a Business with no Blueprint behaves exactly as before.
+
+* **Template** — the wizard's "Choose a style" step pre-selects the Blueprint's preferred template
+  when the Business has no style yet and the Website really offers it (active, for the niche). A
+  Website shell that already has a template keeps its own; the owner still chooses.
+* **Page strategy / sections / content** — guided generation receives `niche_defaults` in its prompt
+  (the Blueprint's content prompts, plus suggested sections per planned page). Sections are translated
+  to the Website's vocabulary (`packages` and `add_ons` -> `services`) and intersected with each page's
+  `allowed_section_types`; a page that is not in the Website's own plan is never suggested, and nothing
+  is invented. They are framed to the model as suggestions that never override confirmed facts. The
+  prompt is byte-for-byte unchanged for a Business without Blueprint defaults.
+
+If the Website renames template keys or page / section types, adapt `WebsiteBlueprintDefaults`
+(`SECTION_MAP` and the template check) — not the renderer and not the Blueprint data.
 
 ## 13. Tests
 
