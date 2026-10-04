@@ -574,6 +574,8 @@ filters, and no UI or API accepts one; (2) **no incentive** fields, copy or
 templates; (3) **no staff quotas or goal-setting** — Overview shows a plain
 count of requests, never a target, leaderboard or per-staff ranking.
 
+**Legacy status repair.** `status` is only ever `requested|reviewed|declined`. A legacy or hand-seeded `resolved` value (a completed outcome, not a rejection) is migrated to `reviewed` by `2026_10_26_100001_repair_legacy_resolved_seo_review_request_status` (no rating inferred, `resolved_at` untouched, count logged). The Reviews page reads the raw status and shows any other unrecognised value as "Unknown" with no outcome action, so one bad row can never take the page down.
+
 ### 8.7 Website SEO / technical audit (Sub-slice G)
 
 Reads **only** the immutable `website_revisions.snapshot` of the published
@@ -948,6 +950,15 @@ Website SEO; H = entitlement/nav/integration.
   code); no Google review content stored (schema test: no rating/reviewer/text
   columns); no dead Ratings tab.
 - **Risk:** Low–Medium (Contact linkage).
+- **Page layout (presentation only, no behaviour change):** header, four
+  summary tiles (Locations with / missing a link, requests recorded, awaiting an
+  outcome, last request — all derived from the sections the page reader already
+  returns, no extra query), then one card per Location with a status badge, the
+  link field with Copy link / Open link, in-page `<details>` forms for Add/Change
+  link and Record a request, and empty states. No tabs, no modal `data-bs-*`
+  hooks and no script inside `reviews.blade.php` (the boundary test scans that
+  file); the copy-to-clipboard helper and styles live in the
+  `_reviews-copy` / `_reviews-style` partials and make no network request.
 
 ### Sub-slice G — Technical / Website SEO audit
 
