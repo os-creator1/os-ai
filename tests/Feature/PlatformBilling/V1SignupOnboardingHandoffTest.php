@@ -273,6 +273,30 @@ class V1SignupOnboardingHandoffTest extends TestCase
         $this->assertSame(1, CustomerOnboarding::query()->count());
     }
 
+    public function test_the_complete_step_finishes_onboarding_and_is_not_a_dead_end(): void
+    {
+        [$user, , $business] = $this->paidSignup();
+        $this->walkWizardToResults($this->onboardingFor($user));
+
+        // The first-value action sends the customer to the Complete step.
+        $onboarding = $this->onboardingFor($user);
+        app(CustomerOnboardingRepository::class)->recordFirstValueAction($onboarding, 'add_phone');
+        $onboarding->refresh()->forceFill(['current_step' => OnboardingStep::Complete])->save();
+
+        $html = $this->get(route('customer.onboarding.show', ['step' => 'complete']))->assertOk()->getContent();
+
+        // The step itself must be able to finish onboarding (it used to offer
+        // only a link home, leaving the Business Draft and Home redirecting
+        // straight back into the wizard).
+        $this->assertStringContainsString('action="' . route('customer.onboarding.complete') . '"', $html);
+
+        $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
+
+        $this->assertSame(OnboardingStatus::Completed, $this->onboardingFor($user)->status);
+        $this->assertSame(BusinessStatus::Active, $business->fresh()->status);
+        $this->get(route('user.home'))->assertOk();
+    }
+
     public function test_an_incomplete_onboarding_never_activates_the_business(): void
     {
         [$user] = $this->paidSignup();
