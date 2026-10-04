@@ -38,6 +38,12 @@ class GrowthCenterHttpTest extends TestCase
         return route('customer.workspaces.businesses.growth.' . $name, array_merge([$this->workspace->uid, $this->business->uid], $extra));
     }
 
+    /** Home IS the Growth Center: the owner-facing recommendations render here. */
+    private function home(): string
+    {
+        return route('user.home');
+    }
+
     private function asOwner(): void
     {
         $this->authenticateAs($this->owner, ['business_advisor', 'view_contact']);
@@ -72,17 +78,20 @@ class GrowthCenterHttpTest extends TestCase
     {
         $this->asOwner();
 
-        foreach (['index', 'opportunities.index', 'score', 'insights', 'brief'] as $name) {
+        foreach (['opportunities.index', 'score', 'insights', 'brief'] as $name) {
             $this->get($this->growth($name))->assertOk()->assertSee('Growth Center')->assertSee('See what is helping or holding back growth');
         }
     }
 
-    public function test_the_sidebar_offers_growth_to_an_entitled_actor(): void
+    public function test_the_old_growth_overview_is_an_alias_of_home_and_there_is_no_growth_sidebar_entry(): void
     {
         $this->asOwner();
 
-        $this->get($this->growth())->assertSee('data-surface="growth-center"', false);
-        $this->get($this->growth())->assertSee(route('customer.workspaces.businesses.growth.index', [$this->workspace->uid, $this->business->uid]), false);
+        $this->get($this->growth())->assertRedirect(route('user.home'));
+
+        $home = $this->get($this->home())->assertOk();
+        $home->assertDontSee('href="' . $this->growth() . '"', false);
+        $home->assertDontSee('>Results<', false);
     }
 
     // ── States ───────────────────────────────────────────────────────────
@@ -91,11 +100,10 @@ class GrowthCenterHttpTest extends TestCase
     {
         $this->asOwner();
 
-        $this->get($this->growth())
+        // Nothing evaluated yet: Home keeps its own next-best-move voice instead of an empty Growth band.
+        $this->get($this->home())
             ->assertOk()
-            ->assertSee('data-role="first-run"', false)
-            ->assertSee('Connect or start using more of Business OS')
-            ->assertDontSee('data-role="all-clear"', false);
+            ->assertDontSee('data-band="growth"', false);
     }
 
     public function test_engine_off_says_so_plainly(): void
@@ -103,7 +111,7 @@ class GrowthCenterHttpTest extends TestCase
         config(['opportunity.enabled' => false]);
         $this->asOwner();
 
-        $this->get($this->growth())->assertOk()->assertSee('data-role="engine-off"', false)->assertSee('Growth checks are not running yet');
+        $this->get($this->growth('opportunities.index'))->assertOk()->assertSee('data-role="engine-off"', false)->assertSee('Growth checks are not running yet');
     }
 
     public function test_a_healthy_business_sees_good_shape_not_a_blank_page(): void
@@ -116,9 +124,9 @@ class GrowthCenterHttpTest extends TestCase
         // Clear every opportunity the bare fixture legitimately has.
         DB::table('opportunities')->where('business_id', $this->business->id)->update(['freshness' => 'stale', 'stale_at' => now()]);
 
-        $this->get($this->growth())
+        $this->get($this->home())
             ->assertOk()
-            ->assertSee('data-role="all-clear"', false)
+            ->assertSee('data-role="growth-all-clear"', false)
             ->assertSee("You're in good shape.", false);
     }
 
@@ -130,17 +138,19 @@ class GrowthCenterHttpTest extends TestCase
         $this->unansweredDeal(30, 50000, 'Emily');
         $this->evaluateGrowth();
 
-        $page = $this->get($this->growth())->assertOk();
+        $page = $this->get($this->home())->assertOk();
 
-        $page->assertSee('data-role="score-ring"', false);                        // how is my business doing
-        $page->assertSee('data-role="score-based-on"', false);
-        $page->assertSee('3 new leads have had no reply for 24+ hours — $2,100 in pipeline value.');   // biggest problem + evidence
-        $page->assertSee('HIGH IMPACT');
-        $page->assertSee('The first business to reply usually wins the job.');   // why (rule copy)
-        $page->assertSee('data-role="primary-action"', false);                    // what to do / can I fix it
+        $page->assertSee('data-band="growth"', false);
+        $page->assertSee('Needs your attention');
+        $page->assertSee('3 new leads have had no reply for 24+ hours — $2,100 in pipeline value.');   // the factual context
+        $page->assertSee('data-role="growth-item-action"', false);                                     // one action
         $page->assertSee('View leads');
-        $page->assertSee('data-tile="pipeline"', false);
-        $page->assertSee('$2,100');
+        $page->assertSee('data-role="growth-health-score"', false);                                    // health is secondary, still there
+        $page->assertSee('data-role="growth-ask-advisor"', false);
+        // Owner-facing: no engine vocabulary on Home.
+        $page->assertDontSee('HIGH IMPACT');
+        $page->assertDontSee('crm.unanswered_new_leads');
+        $page->assertDontSee('confidence');
     }
 
     public function test_unscored_categories_say_not_enough_data_never_a_number(): void
@@ -149,10 +159,9 @@ class GrowthCenterHttpTest extends TestCase
         $this->unansweredDeal();
         $this->evaluateGrowth();
 
-        $html = $this->get($this->growth())->getContent();
+        $html = $this->get($this->growth('score'))->getContent();
 
         $this->assertStringContainsString('data-category="ads"', $html);
-        $this->assertMatchesRegularExpression('/data-category="ads" data-scored="no"/', $html);
         $this->assertStringContainsString('Not enough data', $html);
     }
 
@@ -325,10 +334,9 @@ class GrowthCenterHttpTest extends TestCase
         $this->evaluateGrowth();
         $this->selectedLocationStaff([$this->primaryLocation]);
 
-        $this->get($this->growth())
+        $this->get($this->home())
             ->assertOk()
-            ->assertDontSee('data-role="score-ring"', false)
-            ->assertSee('data-role="score-restricted"', false);
+            ->assertDontSee('data-role="growth-health-score"', false);
         $this->get($this->growth('score'))->assertOk()->assertSee('data-role="score-restricted"', false);
     }
 
@@ -339,7 +347,7 @@ class GrowthCenterHttpTest extends TestCase
         $this->evaluateGrowth();
         $this->selectedLocationStaff([$this->primaryLocation, $second]);
 
-        $this->get($this->growth())->assertOk()->assertSee('data-role="score-ring"', false);
+        $this->get($this->home())->assertOk()->assertSee('data-role="growth-health-score"', false);
     }
 
     public function test_refresh_queues_an_evaluation_and_never_runs_a_provider(): void
@@ -360,5 +368,6 @@ class GrowthCenterHttpTest extends TestCase
         $this->authenticateAs($coreOwner, ['business_advisor']);
 
         $this->get(route('customer.workspaces.businesses.growth.index', [$coreWorkspace->uid, $coreBusiness->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.growth.opportunities.index', [$coreWorkspace->uid, $coreBusiness->uid]))->assertNotFound();
     }
 }

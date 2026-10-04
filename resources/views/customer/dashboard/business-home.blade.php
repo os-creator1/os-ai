@@ -17,6 +17,12 @@
     @include('customer.dashboard.bands.billing-exception', ['exception' => $dashboard->band(DashboardSnapshot::BAND_BILLING_EXCEPTION)])
 @endif
 
+@if($dashboard->failed(DashboardSnapshot::BAND_GROWTH))
+    @include('customer.dashboard.band-failed', ['band' => 'growth', 'title' => 'Needs your attention'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_GROWTH))
+    @include('customer.dashboard.bands.growth', ['growth' => $dashboard->band(DashboardSnapshot::BAND_GROWTH)])
+@endif
+
 @if($dashboard->failed(DashboardSnapshot::BAND_ACTIVITY))
     @include('customer.dashboard.band-failed', ['band' => 'activity', 'title' => 'Business activity'])
 @elseif($dashboard->has(DashboardSnapshot::BAND_ACTIVITY))

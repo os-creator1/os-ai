@@ -36,7 +36,9 @@ use Illuminate\Support\Facades\DB;
  *   unsigned        sent, requires a signature, sent_at older than
  *                   proposal_unsigned_days, not expired. Value = version total.
  *   signed_unpaid   signed at least signed_unpaid_days ago, has pending items,
- *                   NONE of them overdue. Value = pending items.
+ *                   NONE of them overdue. Value = the pending items owed NOW
+ *                   (a Balance item still ahead of its due date is excluded:
+ *                   the scheduled balance request handles it).
  *   overdue         payable, with one or more pending items past due_at.
  *                   Value = the overdue items.
  *   failed_payment  payable, with a payment attempt that FAILED inside
@@ -90,7 +92,7 @@ final class GrowthDocumentFactReader implements GrowthFactReader
                 ->orWhere(fn ($q2) => $q2->where('d.status', 'sent')->where('d.requires_signature', false)))
             ->orderBy('d.id')
             ->limit(self::ROW_CAP)
-            ->get(['d.id as document_id', 'd.uid', 'd.business_location_id', 'd.signed_at', 'i.id as item_id', 'i.amount_minor', 'i.currency_code', 'i.due_at']);
+            ->get(['d.id as document_id', 'd.uid', 'd.business_location_id', 'd.signed_at', 'i.id as item_id', 'i.amount_minor', 'i.currency_code', 'i.due_at', 'i.kind']);
 
         $failedItemIds = DB::table('business_document_payments')
             ->where('business_id', $business->id)
@@ -135,12 +137,20 @@ final class GrowthDocumentFactReader implements GrowthFactReader
                 $bucket = $this->addToBucket($bucket, $uid, (int) $overdueItems->sum('amount_minor'), $first->currency_code);
                 $byLocation[$key]['overdue'] = $bucket;
             } elseif ($first->signed_at !== null && CarbonImmutable::parse($first->signed_at)->lte($signedBefore)) {
-                $byLocation[$key]['signed_unpaid'] = $this->addToBucket(
-                    $bucketFor($key, 'signed_unpaid'),
-                    $first->uid,
-                    (int) $items->sum('amount_minor'),
-                    $first->currency_code,
-                );
+                // A Balance item whose due date is still ahead is the schedule
+                // working as designed (the deposit is the thing owed now, and
+                // the automatic balance request goes out at the due date) —
+                // it is not "signed but unpaid".
+                $owedNow = $items->reject(fn ($i) => $i->kind === 'balance' && $i->due_at !== null && CarbonImmutable::parse($i->due_at)->gte($now));
+
+                if ($owedNow->isNotEmpty()) {
+                    $byLocation[$key]['signed_unpaid'] = $this->addToBucket(
+                        $bucketFor($key, 'signed_unpaid'),
+                        $first->uid,
+                        (int) $owedNow->sum('amount_minor'),
+                        $owedNow->first()->currency_code,
+                    );
+                }
             }
 
             $failed = $items->filter(fn ($i) => $failedItemIds->has($i->item_id));

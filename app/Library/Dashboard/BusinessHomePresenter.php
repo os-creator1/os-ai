@@ -21,6 +21,7 @@ use App\Library\Coo\NextBestMove;
 use App\Library\Coo\NextBestMoveSelector;
 use App\Library\Coo\SignalComparator;
 use App\Library\Coo\WhyThis;
+use App\Library\Growth\GrowthHomeBand;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Navigation\MenuEntitlements;
@@ -117,6 +118,7 @@ final class BusinessHomePresenter
         private readonly CooInsightDisplayReader $insights,
         private readonly CooContextEnvelopeFactory $envelopes,
         private readonly CooInsightExplainLimiter $explainLimiter,
+        private readonly GrowthHomeBand $growthHome,
     ) {
     }
 
@@ -230,6 +232,25 @@ final class BusinessHomePresenter
             }
         }
 
+        // 1a — Home = Growth Center: "Needs your attention", what is working and
+        // the business health score. It supersedes the next-best-move band
+        // below once the Growth engine has something (or "all good") to say.
+        $growthShown = false;
+
+        if ($entitlements->allows('ai_coo_basic') && Gate::forUser($user)->allows('business_advisor')) {
+            try {
+                $growth = $this->growthHome->build($business, (int) $user->id, $workspace->uid, $candidate->uid);
+
+                if ($growth['has_evaluation']) {
+                    $bands[DashboardSnapshot::BAND_GROWTH] = $growth;
+                    $growthShown = true;
+                }
+            } catch (Throwable $e) {
+                report($e);
+                $failed[] = DashboardSnapshot::BAND_GROWTH;
+            }
+        }
+
         // 1b — Business activity: what actually changed since this customer
         // last used this Business (§2.3). Absent on a first visit.
         try {
@@ -248,7 +269,9 @@ final class BusinessHomePresenter
         // status row (a real exception might be hidden) or, when this actor can
         // see conversations, without the waiting count — so either failing
         // degrades the band rather than claiming "all caught up".
-        if ($statusFailed || $awaitingFailed) {
+        if ($growthShown) {
+            // Superseded by the Growth band above — one recommendation voice.
+        } elseif ($statusFailed || $awaitingFailed) {
             $failed[] = DashboardSnapshot::BAND_NEXT_BEST_MOVE;
         } else {
             try {

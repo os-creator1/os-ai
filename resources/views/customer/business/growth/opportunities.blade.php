@@ -5,7 +5,7 @@
 --}}
 @extends('layouts/contentLayoutMaster')
 
-@section('title', 'Growth Center — Opportunities')
+@section('title', 'Recommendations')
 
 @section('page-style')
     @include('customer.business.growth._styles')
@@ -29,7 +29,7 @@
     @include('customer.business.growth._header')
 
     <div class="gc">
-        <div class="gc-chips" role="tablist" aria-label="Opportunity status" data-role="state-chips">
+        <div class="gc-chips" role="tablist" aria-label="Recommendation status" data-role="state-chips">
             @foreach($chips as $key => $label)
                 <a class="gc-chip @if($state === $key) is-active @endif" href="{{ $route(['state' => $key, 'page' => null]) }}" data-state-filter="{{ $key }}" @if($state === $key) aria-current="true" @endif>
                     {{ $label }} <small>{{ $stateCounts[$key] ?? 0 }}</small>

@@ -66,7 +66,7 @@ class GrowthViewAsAndAdvisorTest extends TestCase
         $this->authenticateAs($agency);
         $this->startViewAs($workspace, $client)->assertRedirect(route('user.home'));
 
-        $this->get($this->growthFor($workspace, $client))
+        $this->get(route('user.home'))
             ->assertOk()
             ->assertSee('1 new lead has had no reply for 24+ hours')
             ->assertSee('Viewed Client');
@@ -135,7 +135,7 @@ class GrowthViewAsAndAdvisorTest extends TestCase
         $this->evaluateGrowth();
         $this->authenticateAs($agency);
 
-        $this->get($this->growthFor($workspace, $own))->assertOk()->assertSee('data-role="score-ring"', false);
+        $this->get($this->growthFor($workspace, $own, 'opportunities.index'))->assertOk()->assertSee('Recommendations');
     }
 
     // ── Advisor ──────────────────────────────────────────────────────────

@@ -6,8 +6,8 @@
 @php
     $growthRoute = fn (string $name, array $extra = []) => route('customer.workspaces.businesses.growth.' . $name, array_merge([$workspaceUid, $businessUid], $extra));
     $tabs = [
-        'overview' => ['Overview', $growthRoute('index')],
-        'opportunities' => ['Opportunities', $growthRoute('opportunities.index')],
+        'overview' => ['Home', route('user.home')],
+        'opportunities' => ['Recommendations', $growthRoute('opportunities.index')],
         'score' => ['Score', $growthRoute('score')],
         'insights' => ['Insights', $growthRoute('insights')],
         'advisor' => ['Advisor', $growthRoute('advisor')],

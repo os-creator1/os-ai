@@ -28,6 +28,13 @@ final class DashboardSnapshot
     /** Unified Business Home §2.2 row 0 — one actionable billing exception. */
     public const BAND_BILLING_EXCEPTION = 'billing_exception';
 
+    /**
+     * Home = Growth Center — the top recommendations, what is working and the
+     * business health score. When it renders it REPLACES the next-best-move
+     * band (both read the same Opportunity Engine; one voice on Home).
+     */
+    public const BAND_GROWTH = 'growth';
+
     /** Unified Business Home §2.3 — what changed since this customer's last visit. */
     public const BAND_ACTIVITY = 'activity';
 

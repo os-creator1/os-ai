@@ -70,16 +70,16 @@ class GrowthCenterController extends CustomerBaseController
     ) {
     }
 
-    public function overview(string $workspaceUid, string $businessUid): View
+    /**
+     * Home IS the Growth Center now: the old overview is a permanent alias of
+     * Home, kept so existing links and bookmarks keep working. The gate chain
+     * still runs first, so an unentitled actor gets the same 404 as before.
+     */
+    public function overview(string $workspaceUid, string $businessUid): RedirectResponse
     {
-        [$workspace, $business, $viewer] = $this->context($workspaceUid, $businessUid);
+        $this->context($workspaceUid, $businessUid);
 
-        return view('customer.business.growth.overview', $this->shared($workspace, $business, $viewer, 'overview') + [
-            'summary' => $this->reader->summary($business, $viewer),
-            'top' => $this->presentAll($this->reader->top($business, $viewer, 5), $business, $workspaceUid, $businessUid),
-            'brief' => $this->brief->build($business, $viewer, $workspaceUid, $businessUid),
-            'categories' => $this->categoryCards($business, $viewer),
-        ]);
+        return redirect()->route('user.home');
     }
 
     public function opportunities(Request $request, string $workspaceUid, string $businessUid): View
@@ -310,7 +310,7 @@ class GrowthCenterController extends CustomerBaseController
 
         $this->trigger->triggerManual($business->id);
 
-        return redirect()->route('customer.workspaces.businesses.growth.index', [$workspaceUid, $businessUid])
+        return redirect()->route('user.home')
             ->with(['status' => 'success', 'message' => config('opportunity.enabled') ? 'Checking your business now.' : 'Growth checks are not switched on yet.']);
     }
 
