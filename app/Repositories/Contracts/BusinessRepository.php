@@ -37,6 +37,15 @@ interface BusinessRepository extends BaseRepository
     public function findPrimaryByCustomer(int $customerId): ?Business;
 
     /**
+     * Every Draft Business this customer owns, ascending by id. Onboarding
+     * uses it to find the Business a signup already provisioned, so that the
+     * wizard continues that Business instead of creating a second one.
+     *
+     * @return Collection<int, Business>
+     */
+    public function draftBusinessesForCustomer(int $customerId): Collection;
+
+    /**
      * The earliest Business ever created for this customer_id, by id — no
      * Workspace, primary, status or authorization filter. Used only as a
      * deterministic naming fallback (RFC-003 §10.5-equivalent tier 3), not

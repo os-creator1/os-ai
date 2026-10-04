@@ -235,6 +235,76 @@ class BusinessManager
     }
 
     /**
+     * RFC-001 §7.1/§32 — a finished onboarding is what activates the Draft
+     * Business it has been completing: the Business a paid V1 signup
+     * provisioned, or one the legacy wizard created.
+     *
+     * Called only by OnboardingManager::complete(), after every completion
+     * prerequisite (one primary Location, an active primary service, the
+     * initial analysis) has been proved. It is NOT a general "activate any
+     * Draft Business I own" shortcut, so it independently re-verifies under
+     * lock, in the established Workspace-then-Business order: the Workspace
+     * is active and still owned by this customer, it is NOT an
+     * Agency-managed Client Workspace (that Business keeps its own owner
+     * confirmation path, activateClientBusiness()), and the Business still
+     * belongs to that Workspace and customer.
+     *
+     * Idempotent: an already-Active Business is returned unchanged and
+     * dispatches nothing, so a replayed completion can never re-announce it.
+     *
+     * @throws WorkspaceAccessDeniedException the Workspace/Business does not belong to $customer, or is Agency-managed
+     * @throws RuntimeException the Business is neither Draft nor Active
+     */
+    public function activateForCompletedOnboarding(Customer $customer, Business $business): Business
+    {
+        $this->assertOwnership($customer, $business);
+
+        $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+        $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+        $expectedWorkspaceId = $business->workspace_id;
+
+        [$result, $changed] = DB::transaction(function () use ($customer, $business, $workspaceRepository, $relationshipRepository, $expectedWorkspaceId) {
+            $lockedWorkspace = $expectedWorkspaceId !== null ? $workspaceRepository->findForUpdate((int) $expectedWorkspaceId) : null;
+
+            if ($lockedWorkspace === null
+                || ! $lockedWorkspace->is_active
+                || (int) $lockedWorkspace->owner_user_id !== (int) $customer->user_id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($relationshipRepository->findActiveForClientWorkspaceForUpdate((int) $lockedWorkspace->id) !== null) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null
+                || (int) $locked->customer_id !== (int) $customer->user_id
+                || (int) $locked->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($locked->status === BusinessStatus::Active) {
+                return [$locked, false];
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                throw new RuntimeException(
+                    "Business [{$locked->id}] is not Draft (status: {$locked->status->value}); onboarding cannot activate it."
+                );
+            }
+
+            return [$this->businessRepository->updateStatus($locked, BusinessStatus::Active), true];
+        });
+
+        if ($changed) {
+            BusinessUpdated::dispatch($result->id, ['status', 'activated_at']);
+        }
+
+        return $result;
+    }
+
+    /**
      * Update an already-existing business. Always re-checks ownership.
      */
     public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
