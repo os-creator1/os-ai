@@ -21,6 +21,7 @@ use Illuminate\Console\Command;
  *                                   website templates, question packs
  *   5. blueprint:seed-photo-booth   the niche Blueprint (publishes as the owner)
  *   6. documents:seed-photo-booth-templates   its proposal/contract templates
+ *   7. blueprint:seed-photo-booth-v2   its full niche configuration (Niche Blueprint V2)
  *
  * Re-running is safe: migrate and the seeders are idempotent, an existing
  * administrator skips step 3, and the Blueprint commands no-op once published.
@@ -76,7 +77,7 @@ class PlatformInstallCommand extends Command
             return self::SUCCESS;
         }
 
-        foreach (['blueprint:seed-photo-booth', 'documents:seed-photo-booth-templates'] as $command) {
+        foreach (['blueprint:seed-photo-booth', 'documents:seed-photo-booth-templates', 'blueprint:seed-photo-booth-v2'] as $command) {
             if (! $this->runStep($command, [])) {
                 return self::FAILURE;
             }

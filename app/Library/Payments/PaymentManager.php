@@ -80,6 +80,8 @@ final class PaymentManager
      */
     public function start(PublicDocumentAccess $access, bool $retryAfterCancel = true): PaymentStartResult
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('payment');
+
         // ---- steps 1-13: local intent, committed, no network ------------
         [$payment, $connectionAccountId] = DB::transaction(function () use ($access) {
             // (2) document first — §7.0 tier 1.

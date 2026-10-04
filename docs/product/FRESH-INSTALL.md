@@ -17,6 +17,8 @@ It runs, in this order (the order is the part that used to be undocumented):
    theme presets, website templates, question packs, the Photo Booth questionnaire.
 5. `blueprint:seed-photo-booth` — publishes the niche Blueprint (as the owner).
 6. `documents:seed-photo-booth-templates` — the four proposal/contract templates.
+7. `blueprint:seed-photo-booth-v2` — the Photo Booth niche configuration (CRM, forms,
+   automations, website, SEO, citations, calendar, packages); see `NICHE-BLUEPRINT-V2.md`.
 
 Every step is idempotent; re-running `platform:install` is safe and stops with the
 failing command named if one step fails.

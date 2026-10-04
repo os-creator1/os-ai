@@ -78,6 +78,8 @@ final class StripeConnectManager
      */
     public function connect(int $actorUserId, Business $business, string $refreshUrl, string $returnUrl): string
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
         $business = $this->ownedBusiness($actorUserId, $business);
 
         // Cheap pre-check so the ordinary "already connected" case never
@@ -129,6 +131,8 @@ final class StripeConnectManager
      */
     public function resumeOnboarding(int $actorUserId, Business $business, string $refreshUrl, string $returnUrl): string
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('provider_oauth');
+
         $business = $this->ownedBusiness($actorUserId, $business);
         $connection = $this->liveConnection($business);
 

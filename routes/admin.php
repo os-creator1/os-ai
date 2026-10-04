@@ -951,6 +951,26 @@
                 Route::post('deactivate', 'NicheBlueprintController@deactivate')->name('deactivate')
                     ->missing(fn () => abort(404));
 
+                // Blueprint Workspace (Niche Blueprint V2). Every route runs under
+                // EnterBlueprintMode (Blueprint Safety Mode): nothing reached from
+                // here may send, charge, connect a provider or publish for real.
+                Route::prefix('workspace')->name('workspace.')
+                    ->middleware(\App\Http\Middleware\EnterBlueprintMode::class)
+                    ->group(function () {
+                        Route::post('enter', 'NicheBlueprintWorkspaceController@enter')->name('enter')->missing(fn () => abort(404));
+                        Route::post('save', 'NicheBlueprintWorkspaceController@saveDraft')->name('save')->missing(fn () => abort(404));
+                        Route::post('publish', 'NicheBlueprintWorkspaceController@publish')->name('publish')->missing(fn () => abort(404));
+                        Route::post('exit', 'NicheBlueprintWorkspaceController@exit')->name('exit')->missing(fn () => abort(404));
+                        Route::get('{surface?}', 'NicheBlueprintWorkspaceController@show')->name('show')
+                            ->where('surface', '[a-z]+')->missing(fn () => abort(404));
+                        Route::post('{surface}/components', 'NicheBlueprintWorkspaceController@storeComponent')->name('components.store')
+                            ->where('surface', '[a-z]+')->missing(fn () => abort(404));
+                        Route::patch('{surface}/components/{component}', 'NicheBlueprintWorkspaceController@updateComponent')->name('components.update')
+                            ->where('surface', '[a-z]+')->whereNumber('component')->missing(fn () => abort(404));
+                        Route::delete('{surface}/components/{component}', 'NicheBlueprintWorkspaceController@destroyComponent')->name('components.destroy')
+                            ->where('surface', '[a-z]+')->whereNumber('component')->missing(fn () => abort(404));
+                    });
+
                 Route::post('versions', 'NicheBlueprintController@storeVersion')->name('versions.store')
                     ->missing(fn () => abort(404));
 

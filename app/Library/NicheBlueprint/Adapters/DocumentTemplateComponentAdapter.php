@@ -2,6 +2,7 @@
 
 namespace App\Library\NicheBlueprint\Adapters;
 
+use App\Enums\NicheBlueprint\BlueprintUpdatePolicy;
 use App\Models\Business;
 use App\Models\DocumentTemplate;
 use Illuminate\Support\Str;
@@ -35,7 +36,7 @@ use InvalidArgumentException;
  * template's status is deliberately NOT checked: disabling a template takes
  * effect immediately for recommendations regardless of blueprint versions.
  */
-final class DocumentTemplateComponentAdapter implements BlueprintComponentAdapter
+final class DocumentTemplateComponentAdapter implements BlueprintComponentAdapter, BlueprintComponentDefinition
 {
     public const TYPE = 'document_template';
 
@@ -50,6 +51,7 @@ final class DocumentTemplateComponentAdapter implements BlueprintComponentAdapte
     public function validateDescriptor(array $payload): void
     {
         $this->platformTemplate($payload);
+        $this->paymentTerms($payload);
 
         $label = $payload['label'] ?? null;
 
@@ -82,5 +84,127 @@ final class DocumentTemplateComponentAdapter implements BlueprintComponentAdapte
             ->whereNull('business_id')
             ->first()
             ?? throw new InvalidArgumentException('A document_template component must reference an existing platform template.');
+    }
+
+    /**
+     * Payment-term DEFAULTS recorded beside the template recommendation:
+     * deposit percent and balance-due offset. Guidance read through
+     * BlueprintConfigReader; never applied to an invoice or payment.
+     *
+     * @return array{deposit_percent: ?int, balance_due_days_before_event: ?int, note: ?string}|null
+     */
+    private function paymentTerms(array $payload): ?array
+    {
+        $terms = $payload['payment_terms'] ?? null;
+
+        if ($terms === null) {
+            return null;
+        }
+
+        if (! is_array($terms)) {
+            throw new InvalidArgumentException('"payment_terms" must be an object.');
+        }
+
+        foreach (['deposit_percent' => 100, 'balance_due_days_before_event' => 365] as $key => $max) {
+            $v = $terms[$key] ?? null;
+
+            if ($v !== null && (! is_int($v) || $v < 0 || $v > $max)) {
+                throw new InvalidArgumentException("\"payment_terms.{$key}\" must be a whole number from 0 to {$max}.");
+            }
+        }
+
+        $note = $terms['note'] ?? null;
+
+        if ($note !== null && (! is_string($note) || mb_strlen($note) > 500)) {
+            throw new InvalidArgumentException('"payment_terms.note" must be text of at most 500 characters.');
+        }
+
+        return [
+            'deposit_percent' => $terms['deposit_percent'] ?? null,
+            'balance_due_days_before_event' => $terms['balance_due_days_before_event'] ?? null,
+            'note' => $note,
+        ];
+    }
+
+    public function surface(): string
+    {
+        return 'documents';
+    }
+
+    public function updatePolicy(): BlueprintUpdatePolicy
+    {
+        return BlueprintUpdatePolicy::Live;
+    }
+
+    public function featureKey(): string
+    {
+        return self::FEATURE_KEY;
+    }
+
+    public function typeLabel(): string
+    {
+        return 'Proposal / contract template';
+    }
+
+    public function summary(array $payload): string
+    {
+        $template = DocumentTemplate::query()->where('uid', $payload['template_uid'] ?? '')->whereNull('business_id')->first();
+
+        return ($template->name ?? 'Unknown template').(isset($payload['payment_terms']['deposit_percent'])
+            ? ' · '.$payload['payment_terms']['deposit_percent'].'% deposit' : '');
+    }
+
+    public function formFields(): array
+    {
+        $templates = DocumentTemplate::query()->whereNull('business_id')->orderBy('name')->get()
+            ->mapWithKeys(fn ($t) => [(string) $t->uid => (string) $t->name.' ('.($t->template_type->value ?? $t->template_type).')'])->all();
+
+        return [
+            ['name' => 'template_uid', 'label' => 'Platform template', 'type' => 'select', 'required' => true, 'options' => $templates],
+            ['name' => 'label', 'label' => 'Label (optional)', 'type' => 'text', 'required' => false],
+            ['name' => 'deposit_percent', 'label' => 'Default deposit %', 'type' => 'number', 'required' => false],
+            ['name' => 'balance_due_days_before_event', 'label' => 'Balance due (days before event)', 'type' => 'number', 'required' => false],
+            ['name' => 'payment_note', 'label' => 'Payment terms note', 'type' => 'text', 'required' => false],
+        ];
+    }
+
+    public function payloadFromInput(array $input): array
+    {
+        $payload = ['template_uid' => trim((string) ($input['template_uid'] ?? ''))];
+
+        if (trim((string) ($input['label'] ?? '')) !== '') {
+            $payload['label'] = trim((string) $input['label']);
+        }
+
+        $terms = [];
+
+        foreach (['deposit_percent', 'balance_due_days_before_event'] as $key) {
+            if (trim((string) ($input[$key] ?? '')) !== '') {
+                $terms[$key] = (int) $input[$key];
+            }
+        }
+
+        if (trim((string) ($input['payment_note'] ?? '')) !== '') {
+            $terms['note'] = trim((string) $input['payment_note']);
+        }
+
+        if ($terms !== []) {
+            $payload['payment_terms'] = $terms;
+        }
+
+        $this->validateDescriptor($payload);
+
+        return $payload;
+    }
+
+    public function inputFromPayload(array $payload): array
+    {
+        return [
+            'template_uid' => $payload['template_uid'] ?? '',
+            'label' => $payload['label'] ?? '',
+            'deposit_percent' => $payload['payment_terms']['deposit_percent'] ?? '',
+            'balance_due_days_before_event' => $payload['payment_terms']['balance_due_days_before_event'] ?? '',
+            'payment_note' => $payload['payment_terms']['note'] ?? '',
+        ];
     }
 }
