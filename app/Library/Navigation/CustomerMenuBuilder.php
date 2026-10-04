@@ -324,6 +324,16 @@ final class CustomerMenuBuilder
         $items[] = $this->entitled('payments_contracts', $this->item($user, 'payments_contracts', 'Payments & Contracts', 'file-text', ['payments_contracts'], 'customer.workspaces.businesses.documents.index', $scoped, $current, [
             'customer.workspaces.businesses.documents.',
         ]));
+        // Growth — the Growth Center (what is holding growth back, the evidence,
+        // and what to do). One entry, no children: its Overview / Opportunities /
+        // Score / Insights live as tabs inside the page. Offered exactly when the
+        // AI COO entitlement (which the Opportunity Engine sits behind) and the
+        // `business_advisor` capability both let the actor in. Visibility is
+        // NEVER authorization — every Growth route re-runs the full chain. It is
+        // deliberately not named "Opportunities": that label is the CRM deal board.
+        $items[] = $this->entitled('ai_coo_basic', $this->item($user, 'growth', 'Growth', 'trending-up', ['business_advisor'], 'customer.workspaces.businesses.growth.index', $scoped, $current, [
+            'customer.workspaces.businesses.growth.',
+        ]));
         $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',
         ]);

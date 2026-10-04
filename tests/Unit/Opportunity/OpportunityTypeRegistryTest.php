@@ -42,7 +42,13 @@ class OpportunityTypeRegistryTest extends TestCase
             $this->assertNull(OpportunityTypeRegistry::get(OpportunityWorkerKey::Seo->value, $type));
         }
 
-        $this->assertSame([], OpportunityTypeRegistry::forWorker(OpportunityWorkerKey::Seo->value));
+        // Growth Center lane: the seo worker now owns the Growth SEO rules (and
+        // only those); a worker that owns no rules still has no types.
+        $this->assertSame(
+            array_keys(\App\Library\Growth\GrowthRuleRegistry::typeDefinitionsFor(OpportunityWorkerKey::Seo->value)),
+            array_keys(OpportunityTypeRegistry::forWorker(OpportunityWorkerKey::Seo->value)),
+        );
+        $this->assertSame([], OpportunityTypeRegistry::forWorker(OpportunityWorkerKey::Content->value));
     }
 
     public function test_evidence_summary_templates_cover_every_required_fact_key(): void
