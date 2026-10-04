@@ -15,6 +15,11 @@
                 @endif
             </div>
 
+            <div class="col-12 mb-2" data-payment-provider-status>
+                <strong>Payment provider</strong>
+                <div>{{ $paymentProviderStatus }}</div>
+            </div>
+
             <div class="col-12">
                 <x-card title="Additional Business Slot Agreements">
                     @if ($agreements->isEmpty())

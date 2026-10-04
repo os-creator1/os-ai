@@ -19,6 +19,7 @@ use App\Http\Requests\Admin\ResumeBusinessWalletBillingRequest;
 use App\Http\Requests\Admin\RetryFundingAttemptAsAdministratorRequest;
 use App\Http\Requests\Admin\SetPlatformFeatureUsageSafetyLimitRequest;
 use App\Http\Requests\Admin\SuspendBusinessWalletBillingRequest;
+use App\Library\Usage\PaymentProviderConfigurationStatus;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
@@ -191,6 +192,7 @@ class UsageBillingController extends AdminBaseController
     public function safetyLimits(): View
     {
         return view('admin.usage-billing.safety-limits.index', [
+            'paymentProviderStatus' => PaymentProviderConfigurationStatus::label(),
             'safetyLimits' => $this->safetyLimitRepository->all(),
             'history' => $this->limitTransitionRepository->recentPlatformSafetyLimitHistory(),
             'breadcrumbs' => [
