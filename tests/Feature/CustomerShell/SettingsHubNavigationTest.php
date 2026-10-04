@@ -65,8 +65,8 @@ class SettingsHubNavigationTest extends TestCase
             $sidebar = $this->sidebarHtml($html);
             $keys = $this->menuKeys($html);
 
-            // Opportunities (the CRM sales board) sits directly after Contacts.
-            $expected = ['home', 'conversations', 'contacts', 'opportunities', 'automations', 'website', 'packages_products', 'analytics', 'settings'];
+            // V1 Master Product Blueprint §7 order; Results is not a top-level entry.
+            $expected = ['home', 'opportunities', 'contacts', 'conversations', 'automations', 'website', 'packages_products', 'settings'];
             if ($tier === WorkspacePlanTier::Growth) {
                 array_splice($expected, 6, 0, ['gbp']);
             }

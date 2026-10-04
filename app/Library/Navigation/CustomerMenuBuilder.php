@@ -238,13 +238,32 @@ final class CustomerMenuBuilder
 
         $items = [];
 
-        $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home']);
+        $items[] = $this->item($user, 'home', 'Home', 'home', ['access_backend'], 'user.home', [], $current, ['user.home', 'customer.workspaces.businesses.analytics.', 'customer.analytics.']);
+
+        // Results is not a top-level Business entry (V1 Master Product Blueprint §7):
+        // Home's "See details" opens it, and it keeps Home lit while the owner is there.
+        // Its routes, controller and permission (`view_reports`) are unchanged.
 
         // No separate Advisor entry (owner decision): the Business Home already
         // carries the next best move and the way into its recommendations, and
         // customer-facing Opportunities belong to the CRM sales module. Two
         // primary modules for one idea would confuse. The Advisor's routes,
         // pages and Home links are untouched — only the sidebar entry went.
+
+        // Opportunities — the CRM sales board of the selected Business
+        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
+        // Business frame only: an Agency reaches it after choosing a client
+        // Business. Offered exactly when the CRM boundary would let the actor
+        // in — the `crm` entitlement and the board's own read permission.
+        $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
+            'customer.workspaces.businesses.crm.',
+        ]));
+
+        // Contacts opens the people first ("All contacts"); groups are its
+        // secondary tab and keep the entry active too.
+        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
+            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
+        ]);
 
         // Conversations — ONE destination, the selected Business's own
         // conversations (owner decision: no "Messages → Inbox" group around a
@@ -257,21 +276,6 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.conversations.',
         ]));
 
-        // Contacts opens the people first ("All contacts"); groups are its
-        // secondary tab and keep the entry active too.
-        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
-            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
-        ]);
-
-        // Opportunities — the CRM sales board of the selected Business
-        // (App\Library\Crm; NOT the AI COO Advisor, which has no sidebar entry).
-        // Business frame only: an Agency reaches it after choosing a client
-        // Business. Offered exactly when the CRM boundary would let the actor
-        // in — the `crm` entitlement and the board's own read permission.
-        $items[] = $this->entitled('crm', $this->item($user, 'opportunities', 'Opportunities', 'kanban', [CrmOpportunitiesController::VIEW_PERMISSION], 'customer.workspaces.businesses.crm.board', $scoped, $current, [
-            'customer.workspaces.businesses.crm.',
-        ]));
-
         // Calendar — the authenticated day/week schedule (Contract 15 §12.D). Offered
         // only when the Business is entitled to it; while PlatformFeature::Calendar is
         // Planned that answer is always no, so the entry is absent. The route behind it
@@ -279,6 +283,22 @@ final class CustomerMenuBuilder
         $items[] = $this->entitled('calendar', $this->item($user, 'calendar', 'Calendar', 'calendar', ['access_backend'], 'customer.workspaces.businesses.calendar.index', $scoped, $current, [
             'customer.workspaces.businesses.calendar.',
         ]));
+
+        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [
+            'customer.workspaces.businesses.automations.', 'customer.automations.',
+        ]));
+
+        $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
+            'customer.workspaces.businesses.website.', 'customer.website.',
+        ]));
+
+        // SEO — one parent entry, folding in the existing "Get found" (GBP)
+        // page (Contract 18 §14.2, Sub-slice H). The GBP entry is REMOVED as
+        // a standalone top-level item and re-offered as this group's child,
+        // at the same route/URL it always had (§8.7 of the contract: "GBP
+        // routes keep their names and URLs"). Each child is independently
+        // entitled — the parent showing is never proof a given child does.
+        $items[] = $this->seoMenuItem($user, $scoped, $current);
 
         // Forms — the standalone Forms / Questionnaires product (Forms V1). Its
         // own top-level entry, independent of whether the Business uses the
@@ -291,19 +311,6 @@ final class CustomerMenuBuilder
             'customer.workspaces.businesses.forms.',
         ]));
 
-        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.workflows.index', $scoped, $current, [
-            'customer.workspaces.businesses.automations.', 'customer.automations.',
-        ]));
-        $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
-            'customer.workspaces.businesses.website.', 'customer.website.',
-        ]));
-        // SEO — one parent entry, folding in the existing "Get found" (GBP)
-        // page (Contract 18 §14.2, Sub-slice H). The GBP entry is REMOVED as
-        // a standalone top-level item and re-offered as this group's child,
-        // at the same route/URL it always had (§8.7 of the contract: "GBP
-        // routes keep their names and URLs"). Each child is independently
-        // entitled — the parent showing is never proof a given child does.
-        $items[] = $this->seoMenuItem($user, $scoped, $current);
         // Packages & Products — the Business-wide catalog (Contract 16 §12.E).
         // Offered exactly when the catalog boundary would let the actor in on
         // the first two gates: the `packages_products` capability (item()) and
@@ -324,9 +331,6 @@ final class CustomerMenuBuilder
         $items[] = $this->entitled('payments_contracts', $this->item($user, 'payments_contracts', 'Payments & Contracts', 'file-text', ['payments_contracts'], 'customer.workspaces.businesses.documents.index', $scoped, $current, [
             'customer.workspaces.businesses.documents.',
         ]));
-        $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
-            'customer.workspaces.businesses.analytics.', 'customer.analytics.',
-        ]);
 
         // Settings — ONE destination (owner decision). Nothing expands under it
         // in the sidebar: it opens the Settings hub, a page of cards for the

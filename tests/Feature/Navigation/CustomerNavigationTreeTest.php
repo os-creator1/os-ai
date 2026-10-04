@@ -60,7 +60,7 @@ class CustomerNavigationTreeTest extends TestCase
 
         // Contract 18 §5.1 — seo_basic_visibility is Core+Growth+Agency, so
         // the SEO entry (Overview, Search keywords) is offered even here.
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
@@ -101,6 +101,23 @@ class CustomerNavigationTreeTest extends TestCase
         $this->assertStringContainsString('href="' . route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]) . '"', $hub);
     }
 
+    public function test_the_business_sidebar_reads_in_blueprint_order_and_carries_no_results_entry(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $keys = $this->menuKeys($this->home()->assertOk()->getContent());
+
+        // V1 Master Product Blueprint §7, in order, for the entries this
+        // Growth fixture is entitled to (Calendar/Payments & Contracts are
+        // asserted by their own suites). Results is reached from Home.
+        $blueprint = ['home', 'opportunities', 'contacts', 'conversations', 'calendar', 'automations', 'website', 'seo', 'forms', 'packages_products', 'payments_contracts', 'settings'];
+        $shown = array_values(array_intersect($keys, $blueprint));
+
+        $this->assertSame(array_values(array_intersect($blueprint, $keys)), $shown, 'The sidebar follows the Blueprint top-level order.');
+        $this->assertNotContains('analytics', $keys, 'Results is not a top-level Business entry.');
+    }
+
     public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
@@ -109,7 +126,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'conversations', 'contacts', 'automations', 'website', 'seo', 'gbp', 'seo-audit', 'seo-citations', 'seo-reviews', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
         }
 
@@ -163,7 +180,7 @@ class CustomerNavigationTreeTest extends TestCase
         $conversations = array_search('conversations', $keys, true);
 
         $this->assertNotFalse($conversations);
-        $this->assertSame('contacts', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations.');
+        $this->assertSame('calendar', $keys[$conversations + 1] ?? null, 'Nothing nested under Conversations; Calendar follows it.');
         $this->assertDoesNotMatchRegularExpression('/<li class="[^"]*has-sub[^"]*" data-nav-key="conversations"/', $this->sidebarHtml($html));
     }
 
@@ -172,7 +189,7 @@ class CustomerNavigationTreeTest extends TestCase
     // =================================================================
 
     /**
-     * Opportunities sits directly after Contacts and before Automations, and
+     * Opportunities sits directly after Home and before Contacts, and
      * opens the SELECTED Business's CRM board. Advisor stays absent even with
      * the Opportunity (AI COO) engine switched on.
      */
@@ -189,8 +206,8 @@ class CustomerNavigationTreeTest extends TestCase
             $position = array_search('opportunities', $keys, true);
 
             $this->assertNotFalse($position, "[{$tier->value}] offers Opportunities.");
-            $this->assertSame('contacts', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Contacts.");
-            $this->assertSame('automations', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Automations.");
+            $this->assertSame('home', $keys[$position - 1] ?? null, "[{$tier->value}] Opportunities comes directly after Home.");
+            $this->assertSame('contacts', $keys[$position + 1] ?? null, "[{$tier->value}] and directly before Contacts.");
             $this->assertContains(route('customer.workspaces.businesses.crm.board', [$workspace->uid, $business->uid]), $this->menuLinks($html));
             $this->assertNotContains('advisor', $keys, "[{$tier->value}] Advisor stays out of the Business sidebar.");
 
