@@ -170,6 +170,35 @@ class PlatformAnnouncementTest extends TestCase
         $this->assertSame('expired', $announcement->fresh()->status);
     }
 
+    public function test_the_banner_disappears_the_moment_it_expires_without_waiting_for_the_sweep_and_the_feed_agrees(): void
+    {
+        [$a] = $this->tenant(WorkspacePlanTier::Growth, 'A Biz', 'A WS');
+        $announcement = $this->manager()->publishNow($this->announcement(['channels' => ['banner'], 'expires_at' => now()->addMinutes(10)]));
+        $this->deliverAll($announcement);
+        $this->authenticateAs($a);
+
+        $this->assertCount(1, $this->getJson(route('customer.platform-notices.feed'))->json('banners'));
+
+        Carbon::setTestNow(now()->addMinutes(11));   // expiry passes; no sweep has run
+
+        $this->assertSame('published', $announcement->fresh()->status, 'the sweep has not touched it');
+        $this->assertCount(0, $this->manager()->bannersFor($a->user));
+        $this->assertSame([], $this->getJson(route('customer.platform-notices.feed'))->json('banners'));
+    }
+
+    public function test_cancelling_removes_the_banner_from_the_next_feed_read(): void
+    {
+        [$a] = $this->tenant(WorkspacePlanTier::Growth, 'A Biz', 'A WS');
+        $announcement = $this->manager()->publishNow($this->announcement(['channels' => ['banner']]));
+        $this->deliverAll($announcement);
+        $this->authenticateAs($a);
+        $this->assertCount(1, $this->getJson(route('customer.platform-notices.feed'))->json('banners'));
+
+        $this->manager()->cancel($announcement);
+
+        $this->assertSame([], $this->getJson(route('customer.platform-notices.feed'))->json('banners'));
+    }
+
     public function test_a_scheduled_announcement_publishes_when_due_and_not_before(): void
     {
         $this->tenant(WorkspacePlanTier::Core, 'Core Biz', 'Core WS');

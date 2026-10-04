@@ -27,6 +27,12 @@ final class PlatformTarget
         return new self(PlatformTargetType::User, $userId, null, null, $userId);
     }
 
+    /** A team member in one Workspace: the run targets the user and also carries the Workspace. */
+    public static function member(int $userId, int $workspaceId): self
+    {
+        return new self(PlatformTargetType::User, $userId, $workspaceId, null, $userId);
+    }
+
     public static function workspace(int $workspaceId, ?int $subscriptionId = null): self
     {
         return new self($subscriptionId !== null ? PlatformTargetType::Subscription : PlatformTargetType::Workspace,

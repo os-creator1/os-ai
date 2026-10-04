@@ -355,6 +355,9 @@ final class MetaAdsConnectionManager
             'failure_classification' => $exception->classification,
         ], static fn ($value): bool => $value !== false));
 
+        // The single seam where a Meta connection becomes unusable: raise "reconnect required" once.
+        \App\Events\Provider\ProviderReconnectionRequired::dispatch((int) $connection->business_id, 'meta_ads', $revoked ? 'revoked' : 'expired');
+
         $operation = $this->ledger->open(
             businessId: (int) $connection->business_id,
             type: MetaOperationType::TokenExpired,

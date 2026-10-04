@@ -107,6 +107,9 @@ class ClientInvitationManager
                 'expires_at' => now()->addDays((int) config('workspace.client_invitation_ttl_days')),
             ]);
 
+            // The single writer of invitations raises the single "invitation created" fact, after commit.
+            DB::afterCommit(fn () => \App\Events\Workspace\ClientInvitationCreated::dispatch((int) $invitation->id, (int) $lockedAgencyWorkspace->id));
+
             return [$invitation, $normalizedEmail, $lockedAgencyWorkspace->name];
         });
 

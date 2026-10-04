@@ -28,6 +28,8 @@ final class PlatformAutomationCatalog
         'subscription_status' => ['label' => 'Subscription status', 'type' => 'text'],
         'workspace_active' => ['label' => 'Workspace is active', 'type' => 'select', 'options' => ['yes', 'no']],
         'to_status' => ['label' => 'New status (wallet / plan events)', 'type' => 'text'],
+        'reason' => ['label' => 'Spend-limit reason', 'type' => 'select', 'options' => ['business_spend_cap', 'workspace_spend_cap', 'insufficient_balance']],
+        'new_role' => ['label' => 'New role (membership)', 'type' => 'text'],
     ];
 
     public const OPERATORS = ['eq' => 'is', 'neq' => 'is not', 'in' => 'is one of'];
@@ -48,11 +50,20 @@ final class PlatformAutomationCatalog
                 'hours' => ['Hours after registration', 'number', true, null, 24],
             ], 'Checked every 15 minutes; fires once per user.'),
             'user.password_reset_completed' => self::t('Password reset completed', 'User / identity', $u),
+            'user.account_disabled' => self::t('User account disabled (suspended)', 'User / identity', $u),
+            'user.account_enabled' => self::t('User account enabled (reactivated)', 'User / identity', $u),
+            'membership.role_changed' => self::t('Team member role changed', 'User / identity', $u, [], 'The run targets the member; their Workspace is available to recipients and merge fields. Use the condition "New role" to narrow it.', ['workspace']),
+            'membership.deactivated' => self::t('Team member deactivated in a Workspace', 'User / identity', $u, [], '', ['workspace']),
+            'membership.reactivated' => self::t('Team member reactivated in a Workspace', 'User / identity', $u, [], '', ['workspace']),
+            'invitation.created' => self::t('Agency client invitation created', 'User / identity', $w, [], 'Targets the inviting Agency Workspace.'),
+            'invitation.expired' => self::t('Agency client invitation expired unaccepted', 'User / identity', $w, [], 'Checked every 15 minutes against invitation expiry; fires once per invitation.'),
             // WORKSPACE / BUSINESS
             'workspace.created' => self::t('Workspace created', 'Workspace / Business', $w),
             'business.created' => self::t('Business created', 'Workspace / Business', $b),
             'workspace.suspended' => self::t('Workspace deactivated', 'Workspace / Business', $w),
             'workspace.reactivated' => self::t('Workspace reactivated', 'Workspace / Business', $w),
+            'business.suspended' => self::t('Business deactivated', 'Workspace / Business', $b),
+            'business.reactivated' => self::t('Business reactivated', 'Workspace / Business', $b),
             'business.onboarding_incomplete' => self::t('Business onboarding incomplete', 'Workspace / Business', $b, [
                 'hours' => ['Hours after the Business was created', 'number', true, null, 24],
             ], 'Checked every 15 minutes; fires once per Business.'),
@@ -69,13 +80,20 @@ final class PlatformAutomationCatalog
             'subscription.payment_recovered' => self::t('Payment recovered (access restored)', 'Subscription / billing', $w),
             'subscription.locked' => self::t('Account locked for non-payment', 'Subscription / billing', $w),
             'usage.funding_failed' => self::t('Wallet funding / auto-recharge failed', 'Subscription / billing', $b),
+            'usage.wallet_low' => self::t('Wallet balance low', 'Subscription / billing', $b, [], 'Fires once per low-balance episode, from the same marker that emails the billing contact.'),
+            'usage.spend_limit_reached' => self::t('Spending limit reached (spend refused)', 'Subscription / billing', $b, [], 'The hard-cap moment: a spend was refused by a spend cap or an empty balance. Once per period. The condition "Spend-limit reason" narrows it.'),
+            'usage.auto_recharge_failed' => self::t('Auto-recharge failed', 'Subscription / billing', $b),
             'usage.wallet_status_changed' => self::t('Wallet billing status changed', 'Subscription / billing', $b, [], 'Use the condition "New status" to narrow it (for example a low or blocked wallet).'),
             // PRODUCT
+            'product.first_lead' => self::t('First lead (opportunity) created', 'Product', $b, [], 'Fires only for a Business whose first opportunity this is.'),
+            'product.first_booking' => self::t('First booking made', 'Product', $b, [], 'Fires only for a Business whose first appointment this is.'),
+            'product.first_proposal' => self::t('First proposal sent', 'Product', $b, [], 'Fires only for a Business whose first proposal this is.'),
+            'product.first_payment' => self::t('First payment received', 'Product', $b, [], 'Fires only for a Business whose first successful document payment this is.'),
             'product.website_published' => self::t('Website published', 'Product', $b),
             'product.provider_connected' => self::t('Google Business Profile connected', 'Product', $b),
             'product.provider_disconnected' => self::t('Google Business Profile disconnected', 'Product', $b),
             // PLATFORM OPERATIONS
-            'provider.reconnection_required' => self::t('A provider connection was revoked and needs reconnecting', 'Platform operations', $b),
+            'provider.reconnection_required' => self::t('A provider connection (Google Business Profile, Google Ads, Meta Ads) needs reconnecting', 'Platform operations', $b),
             'ops.repeated_job_failures' => self::t('Repeated queue / job failures', 'Platform operations', $p, [
                 'threshold' => ['Failed jobs', 'number', true, null, 10],
                 'window_minutes' => ['Within minutes', 'number', true, null, 60],
@@ -93,11 +111,9 @@ final class PlatformAutomationCatalog
     {
         return [
             'Password reset requested' => 'No domain event exists for a reset link being requested.',
-            'User invited / invitation expired' => 'There is no invitation ledger to read an invite or its expiry from.',
-            'User suspended / reactivated / role changed' => 'No canonical user-level suspension event exists; Workspace deactivation is available instead.',
             'Subscription cancelled' => 'No cancellation event is raised outside the provider webhook yet.',
-            'Usage warning / hard cap reached' => 'Usage caps are enforced at spend time; no threshold event is raised.',
-            'First lead / booking / proposal / payment' => 'There is no first-occurrence ledger to detect "first".',
+            'Usage warning threshold' => 'There is no warning-threshold setting to cross: the real signals are Wallet balance low and Spending limit reached.',
+            'First Website generated' => 'Generation completion raises no event; Website published is available.',
             'Unusual usage / account requires review' => 'No anomaly signal exists to trigger from.',
         ];
     }
@@ -153,6 +169,11 @@ final class PlatformAutomationCatalog
             'restore_workspace_access' => self::a('Restore Workspace access', 'Account state', PlatformSafetyClass::AccountState, [
                 'reason' => ['Reason (recorded in the audit trail)', 'text', true],
             ]),
+            'set_feature_override' => self::a('Allow or deny a feature for the Workspace', 'Entitlement', PlatformSafetyClass::Entitlement, [
+                'feature' => ['Feature', 'select', true, self::featureOptions()],
+                'state' => ['Override', 'select', true, ['allow' => 'Allow (grant even if the plan does not include it)', 'deny' => 'Deny (withhold even if the plan includes it)'], 'allow'],
+                'reason' => ['Reason (recorded in the audit trail)', 'text', true],
+            ], 'Runs only after a Platform Owner approves, through the canonical entitlement override authority. It never changes the plan; an Allow is refused for a feature that is not yet available.'),
             'change_plan' => self::a('Change the Workspace plan', 'Billing', PlatformSafetyClass::Billing, [
                 'tier' => ['New tier', 'select', true, ['core' => 'Core', 'growth' => 'Growth', 'agency' => 'Agency'], 'core'],
                 'reason' => ['Reason (recorded in the audit trail)', 'text', true],
@@ -164,7 +185,6 @@ final class PlatformAutomationCatalog
     public static function unavailableActions(): array
     {
         return [
-            'Enable / disable a feature for an account' => 'ENTITLEMENT actions need a per-account override flow with its own approval record; not wired in V1.',
             'Revoke sessions / force password reset on next login' => 'Sessions are file-backed and there is no force-reset flag on users.',
         ];
     }
@@ -175,9 +195,22 @@ final class PlatformAutomationCatalog
         return PlatformAutomationRecipes::all();
     }
 
-    private static function t(string $label, string $group, string $target, array $params = [], string $help = ''): array
+    /** @param list<string> $also other target types the run ALSO carries (a member run carries its Workspace) */
+    private static function t(string $label, string $group, string $target, array $params = [], string $help = '', array $also = []): array
     {
-        return ['label' => $label, 'group' => $group, 'target' => $target, 'params' => $params, 'help' => $help, 'available' => true];
+        return ['label' => $label, 'group' => $group, 'target' => $target, 'also' => $also, 'params' => $params, 'help' => $help, 'available' => true];
+    }
+
+    /** @return array<string, string> every known feature key, from the canonical enum */
+    private static function featureOptions(): array
+    {
+        $options = [];
+        foreach (\App\Enums\Entitlement\PlatformFeature::cases() as $feature) {
+            $options[$feature->value] = $feature->value;
+        }
+        ksort($options);
+
+        return $options;
     }
 
     private static function a(string $label, string $group, PlatformSafetyClass $class, array $params, string $help = ''): array
