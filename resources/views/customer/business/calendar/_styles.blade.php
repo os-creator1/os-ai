@@ -253,8 +253,106 @@
         filter: brightness(0.97);
     }
 
+    /* FullCalendar's stylesheet paints every event's text white
+       (--fc-event-text-color) — unreadable on the pale status colours below.
+       Inherit the status rule's own text colour instead. */
     #calendar-grid .fc-event .fc-event-main {
         padding: 2px 4px;
+        color: inherit;
+    }
+
+    /* Event content (see eventContent in _scripts.blade.php): start–end time
+       first, then the title. The box height is the appointment's true
+       duration; only the content adapts to a short one. */
+    #calendar-grid .calendar-event-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+        line-height: 1.2;
+    }
+
+    #calendar-grid .calendar-event-time {
+        flex: none;
+        font-size: .6875rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    /* <= 30 min: tighter padding and line height, no wrapping. */
+    #calendar-grid .fc-event.calendar-event--compact {
+        padding: 0;
+    }
+
+    /* The event itself is the size container, so the rules below can adapt
+       to how wide THIS event is (an overlapped one is only half a column). */
+    #calendar-grid .fc-event.calendar-event--compact {
+        container-type: inline-size;
+    }
+
+    #calendar-grid .calendar-event--compact .fc-event-main {
+        padding: 1px 4px;
+    }
+
+    #calendar-grid .calendar-event--compact .calendar-event-body {
+        line-height: 1.15;
+    }
+
+    #calendar-grid .calendar-event--compact .calendar-event-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: .6875rem;
+    }
+
+    /* <= 25 min: a second line cannot fit, so time and title share one
+       line. The title is what gets the ellipsis, never the time. */
+    #calendar-grid .calendar-event--single .calendar-event-body {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: .375rem;
+    }
+
+    #calendar-grid .calendar-event--single .calendar-event-title {
+        flex: 1 1 auto;
+    }
+
+    /* Side-by-side overlapping events can leave too little width for a
+       title next to the time: drop the title (it is on the tooltip) rather
+       than show a bare ellipsis or clip the time. */
+    @container (max-width: 7rem) {
+        #calendar-grid .calendar-event--single .calendar-event-title {
+            display: none;
+        }
+    }
+
+    @container (max-width: 3.5rem) {
+        #calendar-grid .calendar-event--compact .calendar-event-title {
+            display: none;
+        }
+    }
+
+    /* Very narrow (a half-column overlap on a small screen): give the time
+       every pixel it needs — it is the one thing that is never cut. */
+    /* Narrower still (half a column on a tablet): not even the full range
+       fits, so the end time goes first and the START time is never cut. The
+       tooltip always carries the whole range. */
+    @container (max-width: 4rem) {
+        #calendar-grid .calendar-event--compact .calendar-event-time-end {
+            display: none;
+        }
+    }
+
+    @container (max-width: 5rem) {
+        #calendar-grid .calendar-event--compact .fc-event-main {
+            padding: 1px 2px;
+        }
+
+        #calendar-grid .calendar-event--compact .calendar-event-time {
+            font-size: .625rem;
+            letter-spacing: -.01em;
+        }
     }
 
     /* Status colors — the existing classNames() output, restyled with

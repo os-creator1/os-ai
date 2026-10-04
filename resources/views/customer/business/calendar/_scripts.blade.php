@@ -329,6 +329,73 @@
             return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
         }
 
+        // ---------------------------------------------------------------
+        // Event layout by duration. An event's box stays exactly as tall as
+        // its duration (about 1.15 px per minute at the current slot height
+        // — 15 min is ~17 px, 20 min ~23 px, 30 min ~35 px), so a short
+        // appointment is never padded out to look longer than it is.
+        // Instead the CONTENT adapts: at or under COMPACT_MAX_MINUTES the
+        // padding and line height shrink; at or under SINGLE_LINE_MAX_MINUTES
+        // (boxes too short for two lines) the time and the title share one
+        // line, time first, and it is the title that is cut with an
+        // ellipsis — never the time. The full details are always on the
+        // event's tooltip. If the slot height in _styles.blade.php changes,
+        // revisit these two numbers.
+        // ---------------------------------------------------------------
+        var COMPACT_MAX_MINUTES = 30;
+        var SINGLE_LINE_MAX_MINUTES = 25;
+        var STATUS_LABELS = { scheduled: 'Scheduled', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show' };
+
+        function clock(d) {
+            return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes());
+        }
+
+        function eventMinutes(event) {
+            return event.end ? Math.round((event.end - event.start) / 60000) : 60;
+        }
+
+        function eventTimeRange(event) {
+            return clock(event.start) + '–' + (event.end ? clock(event.end) : '');
+        }
+
+        function eventClasses(event) {
+            var minutes = eventMinutes(event);
+            var classes = [];
+
+            if (minutes <= COMPACT_MAX_MINUTES) {
+                classes.push('calendar-event--compact');
+            }
+
+            if (minutes <= SINGLE_LINE_MAX_MINUTES) {
+                classes.push('calendar-event--single');
+            }
+
+            return classes;
+        }
+
+        function eventBody(event) {
+            var body = document.createElement('div');
+            var time = document.createElement('span');
+            var title = document.createElement('span');
+
+            var start = document.createElement('span');
+            var end = document.createElement('span');
+
+            body.className = 'calendar-event-body';
+            time.className = 'calendar-event-time';
+            start.textContent = clock(event.start);
+            end.className = 'calendar-event-time-end';
+            end.textContent = '–' + (event.end ? clock(event.end) : '');
+            time.appendChild(start);
+            time.appendChild(end);
+            title.className = 'calendar-event-title';
+            title.textContent = event.title;
+            body.appendChild(time);
+            body.appendChild(title);
+
+            return body;
+        }
+
         function renderedDays(mount) {
             return parseInt(mount.getAttribute('data-days'), 10) || 7;
         }
@@ -432,6 +499,21 @@
                 scrollTime: '08:00:00',
                 height: gridHeight,
                 events: events,
+
+                // Duration-aware event layout (see COMPACT_MAX_MINUTES above):
+                // 24-hour start–end, then the title, with the full details on
+                // the tooltip.
+                eventClassNames: function (arg) {
+                    return eventClasses(arg.event);
+                },
+                eventContent: function (arg) {
+                    return { domNodes: [eventBody(arg.event)] };
+                },
+                eventDidMount: function (info) {
+                    var status = STATUS_LABELS[info.event.extendedProps.status];
+
+                    info.el.setAttribute('title', eventTimeRange(info.event) + ' · ' + info.event.title + (status ? ' (' + status + ')' : ''));
+                },
 
                 // FullCalendar's own "today" highlight compares against the
                 // BROWSER's date; the Business's own today is computed
