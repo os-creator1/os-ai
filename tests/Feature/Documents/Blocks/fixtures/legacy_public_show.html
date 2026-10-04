@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Kitchen renovation proposal</title>
+    <style>
+        html{color-scheme:light} body{background:#fff;font-family:system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;color:#17212b;line-height:1.5}
+        table{width:100%;border-collapse:collapse;margin:1.5rem 0}
+        th,td{text-align:left;padding:.55rem .4rem;border-bottom:1px solid #d8dee5}
+        td.num,th.num{text-align:right}
+        .total{font-weight:600}
+        fieldset{border:1px solid #d8dee5;border-radius:.4rem;padding:1rem 1.2rem;margin-top:2rem}
+        label{display:block;margin:.9rem 0 .25rem}
+        input{font:inherit;padding:.6rem;border:1px solid #9ba7b4;border-radius:.4rem;width:100%;max-width:26rem}
+        button{font:inherit;background:#125a9c;color:#fff;border:0;border-radius:.4rem;padding:.7rem 1.1rem;cursor:pointer;margin-top:1.2rem}
+        .consent{background:#f4f6f8;border-radius:.4rem;padding:.8rem 1rem;margin-top:1rem}
+        .error{color:#a51d24}
+        .muted{color:#5a6673;font-size:.92rem}
+    </style>
+</head>
+<body>
+<main>
+
+    <p class="muted" data-role="issuer">Harbor Lane Studios &middot; Main</p>
+    <h1>Kitchen renovation proposal</h1>
+
+
+
+
+
+
+    <table data-role="lines">
+        <thead>
+        <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody>
+                    <tr data-role="line">
+                <td>
+                    Design work
+                    <span class="muted d-block">Initial drawings</span>                </td>
+                <td class="num">2</td>
+                <td class="num">250.00</td>
+                <td class="num">500.00</td>
+            </tr>
+                </tbody>
+        <tfoot>
+        <tr class="total"><td colspan="3">Total</td><td class="num" data-role="total">500.00 USD</td></tr>
+        </tfoot>
+    </table>
+
+            <h2>Payment schedule</h2>
+        <table data-role="schedule">
+            <tbody>
+                            <tr data-role="schedule-item" data-kind="full">
+                    <td>Full</td>
+                    <td></td>
+                    <td class="num">500.00 USD</td>
+                    <td data-role="schedule-status">
+                                            </td>
+                </tr>
+                        </tbody>
+        </table>
+
+                    <p class="muted" data-role="payment-note">
+                                    This document can be paid once it has been signed.
+                            </p>
+
+            <fieldset data-role="sign-form">
+            <legend>Sign this document</legend>
+
+
+            <form method="POST" action="http://localhost/documents/UID/TOKEN/sign">
+                <input type="hidden" name="_token" value="X" autocomplete="off">
+                <input type="hidden" name="displayed_version_uid" value="VUID">
+                <label for="signer_name">Your full name</label>
+                <input id="signer_name" type="text" name="signer_name" maxlength="160" value="" required>
+
+                <label for="signer_email">Your email address</label>
+                <input id="signer_email" type="email" name="signer_email" maxlength="255" value="" required>
+
+                <label for="typed_name">Type your name to sign</label>
+                <input id="typed_name" type="text" name="typed_name" maxlength="160" value="" required>
+
+                <p class="consent" data-role="consent-statement">By typing my name below and submitting this form, I agree to the contents of this document as shown on this page, and I intend my typed name to act as my signature.</p>
+
+                <button type="submit">Sign document</button>
+            </form>
+        </fieldset>
+    </main>
+</body>
+</html>

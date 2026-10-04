@@ -8,20 +8,14 @@ use App\Library\Automation\Workflow\Contracts\NodeExecutor;
 use App\Library\Automation\Workflow\Runtime\AutomationSendContext;
 use App\Library\Automation\Workflow\Runtime\ClaimedStepRun;
 use App\Library\Automation\Workflow\Runtime\ContactMergeFields;
-use App\Library\Messaging\BusinessMessagingIdentityResolver;
+use App\Library\Messaging\BusinessSmsSendingPath;
 use App\Models\AutomationEnrollment;
 use App\Models\AutomationWorkflowNode;
 use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\Contacts;
-use App\Models\Country;
-use App\Models\CustomerBasedSendingServer;
-use App\Models\PhoneNumbers;
-use App\Models\Senderid;
 use App\Models\User;
 use App\Repositories\Contracts\CampaignRepository;
-use libphonenumber\NumberParseException;
-use libphonenumber\PhoneNumberUtil;
 use Throwable;
 
 /**
@@ -68,7 +62,7 @@ use Throwable;
  * THE SLICE 6 HANDOFF. CX Slice 6 owns default-sender selection and its UI. It
  * had not merged when this slice was written, so §10.1's fallback applies:
  * carry the minimum, build no second sender-selection architecture, and record
- * the handoff. When Slice 6 lands, `resolveSendingPath()` is the one method that
+ * the handoff. When Slice 6 lands, `BusinessSmsSendingPath::resolve()` is the one method that
  * should be replaced by its resolver — nothing else here knows how a sender is
  * chosen.
  *
@@ -80,7 +74,7 @@ class SendSmsNodeExecutor implements NodeExecutor
 {
     public function __construct(
         private readonly CampaignRepository $campaigns,
-        private readonly BusinessMessagingIdentityResolver $identities,
+        private readonly BusinessSmsSendingPath $path,
         private readonly AutomationSendContext $sendContext,
     ) {
     }
@@ -110,7 +104,7 @@ class SendSmsNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::skipped('contact_unsubscribed');
         }
 
-        $path = $this->resolveSendingPath($business);
+        $path = $this->path->resolve($business);
 
         if ($path === null) {
             // Fail closed: no managed identity and no usable BYO channel, or no
@@ -119,7 +113,7 @@ class SendSmsNodeExecutor implements NodeExecutor
             return NodeExecutionOutcome::failed('no_business_sending_path');
         }
 
-        $phone = $this->resolvePhone($contact);
+        $phone = $this->path->parsePhone($contact->phone);
 
         if ($phone === null) {
             return NodeExecutionOutcome::skipped('contact_phone_invalid');
@@ -198,111 +192,6 @@ class SendSmsNodeExecutor implements NodeExecutor
     private function claimedStepRunId(AutomationWorkflowNode $node, AutomationEnrollment $enrollment): ?int
     {
         return ClaimedStepRun::idFor($node, $enrollment);
-    }
-
-    /**
-     * The Business's sending path, resolved now and never stored.
-     *
-     * @return array{originator: string, sending_server: int|null}|null null when
-     *         this Business has no usable sending path at all
-     */
-    private function resolveSendingPath(Business $business): ?array
-    {
-        $originator = $this->resolveOriginator($business);
-
-        if ($originator === null) {
-            return null;
-        }
-
-        // 1. Managed sending identity, when one is active. quickSend() detects
-        //    this itself and delegates; it must NOT be handed a legacy server.
-        if ($this->identities->resolveForBusiness($business) !== null) {
-            return ['originator' => $originator, 'sending_server' => null];
-        }
-
-        // 2. Otherwise the Business's own active assigned BYO channel, whose
-        //    underlying sending server must itself still be active (B4 §7.A).
-        $assignment = CustomerBasedSendingServer::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', 1)
-            ->with('sendingServer')
-            ->orderBy('id')
-            ->get()
-            ->first(fn ($row): bool => $row->sendingServer !== null && (bool) $row->sendingServer->status);
-
-        if ($assignment === null) {
-            // 3. Neither path exists: fail closed.
-            return null;
-        }
-
-        return ['originator' => $originator, 'sending_server' => (int) $assignment->sending_server];
-    }
-
-    /**
-     * The Business's own canonical originator: an active SenderID first, then an
-     * assigned phone number that can carry SMS.
-     *
-     * Deterministic by id so the same Business always sends from the same
-     * identity, rather than from whatever the database happened to return first.
-     * Choosing BETWEEN several is a product decision that belongs to CX Slice 6,
-     * not here — this is only enough to send at all.
-     */
-    private function resolveOriginator(Business $business): ?string
-    {
-        $senderId = Senderid::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', Senderid::STATUS_ACTIVE)
-            ->orderBy('id')
-            ->value('sender_id');
-
-        if (is_string($senderId) && trim($senderId) !== '') {
-            return $senderId;
-        }
-
-        $number = PhoneNumbers::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', 'assigned')
-            ->orderBy('id')
-            ->get(['number', 'capabilities'])
-            ->first(fn ($row): bool => str_contains((string) $row->capabilities, 'sms'));
-
-        return $number === null ? null : (string) $number->number;
-    }
-
-    /**
-     * @return array{country_code: int, region_code: string, recipient: string}|null
-     */
-    private function resolvePhone(Contacts $contact): ?array
-    {
-        try {
-            $util = PhoneNumberUtil::getInstance();
-            $parsed = $util->parse('+' . preg_replace('/\D/', '', (string) $contact->phone));
-            $regionCode = $util->getRegionCodeForNumber($parsed);
-            $countryCode = $parsed->getCountryCode();
-
-            if (! $util->isPossibleNumber($parsed) || empty($countryCode) || empty($regionCode)) {
-                return null;
-            }
-
-            $national = $parsed->isItalianLeadingZero()
-                ? '0' . $parsed->getNationalNumber()
-                : (string) $parsed->getNationalNumber();
-
-            // The country must be one the platform sends to at all; quickSend()
-            // checks coverage itself, so this only avoids handing it a region it
-            // cannot parse.
-            if (! Country::query()->where('country_code', $countryCode)->where('iso_code', $regionCode)->exists()) {
-                return null;
-            }
-
-            return [
-                'country_code' => $countryCode,
-                'region_code' => $regionCode,
-                'recipient' => $national,
-            ];
-        } catch (NumberParseException) {
-            return null;
-        }
     }
 
     /**

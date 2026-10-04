@@ -75,7 +75,7 @@ class BlueprintComponentAdapterSeamTest extends TestCase
         // first real adapter (§11 rule 3). Each later Calendar/Packages/
         // Proposal/Forms adapter adds one more component type to this list
         // and nothing else in this test's assertions changes.
-        $this->assertSame(['crm_pipeline'], $first->registeredComponentTypes());
+        $this->assertSame(['crm_pipeline', 'document_template'], $first->registeredComponentTypes());
 
         // Registering through one reference must be visible through the other:
         // that is the whole point of the singleton (mirrors BusinessTemplateRegistry).

@@ -164,6 +164,11 @@
             // overlapping tick expires, reminds or reconciles nothing twice.
             $schedule->command('documents:expire-due')->everyFifteenMinutes();
             $schedule->command('documents:dispatch-due-reminders')->hourly();
+            // Contract 17B §3/§7 — the one send-once balance payment request
+            // (fresh secure link) at the balance item's frozen due_at. Same
+            // flag-gated no-op in the command; durable per-item claim markers
+            // dedupe, withoutOverlapping only avoids two ticks doing the work.
+            $schedule->command('documents:dispatch-balance-requests')->hourly()->withoutOverlapping();
             $schedule->command('documents:reconcile-stale-payments')->everyFiveMinutes();
 
             // Implementation Contract 21 §10.2 — a downgrade takes effect at

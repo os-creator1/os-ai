@@ -1010,4 +1010,44 @@
                     ->missing(fn () => abort(404));
             });
         });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Proposal / contract templates (Implementation Contract 17B §6b)
+        |--------------------------------------------------------------------------
+        |
+        | The Platform Owner's own surface for platform-owned templates
+        | (document_templates.business_id IS NULL): create, edit in the shared
+        | visual editor bundle (mode `platform_template`), preview, publish /
+        | disable, and "Assign to niches". Distinct from Template Library above
+        | (that one is the read-only niche-blueprint catalog); an assignment is
+        | written as a `document_template` blueprint component, through
+        | NicheBlueprintPublisher only, in two explicit steps (save to the
+        | draft, then publish the blueprint version).
+        |
+        | Same EnsureUserIsAdministrator group as everything here; {template}
+        | binds by uid and an unresolved uid goes through refuseMissingTarget()
+        | so a non-owner never learns whether it exists. A Business-owned uid
+        | resolves but is 404ed by the controller. No Business route reaches
+        | any of these.
+        |
+        */
+        Route::prefix('document-templates')->name('document-templates.')->group(function () {
+            Route::get('/', 'DocumentTemplateController@index')->name('index');
+            Route::get('create', 'DocumentTemplateController@create')->name('create');
+            Route::post('/', 'DocumentTemplateController@store')->middleware('throttle:30,1')->name('store');
+
+            Route::prefix('{template}')->whereUuid('template')->group(function () {
+                $missing = fn (\Illuminate\Http\Request $request) => app(\App\Library\PlatformOwner\PlatformOwnerAuthority::class)->refuseMissingTarget($request);
+
+                Route::get('editor', 'DocumentTemplateController@edit')->name('edit')->missing($missing);
+                Route::put('blocks', 'DocumentTemplateController@blocks')->middleware('throttle:240,1')->name('blocks')->missing($missing);
+                Route::get('preview', 'DocumentTemplateController@preview')->middleware('throttle:60,1')->name('preview')->missing($missing);
+                Route::post('publish', 'DocumentTemplateController@publish')->middleware('throttle:30,1')->name('publish')->missing($missing);
+                Route::post('disable', 'DocumentTemplateController@disable')->middleware('throttle:30,1')->name('disable')->missing($missing);
+                Route::get('niches', 'DocumentTemplateController@niches')->name('niches')->missing($missing);
+                Route::put('niches', 'DocumentTemplateController@assignNiches')->middleware('throttle:30,1')->name('niches.update')->missing($missing);
+                Route::post('niches/publish', 'DocumentTemplateController@publishBlueprint')->middleware('throttle:30,1')->name('niches.publish')->missing($missing);
+            });
+        });
     });

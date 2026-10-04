@@ -2,7 +2,7 @@
 @section('title', 'Document')
 @section('content')
 <a href="{{ route('customer.workspaces.businesses.documents.index', [$workspaceUid, $businessUid]) }}">Documents</a>
-<h4>{{ $document->title }} <small>{{ $document->status->value }}</small></h4>
+<h4>{{ $document->title }} <small>{{ $document->status->value }}</small>@if(! empty($editorUrl)) <a class="btn btn-sm btn-primary ms-1" href="{{ $editorUrl }}" data-role="open-editor">Open in the visual editor</a>@endif</h4>
 <x-flash-alert />
 @if(isset($errors) && $errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif
 @php($base = [$workspaceUid, $businessUid, $document->uid])
@@ -41,6 +41,7 @@
 <div class="card p-2 mb-2" data-role="issued-version">
     <h5>Sent version {{ $issued->version_number }} <small class="text-muted">(frozen — this is what the customer sees)</small></h5>
     @if(! empty($issued->content['body']))<div data-role="issued-terms" style="white-space:pre-wrap">{{ $issued->content['body'] }}</div>@endif
+    @if(! empty($issuedBlocksHtml))<div class="mb-1" data-role="issued-blocks" style="overflow-x:auto">{{ $issuedBlocksHtml }}</div>@endif
     @foreach($issued->lineItems->sortBy('position') as $line)
         <div>{{ $line->name }} — {{ $line->quantity }} × {{ $money($line->unit_price_minor) }} = {{ $money($line->line_total_minor) }} {{ $line->currency_code }}</div>
     @endforeach

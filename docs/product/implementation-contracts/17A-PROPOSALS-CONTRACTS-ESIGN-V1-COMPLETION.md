@@ -161,3 +161,6 @@ processes racing for one document row held by a probe connection; runner in
 `Support/concurrent_document_runner.php`). Existing tests that asserted the old
 refusal-on-second-send / refusal-on-second-sign behaviour were updated to the
 idempotent semantics above.
+
+
+> **See also:** contract 17B (visual block editor, templates, niche recommendations, send channels). Authoring now also writes `content.blocks`; the lifecycle, hashing and signing rules in this document are unchanged.

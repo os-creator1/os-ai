@@ -1289,6 +1289,48 @@
             // is ever accepted from the browser. Throttled like the other
             // actions that reach the provider.
             Route::post('{documentUid}/payments/{paymentUid}/refund', 'Business\DocumentsController@refund')->middleware('throttle:30,1')->name('payments.refund');
+
+            // Contract 17B — the Proposal / Contract visual editor. The same
+            // gate chain as every route above (DocumentEditorController uses the
+            // same ResolvesBusinessDocuments trait); JSON endpoints answer with
+            // explicit 200/404/409/422 and require `expected_lock_version`.
+            Route::get('editor/contacts', 'Business\DocumentEditorController@contactSearch')->middleware('throttle:60,1')->name('editor.contacts.search');
+            Route::get('{documentUid}/editor', 'Business\DocumentEditorController@edit')->name('editor.edit');
+            Route::get('{documentUid}/editor/preview', 'Business\DocumentEditorController@preview')->middleware('throttle:60,1')->name('editor.preview');
+            Route::put('{documentUid}/editor/blocks', 'Business\DocumentEditorController@blocks')->middleware('throttle:240,1')->name('editor.blocks');
+            Route::put('{documentUid}/editor/plan', 'Business\DocumentEditorController@plan')->middleware('throttle:120,1')->name('editor.plan');
+            Route::post('{documentUid}/editor/lines/catalog', 'Business\DocumentEditorController@catalogLine')->middleware('throttle:120,1')->name('editor.lines.catalog');
+            Route::post('{documentUid}/editor/lines/custom', 'Business\DocumentEditorController@customLine')->middleware('throttle:120,1')->name('editor.lines.custom');
+            Route::put('{documentUid}/editor/lines/order', 'Business\DocumentEditorController@order')->middleware('throttle:120,1')->name('editor.lines.order');
+            Route::patch('{documentUid}/editor/lines/{lineUid}', 'Business\DocumentEditorController@quantity')->middleware('throttle:120,1')->name('editor.lines.quantity');
+            Route::delete('{documentUid}/editor/lines/{lineUid}', 'Business\DocumentEditorController@destroyLine')->middleware('throttle:120,1')->name('editor.lines.destroy');
+            Route::get('{documentUid}/editor/catalog', 'Business\DocumentEditorController@catalogSearch')->middleware('throttle:60,1')->name('editor.catalog.search');
+            Route::post('{documentUid}/editor/catalog', 'Business\DocumentEditorController@catalogStore')->middleware('throttle:30,1')->name('editor.catalog.store');
+            Route::get('{documentUid}/editor/contact-dates', 'Business\DocumentEditorController@contactDates')->middleware('throttle:60,1')->name('editor.contact.dates');
+            Route::post('{documentUid}/editor/upgrade', 'Business\DocumentEditorController@upgrade')->middleware('throttle:30,1')->name('editor.upgrade');
+            Route::post('{documentUid}/editor/send', 'Business\DocumentEditorController@send')->middleware('throttle:30,1')->name('editor.send');
+            Route::post('{documentUid}/editor/save-template', 'Business\DocumentEditorController@saveTemplate')->middleware('throttle:30,1')->name('editor.save-template');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | Contract 17B §6 — the Business's proposal / contract template
+        | library and template editor. Same gate chain as the documents
+        | group (Workspace -> Business -> payments_contracts capability ->
+        | PaymentsContracts entitlement); a template is addressed by uid
+        | INSIDE the Business (foreign / forged = 404). Templates hold the
+        | layout only: never a Contact, product, price or payment plan.
+        |----------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/document-templates')->name('businesses.document-templates.')->group(function () {
+            Route::get('/', 'Business\DocumentTemplatesController@library')->name('index');
+            Route::post('/', 'Business\DocumentTemplatesController@create')->middleware('throttle:30,1')->name('create');
+            Route::get('{templateUid}/editor', 'Business\DocumentTemplatesController@edit')->name('edit');
+            Route::get('{templateUid}/preview', 'Business\DocumentTemplatesController@preview')->middleware('throttle:60,1')->name('preview');
+            Route::put('{templateUid}/blocks', 'Business\DocumentTemplatesController@blocks')->middleware('throttle:240,1')->name('blocks');
+            Route::post('{templateUid}/duplicate', 'Business\DocumentTemplatesController@duplicate')->middleware('throttle:30,1')->name('duplicate');
+            Route::post('{templateUid}/archive', 'Business\DocumentTemplatesController@archive')->middleware('throttle:30,1')->name('archive');
+            Route::post('{templateUid}/restore', 'Business\DocumentTemplatesController@restore')->middleware('throttle:30,1')->name('restore');
         });
 
         /*
