@@ -24,6 +24,8 @@ enum ConditionOperator: string
     case Before = 'before';
     case After = 'after';
     case OnDate = 'on_date';
+    case GreaterThan = 'greater_than';
+    case LessThan = 'less_than';
 
     /**
      * Whether the operator needs an operand. The validator uses this to refuse
@@ -56,6 +58,24 @@ enum ConditionOperator: string
     public static function forDate(): array
     {
         return [self::Before, self::After, self::OnDate, self::IsEmpty, self::IsNotEmpty];
+    }
+
+    /** Operators valid for a number / currency custom field. */
+    public static function forNumber(): array
+    {
+        return [self::Equals, self::NotEquals, self::GreaterThan, self::LessThan, self::IsEmpty, self::IsNotEmpty];
+    }
+
+    /** Operators valid for a dropdown custom field (the operand is one of its options). */
+    public static function forSelect(): array
+    {
+        return [self::Equals, self::NotEquals, self::IsEmpty, self::IsNotEmpty];
+    }
+
+    /** Operators valid for a multi-select custom field ("includes" / "does not include" an option). */
+    public static function forMulti(): array
+    {
+        return [self::Contains, self::NotContains, self::IsEmpty, self::IsNotEmpty];
     }
 
     /** Operators valid for a reference subject such as a contact group. */

@@ -2,9 +2,14 @@
 
 namespace App\Library\Documents\Blocks;
 
+use App\Library\Merge\MergeContext;
+use App\Library\Merge\MergeFieldRegistry;
+use App\Library\Merge\MergeFieldResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
+use App\Models\BusinessLocation;
 use App\Models\Contacts;
+use App\Models\CrmOpportunity;
 
 /**
  * Implementation Contract 17B §4 — the ONLY authority on merge fields.
@@ -49,7 +54,48 @@ final class DocumentMergeFields
 
     public static function isAllowed(mixed $token): bool
     {
-        return is_string($token) && isset(self::CATALOG[$token]);
+        return is_string($token) && (isset(self::CATALOG[$token]) || self::isCanonical($token));
+    }
+
+    /**
+     * A token of the ONE canonical merge-field system (App\Library\Merge): a
+     * built-in Contact / Location / Opportunity field, or a Business Custom Field
+     * (which lives under `contact.<key>`). The editor offers the Business's real
+     * custom fields (catalogFor()); this only decides whether a stored run may
+     * name one. An unknown key renders blank, never as raw text.
+     */
+    public static function isCanonical(string $token): bool
+    {
+        if (preg_match('/^(contact|location|opportunity)\.([a-z][a-z0-9_]{0,63})$/', $token, $m) !== 1) {
+            return false;
+        }
+
+        return $m[1] === 'contact' || MergeFieldRegistry::isBuiltIn($m[1], $m[2]);
+    }
+
+    /**
+     * The editor's picker catalog for one Business: this editor's fixed tokens plus
+     * the canonical Contact custom fields and Location/Opportunity built-ins, so
+     * a Proposal can use {{contact.event_date}} exactly like an Automation.
+     *
+     * @return list<array{token: string, label: string, group: string}>
+     */
+    public static function catalogFor(Business $business): array
+    {
+        $out = self::catalog();
+        $have = array_column($out, 'token');
+
+        foreach (app(MergeFieldRegistry::class)->catalog($business, [MergeFieldRegistry::GROUP_CUSTOM, MergeFieldRegistry::GROUP_LOCATION, MergeFieldRegistry::GROUP_OPPORTUNITY]) as $group) {
+            foreach ($group['fields'] as $field) {
+                $token = trim($field['token'], '{}');
+
+                if (! in_array($token, $have, true) && self::isCanonical($token)) {
+                    $out[] = ['token' => $token, 'label' => $field['label'], 'group' => $group['title']];
+                }
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -70,7 +116,11 @@ final class DocumentMergeFields
 
     public static function label(string $token): string
     {
-        return self::CATALOG[$token]['label'] ?? '';
+        if (isset(self::CATALOG[$token])) {
+            return self::CATALOG[$token]['label'];
+        }
+
+        return self::isCanonical($token) ? ucfirst(str_replace('_', ' ', substr($token, (int) strpos($token, '.') + 1))) : '';
     }
 
     /**
@@ -135,12 +185,36 @@ final class DocumentMergeFields
      */
     public static function freeze(BusinessDocument $document, Business $business): array
     {
-        return self::values(
+        $base = self::values(
             $business,
             (string) $document->title,
             (string) $document->recipient_name_snapshot,
             (string) $document->recipient_email_snapshot,
         );
+
+        // Canonical fields (Contact custom fields such as event_date, Location,
+        // Opportunity) are resolved ONCE here by the one canonical engine, against
+        // this document's own Contact / Location / linked Opportunity, and frozen
+        // with the rest. The snapshot values above always win for the fixed tokens.
+        $context = new MergeContext(
+            $business,
+            $document->contact_id === null ? null : Contacts::query()->where('business_id', $business->id)->find($document->contact_id),
+            BusinessLocation::query()->where('business_id', $business->id)->find($document->business_location_id),
+            $document->crm_opportunity_id === null ? null : CrmOpportunity::query()->where('business_id', $business->id)->find($document->crm_opportunity_id),
+        );
+        $resolver = app(MergeFieldResolver::class);
+
+        foreach (app(MergeFieldRegistry::class)->catalog($business, [MergeFieldRegistry::GROUP_CUSTOM, MergeFieldRegistry::GROUP_LOCATION, MergeFieldRegistry::GROUP_OPPORTUNITY]) as $group) {
+            foreach ($group['fields'] as $field) {
+                $token = trim($field['token'], '{}');
+
+                if (! isset($base[$token]) && self::isCanonical($token)) {
+                    $base[$token] = self::clean($resolver->render($field['token'], $context));
+                }
+            }
+        }
+
+        return $base;
     }
 
     /**
@@ -175,7 +249,7 @@ final class DocumentMergeFields
         }
 
         foreach ($frozen as $token => $value) {
-            if (is_string($token) && isset(self::CATALOG[$token]) && is_string($value)) {
+            if (is_string($token) && self::isAllowed($token) && is_string($value)) {
                 $context[$token] = self::clean($value);
             }
         }

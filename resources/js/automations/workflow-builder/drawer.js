@@ -9,7 +9,7 @@
 // date fields) comes only from the `catalogs` this Business's page was handed —
 // never another Business's row.
 import { NODE_LABELS, NODE_ICONS, STEP_CATALOG, TRIGGER_TYPES, offsetLabel, triggerTypeInfo } from './constants.js'
-import { GROUP_SUBJECTS, REPLIED_SUBJECT, isDateSubject, needsOperand, operatorLabel, subjectOperators } from './conditions.js'
+import { BUSINESS_FIELD_PREFIX, GROUP_SUBJECTS, REPLIED_SUBJECT, isDateSubject, isNumberSubject, needsOperand, operatorLabel, optionSubject, subjectOperators } from './conditions.js'
 import { el, icon } from './dom.js'
 
 function fillSelect(select, options, valueKey, labelKey, placeholder) {
@@ -106,6 +106,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
         }
 
         populate(node)
+        scopeMergeFieldGroups(options.triggerType)
         showErrors(errorMessages || [])
 
         deleteButton.hidden = node.type === 'trigger' || readOnly
@@ -155,6 +156,20 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
 
         errorsEl.classList.remove('d-none')
         messages.forEach((message) => errorsEl.appendChild(el('p', 'mb-0', message)))
+    }
+
+    // The merge-field picker offers Opportunity / Appointment fields only when
+    // this workflow's trigger can actually supply them (the same rule the server
+    // applies at run time), so a trigger change here is reflected at once.
+    function scopeMergeFieldGroups(triggerType) {
+        const trigger = String(triggerType || '')
+        const family = trigger.startsWith('opportunity_') ? 'opportunity' : (trigger.startsWith('appointment_') ? 'appointment' : '')
+
+        formEl.querySelectorAll('[data-merge-requires]').forEach((group) => {
+            group.hidden = group.dataset.mergeRequires !== family
+        })
+
+        formEl.dispatchEvent(new CustomEvent('merge-fields:rescan'))
     }
 
     function populate(node) {
@@ -473,9 +488,31 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             const operandGroupSelect = row.querySelector('[data-role="wf-condition-operand-group"]')
             const help = row.querySelector('[data-role="wf-condition-help"]')
 
+            // Business-wide Custom Fields, by stable key. An archived one is
+            // offered only while this very condition already uses it.
+            ;(catalogs.customFields || []).forEach((field) => {
+                const value = `${BUSINESS_FIELD_PREFIX}${field.key}`
+
+                if (field.archived && condition.subject !== value) {
+                    return
+                }
+
+                const opt = el('option', null, field.archived ? `${field.label} (archived)` : field.label)
+                opt.value = value
+                customGroup.appendChild(opt)
+            })
+
+            // Legacy contact-group fields stay readable for workflows that
+            // already use one, but are no longer offered for new conditions.
             catalogs.writableFields.forEach((field) => {
+                const value = `contact.custom_field:${field.id}`
+
+                if (condition.subject !== value) {
+                    return
+                }
+
                 const opt = el('option', null, field.label)
-                opt.value = `contact.custom_field:${field.id}`
+                opt.value = value
                 customGroup.appendChild(opt)
             })
 
@@ -496,14 +533,31 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 tagGroup.remove()
             }
 
-            fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null)
+            // The operand select serves two kinds of subject: "in group" (the
+            // Business's groups) and a dropdown / multi-select Custom Field (its
+            // own options, by stable id).
+            function fillOperandSelect(subject) {
+                const field = optionSubject(subject, catalogs)
+
+                if (field) {
+                    fillSelect(operandGroupSelect, field.options || [], 'id', 'label', null)
+                    operandGroupSelect.dataset.filledFor = 'option'
+                } else if (operandGroupSelect.dataset.filledFor !== 'group') {
+                    fillSelect(operandGroupSelect, catalogs.contactGroups, 'id', 'name', null)
+                    operandGroupSelect.dataset.filledFor = 'group'
+                }
+            }
+
+            function usesOperandSelect(subject) {
+                return GROUP_SUBJECTS.includes(subject) || optionSubject(subject, catalogs) !== null
+            }
 
             function syncOperators() {
                 const subject = subjectSelect.value
                 const previous = operatorSelect.value
                 operatorSelect.innerHTML = ''
                 subjectOperators(subject, catalogs).forEach((op) => {
-                    const opt = el('option', null, operatorLabel(subject, op))
+                    const opt = el('option', null, operatorLabel(subject, op, catalogs))
                     opt.value = op
                     operatorSelect.appendChild(opt)
                 })
@@ -518,11 +572,12 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             function syncOperand() {
                 const subject = subjectSelect.value
                 const takesValue = needsOperand(operatorSelect.value)
-                const isGroup = GROUP_SUBJECTS.includes(subject)
+                const isGroup = usesOperandSelect(subject)
 
+                fillOperandSelect(subject)
                 operandWrap.hidden = !takesValue || isGroup
                 operandGroupWrap.hidden = !takesValue || !isGroup
-                operandInput.type = isDateSubject(subject, catalogs) ? 'date' : 'text'
+                operandInput.type = isDateSubject(subject, catalogs) ? 'date' : (isNumberSubject(subject, catalogs) ? 'number' : 'text')
             }
 
             subjectSelect.addEventListener('change', () => {
@@ -554,7 +609,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
                 : operatorSelect.options[0].value
             syncOperand()
 
-            if (GROUP_SUBJECTS.includes(subjectSelect.value)) {
+            if (usesOperandSelect(subjectSelect.value)) {
                 operandGroupSelect.value = condition.operand != null ? String(condition.operand) : ''
             } else {
                 operandInput.value = condition.operand != null ? condition.operand : ''
@@ -651,7 +706,7 @@ export function createDrawer({ drawerEl, catalogs, dateOffsets, limits, onSave, 
             const condition = { subject, operator }
 
             if (needsOperand(operator)) {
-                condition.operand = GROUP_SUBJECTS.includes(subject)
+                condition.operand = GROUP_SUBJECTS.includes(subject) || optionSubject(subject, catalogs) !== null
                     ? row.querySelector('[data-role="wf-condition-operand-group"]').value
                     : row.querySelector('[data-role="wf-condition-operand"]').value
             }

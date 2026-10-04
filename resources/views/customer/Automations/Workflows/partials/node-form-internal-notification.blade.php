@@ -7,6 +7,7 @@
             <span class="wf-counter" data-role="wf-message-counter"></span>
         </div>
         <textarea class="form-control" id="wf-notify-message" rows="4" maxlength="255" data-field="message" placeholder="{{ __('automations.v2.internal_notification_form.placeholder') }}"></textarea>
+        <x-merge-field-picker :picker="$mergeFieldPicker ?? ['groups' => [], 'extra' => []]" target='[data-field="message"]' />
         <p class="wf-help mb-0">{{ __('automations.v2.internal_notification_form.recipients') }}</p>
     </div>
 </template>

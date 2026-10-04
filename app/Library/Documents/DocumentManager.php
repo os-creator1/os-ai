@@ -18,6 +18,8 @@ use App\Exceptions\Documents\DocumentDraftConflictException;
 use App\Exceptions\Documents\InvalidDocumentBlocksException;
 use App\Library\Documents\Blocks\BlockSchema;
 use App\Library\Documents\Blocks\DocumentMergeFields;
+use App\Library\Merge\MergeContext;
+use App\Library\Merge\MergeFieldResolver;
 use App\Models\Business;
 use App\Models\BusinessDocument;
 use App\Models\BusinessDocumentLineItem;
@@ -332,7 +334,13 @@ final class DocumentManager
             // The party names the signer is shown are frozen INTO the content
             // before it is hashed, so the signed record can never be re-read
             // through a later Business / Location / Contact rename.
-            $version->content = $this->withPartiesSnapshot($document, is_array($version->content) ? $version->content : []);
+            // Merge fields ({{contact.full_name}}, {{contact.event_date}}, ...)
+            // are resolved by the ONE canonical engine at the moment of send, and
+            // the RESULT is what gets frozen and hashed — a signed document never
+            // re-resolves against later Contact edits.
+            $content = is_array($version->content) ? $version->content : [];
+            [$document->title, $content] = $this->withMergeFieldsResolved($document, $content);
+            $version->content = $this->withPartiesSnapshot($document, $content);
             $version->content_hash = $this->hasher->hash($version);
             $version->state = DocumentVersionState::Issued;
             $version->issued_at = now();
@@ -511,6 +519,43 @@ final class DocumentManager
         $content['parties'] = $parties;
 
         return $content;
+    }
+
+    /**
+     * Resolve `{{group.key}}` merge fields in the title and the body, against
+     * this document's own Business, Location, Contact and linked Opportunity
+     * (explicit context, never a guess). A missing value renders blank; the
+     * title falls back to the document kind if it would otherwise be empty.
+     *
+     * @param  array<string, mixed>  $content
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private function withMergeFieldsResolved(BusinessDocument $document, array $content): array
+    {
+        $title = (string) $document->title;
+        $body = $content['body'] ?? null;
+
+        if (! str_contains($title, '{{') && (! is_string($body) || ! str_contains($body, '{{'))) {
+            return [$title, $content];
+        }
+
+        $context = new MergeContext(
+            Business::findOrFail($document->business_id),
+            Contacts::query()->where('business_id', $document->business_id)->find($document->contact_id),
+            BusinessLocation::query()->where('business_id', $document->business_id)->find($document->business_location_id),
+            $document->crm_opportunity_id === null
+                ? null
+                : CrmOpportunity::query()->where('business_id', $document->business_id)->find($document->crm_opportunity_id),
+        );
+        $resolver = app(MergeFieldResolver::class);
+
+        $title = trim($resolver->render($title, $context));
+
+        if (is_string($body)) {
+            $content['body'] = $resolver->render($body, $context);
+        }
+
+        return [$title !== '' ? $title : ucfirst($document->kind instanceof \BackedEnum ? $document->kind->value : 'document'), $content];
     }
 
     /**

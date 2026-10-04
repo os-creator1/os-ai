@@ -102,6 +102,10 @@ class FormsHttpTest extends TestCase
             'activate' => ['POST', $this->formsRoute('activate', $w, $b, [$this->form->uid]), []],
             'deactivate' => ['POST', $this->formsRoute('deactivate', $w, $b, [$this->form->uid]), []],
             'locations.set' => ['POST', $this->formsRoute('locations.set', $w, $b, [$this->form->uid, $this->downtown->uid]), ['enabled' => 1]],
+            'builder.save' => ['POST', $this->formsRoute('builder.save', $w, $b, [$this->form->uid]), $this->builderDocument(['base_version' => (int) $this->form->current_version])],
+            'builder.preview' => ['POST', $this->formsRoute('builder.preview', $w, $b, [$this->form->uid]), $this->builderDocument()],
+            'notifications' => ['GET', $this->formsRoute('notifications', $w, $b, [$this->form->uid]), []],
+            'analytics' => ['GET', $this->formsRoute('analytics', $w, $b, [$this->form->uid]), []],
         ];
     }
 

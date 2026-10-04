@@ -7,6 +7,10 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Contacts\ContactDirectory;
+use App\Library\CustomFields\CustomFieldRuleException;
+use App\Library\CustomFields\CustomFieldValueService;
+use App\Library\Workspace\LocationAccessGuard;
+use App\Models\Contacts;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\BusinessRouteAccess;
 use App\Models\Business;
@@ -41,6 +45,7 @@ class ContactDirectoryController extends CustomerBaseController
         private readonly EntitlementManager $entitlementManager,
         private readonly ContactsRepository $contactGroups,
         private readonly ContactDirectory $directory,
+        private readonly CustomFieldValueService $customFields,
     ) {
     }
 
@@ -68,7 +73,49 @@ class ContactDirectoryController extends CustomerBaseController
         return view('customer.people.show', [
             'contactUid' => (string) $contact->uid,
             'profile' => $this->directory->profile($business, $contact, $this->canSeeConversations($workspace, $business)),
+            // Business-defined Custom Fields: only shown for a Contact whose
+            // Location the actor may access (the existing Contact Location ACL).
+            'customFields' => $this->locationAccessible($contact)
+                ? $this->customFields->sectionFor($business, $contact)
+                : null,
         ]);
+    }
+
+    /**
+     * Save the Contact-details Custom Fields section: typed validation per
+     * field, all-or-nothing, only this Business's active fields.
+     */
+    public function updateCustomFields(Request $request, string $workspaceUid, string $businessUid, string $contactUid): RedirectResponse
+    {
+        [, $business] = $this->resolveBusiness($workspaceUid, $businessUid);
+        $this->authorize('update_contact');
+
+        $contact = $this->directory->findForBusiness($business, $contactUid);
+        abort_if($contact === null || ! $this->locationAccessible($contact), 404);
+
+        $input = $request->validate(['custom_fields' => ['nullable', 'array', 'max:200']])['custom_fields'] ?? [];
+
+        try {
+            $this->customFields->saveForContact($business, $contact, $input);
+        } catch (CustomFieldRuleException $exception) {
+            return back()->withInput()->withErrors(['custom_fields' => $exception->getMessage()]);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.businesses.people.show', [$workspaceUid, $businessUid, $contactUid])
+            ->with('flash_success', 'Custom fields saved.');
+    }
+
+    /** A Contact with no Location is governed by Business access alone; otherwise the Location must be the actor's. */
+    private function locationAccessible(Contacts $contact): bool
+    {
+        if ($contact->location_id === null) {
+            return true;
+        }
+
+        $location = $contact->location;
+
+        return $location !== null && app(LocationAccessGuard::class)->userCanAccessLocation((int) Auth::id(), $location);
     }
 
     /**

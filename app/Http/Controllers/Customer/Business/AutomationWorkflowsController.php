@@ -6,6 +6,8 @@ use App\Enums\Automation\Workflow\WorkflowStatus;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesAutomationWorkflows;
 use App\Http\Controllers\Customer\CustomerBaseController;
+
+use App\Library\Merge\MergeFieldRegistry;
 use App\Http\Requests\Automations\Workflow\StoreWorkflowRequest;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
 use App\Library\Automation\Workflow\WorkflowCompiler;
@@ -187,8 +189,34 @@ class AutomationWorkflowsController extends CustomerBaseController
                 'crmStages' => $catalog->stages(),
                 'tags' => $catalog->tags(),
                 'forms' => $catalog->forms(),
+                // Business-wide Custom Fields for If/Else conditions (by stable key),
+                // and the canonical merge-field picker. Opportunity / Appointment
+                // groups are deferred: the builder reveals them only when the
+                // workflow's trigger supplies those facts.
+                'customFields' => $this->customFieldCatalog($catalog),
+                'mergeFieldPicker' => app(MergeFieldRegistry::class)->picker(
+                    $business,
+                    [MergeFieldRegistry::GROUP_CONTACT, MergeFieldRegistry::GROUP_CUSTOM, MergeFieldRegistry::GROUP_BUSINESS, MergeFieldRegistry::GROUP_LOCATION],
+                    [MergeFieldRegistry::GROUP_OPPORTUNITY, MergeFieldRegistry::GROUP_APPOINTMENT],
+                    $catalog->customFields(),
+                ),
             ]);
         });
+    }
+
+    /**
+     * The Business's Custom Fields as the builder's condition picker needs them:
+     * stable key, label, type family and (for dropdowns) option ids and labels.
+     * Read from the ONE Business catalog statement the page already runs, so the
+     * Builder's feature-owned query budget (§18) is unchanged.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function customFieldCatalog($catalog): array
+    {
+        return array_map(fn (array $row): array => $row + [
+            'family' => \App\Enums\CustomFields\CustomFieldType::from($row['type'])->conditionFamily(),
+        ], $catalog->customFields());
     }
 
     /**

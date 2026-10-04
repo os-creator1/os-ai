@@ -13,6 +13,11 @@
 
 export const REPLIED_SUBJECT = 'contact.replied_since_enrollment'
 export const CUSTOM_FIELD_PREFIX = 'contact.custom_field:'
+// A Business-wide Custom Field, by its stable key (same key as {{contact.<key>}}).
+// The only custom-field vocabulary the Builder offers for NEW conditions; the
+// legacy `contact.custom_field:{id}` above is still read and shown for
+// workflows that already use it.
+export const BUSINESS_FIELD_PREFIX = 'contact.field:'
 export const HAS_TAG_PREFIX = 'contact.has_tag:'
 
 export const TEXT_SUBJECTS = ['contact.first_name', 'contact.last_name', 'contact.email', 'contact.company']
@@ -33,6 +38,9 @@ const TEXT_OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'is_
 const BOOLEAN_OPERATORS = ['is_true', 'is_false']
 const REFERENCE_OPERATORS = ['equals', 'not_equals']
 const DATE_OPERATORS = ['before', 'after', 'on_date', 'is_empty', 'is_not_empty']
+const NUMBER_OPERATORS = ['equals', 'not_equals', 'greater_than', 'less_than', 'is_empty', 'is_not_empty']
+const SELECT_OPERATORS = ['equals', 'not_equals', 'is_empty', 'is_not_empty']
+const MULTI_OPERATORS = ['contains', 'not_contains', 'is_empty', 'is_not_empty']
 
 const OPERATOR_LABELS = {
     equals: 'is',
@@ -44,6 +52,8 @@ const OPERATOR_LABELS = {
     before: 'is before',
     after: 'is after',
     on_date: 'is on',
+    greater_than: 'is greater than',
+    less_than: 'is less than',
 }
 
 const BOOLEAN_OPERATOR_LABELS = {
@@ -94,7 +104,51 @@ function fieldFor(subject, catalogs) {
     return (catalogs.writableFields || []).find((field) => Number(field.id) === id) || null
 }
 
+/** The key in a `contact.field:{key}` subject, or null when it is not one. */
+export function businessFieldKey(subject) {
+    if (typeof subject !== 'string' || !subject.startsWith(BUSINESS_FIELD_PREFIX)) {
+        return null
+    }
+
+    const raw = subject.slice(BUSINESS_FIELD_PREFIX.length)
+
+    return /^[a-z][a-z0-9_]{0,39}$/.test(raw) ? raw : null
+}
+
+/** The Business-wide Custom Field a subject names, from this page's catalog (or null). */
+export function businessFieldFor(subject, catalogs) {
+    const key = businessFieldKey(subject)
+
+    if (key === null || !catalogs) {
+        return null
+    }
+
+    return (catalogs.customFields || []).find((field) => field.key === key) || null
+}
+
+/** family: text | number | date | boolean | select | multi — null for any other subject. */
+function businessFieldFamily(subject, catalogs) {
+    const field = businessFieldFor(subject, catalogs)
+
+    return field ? field.family : null
+}
+
+/** A dropdown / multi-select custom field: its operand is one of its own options. */
+export function optionSubject(subject, catalogs) {
+    const field = businessFieldFor(subject, catalogs)
+
+    return field && (field.family === 'select' || field.family === 'multi') ? field : null
+}
+
+export function isNumberSubject(subject, catalogs) {
+    return businessFieldFamily(subject, catalogs) === 'number'
+}
+
 export function isDateSubject(subject, catalogs) {
+    if (businessFieldFamily(subject, catalogs) === 'date') {
+        return true
+    }
+
     const field = fieldFor(subject, catalogs)
 
     return field !== null && field.type === 'date'
@@ -103,6 +157,18 @@ export function isDateSubject(subject, catalogs) {
 export function subjectOperators(subject, catalogs) {
     if (BOOLEAN_SUBJECTS.includes(subject) || tagId(subject) !== null) {
         return BOOLEAN_OPERATORS
+    }
+
+    if (businessFieldKey(subject) !== null) {
+        const family = businessFieldFamily(subject, catalogs)
+
+        if (family === 'number') return NUMBER_OPERATORS
+        if (family === 'date') return DATE_OPERATORS
+        if (family === 'boolean') return BOOLEAN_OPERATORS
+        if (family === 'select') return SELECT_OPERATORS
+        if (family === 'multi') return MULTI_OPERATORS
+
+        return TEXT_OPERATORS
     }
 
     if (GROUP_SUBJECTS.includes(subject)) {
@@ -131,12 +197,29 @@ export function subjectLabel(subject, catalogs) {
         return tag ? `Tag “${tag.name}”` : 'A tag'
     }
 
+    const businessField = businessFieldFor(subject, catalogs)
+
+    if (businessField) {
+        return businessField.label
+    }
+
     const field = fieldFor(subject, catalogs)
 
     return field ? field.label : 'A contact field'
 }
 
-export function operatorLabel(subject, operator) {
+export function operatorLabel(subject, operator, catalogs) {
+    const family = businessFieldFamily(subject, catalogs)
+
+    if (family === 'boolean') {
+        return operator === 'is_true' ? 'is Yes' : 'is No'
+    }
+
+    if (family === 'multi') {
+        if (operator === 'contains') return 'includes'
+        if (operator === 'not_contains') return 'does not include'
+    }
+
     if (tagId(subject) !== null && (operator === 'is_true' || operator === 'is_false')) {
         return operator === 'is_true' ? 'is on the contact' : 'is not on the contact'
     }
@@ -186,13 +269,20 @@ export function describeCondition(condition, catalogs) {
     }
 
     const label = subjectLabel(subject, catalogs)
-    const words = operatorLabel(subject, operator)
+    const words = operatorLabel(subject, operator, catalogs)
 
     if (!needsOperand(operator)) {
         return `${label} ${words}`
     }
 
-    const operand = condition.operand === undefined || condition.operand === null || condition.operand === '' ? '…' : condition.operand
+    let operand = condition.operand === undefined || condition.operand === null || condition.operand === '' ? '…' : condition.operand
+    const optionField = optionSubject(subject, catalogs)
+
+    if (optionField) {
+        // The stored operand is an option's stable id; the sentence shows its name.
+        const option = (optionField.options || []).find((row) => row.id === operand)
+        operand = option ? option.label : '…'
+    }
 
     return `${label} ${words} “${operand}”`
 }

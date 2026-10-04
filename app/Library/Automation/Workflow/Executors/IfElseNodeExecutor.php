@@ -105,7 +105,7 @@ class IfElseNodeExecutor implements NodeExecutor
         Contacts $contact,
     ): bool {
         $key = is_string($condition['subject'] ?? null) ? $condition['subject'] : '';
-        $subject = $this->subjects->find($key);
+        $subject = $this->subjects->find($key, (int) $business->id);
 
         if ($subject === null) {
             // An unregistered subject can never be true. Refusing at execution as
@@ -162,6 +162,14 @@ class IfElseNodeExecutor implements NodeExecutor
             // A tag id in the key that is not this Business's reads as false for
             // "has" AND for "does not have": a forged reference asserts nothing.
             return Tag::query()->whereKey($tagId)->where('business_id', (int) $business->id)->exists();
+        }
+
+        $businessFieldKey = ConditionSubjectRegistry::businessFieldKey($key);
+
+        if ($businessFieldKey !== null) {
+            // A Business-wide field key must name a definition of THIS Business
+            // (archived still counts: existing workflows stay deterministic).
+            return $this->subjects->businessFieldDefinition((int) $business->id, $businessFieldKey) !== null;
         }
 
         $fieldId = ConditionSubjectRegistry::customFieldId($key);

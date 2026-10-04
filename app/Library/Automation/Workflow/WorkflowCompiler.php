@@ -7,6 +7,8 @@ use App\Enums\Automation\Workflow\WorkflowEdgeKind;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
 use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
+use App\Library\Automation\Workflow\Conditions\Subjects\ContactBusinessFieldSubject;
+use App\Enums\CustomFields\CustomFieldType;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\ContactGroupFields;
 use Illuminate\Support\Carbon;
@@ -431,6 +433,14 @@ class WorkflowCompiler
                 continue;
             }
 
+            $businessFieldKey = ConditionSubjectRegistry::businessFieldKey($subject);
+
+            if ($businessFieldKey !== null) {
+                array_push($errors, ...$this->businessFieldConditionErrors($condition, $references()->customField($businessFieldKey), $position));
+
+                continue;
+            }
+
             $fieldId = ConditionSubjectRegistry::customFieldId($subject);
 
             if ($fieldId === null) {
@@ -461,6 +471,56 @@ class WorkflowCompiler
         }
 
         return $errors;
+    }
+
+    /**
+     * A `contact.field:{key}` condition against the Business's own definitions:
+     * the field must exist in THIS Business (archived still resolves, so an
+     * existing workflow can be saved again), the operator must belong to the
+     * field's type family, and the operand must be a value of that type — a
+     * number for "greater than", a date for "before", one of the field's own
+     * option ids for a dropdown.
+     *
+     * Read from the Business catalog the Builder already loaded (one statement),
+     * so the check costs no query of its own however many conditions there are.
+     *
+     * @param array<string, mixed> $condition
+     * @param array{id: int, key: string, label: string, type: string, archived: bool, options: list<array{id: string, label: string}>}|null $definition
+     *
+     * @return list<string>
+     */
+    private function businessFieldConditionErrors(array $condition, ?array $definition, int $position): array
+    {
+        if ($definition === null) {
+            return [sprintf('Condition %d checks a contact field that does not belong to this business.', $position)];
+        }
+
+        $operator = ConditionOperator::tryFrom((string) ($condition['operator'] ?? ''));
+
+        if ($operator === null) {
+            return [];
+        }
+
+        $family = CustomFieldType::from($definition['type'])->conditionFamily();
+
+        if (! in_array($operator, ContactBusinessFieldSubject::operatorsForFamily($family), true)) {
+            return [sprintf('Condition %d uses a comparison that does not apply to that field.', $position)];
+        }
+
+        $operand = $condition['operand'] ?? null;
+
+        if (! $operator->requiresOperand() || $operand === null || $operand === '') {
+            return [];
+        }
+
+        $valid = match ($family) {
+            'number' => is_numeric($operand) && ! is_bool($operand),
+            'date' => is_string($operand) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $operand) === 1 && strtotime($operand) !== false,
+            'select', 'multi' => is_string($operand) && in_array($operand, array_column($definition['options'], 'id'), true),
+            default => true,
+        };
+
+        return $valid ? [] : [sprintf('Condition %d needs a value that fits that field.', $position)];
     }
 
     /**

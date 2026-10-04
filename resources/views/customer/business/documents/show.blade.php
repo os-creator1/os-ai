@@ -112,6 +112,8 @@
         @csrf @method('PATCH')
         <label>Title <input name="title" value="{{ $document->title }}" required maxlength="200"></label>
         <label>Body and terms <textarea name="content[body]">{{ $version->content['body'] ?? '' }}</textarea></label>
+        <x-merge-field-picker :picker="$mergeFieldPicker ?? ['groups' => [], 'extra' => []]" target='[name="content[body]"]' />
+        <p class="text-muted small">Merge fields such as the contact's name or event date are filled in when the document is sent.</p>
         <button class="btn btn-primary" type="submit">Save</button>
     </form>
 </div>
@@ -186,4 +188,8 @@
     @csrf <label>Void reason <input name="reason" required maxlength="255"></label><button type="submit">Void document</button>
 </form>
 @endif
+@endsection
+
+@section('page-script')
+    <script src="{{ asset('js/merge-fields/insert-field.js') }}"></script>
 @endsection

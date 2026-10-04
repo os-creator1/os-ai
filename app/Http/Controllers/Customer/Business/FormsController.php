@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Customer\Business;
 
 use App\Enums\Forms\FormDeploymentSource;
-use App\Enums\Forms\FormFieldType;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Business\Concerns\AuthorizesFormsRequests;
+use App\Library\Forms\Builder\FormBuilderState;
+use App\Library\Forms\Builder\FormStarterTemplates;
 use App\Library\Forms\Exceptions\FormRuleException;
 use App\Library\Forms\FormDefinitionNormalizer;
 use App\Library\Forms\FormManager;
 use App\Library\Forms\FormSubmissionReader;
-use App\Models\CrmPipeline;
 use App\Models\Form;
 use App\Models\FormDeployment;
 use Illuminate\Contracts\View\View;
@@ -63,21 +63,29 @@ class FormsController extends Controller
     {
         [$workspace, $business] = $this->formsScope($workspaceUid, $businessUid);
 
-        return view('customer.business.forms.create', $this->editorData($workspace, $business, null));
+        return view('customer.business.forms.create', [
+            'workspace' => $workspace,
+            'business' => $business,
+            'starters' => FormStarterTemplates::choices(),
+        ]);
     }
 
     public function store(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
         [, $business] = $this->formsScope($workspaceUid, $businessUid);
 
+        $input = $request->has('fields')
+            ? $this->validated($request)
+            : $this->starterInput($request);
+
         try {
-            $form = $this->forms->create($business, $this->validated($request), (int) Auth::id());
+            $form = $this->forms->create($business, $input, (int) Auth::id());
         } catch (FormRuleException $exception) {
             return $this->refused($exception);
         }
 
         return $this->backToEdit($workspaceUid, $businessUid, $form)
-            ->with('flash_success', '"'.$form->name.'" created as a draft. Choose where to offer it, then activate it.');
+            ->with('flash_success', '"'.$form->name.'" created as a draft. Design it, choose where to offer it, then activate it.');
     }
 
     public function edit(string $workspaceUid, string $businessUid, string $formUid): View
@@ -85,7 +93,7 @@ class FormsController extends Controller
         [$workspace, $business] = $this->formsScope($workspaceUid, $businessUid);
         $form = $this->formOrAbort($business, $formUid);
 
-        return view('customer.business.forms.edit', $this->editorData($workspace, $business, $form));
+        return view('customer.business.forms.edit', $this->builderData($workspace, $business, $form));
     }
 
     public function update(Request $request, string $workspaceUid, string $businessUid, string $formUid): RedirectResponse
@@ -177,72 +185,63 @@ class FormsController extends Controller
             'fields.*.required' => ['nullable', 'boolean'],
             'fields.*.options' => ['nullable', 'string', 'max:5000'],
             'fields.*.contact_name' => ['nullable', 'boolean'],
+            'fields.*.custom_field_uid' => ['nullable', 'string', 'max:64'],
             'create_opportunity' => ['nullable', 'boolean'],
             'opportunity_pipeline_id' => ['nullable', 'integer'],
         ]);
     }
 
     /**
+     * A new form from a starting point: the name plus the starter's elements, in
+     * the same shape the visual editor saves.
+     *
      * @return array<string, mixed>
      */
-    private function editorData($workspace, $business, ?Form $form): array
+    private function starterInput(Request $request): array
     {
-        $version = $form?->currentVersion();
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:1000'],
+            'starter' => ['nullable', 'string', 'max:32'],
+        ]);
 
-        $rows = old('fields');
-        if (! is_array($rows)) {
-            $rows = collect($version?->fields ?? [])
-                ->map(fn (array $field) => $field + ['options' => ''])
-                ->map(fn (array $field) => array_merge($field, ['options' => implode("\n", $field['options'] ?? [])]))
-                ->all();
-        }
-        // Spare, unused rows: a blank label is ignored on save.
-        $rows = array_pad(array_values($rows), min(count($rows) + 3, FormDefinitionNormalizer::MAX_FIELDS + 3), []);
+        $starter = (string) ($data['starter'] ?? FormStarterTemplates::BLANK);
+        $starter = FormStarterTemplates::exists($starter) ? $starter : FormStarterTemplates::BLANK;
 
-        // Page SLOTS: the version's pages (in their order), then unused spares up
-        // to the bound. A slot keeps its key wherever it is moved; reordering is
-        // an edit of its position, and a slot nobody uses is dropped on save.
-        $pageRows = old('pages');
-        if (! is_array($pageRows)) {
-            $pageRows = [];
-            foreach ($version?->pages() ?? [['key' => 'page_1', 'title' => null]] as $i => $page) {
-                $pageRows[] = ['key' => $page['key'], 'title' => $page['title'] ?? '', 'position' => $i + 1];
-            }
-            $taken = array_column($pageRows, 'key');
-            for ($n = 1; count($pageRows) < FormDefinitionNormalizer::MAX_PAGES; $n++) {
-                if (! in_array('page_'.$n, $taken, true)) {
-                    $pageRows[] = ['key' => 'page_'.$n, 'title' => '', 'position' => count($pageRows) + 1];
-                }
-            }
-        }
+        return ['name' => $data['name']] + FormStarterTemplates::content($starter);
+    }
 
-        $visible = $form === null ? [] : $this->reader->visibleLocations($business, (int) Auth::id());
+    /**
+     * Everything the visual builder page needs: the editor document and toolbox
+     * (FormBuilderState — an adapter over the stored version, no new storage) and
+     * the Integrate/Settings data (Locations the actor may reach, and this
+     * form's direct-link deployments).
+     *
+     * @return array<string, mixed>
+     */
+    private function builderData($workspace, $business, Form $form): array
+    {
+        $version = $form->currentVersion();
+        $visible = $this->reader->visibleLocations($business, (int) Auth::id());
 
         return [
             'workspace' => $workspace,
             'business' => $business,
             'form' => $form,
-            'version' => $version,
-            'rows' => $rows,
-            'pageRows' => $pageRows,
-            'types' => FormFieldType::cases(),
-            'pipelines' => CrmPipeline::query()->forBusiness($business)->active()->orderBy('position')->orderBy('id')->get(['id', 'name']),
+            'tab' => 'edit',
+            'builder' => app(FormBuilderState::class)->forForm($business, $form, $version),
             'locations' => $visible,
-            'deployments' => $form === null
-                ? collect()
-                : FormDeployment::query()
-                    ->where('form_id', $form->id)
-                    ->where('source', FormDeploymentSource::DirectLink->value)
-                    ->whereIn('business_location_id', array_keys($visible))
-                    ->get()
-                    ->keyBy('business_location_id'),
+            'deployments' => FormDeployment::query()
+                ->where('form_id', $form->id)
+                ->where('source', FormDeploymentSource::DirectLink->value)
+                ->whereIn('business_location_id', array_keys($visible))
+                ->get()
+                ->keyBy('business_location_id'),
             'limits' => [
                 'fields' => FormDefinitionNormalizer::MAX_FIELDS,
                 'pages' => FormDefinitionNormalizer::MAX_PAGES,
             ],
         ];
     }
-
     private function refused(FormRuleException $exception): RedirectResponse
     {
         return back()->withInput()->withErrors(['forms' => $exception->getMessage()]);

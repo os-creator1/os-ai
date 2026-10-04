@@ -76,6 +76,7 @@
             'crmStages' => $toArrayList($crmStages ?? [], ['id', 'pipeline_id', 'name', 'archived']),
             'tags' => $toArrayList($tags ?? [], ['id', 'name', 'archived']),
             'forms' => $toArrayList($forms ?? [], ['id', 'name', 'lifecycle']),
+            'customFields' => $customFields ?? [],
         ],
         'limits' => [
             'maxNodes' => \App\Library\Automation\Workflow\WorkflowLimits::MAX_NODES_PER_VERSION,
@@ -273,6 +274,7 @@
 @endsection
 
 @section('page-script')
+    <script src="{{ asset('js/merge-fields/insert-field.js') }}"></script>
     <script src="{{ asset(mix('js/automations/workflow-builder.js')) }}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function () {

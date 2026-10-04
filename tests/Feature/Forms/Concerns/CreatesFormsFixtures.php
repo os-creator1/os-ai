@@ -85,6 +85,49 @@ trait CreatesFormsFixtures
     }
 
     /**
+     * The same lead form as a visual-builder document: options as an ARRAY (what
+     * the editor posts), keys derived by the server from the labels.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    protected function builderDocument(array $overrides = []): array
+    {
+        $input = $this->leadFormInput();
+        $input['fields'] = array_map(
+            fn (array $field) => isset($field['options']) ? array_merge($field, ['options' => preg_split('/\R/', $field['options'])]) : $field,
+            $input['fields'],
+        );
+
+        return array_merge($input, $overrides);
+    }
+
+    /**
+     * The CURRENT version of a form exactly as the visual editor holds it (every
+     * stored key, options as arrays), ready to be changed and saved back.
+     *
+     * @return array<string, mixed>
+     */
+    protected function builderDocumentFor(Form $form): array
+    {
+        $form = $form->fresh();
+        $version = $form->currentVersion();
+
+        return [
+            'name' => $form->name,
+            'intro' => $version->intro,
+            'submit_label' => $version->submit_label,
+            'success_message' => $version->success_message,
+            'design' => $version->style(),
+            'create_opportunity' => $version->create_opportunity,
+            'opportunity_pipeline_id' => $version->opportunity_pipeline_id,
+            'pages' => $version->pages(),
+            'fields' => $version->fields,
+            'base_version' => (int) $form->current_version,
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $overrides
      */
     protected function makeForm(Business $business, array $overrides = [], bool $activate = false): Form

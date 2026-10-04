@@ -80,6 +80,7 @@ final class CustomerMenuBuilder
     public const SETTINGS_DESCRIPTIONS = [
         'business-details' => 'Name, contact details and what the business does.',
         'locations' => 'Addresses and the areas this business serves.',
+        'custom-fields' => 'The extra details you keep about contacts, like event date or venue.',
         'text-messaging' => 'This business’s number and whether texting is ready.',
         'usage-billing' => 'Balance, top-ups, payment method and spending limits.',
         'plan' => 'What your plan includes and your subscription.',
@@ -663,6 +664,12 @@ final class CustomerMenuBuilder
         // a switcher level; the destination enforces its own tenancy.
         $setup[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
             'customer.workspaces.businesses.locations.',
+        ]);
+
+        // Business-wide Custom Fields — definitions are Business-level, so they
+        // live with the Business's setup (Blueprint §25), not under Contacts.
+        $setup[] = $this->item($user, 'custom-fields', 'Custom fields', 'sliders', ['view_contact'], 'customer.workspaces.businesses.custom-fields.index', $scoped, $current, [
+            'customer.workspaces.businesses.custom-fields.',
         ]);
 
         // Owner product decision — the plain-language, read-only status

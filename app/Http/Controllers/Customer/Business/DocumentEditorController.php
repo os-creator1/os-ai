@@ -107,7 +107,7 @@ class DocumentEditorController extends CustomerBaseController
                 'toolbox' => [
                     'categories' => DocumentEditorToolbox::categories(),
                     'block_types' => BlockSchema::TYPES,
-                    'merge_fields' => DocumentMergeFields::catalog(),
+                    'merge_fields' => DocumentMergeFields::catalogFor($business),
                     'limits' => ['max_blocks' => BlockSchema::MAX_BLOCKS, 'max_bytes' => BlockSchema::MAX_BYTES, 'max_run_text' => BlockSchema::MAX_RUN_TEXT],
                     'plan' => ['structures' => ['full', 'deposit'], 'full_due' => ['on_signing', 'date'], 'balance_due' => ['after_deposit', 'date']],
                 ],

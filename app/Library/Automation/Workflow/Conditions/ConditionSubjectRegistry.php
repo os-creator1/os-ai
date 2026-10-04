@@ -3,6 +3,7 @@
 namespace App\Library\Automation\Workflow\Conditions;
 
 use App\Enums\Automation\Workflow\ConditionOperator;
+use App\Library\Automation\Workflow\Conditions\Subjects\ContactBusinessFieldSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactCustomFieldSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactHasTagSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactIdentitySubject;
@@ -10,8 +11,12 @@ use App\Library\Automation\Workflow\Conditions\Subjects\ContactInGroupSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactRepliedSinceEnrollmentSubject;
 use App\Library\Automation\Workflow\Conditions\Subjects\ContactSubscribedSubject;
 use App\Library\Automation\Workflow\Contracts\ConditionSubject;
+use App\Enums\CustomFields\CustomFieldType;
+use App\Library\CustomFields\CustomFieldValueCodec;
 use App\Models\ContactGroupFields;
 use App\Models\Contacts;
+use App\Models\CustomFieldDefinition;
+use App\Models\CustomFieldValue;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -68,8 +73,18 @@ class ConditionSubjectRegistry
     /** V2-F — has the contact written to the Business since entering this journey? */
     public const REPLIED_SINCE_ENROLLMENT = 'contact.replied_since_enrollment';
 
-    /** `contact.custom_field:{field_id}` — the only parameterised subject. */
+    /**
+     * `contact.custom_field:{field_id}` — the LEGACY contact-group field subject.
+     * Still evaluated so already-published workflow versions keep working, but
+     * the Builder no longer offers it for new conditions (see BUSINESS_FIELD_PREFIX).
+     */
     public const CUSTOM_FIELD_PREFIX = 'contact.custom_field:';
+
+    /**
+     * `contact.field:{key}` — a Business-wide Custom Field by its stable key.
+     * The vocabulary new conditions use; same key as `{{contact.<key>}}`.
+     */
+    public const BUSINESS_FIELD_PREFIX = 'contact.field:';
 
     /** `contact.has_tag:{tag_id}` — the other parameterised subject (boolean). */
     public const HAS_TAG_PREFIX = 'contact.has_tag:';
@@ -86,6 +101,12 @@ class ConditionSubjectRegistry
     /** @var array<int, Collection<int, ContactGroupFields>> group id => fields */
     private array $groupFieldCache = [];
 
+    /** @var array<int, array<string, CustomFieldDefinition>> business id => key => definition */
+    private array $definitionCache = [];
+
+    /** @var array<int, array<string, mixed>> contact id => key => comparable value */
+    private array $businessFieldCache = [];
+
     /**
      * Resolve a stored subject key to the object that can read it.
      *
@@ -93,8 +114,16 @@ class ConditionSubjectRegistry
      * custom-field key, or a subject belonging to a later slice. Callers treat
      * null as "refuse", never as "assume text".
      */
-    public function find(string $key): ?ConditionSubject
+    public function find(string $key, ?int $businessId = null): ?ConditionSubject
     {
+        $fieldKey = self::businessFieldKey($key);
+
+        if ($fieldKey !== null) {
+            // A Business-wide field needs the Business to resolve its type, so
+            // without one it is not a readable subject (refuse, never guess).
+            return $businessId === null ? null : new ContactBusinessFieldSubject($fieldKey, $businessId, $this);
+        }
+
         if (array_key_exists($key, self::IDENTITY_SUBJECTS)) {
             return new ContactIdentitySubject($key, self::IDENTITY_SUBJECTS[$key], $this);
         }
@@ -122,9 +151,9 @@ class ConditionSubjectRegistry
         return $fieldId === null ? null : new ContactCustomFieldSubject($fieldId, $this);
     }
 
-    public function isRegistered(string $key): bool
+    public function isRegistered(string $key, ?int $businessId = null): bool
     {
-        return $this->find($key) !== null;
+        return $this->find($key, $businessId) !== null;
     }
 
     /**
@@ -144,7 +173,79 @@ class ConditionSubjectRegistry
             || $key === self::IN_GROUP
             || $key === self::REPLIED_SINCE_ENROLLMENT
             || self::tagId($key) !== null
+            || self::businessFieldKey($key) !== null
             || self::customFieldId($key) !== null;
+    }
+
+    /**
+     * The field key in a `contact.field:{key}` subject, or null if this is not
+     * one. Strict: the same shape a Custom Field key is generated in.
+     */
+    public static function businessFieldKey(string $key): ?string
+    {
+        if (! str_starts_with($key, self::BUSINESS_FIELD_PREFIX)) {
+            return null;
+        }
+
+        $raw = substr($key, strlen(self::BUSINESS_FIELD_PREFIX));
+
+        return preg_match('/^[a-z][a-z0-9_]{0,39}$/', $raw) === 1 ? $raw : null;
+    }
+
+    /** A Business's Custom Field definition by key (archived included), read once per Business. */
+    public function businessFieldDefinition(int $businessId, string $key): ?CustomFieldDefinition
+    {
+        if (! array_key_exists($businessId, $this->definitionCache)) {
+            $this->definitionCache[$businessId] = CustomFieldDefinition::query()
+                ->where('business_id', $businessId)
+                ->where('entity', CustomFieldDefinition::ENTITY_CONTACT)
+                ->get()
+                ->keyBy('key')
+                ->all();
+        }
+
+        return $this->definitionCache[$businessId][$key] ?? null;
+    }
+
+    /**
+     * The Contact's value for a Custom Field in the form the evaluator compares:
+     * numbers as floats, booleans as bools, option ids as strings, multi-select
+     * as a list, dates as `Y-m-d` / `Y-m-d H:i:s`. Null when unset. Read once per Contact.
+     */
+    public function businessFieldValue(Contacts $contact, string $key): mixed
+    {
+        $id = (int) $contact->id;
+
+        if (! array_key_exists($id, $this->businessFieldCache)) {
+            $values = [];
+
+            // Loads (and memoizes) the Business's definitions if not yet read.
+            $this->businessFieldDefinition((int) $contact->business_id, $key);
+            $definitions = collect($this->definitionCache[(int) $contact->business_id])->keyBy('id');
+
+            $rows = CustomFieldValue::query()
+                ->where('contact_id', $id)
+                ->where('business_id', (int) $contact->business_id)
+                ->get();
+
+            foreach ($rows as $row) {
+                $definition = $definitions->get($row->definition_id);
+
+                if ($definition === null) {
+                    continue;
+                }
+
+                $canonical = CustomFieldValueCodec::fromRow($definition->fieldType(), $row);
+
+                $values[$definition->key] = in_array($definition->fieldType(), [CustomFieldType::Number, CustomFieldType::Currency], true) && $canonical !== null
+                    ? (float) $canonical
+                    : $canonical;
+            }
+
+            $this->businessFieldCache[$id] = $values;
+        }
+
+        return $this->businessFieldCache[$id][$key] ?? null;
     }
 
     /**
@@ -215,9 +316,9 @@ class ConditionSubjectRegistry
      * is only the lookup, so a subject can never be evaluated with an operator it
      * does not declare.
      */
-    public function allows(string $key, ConditionOperator $operator): bool
+    public function allows(string $key, ConditionOperator $operator, ?int $businessId = null): bool
     {
-        $subject = $this->find($key);
+        $subject = $this->find($key, $businessId);
 
         return $subject !== null && in_array($operator, $subject->allowedOperators(), true);
     }
@@ -313,5 +414,7 @@ class ConditionSubjectRegistry
         $this->valueCache = [];
         $this->groupFieldCache = [];
         $this->tagCache = [];
+        $this->definitionCache = [];
+        $this->businessFieldCache = [];
     }
 }

@@ -7,7 +7,7 @@
 // document and the Business catalogs the page was handed; it never shows an
 // identifier, and an unfinished step reads as the thing still to do.
 import { NODE_TYPES, CONTACT_SOURCE_LABELS, triggerTypeInfo } from './constants.js'
-import { customFieldId, describeCondition } from './conditions.js'
+import { businessFieldKey, customFieldId, describeCondition } from './conditions.js'
 
 const EXCERPT_LENGTH = 90
 
@@ -150,7 +150,9 @@ export function summarize(node, catalogs) {
                 .map((condition) => {
                     const text = describeCondition(condition, catalogs)
 
-                    return customFieldId(condition && condition.subject) === null ? text.charAt(0).toLowerCase() + text.slice(1) : text
+                    const isFieldCondition = customFieldId(condition && condition.subject) !== null || businessFieldKey(condition && condition.subject) !== null
+
+                    return isFieldCondition ? text : text.charAt(0).toLowerCase() + text.slice(1)
                 })
                 .join(joiner)
 

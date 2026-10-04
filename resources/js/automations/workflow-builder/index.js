@@ -155,7 +155,7 @@ function initBuilder(root) {
         }
 
         selectedKey = node.key
-        drawer.open(node, errors[node.key] || [], { readOnly })
+        drawer.open(node, errors[node.key] || [], { readOnly, triggerType: doc.root && doc.root.config ? doc.root.config.trigger_type : '' })
         syncPanels()
         rerender()
     }
