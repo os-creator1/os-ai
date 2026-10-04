@@ -153,6 +153,15 @@ final class CustomerMenuBuilder
         // fail closed and silently hide the entry, even once Available.
         'seo_basic_visibility',
         'seo_module',
+        // Google Ads (Google Ads Module V1, contract 23 §7). Two independent
+        // decisions: ads_basic_visibility gates the Ads entry itself, its
+        // Overview and Settings (Core+); google_ads_module additionally gates
+        // Campaigns, Keywords, Search terms, Leads & conversions, Budget and
+        // Recommendations (Growth+). Same lesson as every entry above —
+        // omitting either key would fail closed and silently hide the entry.
+        // Nav gating only: every Ads route carries its own entitlement decision.
+        'ads_basic_visibility',
+        'google_ads_module',
     ];
 
     /**
@@ -304,6 +313,8 @@ final class CustomerMenuBuilder
         // routes keep their names and URLs"). Each child is independently
         // entitled — the parent showing is never proof a given child does.
         $items[] = $this->seoMenuItem($user, $scoped, $current);
+        // Ads — one parent entry directly after SEO (Google Ads Module V1).
+        $items[] = $this->adsMenuItem($user, $scoped, $current);
         // Packages & Products — the Business-wide catalog (Contract 16 §12.E).
         // Offered exactly when the catalog boundary would let the actor in on
         // the first two gates: the `packages_products` capability (item()) and
@@ -412,6 +423,50 @@ final class CustomerMenuBuilder
         ]));
 
         return new MenuItem('seo', 'SEO', $overview->url, 'trending-up', false, $children);
+    }
+
+    /**
+     * Google Ads Module V1 (contract 23 §7) — the Ads group. Overview and
+     * Settings need `ads_basic_visibility` OR `google_ads_module` (Core
+     * connects and reads); Campaigns, Keywords, Search terms, Leads &
+     * conversions, Budget and Recommendations need `google_ads_module`. Every
+     * child needs `view_google_ads`, and every child is produced by the
+     * ordinary item()/entitled() pair, so a child whose route is not
+     * registered yet (the later pages) is silently absent.
+     *
+     * Like seoMenuItem(), the parent exists exactly when its Overview child
+     * does, so the parent's own URL inherits Overview's route / capability /
+     * View-As rules by construction — there is no second policy to drift.
+     * Visibility is never authorization: every Ads route re-runs the full
+     * tenancy/entitlement/capability chain itself.
+     */
+    private function adsMenuItem(User $user, array $scoped, string $current): ?MenuItem
+    {
+        $any = ['ads_basic_visibility', 'google_ads_module'];
+
+        $overview = $this->entitledAny($any, $this->item($user, 'ads-overview', 'Overview', 'bar-chart-2', ['view_google_ads'], 'customer.workspaces.businesses.ads.index', $scoped, $current, [
+            'customer.workspaces.businesses.ads.index', 'customer.ads.',
+        ]));
+
+        if ($overview === null) {
+            return null;
+        }
+
+        $growth = ['google_ads_module'];
+        $prefix = 'customer.workspaces.businesses.ads.';
+
+        $children = array_values(array_filter([
+            $overview,
+            $this->entitledAny($growth, $this->item($user, 'ads-campaigns', 'Campaigns', 'layers', ['view_google_ads'], $prefix . 'campaigns.index', $scoped, $current, [$prefix . 'campaigns.'])),
+            $this->entitledAny($growth, $this->item($user, 'ads-keywords', 'Keywords', 'hash', ['view_google_ads'], $prefix . 'keywords.index', $scoped, $current, [$prefix . 'keywords.'])),
+            $this->entitledAny($growth, $this->item($user, 'ads-search-terms', 'Search terms', 'search', ['view_google_ads'], $prefix . 'search-terms.index', $scoped, $current, [$prefix . 'search-terms.'])),
+            $this->entitledAny($growth, $this->item($user, 'ads-leads', 'Leads & conversions', 'users', ['view_google_ads'], $prefix . 'leads.index', $scoped, $current, [$prefix . 'leads.'])),
+            $this->entitledAny($growth, $this->item($user, 'ads-budget', 'Budget', 'wallet', ['view_google_ads'], $prefix . 'budget', $scoped, $current, [$prefix . 'budget'])),
+            $this->entitledAny($growth, $this->item($user, 'ads-recommendations', 'Recommendations', 'lightbulb', ['view_google_ads'], $prefix . 'recommendations.index', $scoped, $current, [$prefix . 'recommendations.'])),
+            $this->entitledAny($any, $this->item($user, 'ads-settings', 'Settings', 'settings', ['view_google_ads'], $prefix . 'settings', $scoped, $current, [$prefix . 'settings', $prefix . 'accounts'])),
+        ]));
+
+        return new MenuItem('ads', 'Ads', $overview->url, 'megaphone', false, $children);
     }
 
     /**
@@ -828,6 +883,28 @@ final class CustomerMenuBuilder
         }
 
         return $this->entitlements->allows($featureKey) ? $item : null;
+    }
+
+    /**
+     * entitled() for an entry that either of several features unlocks (the
+     * Core Ads Overview is allowed by `ads_basic_visibility` OR
+     * `google_ads_module`). Absent when none of them is entitled.
+     *
+     * @param  array<int, string>  $featureKeys
+     */
+    private function entitledAny(array $featureKeys, ?MenuItem $item): ?MenuItem
+    {
+        if ($item === null) {
+            return null;
+        }
+
+        foreach ($featureKeys as $featureKey) {
+            if ($this->entitlements->allows($featureKey)) {
+                return $item;
+            }
+        }
+
+        return null;
     }
 
     /**

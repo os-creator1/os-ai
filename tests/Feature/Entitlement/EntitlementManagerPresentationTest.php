@@ -297,7 +297,13 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertArrayHasKey(PlatformFeature::SeoBasicVisibility->value, $result);
         $this->assertArrayHasKey(PlatformFeature::SeoModule->value, $result);
 
-        $this->assertCount(12, $result);
+        // Google Ads Module V1: AdsBasicVisibility (Core+) and GoogleAdsModule
+        // (Growth+) both flipped Planned -> Available. Both are Business-scoped
+        // and packaged into the Agency fixture tier, so both join this map.
+        $this->assertArrayHasKey(PlatformFeature::AdsBasicVisibility->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::GoogleAdsModule->value, $result);
+
+        $this->assertCount(14, $result);
     }
 
     /**

@@ -126,7 +126,7 @@ final class PlatformFeatureRegistry
         // only) and is unchanged; no new packaging or classification
         // migration is needed (contract §10.3).
         PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Available,
-        PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Available,
         PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,

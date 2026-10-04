@@ -1589,6 +1589,8 @@
             'view_seo'                           => 'view_seo',
             'manage_seo'                         => 'manage_seo',
             'manage_search_console'              => 'manage_search_console',
+            'view_google_ads'                    => 'view_google_ads',
+            'manage_google_ads'                  => 'manage_google_ads',
         ],
 
         'contacts'  => [

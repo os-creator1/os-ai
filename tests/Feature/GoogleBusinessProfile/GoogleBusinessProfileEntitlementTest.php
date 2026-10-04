@@ -116,7 +116,6 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         }
 
         foreach ([
-            PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
             // (Forms left this list at the Forms V1 flip — intentional and unrelated to GBP.)
         ] as $planned) {

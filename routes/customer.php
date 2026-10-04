@@ -566,6 +566,41 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Google Ads entry (Google Ads Module V1, contract 23 §7)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the module lives at
+    | customer.workspaces.businesses.ads.*. Never guesses a Business: zero
+    | accessible show an empty state, exactly one redirects through, several
+    | show a chooser. "Accessible" includes ENTITLEMENT (ads_basic_visibility
+    | or google_ads_module). While neither feature is Available in the
+    | registry the whole route is 404. See Business\AdsController::entry().
+    |
+    */
+    Route::get('ads', 'Business\AdsController@entry')->name('ads.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Ads OAuth callback — ONE FIXED, TENANT-FREE URI
+    |--------------------------------------------------------------------------
+    |
+    | Google matches `redirect_uri` EXACTLY, so this can never carry a
+    | Workspace or Business segment; GoogleAdsOAuthConfig refuses to start a
+    | flow unless services.google_ads.redirect equals this URL. The Business
+    | is resolved ONLY from the signed, single-use state and the whole
+    | tenancy / entitlement / permission chain is re-run before the nonce is
+    | consumed or any code exchanged. It stays GET because Google redirects
+    | the browser here; it never authenticates or creates a user and never
+    | places a code or token in a URL, flash or log. See
+    | Business\AdsConnectionController::callback().
+    |
+    */
+    Route::get('ads/oauth/callback', 'Business\AdsConnectionController@callback')
+        ->middleware('throttle:20,1')
+        ->name('ads.oauth.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
@@ -1240,6 +1275,42 @@
             // revision is published, and re-auditing one is idempotent.
             Route::get('/site-audit', 'Business\SeoAuditController@audit')->name('audit.index');
             Route::post('/site-audit/run', 'Business\SeoAuditController@rerun')->middleware('throttle:6,1')->name('audit.rerun');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Google Ads (Google Ads Module V1, contract 23 §7/§8).
+        |
+        | Every action runs Workspace -> Business -> BusinessRouteAccess ->
+        | active Business -> entitlement -> capability. Tenancy/entitlement
+        | failures are 404, never 403. Overview, Settings and the connection
+        | actions are entitled by ads_basic_visibility OR google_ads_module
+        | (Core connects + reads); Budget and every later page (campaigns,
+        | keywords, search-terms, leads, recommendations) need google_ads_module
+        | only. Reads need view_google_ads; connect, choose the account,
+        | disconnect, save the budget target and refresh need manage_google_ads.
+        |
+        | Every non-GET route under this prefix is View-As prohibited by
+        | PATTERN (ViewAsProhibitedActions), so the later mutation routes are
+        | covered the moment they are registered.
+        |
+        | RESERVED for the next UI slice (not registered here): campaigns.*,
+        | keywords.*, search-terms.*, leads.*, recommendations.*. The sidebar
+        | shows each child only once its route exists.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/ads')->name('businesses.ads.')->group(function () {
+            Route::get('/', 'Business\AdsController@overview')->name('index');
+            Route::get('/series', 'Business\AdsController@series')->middleware('throttle:60,1')->name('series');
+            Route::get('/budget', 'Business\AdsController@budget')->name('budget');
+
+            Route::get('/settings', 'Business\AdsConnectionController@settings')->name('settings');
+            Route::post('/settings', 'Business\AdsConnectionController@saveSettings')->middleware('throttle:20,1')->name('settings.update');
+            Route::post('/connect', 'Business\AdsConnectionController@connect')->middleware('throttle:10,1')->name('connect');
+            Route::get('/accounts', 'Business\AdsConnectionController@accounts')->middleware('throttle:20,1')->name('accounts');
+            Route::post('/accounts/select', 'Business\AdsConnectionController@selectAccount')->middleware('throttle:20,1')->name('accounts.select');
+            Route::post('/disconnect', 'Business\AdsConnectionController@disconnect')->name('disconnect');
+            Route::post('/refresh', 'Business\AdsConnectionController@refresh')->middleware('throttle:10,1')->name('refresh');
         });
 
         /*

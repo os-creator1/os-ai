@@ -25,6 +25,9 @@ class PlatformFeatureRegistryTest extends TestCase
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::AiCooBasic->value));
         // Forms V1 domain foundation: the standalone Forms product.
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Forms->value));
+        // Google Ads Module V1: both Ads keys are Available; Meta Ads stays Planned.
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::AdsBasicVisibility->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::GoogleAdsModule->value));
     }
 
     public function test_every_other_feature_is_planned_not_available(): void
@@ -32,8 +35,6 @@ class PlatformFeatureRegistryTest extends TestCase
         $planned = [
             // (Forms left this list at the Forms V1 domain foundation flip;
             // tests/Feature/Forms/FormsEntitlementIdentityTest asserts it is Available.)
-            PlatformFeature::AdsBasicVisibility,
-            PlatformFeature::GoogleAdsModule,
             PlatformFeature::MetaAdsModule,
             PlatformFeature::AgencyPackageCapabilities,
             // (WhiteLabel left this list at the Agency V1 completion flip;
@@ -49,7 +50,7 @@ class PlatformFeatureRegistryTest extends TestCase
             // found and documented as a pre-existing, out-of-scope defect.)
         ];
 
-        $this->assertCount(4, $planned);
+        $this->assertCount(2, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(

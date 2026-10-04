@@ -207,3 +207,22 @@ Per-Business sync claim; daily cadence; manual refresh throttle; per-Business ho
 ## 17. Deferred
 
 Meta/Microsoft Ads, campaign creation, automatic budget/bidding changes, PMax assets, Shopping/Merchant Center, conversion-action management, AI features, competitor research, keyword planner, cross-client Agency Ads reporting, multi-touch attribution *modelling*, call tracking, **offline conversion upload** (click-id foundation is in place; needs consent model, conversion-action mapping UI, dedupe, and verification of `uploadClickConversions`), per-conversion-action breakdown, campaign→Location mapping (campaign data is Business-wide; no inference from names), intraday refresh, Quality Score beyond showing the API value when present, "Add as keyword", Growth Center / Opportunity Engine integration (§12), Ads facts on Home/COO, provider-side token revoke, live provider acceptance.
+
+## 18. UI shell (Phase 3A) — routes, access matrix, extension points
+
+**Routes** (`routes/customer.php`). Bare entry `customer.ads.index` (`/ads`; 404 while neither Ads feature is Available; zero / one / many entitled Businesses behave like `seo.index`). Fixed tenant-free callback `customer.ads.oauth.callback` (`/ads/oauth/callback`; signed state, product claim `google_ads`, actor must be the initiator, nonce consumed before the code exchange). Business-scoped group `{workspaceUid}/businesses/{businessUid}/ads` named `customer.workspaces.businesses.ads.*`: `index` (Overview), `series` (JSON, throttle 60/min), `budget`, `settings` (GET) + `settings.update` (POST), `connect` (POST), `accounts` (GET) + `accounts.select` (POST), `disconnect` (POST), `refresh` (POST). Reserved for the next UI slice: `campaigns.*`, `keywords.*`, `search-terms.*`, `leads.*`, `recommendations.*`.
+
+**Access matrix.** Tenancy and entitlement failures are 404. A missing capability is the application-wide authorization failure (401), checked only after tenancy.
+
+| Route | Entitlement | Capability |
+|---|---|---|
+| Overview, series, Settings (GET) | `ads_basic_visibility` OR `google_ads_module` | `view_google_ads` |
+| connect, accounts (GET), accounts.select, settings.update, refresh | `ads_basic_visibility` OR `google_ads_module` | `manage_google_ads` |
+| disconnect | none (stored credentials are never trapped by a plan change; GBP precedent) | `manage_google_ads` |
+| Budget and every later page | `google_ads_module` only (Core gets 404) | `view_google_ads` (mutations: `manage_google_ads`) |
+
+**Behaviour.** Overview, series and Budget read cached normalised data only; changing the period never calls Google. Refresh only queues a sync (`GoogleAdsSyncRequester`). Targets are stored in micros of the account currency; a blank or zero value clears to NULL. The callback leaves the framework's server-side session "previous URL" holding the callback URL (as the GBP callback does); the code and state are single-use and never appear in a response, redirect, flash or log.
+
+**View As.** Reads stay viewable. `connect`, `accounts`, `accounts.select`, `disconnect`, `settings.update`, `refresh` and the callback are prohibited by name, and EVERY non-GET route under `customer.workspaces.businesses.ads.` is prohibited by pattern (`ViewAsProhibitedActions::NON_GET_PROHIBITED_PREFIXES`), so mutation routes added later are covered on registration. `customer.ads.index` redirects to the viewed Business's Overview.
+
+**Extension points for later pages.** `ResolvesAdsBusinessTenancy` (`resolveAdsTenancy`, `resolveAdsModuleTenancy`, `resolveAdsAccount`, `adsViewData`), the shared partials `customer.business.ads._header` (title, currency, sub-navigation, freshness) / `_freshness` / `_empty-state`, and `CustomerMenuBuilder::adsMenuItem()` which shows each child only when its route exists.
