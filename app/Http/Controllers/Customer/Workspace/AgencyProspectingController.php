@@ -142,6 +142,10 @@ class AgencyProspectingController extends CustomerBaseController
             'replyRate' => $initialMessagesSent > 0 ? round($inboundReplies / $initialMessagesSent * 100, 1) : null,
             'bookedRate' => $totalProspects > 0 ? round($bookedProspects / $totalProspects * 100, 1) : null,
             'optOutRate' => $totalProspects > 0 ? round($stoppedProspects / $totalProspects * 100, 1) : null,
+            // Agency Outreach V1 — the readiness checklist and the real metrics (contract 12, 16).
+            'readiness' => app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace),
+            'metrics' => app(\App\Library\AgencyOutreach\OutreachMetrics::class)->forWorkspace($workspace),
+            'pausedForFunds' => app(\App\Library\AgencyOutreach\OutreachCampaignService::class)->hasPausedForFunds($workspace),
         ]);
     }
 
@@ -151,9 +155,7 @@ class AgencyProspectingController extends CustomerBaseController
 
         return view('customer.workspaces.prospecting.prospects', [
             'workspaceUid' => $workspaceUid,
-            'prospects' => AgencyProspect::where('workspace_id', $workspace->id)
-                ->orderByDesc('id')
-                ->get(),
+            'rows' => app(\App\Library\AgencyOutreach\OutreachProspectListReader::class)->rows($workspace),
         ]);
     }
 
@@ -308,12 +310,17 @@ class AgencyProspectingController extends CustomerBaseController
     public function campaigns(string $workspaceUid): View|Factory|Application
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $campaigns = AgencyProspectCampaign::where('workspace_id', $workspace->id)->orderByDesc('id')->get();
+        $service = app(\App\Library\AgencyOutreach\OutreachCampaignService::class);
+        $readiness = app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace);
 
         return view('customer.workspaces.prospecting.campaigns', [
             'workspaceUid' => $workspaceUid,
-            'campaigns' => AgencyProspectCampaign::where('workspace_id', $workspace->id)
-                ->orderByDesc('id')
-                ->get(),
+            'campaigns' => $campaigns,
+            'summaries' => $service->summaries($workspace, $campaigns),
+            'pausedForFunds' => $service->hasPausedForFunds($workspace),
+            'sendingNumber' => $readiness->info()['number'] ?? null,
+            'defaultOpener' => \App\Library\AgencyOutreach\OutreachScript::forWorkspace($workspace)->get('message_1'),
         ]);
     }
 
@@ -350,6 +357,7 @@ class AgencyProspectingController extends CustomerBaseController
                 ->whereNotIn('id', $campaign->members()->pluck('prospect_id'))
                 ->orderBy('company_name')
                 ->get(),
+            'readiness' => $campaign->isManaged() ? app(\App\Library\AgencyOutreach\AgencyOutreachReadiness::class)->forWorkspace($workspace) : null,
             'availableChannels' => \App\Models\AgencyProspectingChannel::where('workspace_id', $workspace->id)
                 ->where('status', \App\Models\AgencyProspectingChannel::STATUS_ACTIVE)
                 ->get(),
@@ -457,6 +465,15 @@ class AgencyProspectingController extends CustomerBaseController
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceCampaign($workspace, $campaign);
+
+        // Managed (Outreach) campaigns start through the readiness-gated service;
+        // everything below is the unchanged channel-campaign path.
+        if ($campaign->isManaged()) {
+            $result = app(\App\Library\AgencyOutreach\OutreachCampaignService::class)->start($workspace, $campaign);
+
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with($result['ok'] ? 'flash_success' : 'flash_error', $result['ok'] ? $result['message'] : $result['error']);
+        }
 
         $outcome = DB::transaction(function () use ($workspace, $campaign) {
             $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
@@ -582,6 +599,14 @@ class AgencyProspectingController extends CustomerBaseController
         if ($campaign->status === AgencyProspectCampaignStatus::Draft) {
             return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
                 ->with('flash_error', 'Use Start Campaign to activate a draft campaign.');
+        }
+
+        if ($campaign->isManaged()) {
+            $service = app(\App\Library\AgencyOutreach\OutreachCampaignService::class);
+            $result = $validated['status'] === 'paused' ? $service->pause($workspace, $campaign) : $service->resume($workspace, $campaign);
+
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with($result['ok'] ? 'flash_success' : 'flash_error', $result['ok'] ? $result['message'] : $result['error']);
         }
 
         $newStatus = AgencyProspectCampaignStatus::from($validated['status']);

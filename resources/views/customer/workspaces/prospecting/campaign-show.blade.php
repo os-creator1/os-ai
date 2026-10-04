@@ -22,6 +22,18 @@
                 @endif
 
                 @if($campaign->status->value !== 'draft')
+                    @if($campaign->isManaged())
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}">
+                            @csrf
+                            @if($campaign->status->value === 'active')
+                                <input type="hidden" name="status" value="paused">
+                                <x-button type="submit" variant="outline" size="sm">Pause campaign</x-button>
+                            @else
+                                <input type="hidden" name="status" value="active">
+                                <x-button type="submit" variant="primary" size="sm">Resume campaign</x-button>
+                            @endif
+                        </form>
+                    @else
                     <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
                         @csrf
                         <select name="status" class="form-select" style="max-width: 200px;">
@@ -30,10 +42,46 @@
                         </select>
                         <x-button type="submit" variant="primary" size="sm">Update status</x-button>
                     </form>
+                    @endif
                 @endif
             </x-card>
 
+            @if($campaign->isManaged() && $readiness !== null)
+                <x-card title="Ready to send?" :padded="true" class="mt-2" data-role="campaign-readiness">
+                    <ul class="list-unstyled mb-0">
+                        @foreach($readiness->items() as $item)
+                            <li class="mb-1" data-readiness="{{ $item['key'] }}" data-ok="{{ $item['ok'] ? '1' : '0' }}">
+                                <x-badge :variant="$item['ok'] ? 'success' : 'warning'">{{ $item['ok'] ? 'Ready' : 'Needs attention' }}</x-badge>
+                                <strong>{{ $item['label'] }}</strong>
+                                @if(! $item['ok'])
+                                    <span class="d-block text-caption">{{ $item['reason'] }}
+                                        @if(! empty($item['url']))<a href="{{ $item['url'] }}">Open</a>@endif
+                                    </span>
+                                @endif
+                            </li>
+                        @endforeach
+                    </ul>
+                </x-card>
+            @endif
+
             @if($campaign->status->value === 'draft')
+                @if($campaign->isManaged())
+                    <x-card title="First text &amp; start" :padded="true" class="mt-2">
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.config', [$workspaceUid, $campaign->uid]) }}">
+                            @csrf
+                            <div class="mb-1">
+                                <label class="form-label" for="opening_message">First text</label>
+                                <textarea id="opening_message" name="opening_message" class="form-control" rows="3">{{ old('opening_message', $campaign->opening_message) }}</textarea>
+                            </div>
+                            <x-button type="submit" variant="outline" size="sm">Save first text</x-button>
+                        </form>
+
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.start', [$workspaceUid, $campaign->uid]) }}" class="mt-2">
+                            @csrf
+                            <x-button type="submit" variant="primary">Start campaign</x-button>
+                        </form>
+                    </x-card>
+                @else
                 <x-card title="Configure &amp; start" :padded="true" class="mt-2">
                     <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.config', [$workspaceUid, $campaign->uid]) }}">
                         @csrf
@@ -61,6 +109,7 @@
                         <x-button type="submit" variant="primary">Start campaign</x-button>
                     </form>
                 </x-card>
+                @endif
             @endif
 
             @if($campaign->status->value === 'draft')

@@ -449,7 +449,7 @@ final class CustomerMenuBuilder
         }
 
         if ($context->isAgency()) {
-            $items[] = $this->item($user, 'prospecting', 'Prospecting', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
+            $items[] = $this->item($user, 'prospecting', 'Outreach', 'target', ['access_backend'], 'customer.prospecting.index', [], $current, [
                 'customer.prospecting.', 'customer.workspaces.prospecting.',
             ]);
         }

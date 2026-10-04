@@ -1383,6 +1383,19 @@
         // Initial load
         loadChatUsers(page, filter, search);
 
+        // Deep link from Outreach (?open=<conversation uid>): open that conversation
+        // once the list has loaded. Best effort; nothing happens if it is not listed.
+        (function () {
+          const wanted = new URLSearchParams(window.location.search).get("open");
+          if (!wanted) { return; }
+          let tries = 0;
+          const timer = setInterval(function () {
+            const $row = $("#users-list li").filter(function () { return String($(this).attr("data-id")) === wanted; }).first();
+            if ($row.length) { clearInterval(timer); $row.trigger("click"); }
+            else if (++tries > 20) { clearInterval(timer); }
+          }, 250);
+        })();
+
 // Add debounce function to delay the search request
         function debounce(func, delay) {
           let timeout;

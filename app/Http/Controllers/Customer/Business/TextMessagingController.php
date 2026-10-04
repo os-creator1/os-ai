@@ -10,6 +10,7 @@ use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsPresenter;
+use App\Library\AgencyOutreach\MessagingReadinessReader;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
 use App\Library\Messaging\BusinessMessagingProvisioningService;
 use App\Library\Messaging\BusinessMessagingRegistrationService;
@@ -84,6 +85,7 @@ class TextMessagingController extends CustomerBaseController
         private readonly BusinessAnalyticsPresenter $analyticsPresenter,
         private readonly CustomerShellComposer $shell,
         private readonly PortOutRequestManager $portOutRequests,
+        private readonly MessagingReadinessReader $readiness,
     ) {
     }
 
@@ -522,65 +524,9 @@ class TextMessagingController extends CustomerBaseController
      */
     private function situation(Business $business): array
     {
-        $identity = $this->identities->resolveForBusiness($business);
-        $registration = $this->registrationFor($business);
-
-        // Review correction — computed once, independent of the
-        // active-identity/active-number branches below, through the
-        // ownership-safe lookup (never Slice 3's outbound-send resolver).
-        // A Suspended number (or a Pending identity) still falls into the
-        // 'no_number'/'registration_required' branches beneath for the
-        // rest of this method's existing, unrelated state classification —
-        // that classification is Slice 3/4's own established contract and
-        // is deliberately left unchanged here — but the port-out exit path
-        // must remain reachable, for every retained number, regardless of
-        // which branch is taken.
-        $portOutContext = $this->portOutContextFor($business);
-
-        if ($identity === null) {
-            // Review correction — Telnyx genuinely supports (and this
-            // platform now requires) completing 10DLC business
-            // verification BEFORE any local number is purchased; toll-free
-            // can never reach this branch un-Approved, since its own
-            // carrier verification always requires an already-owned
-            // number, so its submission is only ever reachable once a
-            // number (and therefore an identity) already exists.
-            if ($registration !== null && $registration->number_type === PhoneNumberType::Local) {
-                $state = $registration->isApproved() ? 'number_required' : 'registration_required';
-
-                return ['state' => $state, 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
-            }
-
-            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
-        }
-
-        try {
-            $number = $this->identities->resolvePrimaryNumber($identity);
-        } catch (MessagingIdentityConflictException) {
-            return ['state' => 'no_number', 'phoneNumber' => null, 'textingAvailable' => false, 'mediaAvailable' => false, 'registration' => $registration, ...$portOutContext];
-        }
-
-        // Review correction — a local number's own carrier-side campaign
-        // assignment must be genuinely Confirmed, never merely Requested,
-        // before the customer is told they are Ready. See
-        // BusinessMessagingNumber::isCampaignAssignmentConfirmedOrNotRequired()'s
-        // own docblock for why toll-free and assignment-less numbers pass
-        // this check unconditionally.
-        $ready = $number->isActive()
-            && $registration !== null
-            && $registration->isApproved()
-            && $number->isCampaignAssignmentConfirmedOrNotRequired();
-
-        return [
-            'state' => $ready ? 'ready' : 'registration_required',
-            'phoneNumber' => $number->phone_number,
-            'textingAvailable' => $ready,
-            'mediaAvailable' => $ready,
-            'registration' => $registration,
-            'campaignAssignmentStatus' => $number->campaign_assignment_status,
-            'campaignAssignmentFailureReason' => $number->campaign_assignment_failure_reason,
-            ...$portOutContext,
-        ];
+        // The one read of the messaging situation now lives in MessagingReadinessReader
+        // (shared with Agency Outreach readiness); behaviour is unchanged.
+        return $this->readiness->situation($business);
     }
 
     /**
@@ -592,21 +538,12 @@ class TextMessagingController extends CustomerBaseController
      */
     private function portOutContextFor(Business $business): array
     {
-        $retainedNumbers = $this->portOutRequests->retainedNumbersFor($business);
-
-        return [
-            'retainedNumbers' => $retainedNumbers,
-            'portOutRequestsByNumberId' => $retainedNumbers
-                ->mapWithKeys(fn (BusinessMessagingNumber $number) => [
-                    (int) $number->id => $this->portOutRequests->activeRequestFor($number),
-                ])
-                ->all(),
-        ];
+        return $this->readiness->portOutContextFor($business);
     }
 
     private function registrationFor(Business $business): ?BusinessMessagingRegistration
     {
-        return BusinessMessagingRegistration::query()->where('business_id', $business->id)->first();
+        return $this->readiness->registrationFor($business);
     }
 
     /**

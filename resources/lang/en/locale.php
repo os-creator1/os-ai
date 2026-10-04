@@ -937,6 +937,7 @@
             'Client account'          => 'Client account',
             'Client accounts'         => 'Client accounts',
             'Prospecting'             => 'Prospecting',
+            'Outreach'                => 'Outreach',
             'Accounts'                => 'Accounts',
             'Agency account details'  => 'Agency account details',
             'Get found'               => 'Get found',
