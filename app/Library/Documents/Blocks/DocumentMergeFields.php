@@ -66,7 +66,13 @@ final class DocumentMergeFields
      */
     public static function isCanonical(string $token): bool
     {
-        if (preg_match('/^(contact|location|opportunity)\.([a-z][a-z0-9_]{0,63})$/', $token, $m) !== 1) {
+        if (preg_match('/^(contact|location|opportunity)\.([a-z][a-z0-9_]{0,63})$/D', $token, $m) !== 1) {
+            return false;
+        }
+
+        // A credential-shaped key is never a merge token, even as a Custom Field key:
+        // a stored run can never be made to name one.
+        if ($m[1] === 'contact' && preg_match('/password|passwd|secret|token|api_?key|private_?key/', $m[2]) === 1) {
             return false;
         }
 

@@ -282,7 +282,7 @@ class CrossDomainTriggersTest extends TestCase
         DB::table('automation_enrollments')->where('id', $journey->id)->update(['causation_depth' => 1]);
 
         $document = $this->draftDocument($this->world);
-        app(DocumentManager::class)->send($document, TriggerCause::originFor($stepRunId));
+        app(DocumentManager::class)->send($document, origin: TriggerCause::originFor($stepRunId));
 
         $this->assertSame(0, $this->enrollments($producer)->where('id', '!=', $journey->id)->count(), 'The workflow never re-triggers off its own output.');
         $enrolled = $this->enrollments($other)->sole();

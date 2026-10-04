@@ -205,6 +205,8 @@ class WorkflowReferenceCatalogLoader
                 DB::raw('null as field_is_phone'),
                 DB::raw('CAST(custom_field_definitions.options AS CHAR) as stage_semantic_key'),
                 DB::raw('null as child_archived_at'),
+                DB::raw('null as extra_int'),
+                DB::raw('null as extra_text'),
             ]);
 
         // Contact groups by name (as before); pipelines and their stages in the

@@ -72,6 +72,10 @@ class EventServiceProvider extends ServiceProvider
         // payment row that transitions into `failed`; nothing else consumes it.
         \App\Events\DocumentPaymentFailed::class => [
             \App\Listeners\Automation\Workflow\EnrollFromDocumentEvent::class,
+            // Growth Center — a failed payment is the one document event that
+            // CREATES a finding at once; the debounced trigger keeps a burst of
+            // events to one evaluation per window.
+            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handlePaymentFailed',
         ],
         // Implementation Contract 17 §12.G — Blueprint §24's "payment events
         // reach the Activity Center", extended to the whole document
@@ -90,12 +94,6 @@ class EventServiceProvider extends ServiceProvider
         \App\Events\DocumentFullyPaid::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleFullyPaid',
             \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handleFullyPaid',
-        ],
-        // Growth Center — a failed payment is the one document event that
-        // CREATES a finding at once; the debounced trigger keeps a burst of
-        // events to one evaluation per window.
-        \App\Events\DocumentPaymentFailed::class => [
-            \App\Listeners\Growth\TriggerGrowthEvaluation::class.'@handlePaymentFailed',
         ],
         \App\Events\DocumentExpired::class => [
             \App\Listeners\Documents\SurfaceDocumentActivityInActivityCenter::class.'@handleExpired',
