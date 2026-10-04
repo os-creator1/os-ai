@@ -102,12 +102,17 @@ at a time (a later edit queues exactly one follow-up; an older response never ov
   *Conflict — stale tab* and a reload button and stops saving.
 * A rule refusal (e.g. a dropdown with <2 options) is HTTP 422 with the manager's own wording, shown in the
   banner; the document stays dirty and retries on the next edit.
-* **Known trade-off:** every autosave that changes content is a new immutable `FormVersion` (the model forbids
-  updates). A burst of edits separated by pauses can write several versions. Versions are small JSON and never
-  referenced by submissions that didn't answer against them, but a draft buffer (autosave to a mutable draft,
-  publish on demand) is the right follow-up if version noise matters — it is **not** built here because it
-  would add a second definition store. Reordering/relabelling never changes a stored key.
-* The Settings status buttons and Offer-here toggles flush a pending autosave before navigating.
+* **Draft editing (final pass).** A form that has **never been activated** cannot have been rendered to a
+  visitor, so no token, questionnaire session or submission can be pinned to any of its versions. For such a
+  form the builder (and only the builder — `FormManager::update(..., coalesceUnpublished: true)`) rewrites the
+  single working version **in place** instead of writing one per pause. Activation sets `forms.activated_at`
+  (never cleared), which closes that branch for good: from then on — including after "switch off" — every content
+  change is a new immutable `FormVersion`, and a version a visitor could have seen is never touched. As a
+  defence in depth the in-place path also refuses if any submission or session already references the form.
+  The classic `update()` is unchanged (always a new version).
+* **Stale detection** therefore compares the **content hash** as well as the version number
+  (`base_version` + `base_hash`, both checked under the row lock), because on a draft the version number alone
+  does not change when content does.* The Settings status buttons and Offer-here toggles flush a pending autosave before navigating.
 
 ## 7. Preview
 
@@ -121,9 +126,30 @@ the public page's. The canvas itself is drawn client-side with the same `pf-*` c
 
 A dialog (also `#integrate`): per enabled Location deployment, the public link with *Copy link* / *Open* and an
 `<iframe>` embed snippet with *Copy embed*; a notice when the form isn't active; a note that the public route
-sends no framing restriction from the application (a reverse proxy may still add one). **Add to Website is not
-offered** — Forms contract §12 defers the Website integration, and the Website still has its own form
-implementation; no second one was created.
+sends no framing restriction from the application (a reverse proxy may still add one). The dialog has a Location
+selector (when there are several) and a **Website pages** section: a toggle that creates a `Website`-source
+deployment (see §8a). The Website's own form implementation is untouched.
+
+### 8a. Website placement seam
+
+`FormDeploymentSource::Website` (additive; the column is a string) + `App\Library\Forms\Embed\FormWebsiteEmbed`.
+
+* **Reference:** a Website-source `FormDeployment` — "this form, at this Location, offered to Website pages". Its
+  public `uid` is the stable, embeddable reference a Website component stores
+  (`data.forms_module_deployment_uid`). It is Location-bound, so a page never chooses a Location; a submission
+  through it is an ordinary Forms submission (same service, pinning, Contact resolution, event) with
+  `source = website`.
+* **Contract:** `FormWebsiteEmbed::resolve($business, $uid)` re-proves from persistence that the row is a
+  Website-source, enabled deployment of **this** Business with an active Form and an active Location, and returns
+  `{url, title, height, form_uid, location_uid}` — or `null` (never throws) for anything else, so a stale or
+  foreign reference renders nothing. The renderer contract is the `public.forms._embed` partial (an iframe of the
+  real public form).
+* **Not done on purpose (the one final-integration change):** the Website component library and snapshot builder
+  are shared wiring owned by the Website lane. To finish placement that lane adds (1) a `forms_module_form`
+  component whose editor stores `forms_module_deployment_uid`, (2) in `WebsiteSnapshotBuilder`, for each such
+  component call `FormWebsiteEmbed::resolve($site->business, $uid)` and embed the returned array in the published
+  snapshot (so a published page is immutable until the next publish, like `formsByUid`), and (3) render it with
+  `@include('public.forms._embed', ['embed' => $embed])`. Nothing else changes.
 
 ## 9. Submissions, Notifications, Analytics
 
@@ -156,6 +182,7 @@ Forms, Custom Fields and Automations suites; `FormsHttpTest` inventory extended 
 
 ## 12. Deferred / not done
 
-File upload; payments; redirect-after-submit URL (not supported by the domain); Add-to-Website; draft buffer
-for autosave; applying consent to Contact subscription state; owner "email me every response"; page views /
+File upload; payments; redirect-after-submit URL (not a canonical Forms field; a safe validated one is a domain
+change); finishing Website placement (§8a, a Website-lane step); draft editing for already-published forms (a
+separate draft store); applying consent to Contact subscription state; owner "email me every response"; page views /
 one-page starts instrumentation; undo/redo; per-element conditional visibility.

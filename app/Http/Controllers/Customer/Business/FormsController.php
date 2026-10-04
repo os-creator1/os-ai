@@ -143,17 +143,23 @@ class FormsController extends Controller
         [, $business, $location] = $this->formsLocationScope($workspaceUid, $businessUid, $locationUid);
         $form = $this->formOrAbort($business, $formUid);
 
-        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'source' => ['nullable', 'string', 'in:'.implode(',', array_column(FormDeploymentSource::cases(), 'value'))],
+        ]);
+        $source = FormDeploymentSource::tryFrom((string) ($data['source'] ?? '')) ?? FormDeploymentSource::DirectLink;
 
         try {
-            $this->forms->setDeployment($business, $form, $location, (bool) $data['enabled']);
+            $this->forms->setDeployment($business, $form, $location, (bool) $data['enabled'], $source);
         } catch (FormRuleException $exception) {
             return $this->refused($exception);
         }
 
         return $this->backToEdit($workspaceUid, $businessUid, $form)->with(
             'flash_success',
-            $data['enabled'] ? 'Now offered at '.($location->name ?: 'that location').'.' : 'No longer offered at '.($location->name ?: 'that location').'.'
+            $source === FormDeploymentSource::Website
+                ? 'Website reference '.($data['enabled'] ? 'enabled' : 'switched off').' for '.($location->name ?: 'that location').'.'
+                : ($data['enabled'] ? 'Now offered at ' : 'No longer offered at ').($location->name ?: 'that location').'.'
         );
     }
 
@@ -230,6 +236,12 @@ class FormsController extends Controller
             'tab' => 'edit',
             'builder' => app(FormBuilderState::class)->forForm($business, $form, $version),
             'locations' => $visible,
+            'websiteDeployments' => FormDeployment::query()
+                ->where('form_id', $form->id)
+                ->where('source', FormDeploymentSource::Website->value)
+                ->whereIn('business_location_id', array_keys($visible))
+                ->get()
+                ->keyBy('business_location_id'),
             'deployments' => FormDeployment::query()
                 ->where('form_id', $form->id)
                 ->where('source', FormDeploymentSource::DirectLink->value)
