@@ -30,7 +30,7 @@
     $hasErrors = $errorBag->any();
     $drawerId = 'citation-drawer-' . $directory->key;
     $canEdit = $canManage && $row->writable;
-    $notApplicable = ! $row->countsTowardProgress();
+    $notApplicable = $row->isNotApplicable();
     $verified = $row->citation?->last_verified_at;
     $canonical = $section->canonical;
     $websiteUrl = $section->canonicalWebsite;
@@ -89,7 +89,7 @@
 
         @unless($row->writable && $section->writable)
             <p class="text-caption mb-0" data-role="drawer-readonly">
-                {{ $section->writable ? 'This directory is no longer offered, so its record is read-only.' : 'This location is archived, so its citations are read-only.' }}
+                {{ $section->writable ? 'This directory is no longer offered for this location, so your earlier record is kept for reference and is read-only.' : 'This location is archived, so its citations are read-only.' }}
             </p>
         @endunless
 

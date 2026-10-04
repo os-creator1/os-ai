@@ -99,8 +99,32 @@ Rejected or not seeded: Thumbtack, Zola (sign-up pages not verifiable), PartySla
 (paid tiers, no self-serve form), Here Comes The Guide (vendor directory closed),
 Wedding Spot / Peerspace (venue marketplaces), Joy, Cvent, Alignable.
 
-## 3. Custom directories
+### Country applicability (decided per Location)
 
+`seo_citation_directories.country_scope` is NULL (everywhere) or one ISO-2 code. For each
+**Location**, a *platform* directory is **offered** only when it is active, is core or is recommended
+by the niche, **and** `country_scope IS NULL` or `UPPER(country_scope) = UPPER(location.country_code)`.
+The Business's own country is never used: a Business may hold Locations in different countries and
+each sees its own list. A niche recommendation does **not** override country applicability (a US-only
+directory recommended for a niche is absent from a non-US Location), and a Location with no country
+code cannot prove a match, so a scoped directory is not offered there (fail closed). Business **custom**
+directories are never country-filtered.
+
+**History:** a citation the Business already holds for a directory that is no longer offered at that
+Location (country, un-recommended, or disabled) stays readable but is a *history-only* row — marked
+"History", read-only (the write routes answer 404 for it), and excluded from every count, progress
+figure and the next-steps list. Nothing is deleted.
+
+Markets recorded after the closure re-check (evidence in the table above and in the Photo Booth
+section): `data_axle` US, `nextdoor_business` US (documented US market; the loaded page speaks of US
+households, the weakest of the three), `yellow_pages` US; **`weddingwire_the_knot` NULL** (evidence is
+only "US focus" and WeddingWire runs other countries' sites; the WeddingPro claim page is not
+country-specific, so no restriction is proven); **`bark` US** (the verified claim path is Bark's US
+site, `/en/us/sellers/create/`); `gigsalad`, `eventective`, `the_bash`, `bbb`, `mapquest` and the
+globally available directories stay NULL because their markets were unconfirmed or multi-country
+(multi-country storage is not part of V1).
+
+## 3. Custom directories
 `+ Add custom directory` (owner, `manage_seo`): name, listing link, optional
 claim/manage link, status and the listed name/phone/address/website, applied to
 all Locations or only the selected one. Always `manual`, always labelled **Custom**,

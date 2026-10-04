@@ -144,7 +144,7 @@ class SeoCitationDirectorySeeder extends Seeder
             'key' => 'weddingwire_the_knot', 'name' => 'WeddingWire & The Knot (WeddingPro)',
             'website_url' => 'https://www.weddingwire.com', 'claim_url' => 'https://pros.weddingpro.com/',
             'category' => 'wedding_events', 'icon' => 'heart', 'importance' => 'recommended', 'tracking_mode' => 'assisted',
-            'country_scope' => 'US', 'is_platform_core' => false, 'sort_order' => 200,
+            'country_scope' => null, 'is_platform_core' => false, 'sort_order' => 200,
             'setup_guidance' => 'One WeddingPro account covers both sites. Start with the free plan; add real prices and event photos, and answer inquiries quickly.',
         ],
         [
@@ -165,7 +165,7 @@ class SeoCitationDirectorySeeder extends Seeder
             'key' => 'bark', 'name' => 'Bark',
             'website_url' => 'https://www.bark.com/en/us/', 'claim_url' => 'https://www.bark.com/en/us/sellers/create/',
             'category' => 'lead_marketplace', 'icon' => 'megaphone', 'importance' => 'optional', 'tracking_mode' => 'assisted',
-            'country_scope' => null, 'is_platform_core' => false, 'sort_order' => 230,
+            'country_scope' => 'US', 'is_platform_core' => false, 'sort_order' => 230,
             'setup_guidance' => 'Joining is free but responding to leads uses paid credits. Start with a small pack and reply only to leads in your service area.',
         ],
         [

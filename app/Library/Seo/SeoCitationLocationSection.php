@@ -144,7 +144,12 @@ final class SeoCitationLocationSection
         ];
 
         foreach ($this->rows as $row) {
-            if (! $row->countsTowardProgress()) {
+            // A record kept for a directory no longer offered here is history, not progress.
+            if ($row->isHistoryOnly()) {
+                continue;
+            }
+
+            if ($row->isNotApplicable()) {
                 $s['notApplicable']++;
 
                 continue;

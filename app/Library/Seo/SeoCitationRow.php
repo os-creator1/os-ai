@@ -44,6 +44,7 @@ final class SeoCitationRow
         public readonly ?string $listedWebsite = null,
         public readonly SeoNapFieldResult $websiteResult = SeoNapFieldResult::NotComparable,
         public readonly bool $reviewDue = false,
+        public readonly bool $offered = true,
     ) {
     }
 
@@ -74,10 +75,25 @@ final class SeoCitationRow
         return $this->status === SeoCitationStatus::Listed && $this->hasRecordedDetails();
     }
 
-    /** Not-applicable rows are out of every denominator and out of "needs attention". */
+    /**
+     * Not-applicable rows, and HISTORY-ONLY rows (a record kept for a directory that is no longer
+     * offered for this Location: disabled, un-recommended, or outside the Location's country), are
+     * out of every denominator and out of "needs attention".
+     */
     public function countsTowardProgress(): bool
     {
-        return $this->status !== SeoCitationStatus::NotApplicable;
+        return $this->offered && $this->status !== SeoCitationStatus::NotApplicable;
+    }
+
+    public function isNotApplicable(): bool
+    {
+        return $this->status === SeoCitationStatus::NotApplicable;
+    }
+
+    /** A readable record for a directory that is not (or no longer) offered here. Never actionable. */
+    public function isHistoryOnly(): bool
+    {
+        return ! $this->offered;
     }
 
     /** Nothing recorded to compare yet (and not marked not-applicable). */

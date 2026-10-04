@@ -25,7 +25,7 @@
     $verified = $row->citation?->last_verified_at;
     $drawerId = 'citation-drawer-' . $directory->key;
     $canEdit = $canManage && $row->writable;
-    $notApplicable = ! $row->countsTowardProgress();
+    $notApplicable = $row->isNotApplicable();
     $mode = $row->trackingMode();
 @endphp
 <div class="cz-row @if($notApplicable) cz-row--muted @endif" data-role="citation-row" data-directory="{{ $directory->key }}" data-status="{{ $row->status->value }}" data-state="{{ $state->value }}" data-setup="{{ $row->status->value }}" data-importance="{{ $importance->value }}" data-custom="{{ $row->isCustom() ? '1' : '0' }}" data-notchecked="{{ $row->isNotChecked() ? '1' : '0' }}" data-attention="{{ (! $notApplicable && ($state->isActionable() || $row->reviewDue)) ? '1' : '0' }}" data-name="{{ \Illuminate\Support\Str::lower($directory->name) }}" data-drawer="#{{ $drawerId }}">
@@ -39,7 +39,8 @@
                 @else
                     <x-badge :variant="$importance->variant()" data-role="importance-badge">{{ $importance->label() }}</x-badge>
                 @endif
-                @if($row->nicheLabel !== null)<x-badge variant="accent" data-role="niche-badge">{{ $row->nicheLabel }}</x-badge>@endif
+                @if($row->nicheLabel !== null && ! $row->isHistoryOnly())<x-badge variant="accent" data-role="niche-badge">{{ $row->nicheLabel }}</x-badge>@endif
+                @if($row->isHistoryOnly())<x-badge variant="neutral" data-role="history-badge">History</x-badge>@endif
                 <span class="cz-mode" data-role="tracking-mode">{{ $mode->label() }}</span>
             </span>
         </span>

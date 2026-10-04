@@ -348,11 +348,28 @@ final class SeoCitationManager
             ->first();
 
         if ($directory === null
-            || ($directory->business_location_id !== null && (int) $directory->business_location_id !== (int) $location->id)) {
+            || ($directory->business_location_id !== null && (int) $directory->business_location_id !== (int) $location->id)
+            || ! $this->appliesToCountry($directory, $location)) {
             throw new SeoCitationNotFoundException('Directory not found.');
         }
 
         return $directory;
+    }
+
+    /**
+     * Country applicability, decided per LOCATION (a Business may have Locations in different
+     * countries): a platform directory with a NULL country_scope applies everywhere; one with an
+     * ISO-2 scope applies only where it equals the Location's country_code (case-insensitive). A
+     * Location with no country code cannot prove a match, so a scoped directory does not apply
+     * (fail closed). Business custom directories are never filtered by country.
+     */
+    private function appliesToCountry(SeoCitationDirectory $directory, BusinessLocation $location): bool
+    {
+        if ($directory->isCustom() || $directory->country_scope === null || trim((string) $directory->country_scope) === '') {
+            return true;
+        }
+
+        return strtoupper(trim((string) $directory->country_scope)) === strtoupper(trim((string) $location->country_code));
     }
 
     /**
@@ -482,8 +499,12 @@ final class SeoCitationManager
                 continue;
             }
 
+            // OFFERED = new, actionable. A platform directory must be active, core or recommended by the
+            // niche, AND apply to THIS Location's country (a recommendation never overrides that). A custom
+            // directory is governed only by its own Business/Location scope.
             $offered = $directory->is_active
-                && ($directory->is_platform_core || $recommendation !== null || $directory->isCustom());
+                && ($directory->isCustom()
+                    || (($directory->is_platform_core || $recommendation !== null) && $this->appliesToCountry($directory, $location)));
 
             // Anything else is shown only where the Business already holds a
             // record for it (history), and is then read-only.
@@ -506,12 +527,13 @@ final class SeoCitationManager
                     'phone' => $citation?->listed_phone,
                     'address' => $listedAddress,
                 ]),
-                writable: $writable && $directory->is_active,
+                writable: $writable && $offered,
                 importance: $recommendation?->importance,
                 nicheLabel: $recommendation !== null ? $nicheLabel : null,
                 nicheGuidance: $recommendation?->guidance,
                 listedWebsite: $citation?->listed_website,
                 websiteResult: $this->comparator->compareWebsite($canonicalWebsite, $citation?->listed_website),
+                offered: $offered,
                 reviewDue: $citation !== null
                     && $citation->status === SeoCitationStatus::Listed
                     && $citation->last_verified_at !== null
