@@ -106,6 +106,14 @@ return new class extends Migration {
             });
         }
 
+        // `channel` (default, every existing campaign) keeps the BYO-channel Prospecting runtime exactly as it was;
+        // `managed` is an Outreach campaign: canonical messaging + the deterministic engine.
+        if (Schema::hasTable('agency_prospect_campaigns') && ! Schema::hasColumn('agency_prospect_campaigns', 'sending_mode')) {
+            Schema::table('agency_prospect_campaigns', function (Blueprint $table) {
+                $table->string('sending_mode', 16)->default('channel');
+            });
+        }
+
         if (Schema::hasTable('agency_prospects') && ! Schema::hasColumn('agency_prospects', 'stop_reason')) {
             Schema::table('agency_prospects', function (Blueprint $table) {
                 $table->string('stop_reason', 24)->nullable();
@@ -124,6 +132,7 @@ return new class extends Migration {
             'agency_prospect_campaign_members' => ['chat_box_id', 'ai_paused_at', 'ai_paused_by_user_id'],
             'agency_prospect_messages' => ['source', 'stage_from', 'stage_to', 'script_version', 'actor_user_id', 'failure_reason'],
             'agency_prospects' => ['stop_reason'],
+            'agency_prospect_campaigns' => ['sending_mode'],
         ];
 
         foreach ($drop as $table => $columns) {

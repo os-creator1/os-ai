@@ -29,9 +29,12 @@ What changes:
 | STOP | detector flag on the prospect | `Blacklists` row for the Agency Business (§9) |
 | Tokens | `strtr` template | Canonical merge engine, `agency.*` + `prospect.*` groups (§3) |
 
-The BYO-channel code path (`AgencyProspectingChannel*`, provider webhooks, `ProviderAgencyProspectingMessageSender`)
-is **left in place, not removed** (removal needs approval). A campaign with a `channel_id` keeps using it through the
-same engine; a campaign WITHOUT a channel (every new Outreach campaign) uses canonical messaging.
+The BYO-channel runtime (`AgencyProspectingChannel*`, provider webhooks, `AgencyProspectingRespondJob`, `AgencyProspectingFollowUpJob`,
+`AgencyProspectingInitialSendJob`, `ProviderAgencyProspectingMessageSender`) is **left in place and byte-unchanged** (removal needs approval, and
+`AgencyProspectingRuntimeTest` is pinned to main by a Slice 3 tripwire). It keeps serving campaigns with `sending_mode = 'channel'` (the column
+default — every existing campaign). Outreach adds `agency_prospect_campaigns.sending_mode = 'managed'`: such a campaign uses the new deterministic
+engine and canonical messaging through NEW classes (`OutreachRespondJob`, `OutreachFollowUpJob`, `OutreachInitialSendJob`) in `App\Library\AgencyOutreach`
+and `App\Jobs\Outreach`. The Outreach UI only ever creates `managed` campaigns. A `managed` campaign never needs a channel.
 
 ## 2. Ownership and tenancy
 
@@ -120,7 +123,7 @@ Calendar-link mode only in V1 (§10).
 - **Canonical** (campaign without channel): `CampaignRepository::checkQuickSendValidation()` + `quickSend()` with `business_id` = the Agency's own Business,
   `managed_operation_key`, `require_managed = true`. That gives managed number resolution, the `Blacklists` check, conversation history,
   usage measurement and §7 billing. No second sender, no direct provider calls.
-- **Channel** (legacy BYO campaign): the existing `AgencyProspectingMessageSender`, unchanged.
+- There is **no** channel driver in the Outreach engine: BYO-channel campaigns do not go through it at all (§1).
 
 Eligibility is re-checked at send time under the member lock: Workspace active, entitlement, campaign Active, prospect Active,
 member non-terminal, AI not paused, Business resolvable, `Blacklists` clear. Anything else → no send, reason recorded.
@@ -156,7 +159,7 @@ Conversations maps the refusal to "insufficient balance". Outreach treats it as 
   listener) reads the latest incoming message of the matching conversation, matches the prospect (§2) and writes the inbound ledger row with
   `operation_key = outreach:in:{occurrenceKey}` (unique) — a redelivered event is a no-op. It links `chat_box_id`, sets `last_inbound_at`,
   cancels a pending follow-up (`followup_cancelled_at`), and dispatches `AgencyProspectingRespondJob`.
-- `AgencyProspectingRespondJob` (kept, rewritten) is the single responder for both transports; reply key `outreach:reply:{inboundMessageId}`.
+- `OutreachRespondJob` (new) is the responder; the old `AgencyProspectingRespondJob` is untouched and only ever dispatched by the BYO webhook for `channel` campaigns. Reply key `outreach:reply:{inboundMessageId}`. A prospect with both kinds of membership is answered by the managed engine only when the inbound arrived through canonical messaging.
 - **Hard opt-out is platform-controlled and cannot be disabled.** `OutreachStopClassifier` (word-boundary, case-insensitive; "nonstop"/"unstoppable" do not match):
   - **opt_out** — `stop`, `stop all`, `unsubscribe`, `remove me`, `don't/do not text`, `leave me alone`, `wrong number`, `cancel`, `quit`, `end`:
     write a `Blacklists` row (`business_id` = the Agency Business, `number`, reason) idempotently, mark the prospect stopped (`stop_reason=opt_out`),
@@ -179,7 +182,7 @@ hardcoded area-code timezone map is **not** ported. Booked state: "Mark booked" 
 ## 11. Follow-up
 
 After message 3 is sent: `followup_at = now + follow_up_delay_hours` (default 24) when `followup_enabled`. One durable job
-(`AgencyProspectingFollowUpJob`, delayed) **plus** a scheduled sweeper command (`outreach:dispatch-due-followups`, every 5 min) that
+(`OutreachFollowUpJob`, delayed) **plus** a scheduled sweeper command (`outreach:dispatch-due-followups`, every 5 min) that
 re-dispatches rows with `followup_at <= now AND followup_sent_at IS NULL AND followup_cancelled_at IS NULL`. Exactly once per member:
 claim under the member lock, `operation_key = outreach:followup:{memberId}`. Not sent when: booked, rejected/opted out, AI paused,
 a later inbound reply exists, the campaign is paused, the prospect is on `Blacklists`, or `followup_enabled` is off. The text is `followup_message`.
@@ -192,7 +195,7 @@ wallet payer allows paid activity and balance available (auto-recharge shown), p
 Number/verification state comes from `MessagingReadinessReader`, extracted from `TextMessagingController::situation()` (the controller now
 delegates to it; behaviour unchanged). Wallet state is read from `UsageBillingPresenter` / `EffectivePayerResolver`, never recomputed.
 
-- A campaign without a channel cannot become **Active** unless every item is ok; the reason is shown.
+- A `managed` campaign cannot become **Active** unless every item is ok; the reason is shown.
 - No number / not verified → do not start/send. Insufficient funds (`MessagingInsufficientFundsException`) → the send is **paused**, not failed:
   the member keeps its stage, the message ledger row is `status=paused, failure_reason=insufficient_balance`, and the campaign shows
   "Paused — add funds"; funding + resume re-sends under the same key (idempotent). Opted-out prospects never receive a message.
@@ -218,8 +221,8 @@ is the only writer; every change is audited on the ledger with `actor_user_id`.
 
 ## 15. Initial outbound
 
-Unchanged source: `AgencyProspectingInitialSendJob` sends `opening_message` of the campaign when it starts. For channel-less campaigns it now goes
-through the canonical sender and the §12 gates. The opening message is rendered through the canonical engine. The Ultimate SMS
+`opening_message` of the campaign is sent when it starts: `AgencyProspectingInitialSendJob` (unchanged) for `channel` campaigns; the new
+`OutreachInitialSendJob` for `managed` campaigns, through the canonical sender and the §12 gates (member lock, `operation_key = outreach:opener:{memberId}`). The opening message is rendered through the canonical engine. The Ultimate SMS
 `quickSend` ai_stage hook is untouched.
 
 ## 16. Metrics (Overview, real data only)
