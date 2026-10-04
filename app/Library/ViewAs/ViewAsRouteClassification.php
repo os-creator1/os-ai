@@ -112,6 +112,7 @@ final class ViewAsRouteClassification
         'customer.website.index' => 'customer.workspaces.businesses.website.show',
         'customer.gbp.index' => 'customer.workspaces.businesses.gbp.index',
         'customer.seo.index' => 'customer.workspaces.businesses.seo.index',
+        'customer.ads.index' => 'customer.workspaces.businesses.ads.index',
         'customer.automations.index' => 'customer.workspaces.businesses.automations.index',
         'customer.outreach.index' => 'customer.workspaces.businesses.outreach.index',
         'customer.outreach.campaigns.entry' => 'customer.workspaces.businesses.outreach.campaigns',
@@ -150,6 +151,7 @@ final class ViewAsRouteClassification
         'customer.payment.',
         'customer.callback.',
         'customer.gbp.oauth.',
+        'customer.ads.oauth.',
         'user.callback.',
         'user.registers.',
         // Implementation Contract 07 §12 — Agency-side client-workspace

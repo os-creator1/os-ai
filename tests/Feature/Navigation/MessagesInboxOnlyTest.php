@@ -43,8 +43,13 @@ class MessagesInboxOnlyTest extends TestCase
             $this->assertSame(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $this->navHref($html, 'conversations'));
             $this->assertStringNotContainsString('/outreach', $this->shellHtml($html), "{$tier->value}: no menu link reaches Send or Campaigns.");
 
-            foreach (['Send', 'Campaigns'] as $label) {
-                $this->assertDoesNotMatchRegularExpression('/\b' . $label . '\b/', $this->shellText($html), "{$tier->value}: no [{$label}] entry.");
+            $this->assertDoesNotMatchRegularExpression('/\bSend\b/', $this->shellText($html), "{$tier->value}: no [Send] entry.");
+
+            // The legacy messaging "Campaigns" entry is gone. A [Campaigns] child of the
+            // Ads module (data-nav-key="ads-campaigns") is a different, legitimate item,
+            // so the check is on the legacy keys, not on the word.
+            foreach (['campaigns', 'outreach'] as $legacyKey) {
+                $this->assertStringNotContainsString('data-nav-key="' . $legacyKey . '"', $this->sidebarHtml($html), "{$tier->value}: no legacy [{$legacyKey}] entry.");
             }
         }
     }

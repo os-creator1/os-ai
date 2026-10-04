@@ -1,7 +1,7 @@
 <?php
 
     Route::get('book/{bookingTypeUuid}', 'Customer\PublicBookingController@show')
-        ->whereUuid('bookingTypeUuid')->name('public.booking.show');
+        ->whereUuid('bookingTypeUuid')->middleware('attribution.capture')->name('public.booking.show');
     // The scheduler's two read-only questions while a guest browses. Sized for a
     // real visitor paging months and trying days, far above the 10/minute write.
     Route::get('book/{bookingTypeUuid}/dates', 'Customer\PublicBookingController@dates')
@@ -24,7 +24,7 @@
     | mutations use; the GET is sized for a real visitor who reloads.
     */
     Route::get('forms/{deploymentUid}', 'Public\PublicFormController@show')
-        ->whereUuid('deploymentUid')->middleware('throttle:60,1')->name('public.forms.show');
+        ->whereUuid('deploymentUid')->middleware(['throttle:60,1', 'attribution.capture'])->name('public.forms.show');
     // A questionnaire page. The token (nonce.version.hmac) is part of the address:
     // it is the visitor's bearer for ONE in-progress, version-pinned flow, in the
     // same two-segment spirit as the secure document link. A stale, skipped or
@@ -376,11 +376,11 @@
      * mirroring routes/admin.php's identical {business} precedent).
      */
     Route::prefix('sites')->group(function () {
-        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->name('public.website.home')
+        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->middleware('attribution.capture')->name('public.website.home')
             ->missing(fn () => abort(404));
         Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap')
             ->missing(fn () => abort(404));
-        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page')
+        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->middleware('attribution.capture')->name('public.website.page')
             ->missing(fn () => abort(404));
 
         // Forms slice — the one public mutation. 10/minute matches the

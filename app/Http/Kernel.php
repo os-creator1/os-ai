@@ -135,6 +135,7 @@
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
             'business.profile.accessible' => EnsureBusinessProfileIsAccessible::class,
             'customer.context'  => ResolveCustomerContext::class,
+            'attribution.capture' => \App\Http\Middleware\CaptureAttributionTouch::class,
 
 
         ];

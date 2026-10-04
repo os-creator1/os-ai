@@ -50,6 +50,14 @@ final class ViewAsProhibitedActions
         'customer.workspaces.businesses.gbp.bind',
         'customer.workspaces.businesses.gbp.unbind',
         'customer.gbp.oauth.callback',
+        // provider credentials, account choice, settings and refresh (Google Ads)
+        'customer.workspaces.businesses.ads.connect',
+        'customer.workspaces.businesses.ads.accounts',
+        'customer.workspaces.businesses.ads.accounts.select',
+        'customer.workspaces.businesses.ads.disconnect',
+        'customer.workspaces.businesses.ads.settings.update',
+        'customer.workspaces.businesses.ads.refresh',
+        'customer.ads.oauth.callback',
         // provider credentials and sending as the Business (Business Email)
         'customer.workspaces.businesses.email.connect',
         'customer.workspaces.businesses.email.disconnect',
@@ -103,6 +111,7 @@ final class ViewAsProhibitedActions
         'user.callback.',
         'user.registers.',
         'customer.gbp.oauth.',
+        'customer.ads.oauth.',
         'customer.email.oauth.',
         // Contract 21 §7 — the authenticated V1 signup re-entry and its hosted
         // Checkout return buy a lane-A plan for the ACTOR's own account. A View
@@ -136,6 +145,19 @@ final class ViewAsProhibitedActions
         'App\Http\Controllers\Customer\SubscriptionController@checkoutPurchase',
         'App\Http\Controllers\Customer\SubscriptionController@renewPost',
         'App\Http\Controllers\User\AccountController@checkoutTopUp',
+    ];
+
+    /**
+     * Google Ads Module V1 — EVERY non-GET route under this prefix is
+     * prohibited while viewing, by PATTERN rather than by listing: connect,
+     * account choice, settings, refresh and every change made in the
+     * Business's Google Ads account (pause/resume, add negative keyword) are
+     * credential- or spend-class actions a View As actor never takes for the
+     * client. A route added later under the prefix is covered the moment it
+     * is registered; the read pages (GET) stay viewable.
+     */
+    public const NON_GET_PROHIBITED_PREFIXES = [
+        'customer.workspaces.businesses.ads.',
     ];
 
     /** Name suffixes that delete data (non-GET only). */
@@ -182,6 +204,12 @@ final class ViewAsProhibitedActions
         }
 
         if ($method !== 'GET' && $method !== 'HEAD') {
+            foreach (self::NON_GET_PROHIBITED_PREFIXES as $prefix) {
+                if (str_starts_with($name, $prefix)) {
+                    return true;
+                }
+            }
+
             foreach (self::DELETING_SUFFIXES as $suffix) {
                 if (str_ends_with($name, $suffix)) {
                     return true;

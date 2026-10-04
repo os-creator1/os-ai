@@ -4,7 +4,10 @@ namespace App\Http\Controllers\Customer;
 
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\GoogleAds\LeadAttributionEntrySurface;
+use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Exceptions\Calendar\BookingRefusedException;
+use App\Library\GoogleAds\Attribution\LeadAttributionRecorder;
 use App\Http\Controllers\Controller;
 use App\Library\Calendar\AppointmentBookingService;
 use App\Library\Calendar\CalendarLocationResolver;
@@ -45,6 +48,7 @@ class PublicBookingController extends Controller
         private readonly PublicSlotFinder $slots,
         private readonly AppointmentBookingService $booking,
         private readonly EloquentContactsRepository $contacts,
+        private readonly LeadAttributionRecorder $attribution,
     ) {
     }
 
@@ -205,6 +209,16 @@ class PublicBookingController extends Controller
             throw $exception;
         }
 
+        // Google Ads contract §10 — after commit, never able to fail the booking.
+        $this->attribution->record(
+            $business,
+            (int) $location->id,
+            (int) $appointment->contact_id,
+            LeadAttributionSubjectType::Appointment,
+            (int) $appointment->id,
+            LeadAttributionEntrySurface::Booking,
+            $request,
+        );
         $visitorTimezone = $this->visitorTimezone($request, $timezone, 'visitor_timezone');
         $summary = $this->summary($type, $business, $location, $start, $visitorTimezone);
         if ($wantsJson) {

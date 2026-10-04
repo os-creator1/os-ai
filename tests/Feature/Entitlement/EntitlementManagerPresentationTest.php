@@ -301,7 +301,13 @@ class EntitlementManagerPresentationTest extends TestCase
         // (packaged Core+Growth+Agency), so it joins this map too.
         $this->assertArrayHasKey(PlatformFeature::SeoRankTracking->value, $result);
 
-        $this->assertCount(13, $result);
+        // Google Ads Module V1: AdsBasicVisibility (Core+) and GoogleAdsModule
+        // (Growth+) both flipped Planned -> Available. Both are Business-scoped
+        // and packaged into the Agency fixture tier, so both join this map.
+        $this->assertArrayHasKey(PlatformFeature::AdsBasicVisibility->value, $result);
+        $this->assertArrayHasKey(PlatformFeature::GoogleAdsModule->value, $result);
+
+        $this->assertCount(15, $result);
     }
 
     /**

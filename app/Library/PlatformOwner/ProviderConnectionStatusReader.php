@@ -2,6 +2,7 @@
 
 namespace App\Library\PlatformOwner;
 
+use App\Enums\GoogleBusinessProfile\GoogleConnectionProduct;
 use App\Models\BusinessEmailAccount;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessStripeConnection;
@@ -99,6 +100,7 @@ final class ProviderConnectionStatusReader
 
         return BusinessGoogleConnection::query()
             ->select(self::GOOGLE_COLUMNS)
+            ->where('product', GoogleConnectionProduct::BusinessProfile->value)
             ->whereIn('business_id', $businessIds)
             ->orderBy('id')
             ->get()

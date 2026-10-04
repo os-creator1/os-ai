@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Public;
 
+use App\Enums\GoogleAds\LeadAttributionEntrySurface;
+use App\Enums\GoogleAds\LeadAttributionSubjectType;
 use App\Http\Controllers\Controller;
+use App\Library\GoogleAds\Attribution\LeadAttributionRecorder;
 use App\Library\Website\WebsiteFormSubmissionService;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
@@ -36,6 +39,7 @@ class WebsiteFormController extends Controller
     public function __construct(
         private readonly WebsitePublicEntitlementGate $gate,
         private readonly WebsiteFormSubmissionService $submissions,
+        private readonly LeadAttributionRecorder $attribution,
     ) {
     }
 
@@ -62,7 +66,7 @@ class WebsiteFormController extends Controller
         $form = WebsiteForm::where('website_id', $website->id)->where('uid', $formUid)->first();
         abort_unless($form !== null, 404);
 
-        $this->submissions->submit(
+        $submission = $this->submissions->submit(
             $form,
             $formSnapshot['fields'],
             $formSnapshot['name'],
@@ -72,6 +76,20 @@ class WebsiteFormController extends Controller
             (int) $website->published_revision_id,
             $pageUid,
         );
+
+        // Google Ads contract §10 — spam and duplicates record nothing; after
+        // commit, and never able to fail the submission.
+        if ($submission !== null && ! $submission->is_spam) {
+            $this->attribution->record(
+                (int) $website->business_id,
+                null,
+                $submission->contact_id === null ? null : (int) $submission->contact_id,
+                LeadAttributionSubjectType::WebsiteFormSubmission,
+                (int) $submission->id,
+                LeadAttributionEntrySurface::WebsiteForm,
+                $request,
+            );
+        }
 
         return redirect()->back()->with([
             'status' => 'success',
