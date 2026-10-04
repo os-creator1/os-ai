@@ -80,7 +80,10 @@ class SeoRankLocationCatalog
         $now = now();
 
         foreach ($this->provider->locations(self::SUPPORTED_COUNTRY) as $location) {
-            if ($location['type'] !== self::SUPPORTED_TYPE) {
+            // Trust the row's own country metadata, never the endpoint we asked:
+            // a missing or non-US country is skipped, not stamped as US.
+            if ($location['type'] !== self::SUPPORTED_TYPE
+                || strtoupper((string) ($location['country_iso'] ?? '')) !== self::SUPPORTED_COUNTRY) {
                 continue;
             }
 

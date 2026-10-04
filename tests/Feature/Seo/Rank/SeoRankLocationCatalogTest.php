@@ -208,6 +208,27 @@ class SeoRankLocationCatalogTest extends TestCase
         $this->assertSame('Aurora,Illinois,United States', $aurora->location_name);
     }
 
+    public function test_sync_trusts_each_rows_own_country_not_the_requested_endpoint(): void
+    {
+        SeoRankLocation::query()->delete();
+
+        // The sandbox answers /locations/us with GB rows; a row with no country
+        // metadata at all must not be vouched for by the endpoint either.
+        FakeSeoRankProvider::$locations = [
+            ['code' => 4001, 'name' => 'Abingdon,England,United Kingdom', 'parent_code' => null, 'country_iso' => 'GB', 'type' => 'City'],
+            ['code' => 4002, 'name' => 'Nowhere,Unknown', 'parent_code' => null, 'country_iso' => '', 'type' => 'City'],
+            ['code' => 4003, 'name' => 'Lowercase,Illinois,United States', 'parent_code' => null, 'country_iso' => 'us', 'type' => 'City'],
+            ['code' => 1016367, 'name' => 'Chicago,Illinois,United States', 'parent_code' => 21144, 'country_iso' => 'US', 'type' => 'City'],
+        ];
+
+        $this->assertSame(2, $this->catalog()->sync());
+        $this->assertSame([4003, 1016367], SeoRankLocation::query()->orderBy('location_code')->pluck('location_code')->map(fn ($c) => (int) $c)->all());
+        $this->assertSame(['US'], SeoRankLocation::query()->pluck('country_iso')->unique()->values()->all());
+        $this->assertNull($this->catalog()->find(4001));
+        $this->assertNull($this->catalog()->find(4002));
+        $this->assertSame('Chicago,Illinois,United States', $this->catalog()->find(1016367)?->location_name);
+    }
+
     public function test_sync_is_idempotent_and_updates_changed_names(): void
     {
         SeoRankLocation::query()->delete();

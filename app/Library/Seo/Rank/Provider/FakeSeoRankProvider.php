@@ -117,6 +117,8 @@ final class FakeSeoRankProvider implements SeoRankProvider
 
     public function locations(string $countryIso): array
     {
-        return array_values(array_filter(self::$locations, fn (array $l) => $l['country_iso'] === strtoupper($countryIso)));
+        // Like the real sandbox, the endpoint does NOT filter by the requested
+        // country; the catalogue must judge each row's own country.
+        return self::$locations;
     }
 }

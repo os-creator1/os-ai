@@ -236,7 +236,10 @@ final class DataForSeoRankProvider implements SeoRankProvider
                 'code' => $row['location_code'],
                 'name' => mb_substr($row['location_name'], 0, 255),
                 'parent_code' => is_int($row['location_code_parent'] ?? null) ? $row['location_code_parent'] : null,
-                'country_iso' => strtoupper((string) ($row['country_iso_code'] ?? $iso)),
+                // The row's OWN country only. A missing one stays '' so the
+                // catalogue can refuse it: the requested endpoint is never trusted
+                // to vouch for a row (the sandbox serves GB rows for /locations/us).
+                'country_iso' => strtoupper(is_string($row['country_iso_code'] ?? null) ? trim($row['country_iso_code']) : ''),
                 'type' => mb_substr((string) ($row['location_type'] ?? ''), 0, 32),
             ];
         }

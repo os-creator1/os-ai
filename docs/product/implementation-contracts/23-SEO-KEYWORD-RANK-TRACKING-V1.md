@@ -303,6 +303,22 @@ It can only be lowered by config. V1 does not redesign billing around it.
 
 ## 17. Verification status and deferred work
 
+**Live acceptance (2026-10-04) - COMPLETE.** Sandbox first (integration shape only: it serves canned
+tasks, a fixed GB location sample and never echoes our tag), then ONE production pair for
+"photo booth rental", Chicago, Illinois, United States (code 1016367), mobile: one Organic Standard
+task (depth 100, priority 1) and one Local Finder Standard task (depth 10, priority 1), two POSTs total,
+driven through the real planner/budget/executor/recorder.
+- Location: the free production sync cached only US City rows; Chicago resolves to 1016367. The catalogue
+  now trusts each row's OWN country (the sandbox returns GB rows for /locations/us); a row without one is skipped.
+- Tag round-trip: task_get echoes our run uid for both tasks; tasks_ready listed the Local task under our
+  run uid mapping to our task id. The Organic task was collected before a tasks_ready sweep could observe it
+  (tasks_ready only lists uncollected tasks), so its tasks_ready listing was not itself observed.
+- Standard-queue latency is real: Local completed in under a minute; Organic depth 100 took about 14 minutes.
+- Cost: reserved 6 000 + 600 = 6 600 uUSD; provider-reported 0.006 + 0.0006 USD = 6 600 uUSD; ledger committed
+  with matching actuals; no duplicate task, no live/priority-2 mode.
+- Response structure parsed with no mismatch: Organic returned paid + organic items (only organic kept, rank_group
+  ints); Local Finder returned local_pack items with rank_group, domain, phone and cid.
+
 Automated: fake provider only. Live acceptance (sandbox first, then the minimum paid
 requests: one "photo booth rental" check in one US city) requires `DATAFORSEO_*`
 credentials and is recorded in the lane report; if credentials are absent it is

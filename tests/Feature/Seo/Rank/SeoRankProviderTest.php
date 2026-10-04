@@ -825,10 +825,10 @@ class SeoRankProviderTest extends TestCase
         $this->assertNull($locations[1]['parent_code']);
         $this->assertSame('State', $locations[1]['type']);
         $this->assertNull($locations[2]['parent_code'], 'A non-integer parent is ignored.');
-        $this->assertSame('US', $locations[2]['country_iso'], 'Falls back to the requested country, upper-cased.');
+        $this->assertSame('', $locations[2]['country_iso'], 'A row without its own country is never given the requested one.');
         $this->assertSame(255, mb_strlen($locations[3]['name']));
         $this->assertSame(32, mb_strlen($locations[3]['type']));
-        $this->assertSame('US', $locations[3]['country_iso']);
+        $this->assertSame('US', $locations[3]['country_iso'], 'The row\'s own country, upper-cased.');
     }
 
     public function test_a_malformed_country_code_never_reaches_the_network(): void
