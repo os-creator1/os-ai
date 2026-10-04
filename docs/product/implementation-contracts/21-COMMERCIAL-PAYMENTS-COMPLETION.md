@@ -444,8 +444,10 @@ started without one); only a customer with no Business to continue gets one
 created. Completing onboarding is what activates the Draft Business
 (`BusinessManager::activateForCompletedOnboarding()`, never for an
 Agency-managed Client Workspace, which keeps `activateClientBusiness()`), after
-which Home is the normal Business Home. Agency-tier signups are not sent into
-this wizard. `BUSINESS_ONBOARDING_ENABLED` therefore defaults to `true`
+which Home is the normal Business Home. An Agency signup takes the same hand-off: the
+Agency owner configures their OWN Business (its one Business, never a client)
+through first-run onboarding, and no Agency-client relationship or second
+Workspace/Business is created. `BUSINESS_ONBOARDING_ENABLED` therefore defaults to `true`
 (RFC-001 deployment note); `REQUIRE_NEW_CUSTOMERS` stays `false` because it only
 governs the legacy `register()` path.
 

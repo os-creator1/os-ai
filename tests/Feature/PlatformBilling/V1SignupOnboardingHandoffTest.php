@@ -471,17 +471,71 @@ class V1SignupOnboardingHandoffTest extends TestCase
 
     // Guards -------------------------------------------------------------
 
-    public function test_an_agency_signup_is_not_sent_into_the_local_business_wizard(): void
+    /**
+     * An Agency owner's OWN Business is operationally a Business like any
+     * other, so it takes the same required first-run onboarding. It is the
+     * Workspace's one Business: no fake client, no second Workspace/Business.
+     */
+    public function test_an_agency_signup_hands_its_own_business_to_onboarding_and_activates_it_with_no_fake_client(): void
     {
         $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
-        $form = $this->form(['tier' => 'agency']);
+        $form = $this->form(['tier' => 'agency', 'business_name' => 'North Shore Agency']);
+
+        $this->post(route('register.plan.select'), ['tier' => 'agency']);
+        $this->post(route('register.account.store'), \Illuminate\Support\Arr::only($form, ['first_name', 'last_name', 'email', 'password', 'password_confirmation']));
+        $this->post(route('register.business.store'), ['business_name' => 'North Shore Agency', 'country_code' => 'US', 'timezone' => 'UTC']);
+        $this->post(route('register.payment.start'));
+
+        $subscription = PlatformSubscription::query()->sole();
+        $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
+        $this->get(route('signup.success'));
+        $user = User::query()->where('email', $form['email'])->sole();
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $this->actingAs($user->fresh());
+
+        $business = Business::query()->sole();
+        $onboarding = $this->onboardingFor($user);
+        $this->assertNotNull($onboarding, 'The Agency owner configures their OWN Business through first-run onboarding.');
+        $this->assertSame($business->id, $onboarding->business_id);
+        $this->assertTrue((bool) $onboarding->is_required);
+        $this->assertSame(BusinessStatus::Draft, $business->status);
+
+        $this->walkWizardToResults($onboarding);
+        $this->post(route('customer.onboarding.complete'))->assertRedirect(route('user.home'));
+
+        $this->assertSame(BusinessStatus::Active, $business->fresh()->status);
+        $this->get(route('user.home'))->assertOk();
+
+        // Exactly the own Workspace/Business/Location; never a client.
+        $this->assertSame(1, Workspace::query()->count());
+        $this->assertSame(1, Business::query()->count());
+        $this->assertSame(1, BusinessLocation::query()->count());
+        $this->assertSame(1, WorkspacePlanAssignment::query()->count());
+        $this->assertSame(0, \App\Models\AgencyClientWorkspaceRelationship::query()->count());
+    }
+
+    /** @return array<string, array{0: WorkspacePlanTier}> */
+    public static function nonAgencyTiers(): array
+    {
+        return ['core' => [WorkspacePlanTier::Core], 'growth' => [WorkspacePlanTier::Growth]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('nonAgencyTiers')]
+    public function test_core_and_growth_signups_hand_off_exactly_as_before(WorkspacePlanTier $tier): void
+    {
+        $this->sellableTier($tier);
+        $form = $this->form(['tier' => $tier->value]);
         $this->signUp($form);
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
         $this->get(route('signup.success'));
 
-        $this->assertSame(1, WorkspacePlanAssignment::query()->count());
-        $this->assertSame(0, CustomerOnboarding::query()->count());
+        $user = User::query()->where('email', $form['email'])->sole();
+        $this->assertOneGraph();
+        $this->assertSame(1, CustomerOnboarding::query()->count());
+        $this->assertSame(Business::query()->sole()->id, $this->onboardingFor($user)->business_id);
+        $this->assertSame(BusinessStatus::Draft, Business::query()->sole()->status);
+        $this->assertSame(0, \App\Models\AgencyClientWorkspaceRelationship::query()->count());
     }
 
     public function test_the_hand_off_refuses_another_customers_business(): void

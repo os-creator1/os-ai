@@ -2,7 +2,6 @@
 
 namespace App\Library\PlatformBilling;
 
-use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Exceptions\Entitlement\WorkspacePlanAlreadyAssignedException;
 use App\Exceptions\PlatformBilling\PlatformBillingException;
 use App\Library\Business\BusinessManager;
@@ -236,7 +235,7 @@ final class V1SignupManager
             // Already assigned by an earlier call. Still hand off, so a
             // hand-off that failed after the assignment is repaired by the
             // next confirmation instead of stranding a paid account.
-            $this->handOffToOnboarding($workspace, $catalog);
+            $this->handOffToOnboarding($workspace);
 
             return true;
         }
@@ -252,7 +251,7 @@ final class V1SignupManager
             // The other path won the race. One assignment, which is the point.
         }
 
-        $this->handOffToOnboarding($workspace, $catalog);
+        $this->handOffToOnboarding($workspace);
 
         return true;
     }
@@ -273,14 +272,8 @@ final class V1SignupManager
      * wizard also adopts the Draft Business on its Business step, so the
      * account is recoverable either way.
      */
-    private function handOffToOnboarding(Workspace $workspace, WorkspacePlanCatalog $catalog): void
+    private function handOffToOnboarding(Workspace $workspace): void
     {
-        // An Agency signup has its own shell and its own Business handling;
-        // the local-business wizard is the Business and Growth/Core journey.
-        if ($catalog->tier === WorkspacePlanTier::Agency) {
-            return;
-        }
-
         try {
             $customer = Customer::query()->where('user_id', $workspace->owner_user_id)->first();
             $business = Business::query()->where('workspace_id', $workspace->id)->first();
