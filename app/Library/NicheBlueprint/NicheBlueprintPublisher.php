@@ -481,6 +481,8 @@ class NicheBlueprintPublisher
                 'published_by_user_id' => $actorUserId,
             ])->save();
 
+            $this->syncLiveComponents($blueprint, $components, $incumbent, $actorUserId);
+
             return $target->refresh();
         });
     }
@@ -518,6 +520,76 @@ class NicheBlueprintPublisher
         });
     }
 
+    // =====================================================================
+    // Blueprint V2 — start a draft from the published version; live sync
+    // =====================================================================
+
+    /**
+     * Creates the single draft as a COPY of the currently published version's
+     * components (same component_key, type, feature, payload, position), so a
+     * niche is evolved rather than re-authored and component identity stays
+     * stable across versions. Refuses, like createDraftVersion, when a draft
+     * already exists. With no published version it behaves as createDraftVersion.
+     */
+    public function createDraftFromPublished(int $actorUserId, NicheBlueprint $blueprint, ?string $notes = null): NicheBlueprintVersion
+    {
+        $draft = $this->createDraftVersion($actorUserId, $blueprint, $notes);
+
+        return DB::transaction(function () use ($draft, $blueprint): NicheBlueprintVersion {
+            $this->lockBlueprint((int) $blueprint->id);
+
+            $published = NicheBlueprintVersion::query()
+                ->where('blueprint_id', $blueprint->id)
+                ->where('state', NicheBlueprintVersionState::Published->value)
+                ->first();
+
+            if ($published !== null) {
+                foreach (NicheBlueprintComponent::query()->where('blueprint_version_id', $published->id)->orderBy('position')->orderBy('id')->get() as $component) {
+                    NicheBlueprintComponent::create([
+                        'blueprint_version_id' => $draft->id,
+                        'blueprint_id' => $blueprint->id,
+                        'component_key' => $component->component_key,
+                        'component_type' => $component->component_type,
+                        'required_feature_key' => $component->required_feature_key,
+                        'payload' => $component->payload,
+                        'position' => $component->position,
+                    ]);
+                }
+            }
+
+            return $draft->refresh();
+        });
+    }
+
+    /**
+     * LIVE components propagate at publish: each adapter implementing
+     * PublishesLiveBlueprintComponent syncs the table the Business-facing reader
+     * consults. Runs inside the publish transaction, so a sync failure leaves
+     * the version unpublished rather than half-live.
+     *
+     * @param  \Illuminate\Support\Collection<int, NicheBlueprintComponent>  $components
+     */
+    private function syncLiveComponents(NicheBlueprint $blueprint, $components, ?NicheBlueprintVersion $incumbent, int $actorUserId): void
+    {
+        $previous = $incumbent === null ? collect() : NicheBlueprintComponent::query()
+            ->where('blueprint_version_id', $incumbent->id)->get()->keyBy('component_key');
+
+        foreach ($components as $component) {
+            $adapter = $this->adapters->adapterFor((string) $component->component_type);
+
+            if (! $adapter instanceof \App\Library\NicheBlueprint\Adapters\PublishesLiveBlueprintComponent) {
+                continue;
+            }
+
+            $before = $previous->get($component->component_key);
+            $adapter->onPublished(
+                $blueprint,
+                is_array($component->payload) ? $component->payload : [],
+                $before !== null && is_array($before->payload) ? $before->payload : null,
+                $actorUserId,
+            );
+        }
+    }
     // =====================================================================
     // §6.2 — the publish gates
     // =====================================================================
@@ -590,6 +662,7 @@ class NicheBlueprintPublisher
             // Gate 5 — the adapter validates its own descriptor, here and not
             // in the installer.
             try {
+                \App\Library\NicheBlueprint\Workspace\BlueprintDataBoundary::assertClean(is_array($component->payload) ? $component->payload : []);
                 $adapter->validateDescriptor(is_array($component->payload) ? $component->payload : []);
             } catch (UnknownBlueprintComponentTypeException $e) {
                 throw $e;

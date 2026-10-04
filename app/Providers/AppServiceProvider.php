@@ -582,6 +582,17 @@
                     // 17B §6b — reference-only Proposal/Contract template recommendation.
                     $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\DocumentTemplateComponentAdapter::class));
 
+                    // Niche Blueprint V2 — one line per component type.
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\TagSetComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CustomFieldComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\AutomationWorkflowComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\FormComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\BookingTypeComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\PackageTemplateComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\WebsiteConfigComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\SeoStrategyComponentAdapter::class));
+                    $registry->register($app->make(\App\Library\NicheBlueprint\Adapters\CitationRecommendationsComponentAdapter::class));
+
                     return $registry;
                 },
             );
@@ -596,6 +607,25 @@
         public function boot()
         {
             Schema::defaultStringLength(191);
+
+            // Blueprint Safety Mode — the Blueprint Workspace may never reach the
+            // outside world. One flag (BlueprintMode), enforced at the generic
+            // choke points here and by BlueprintSafetyGuard::check() at the
+            // domain ones. A no-op unless the mode is active.
+            $this->app->singleton(\App\Library\NicheBlueprint\Safety\BlueprintMode::class);
+            \Illuminate\Support\Facades\Event::listen(
+                \Illuminate\Mail\Events\MessageSending::class,
+                fn () => \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('email_send'),
+            );
+            \Illuminate\Support\Facades\Event::listen(
+                \Illuminate\Notifications\Events\NotificationSending::class,
+                fn () => \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('notification_send'),
+            );
+            \Illuminate\Support\Facades\Http::globalRequestMiddleware(function ($request) {
+                \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('http_request');
+
+                return $request;
+            });
 
             // Force HTTPS if enabled
             if (config('app.url_force_https') === true) {

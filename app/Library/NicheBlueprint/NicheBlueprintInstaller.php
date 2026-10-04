@@ -7,6 +7,8 @@ use App\Enums\NicheBlueprint\BlueprintComponentInstallationState;
 use App\Enums\NicheBlueprint\NicheBlueprintVersionState;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\NicheBlueprint\Adapters\BlueprintComponentAdapterRegistry;
+use App\Library\NicheBlueprint\Adapters\FingerprintsInstalledComponent;
+use App\Library\NicheBlueprint\Workspace\BlueprintChecksum;
 use App\Models\Business;
 use App\Models\BusinessBlueprintComponentInstallation;
 use App\Models\BusinessKnowledgeProfile;
@@ -458,7 +460,11 @@ class NicheBlueprintInstaller
                 // no privileged write path here: what it creates stays subject
                 // to `decide()` on every later read, exactly like any other row
                 // of its type (§6.3).
-                $reference = $this->adapters->adapterFor($componentType)->install($business, $payload, null);
+                $adapter = $this->adapters->adapterFor($componentType);
+                $reference = $adapter->install($business, $payload, null);
+                $fingerprint = $adapter instanceof FingerprintsInstalledComponent
+                    ? $adapter->fingerprint($business, $reference, $payload)
+                    : null;
 
                 $this->writeRecord(
                     record: $record,
@@ -472,6 +478,8 @@ class NicheBlueprintInstaller
                     decisionReason: $decision->reason,
                     installedRecordType: $reference->recordType,
                     installedRecordId: $reference->recordId,
+                    sourceChecksum: BlueprintChecksum::of($payload),
+                    installedFingerprint: $fingerprint,
                 );
 
                 return self::OUTCOME_INSTALLED;
@@ -559,6 +567,8 @@ class NicheBlueprintInstaller
         ?string $installedRecordType = null,
         ?int $installedRecordId = null,
         ?string $errorCode = null,
+        ?string $sourceChecksum = null,
+        ?string $installedFingerprint = null,
     ): BusinessBlueprintComponentInstallation {
         $record ??= new BusinessBlueprintComponentInstallation();
 
@@ -574,6 +584,8 @@ class NicheBlueprintInstaller
             'installed_record_type' => $installedRecordType,
             'installed_record_id' => $installedRecordId,
             'error_code' => $errorCode,
+            'source_checksum' => $sourceChecksum,
+            'installed_fingerprint' => $installedFingerprint,
             'installed_at' => $state === BlueprintComponentInstallationState::Installed ? now() : null,
             // §6.4 — a system install has no actor, and says so rather than
             // fabricating one.

@@ -543,7 +543,7 @@ class BlueprintInstallMissingCommandTest extends TestCase
         // added the reference-only `document_template` adapter, also registered
         // additively in AppServiceProvider.
         $this->assertTrue(class_exists('App\Library\NicheBlueprint\Adapters\CrmPipelineComponentAdapter'));
-        $this->assertSame(['crm_pipeline', 'document_template'], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
+        $this->assertSame(['crm_pipeline', 'document_template', 'crm_tag_set', 'crm_custom_field', 'automation_workflow', 'form', 'booking_type', 'package_template', 'website_config', 'seo_strategy', 'citation_recommendations'], app(BlueprintComponentAdapterRegistry::class)->registeredComponentTypes());
     }
 
     // =====================================================================

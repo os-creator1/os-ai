@@ -144,6 +144,8 @@ final class GoogleAdsHttpTransport
      */
     public function mutate(GoogleAdsAccessContext $context, string $resource, array $operation): string
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('ads_mutation');
+
         if (! in_array($resource, self::MUTATE_RESOURCES, true)) {
             throw GoogleAdsProviderException::validation();
         }

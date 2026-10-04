@@ -81,6 +81,8 @@ class ManagedMessageDispatcher
         string $quantity = '1',
         ?\App\Library\Messaging\DTO\LocationSendContext $location = null,
     ): OutboundMessageResult {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('sms_send');
+
         // §4.4 — the platform kill switch, enforced HERE and not only inside
         // TelnyxMessagingAdapter's constructor.
         //

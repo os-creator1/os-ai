@@ -91,6 +91,8 @@ class AppointmentBookingService
         ?int $createdByUserId = null,
         ?int $crmOpportunityId = null
     ): Appointment {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('booking');
+
         $location = $this->locationFor($bookingType);
 
         // §7.2 step 1 — ensure OUTSIDE the transaction, before any lock.

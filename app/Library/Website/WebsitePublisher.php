@@ -33,6 +33,8 @@ final class WebsitePublisher
      */
     public function publish(Website $website, int $actingUserId): WebsiteRevision
     {
+        \App\Library\NicheBlueprint\Safety\BlueprintSafetyGuard::check('website_publish');
+
         return DB::transaction(function () use ($website, $actingUserId) {
             // Locks the Website row for the duration of the transaction,
             // serializing concurrent publish attempts for the SAME
