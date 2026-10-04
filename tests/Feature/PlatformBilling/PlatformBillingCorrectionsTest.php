@@ -81,7 +81,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_resuming_the_same_tier_changes_no_business_or_location_field(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $before = $this->snapshotIdentity();
 
         $this->assertSame('LT', (string) $before['business']['country_code']);
@@ -98,7 +98,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $before = $this->snapshotIdentity();
 
         $this->get(route('signup.cancelled'));
@@ -113,7 +113,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->sellableTier(WorkspacePlanTier::Core, price: '97.00');
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $this->get(route('signup.cancelled'));
         $this->post(route('signup.resume'), ['tier' => 'core']);
@@ -126,7 +126,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $this->post(route('signup.resume'), ['tier' => 'agency']);
         $this->post(route('signup.resume'), ['tier' => 'growth']);
@@ -159,7 +159,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_retrying_the_same_tier_reuses_one_attempt_and_one_session(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $attempt = (string) $subscription->checkout_attempt_uid;
 
@@ -175,7 +175,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
         $this->sellableTier(WorkspacePlanTier::Agency, price: '497.00');
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         $subscription = PlatformSubscription::query()->sole();
         $firstAttempt = (string) $subscription->checkout_attempt_uid;
@@ -200,7 +200,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_an_expired_session_permits_a_fresh_attempt(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $session = (string) $subscription->provider_checkout_session_id;
 
@@ -216,7 +216,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_a_completed_session_never_starts_a_second_subscription(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
@@ -432,7 +432,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_activation_recovers_on_a_later_attempt_after_a_post_finalizer_failure(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth, trialDays: 14);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $providerSubscriptionId = $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
@@ -460,7 +460,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_an_out_of_order_event_still_converges_an_already_confirmed_subscription(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $providerSubscriptionId = $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
@@ -508,7 +508,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_an_identity_mismatch_still_never_activates(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
         $subscription = PlatformSubscription::query()->sole();
         $this->stripe->completeCheckout((string) $subscription->provider_checkout_session_id);
 
@@ -565,7 +565,8 @@ class PlatformBillingCorrectionsTest extends TestCase
         $usersBefore = User::query()->count();
 
         $this->get(route('register'))->assertRedirect();
-        $this->post(route('register'), $this->form(['email' => 'someone-else@example.test']))->assertRedirect();
+        $this->post(route('register.account.store'), $this->form(['email' => 'someone-else@example.test']))->assertRedirect();
+        $this->post(route('register.payment.start'))->assertRedirect();
 
         $this->assertSame($usersBefore, User::query()->count(),
             'A signed-in user cannot silently create a second account and be switched into it.');
@@ -575,7 +576,7 @@ class PlatformBillingCorrectionsTest extends TestCase
     public function test_the_authenticated_re_entry_routes_stay_authenticated(): void
     {
         $this->sellableTier(WorkspacePlanTier::Growth);
-        $this->post(route('register'), $this->form());
+        $this->signUp($this->form());
 
         // Still signed in from registration — these are the supported path.
         $this->get(route('signup.plan'))->assertOk();

@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Auth;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Models\AppConfig;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\PlatformBilling\Concerns\CreatesPlatformSubscriptions;
 use Tests\TestCase;
 
 /**
@@ -15,6 +17,7 @@ use Tests\TestCase;
 class AuthValidationDisplayTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesPlatformSubscriptions;
 
     protected function setUp(): void
     {
@@ -61,22 +64,17 @@ class AuthValidationDisplayTest extends TestCase
 
     public function test_invalid_register_redirects_back_with_visible_errors(): void
     {
-        // RegisterController::register() reads $data['phone'] via array
-        // offset, not $request->input('phone') -- a pre-existing,
-        // unrelated behavior this presentation-only slice does not
-        // authorize changing, so a `phone` key is included (even
-        // invalid) purely to reach the same validation-error redirect
-        // this test actually exercises, without tripping an unrelated
-        // undefined-array-key notice. It must be non-empty: Laravel's
-        // ConvertEmptyStringsToNull middleware would otherwise null it
-        // before the controller runs, and the Phone rule's constructor
-        // requires a string.
-        $response = $this->from(route('register'))->post(route('register'), [
-            'email' => '',
-            'phone' => 'x',
-        ]);
+        // `register` is the V1 signup. Its ACCOUNT step validates before it
+        // stores anything, and a refused answer comes back to the same step
+        // with a visible error rather than a crash or a silent success.
+        $this->bindFakeStripe();
+        $this->sellableTier(WorkspacePlanTier::Growth);
 
-        $response->assertRedirect(route('register'));
+        $response = $this->withSession(['v1_signup_draft' => ['tier' => 'growth']])
+            ->from(route('register.account'))
+            ->post(route('register.account.store'), ['email' => '']);
+
+        $response->assertRedirect(route('register.account'));
         $response->assertSessionHasErrors('email');
     }
 
