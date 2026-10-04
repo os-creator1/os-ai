@@ -363,6 +363,8 @@
     Route::get('administrators/export', 'AdministratorController@export')->name('administrators.export');
     Route::get('administrators/{administrator}/show', 'AdministratorController@show')->name('administrators.show');
     Route::post('administrators/{administrator}/active', 'AdministratorController@activeToggle')->name('administrators.active');
+    Route::post('administrators/{administrator}/resend-invitation', 'AdministratorController@resendInvitation')->name('administrators.resend-invitation');
+    Route::post('administrators/{administrator}/status', 'AdministratorController@setStatus')->name('administrators.status');
     Route::post('administrators/batch_action', 'AdministratorController@batchAction')->name('administrators.batch_action');
     Route::resource('administrators', 'AdministratorController', [
         'only' => ['index', 'create', 'store', 'update', 'destroy'],
@@ -754,6 +756,35 @@
         */
         Route::get('platform-billing', 'PlatformBillingController@index')->name('platform-billing.index');
         Route::post('platform-billing/{tier}', 'PlatformBillingController@update')->name('platform-billing.update');
+
+        /*
+        | Platform Owner V1 final — Plans: the one plan authority. Edit name,
+        | price, cycle, trial, signup availability, slots, feature packaging;
+        | archive instead of delete (PlatformPlanAdministrator).
+        */
+        Route::get('platform-plans', 'PlatformPlansController@index')->name('platform-plans.index');
+        Route::get('platform-plans/{tier}', 'PlatformPlansController@edit')->name('platform-plans.edit');
+        Route::put('platform-plans/{tier}', 'PlatformPlansController@update')->name('platform-plans.update');
+
+        /*
+        | Platform Owner V1 final — Users, Support and Announcements management.
+        | Inside the EnsureUserIsAdministrator group; each controller also
+        | authorizes a permission string (second, independent layer).
+        */
+        Route::get('platform-users', 'PlatformUsersController@index')->name('platform-users.index');
+        Route::get('platform-users/{uid}', 'PlatformUsersController@show')->name('platform-users.show');
+        Route::post('platform-users/{uid}/{action}', 'PlatformUsersController@act')
+            ->where('action', 'password-reset|resend-verification|suspend|reactivate|revoke-sessions')->name('platform-users.act');
+        Route::get('platform-support', 'PlatformSupportController@index')->name('platform-support.index');
+        Route::get('platform-features', 'PlatformFeaturesController@index')->name('platform-features.index');
+
+        Route::get('platform-announcements', 'PlatformAnnouncementsController@index')->name('platform-announcements.index');
+        Route::get('platform-announcements/create', 'PlatformAnnouncementsController@create')->name('platform-announcements.create');
+        Route::post('platform-announcements', 'PlatformAnnouncementsController@store')->name('platform-announcements.store');
+        Route::get('platform-announcements/{uid}/edit', 'PlatformAnnouncementsController@edit')->whereUuid('uid')->name('platform-announcements.edit');
+        Route::put('platform-announcements/{uid}', 'PlatformAnnouncementsController@update')->whereUuid('uid')->name('platform-announcements.update');
+        Route::post('platform-announcements/{uid}/{action}', 'PlatformAnnouncementsController@transition')->whereUuid('uid')
+            ->where('action', 'publish|cancel|schedule')->name('platform-announcements.transition');
 
         /*
         |--------------------------------------------------------------------------

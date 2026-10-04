@@ -113,6 +113,13 @@
          */
         public function register()
         {
+            // Platform Owner V1 final — announcement delivery seam. Platform
+            // Automations rebinds this to its own delivery implementation.
+            $this->app->bind(
+                \App\Library\PlatformOwner\Announcements\PlatformAnnouncementDelivery::class,
+                \App\Library\PlatformOwner\Announcements\NullPlatformAnnouncementDelivery::class,
+            );
+
             // Shared customer request query-budget optimization (Automations
             // V2 §18, the V2-E blocker on PR #280) — bound as a singleton so
             // every resolution within one request/container shares the same

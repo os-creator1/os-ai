@@ -57,6 +57,9 @@ class PlatformOwnerController extends AdminBaseController
         return view('admin.platform-owner.audit', [
             'rows' => $rows,
             'actors' => $this->support->actorLabels($rows->items()),
+            'platformActions' => \App\Models\PlatformAdminAction::query()->with('actor:id,first_name,last_name,email')
+                ->when($request->query('type'), fn ($q, $t) => $q->where('subject_type', (string) $t))
+                ->orderByDesc('id')->limit(50)->get(),
             'breadcrumbs' => $this->breadcrumbs('Audit'),
         ]);
     }

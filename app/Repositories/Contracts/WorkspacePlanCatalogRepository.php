@@ -33,4 +33,13 @@ interface WorkspacePlanCatalogRepository extends BaseRepository
      * before it calls this method (M2, RFC-004 §12.5).
      */
     public function update(WorkspacePlanCatalog $catalog, array $attributes): WorkspacePlanCatalog;
+
+    /**
+     * Platform Owner V1 final — structure and commercial switches that carry
+     * no price history (name, slots, trial, signup availability, billing cycle,
+     * provider price id, active flag). Price, currency and the slot price ratio
+     * are NOT writable here: they go through EntitlementManager::updateCatalogPricing().
+     * Invariants are enforced by PlatformPlanAdministrator before this call.
+     */
+    public function updateStructure(WorkspacePlanCatalog $catalog, array $attributes): WorkspacePlanCatalog;
 }

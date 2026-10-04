@@ -324,6 +324,11 @@
         // this is switched on.
         'legacy_messaging_menu' => (bool) env('LEGACY_MESSAGING_MENU', false),
 
+        // Platform Automations owns its own admin page and engine. The sidebar
+        // entry is wired but hidden until that lane's route exists; switch on
+        // with PLATFORM_AUTOMATIONS_MENU=true at integration.
+        'platform_automations_menu' => (bool) env('PLATFORM_AUTOMATIONS_MENU', false),
+
         /*
         |--------------------------------------------------------------------------
         | Application Site Editor
