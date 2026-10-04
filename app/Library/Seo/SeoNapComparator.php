@@ -78,6 +78,66 @@ final class SeoNapComparator
         ];
     }
 
+    /**
+     * WEBSITE — compared only where BOTH a business website and a recorded
+     * listing website exist; otherwise NotComparable. Many directories store no
+     * website, so a missing one is neither "unchecked" nor a mismatch. Kept
+     * out of compare() so the three-field NAP contract above is unchanged.
+     */
+    public function compareWebsite(?string $canonical, ?string $listed): SeoNapFieldResult
+    {
+        $canonicalNormalized = self::normalizeWebsite($canonical);
+        $listedNormalized = self::normalizeWebsite($listed);
+
+        if ($canonicalNormalized === null || $listedNormalized === null) {
+            return SeoNapFieldResult::NotComparable;
+        }
+
+        return $canonicalNormalized === $listedNormalized ? SeoNapFieldResult::Consistent : SeoNapFieldResult::Mismatch;
+    }
+
+    /**
+     * Scheme (http/https), a leading "www.", host case, a trailing slash and
+     * any #fragment are not differences; the path and query are. No fuzzy
+     * matching: https://a.com/x and https://a.com/y differ.
+     */
+    public static function normalizeWebsite(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $withScheme = preg_match('#^[a-z][a-z0-9+.-]*://#i', $trimmed) === 1 ? $trimmed : 'https://' . $trimmed;
+        $parts = parse_url($withScheme);
+
+        if ($parts === false || ! isset($parts['host']) || $parts['host'] === '') {
+            return null;
+        }
+
+        if (! in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)) {
+            return null;
+        }
+
+        $host = strtolower($parts['host']);
+        $host = str_starts_with($host, 'www.') ? substr($host, 4) : $host;
+
+        // A registrable-looking hostname only: not a sentence, not a bare word.
+        if (preg_match('/\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?\z/', $host) !== 1 || ! str_contains($host, '.')) {
+            return null;
+        }
+        $port = isset($parts['port']) && ! in_array((int) $parts['port'], [80, 443], true) ? ':' . $parts['port'] : '';
+        $path = rtrim((string) ($parts['path'] ?? ''), '/');
+        $query = isset($parts['query']) && $parts['query'] !== '' ? '?' . $parts['query'] : '';
+
+        return $host . $port . $path . $query;
+    }
+
     public static function normalizeText(?string $value): ?string
     {
         if ($value === null) {

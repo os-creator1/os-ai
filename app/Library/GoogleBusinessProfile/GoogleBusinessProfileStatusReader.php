@@ -117,6 +117,9 @@ final class GoogleBusinessProfileStatusReader
                 mirrorIsFresh: $fresh,
                 newReviewUri: $fresh && is_string($mirror['new_review_uri'] ?? null) ? $mirror['new_review_uri'] : null,
                 napMismatchCount: $fresh ? $this->mismatchCount($business, $location, $binding) : null,
+                mirrorName: $fresh && is_string($mirror['title'] ?? null) ? $mirror['title'] : null,
+                mirrorPhone: $fresh && is_string($mirror['phone_primary'] ?? null) ? $mirror['phone_primary'] : null,
+                mirrorWebsite: $fresh && is_string($mirror['website_uri'] ?? null) ? $mirror['website_uri'] : null,
             );
         }
 

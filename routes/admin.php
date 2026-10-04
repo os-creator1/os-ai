@@ -973,6 +973,30 @@
             });
         });
 
+        // Citations V1 — the Platform Owner's directory catalog and the
+        // per-niche recommendations. Writes go through
+        // SeoCitationCatalogManager, which re-checks is_admin itself.
+        Route::prefix('citation-directories')->name('citation-directories.')->group(function () {
+            Route::get('/', 'SeoCitationCatalogController@directories')->name('index');
+            Route::get('create', 'SeoCitationCatalogController@createDirectory')->name('create');
+            Route::post('/', 'SeoCitationCatalogController@storeDirectory')->name('store');
+            Route::prefix('{uid}')->whereUuid('uid')->group(function () {
+                Route::get('edit', 'SeoCitationCatalogController@editDirectory')->name('edit');
+                Route::put('/', 'SeoCitationCatalogController@updateDirectory')->name('update');
+                Route::post('active', 'SeoCitationCatalogController@setDirectoryActive')->name('active');
+            });
+        });
+
+        Route::prefix('citation-niches')->name('citation-niches.')->group(function () {
+            Route::get('/', 'SeoCitationCatalogController@niches')->name('index');
+            Route::prefix('{niche}')->where(['niche' => '[a-z_]+'])->group(function () {
+                Route::get('/', 'SeoCitationCatalogController@showNiche')->name('show');
+                Route::post('recommendations', 'SeoCitationCatalogController@recommend')->name('recommendations.store');
+                Route::put('recommendations/{uid}', 'SeoCitationCatalogController@updateRecommendation')->whereUuid('uid')->name('recommendations.update');
+                Route::delete('recommendations/{uid}', 'SeoCitationCatalogController@removeRecommendation')->whereUuid('uid')->name('recommendations.destroy');
+            });
+        });
+
         Route::prefix('template-library')->name('template-library.')->group(function () {
             Route::get('/', 'BlueprintTemplateLibraryController@index')->name('index');
 

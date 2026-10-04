@@ -409,7 +409,7 @@ class SeoFoundationBoundaryTest extends TestCase
             // reads the published snapshot and reports, and cannot fetch a
             // URL or mutate anything. SeoAuditRunner's own table-scoped rule
             // is pinned in SeoAuditBoundaryTest.
-            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php', 'SeoAuditRunner.php'], true)) {
+            if (in_array(basename($file), ['SeoCitationManager.php', 'SeoCitationCatalogManager.php', 'SeoReviewLinkManager.php', 'SeoReviewRequestManager.php', 'SeoAuditRunner.php'], true)) {
                 continue;
             }
 

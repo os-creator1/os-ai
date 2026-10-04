@@ -665,6 +665,26 @@
                         'admin_only' => true,
                     ],
                     [
+                        // Citations V1 — the Platform Owner's directory catalog.
+                        'url'        => url(config('app.admin_path') . '/citation-directories'),
+                        'slug'       => config('app.admin_path') . '/citation-directories',
+                        'name'       => 'Citation Directories',
+                        'i18n'       => 'Citation Directories',
+                        'icon'       => 'list',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
+                        // Citations V1 — which directories each niche recommends.
+                        'url'        => url(config('app.admin_path') . '/citation-niches'),
+                        'slug'       => config('app.admin_path') . '/citation-niches',
+                        'name'       => 'Citation Niches',
+                        'i18n'       => 'Citation Niches',
+                        'icon'       => 'target',
+                        'access'     => 'access backend',
+                        'admin_only' => true,
+                    ],
+                    [
                         // Implementation Contract 20 §12.F/§18.F, Blueprint §30 —
                         // the Platform Owner's read-only Template Library catalog
                         // surface, backed by the same niche_blueprint_* rows as

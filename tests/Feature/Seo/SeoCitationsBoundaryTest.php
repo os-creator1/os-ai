@@ -128,7 +128,14 @@ class SeoCitationsBoundaryTest extends TestCase
             ->filter(fn ($route) => str_contains((string) $route->getActionName(), SeoCitationController::class));
 
         $this->assertSame(
-            ['customer.workspaces.businesses.seo.citations.index', 'customer.workspaces.businesses.seo.citations.update'],
+            [
+                'customer.workspaces.businesses.seo.citations.applicability',
+                'customer.workspaces.businesses.seo.citations.custom.archive',
+                'customer.workspaces.businesses.seo.citations.custom.store',
+                'customer.workspaces.businesses.seo.citations.custom.update',
+                'customer.workspaces.businesses.seo.citations.index',
+                'customer.workspaces.businesses.seo.citations.update',
+            ],
             $routes->map(fn ($route) => $route->getName())->sort()->values()->all()
         );
 
@@ -255,8 +262,31 @@ class SeoCitationsBoundaryTest extends TestCase
 
         // Reads of the directory reference table and writes of citations are
         // the only Eloquent entry points; no other model is touched.
-        $this->assertEqualsCanonicalizing(['SeoCitation', 'SeoCitationDirectory'], array_values(array_unique($matches[1])));
+        // SeoNicheCitationRecommendation is READ here (the live niche lookup); only the Platform Owner screens
+        // (SeoCitationCatalogManager) write it.
+        $this->assertEqualsCanonicalizing(['SeoCitation', 'SeoCitationDirectory', 'SeoNicheCitationRecommendation'], array_values(array_unique($matches[1])));
+        $this->assertSame(0, preg_match('/SeoNicheCitationRecommendation::(create|firstOrNew|firstOrCreate|updateOrCreate|insert|upsert)/', $code), 'The manager never writes niche recommendations.');
         $this->assertSame(0, preg_match('/SeoCitationDirectory::(create|firstOrNew|firstOrCreate|updateOrCreate|insert|upsert)/', $code), 'Customers never write the reference table.');
+    }
+
+    public function test_the_catalog_manager_writes_only_the_platform_catalog_and_niche_recommendations_and_calls_nothing_external(): void
+    {
+        $code = $this->codeWithoutComments(dirname(__DIR__, 3) . '/app/Library/Seo/SeoCitationCatalogManager.php');
+
+        // The Platform Owner's writer: it may touch the directory catalog and the niche
+        // recommendations and nothing else — never a citation, a Business, a Location or Google.
+        preg_match_all('/\b([A-Z]\w+)::(?:query|create|firstOrNew|firstOrCreate|updateOrCreate|insert|upsert)\b/', $code, $matches);
+        $this->assertEqualsCanonicalizing(
+            ['SeoCitationDirectory', 'SeoNicheCitationRecommendation', 'User'],
+            array_values(array_unique($matches[1])),
+            'User is read only, for the is_admin authority check.'
+        );
+
+        foreach (['SeoCitation::', 'Business::', 'BusinessLocation::', 'DB::', 'Http::', 'Cache::', 'Queue::', 'dispatch(', 'Bus::', 'curl_', 'GoogleBusinessProfile', 'OpenAI', 'Anthropic'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $code, "SeoCitationCatalogManager must not contain {$forbidden}");
+        }
+
+        $this->assertStringContainsString("whereNull('business_id')", $code, 'It only ever addresses platform rows, never a Business custom directory.');
     }
 
     public function test_the_citation_view_has_no_unescaped_output_and_no_script(): void
@@ -276,9 +306,39 @@ class SeoCitationsBoundaryTest extends TestCase
         );
     }
 
+    public function test_the_citation_partials_have_no_unescaped_output_and_only_the_static_scripts_partial_has_script(): void
+    {
+        $dir = dirname(__DIR__, 3) . '/resources/views/customer/business/seo';
+
+        foreach (glob($dir . '/_citation*.blade.php') as $path) {
+            $markup = preg_replace('/\{\{--.*?--\}\}/s', '', (string) file_get_contents($path));
+            $name = basename($path);
+
+            $this->assertStringNotContainsString('{!!', $markup, $name);
+
+            if ($name === '_citations_scripts.blade.php') {
+                $this->assertStringNotContainsString('{{', $markup, 'The scripts partial must hold no dynamic output.');
+
+                continue;
+            }
+
+            $this->assertStringNotContainsString('<script', strtolower($markup), $name);
+            $this->assertSame(
+                substr_count($markup, 'target="_blank"'),
+                substr_count($markup, 'rel="{{ SeoLinkSafety::EXTERNAL_REL }}"'),
+                $name . ': every external link must carry the contracted rel.'
+            );
+        }
+    }
+
     public function test_the_directory_reference_table_has_no_customer_write_route(): void
     {
         foreach (Route::getRoutes()->getRoutes() as $route) {
+            // The Platform Owner screens (admin portal) are the one legitimate writer.
+            if (str_starts_with($route->uri(), trim((string) config('app.admin_path'), '/') . '/')) {
+                continue;
+            }
+
             $this->assertStringNotContainsString('citation-director', $route->uri());
             $this->assertStringNotContainsString('citation_director', (string) $route->getName());
         }

@@ -23,6 +23,17 @@
 
 return [
 
+    'citations' => [
+        // Citations V1 — a manually tracked listing that was last checked
+        // longer ago than this is flagged "Review recommended" (in-product
+        // reminder only; nothing is sent). Default 90 days, range 7-365.
+        'review_after_days' => env('SEO_CITATIONS_REVIEW_AFTER_DAYS'),
+
+        // Citations V1 — custom directories one Business may keep. Default
+        // and ceiling 25: a safety ceiling, not a plan limit.
+        'max_custom_directories' => env('SEO_CITATIONS_MAX_CUSTOM_DIRECTORIES'),
+    ],
+
     'keywords' => [
         // Contract §8.4 — 50 active keywords per Business, all tiers.
         // Ceiling is also 50: config may lower it, never raise it.
