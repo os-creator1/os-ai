@@ -40,6 +40,8 @@ class WebsiteFormAttributionTest extends TestCase
             'name' => 'Photo Booth Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
             'submit_label' => 'Request a quote',
+            'location_id' => (\App\Models\BusinessLocation::query()->where('business_id', $this->business->id)->value('id')
+            ?? \App\Models\BusinessLocation::create(['business_id' => $this->business->id, 'name' => 'Main', 'service_mode' => 'storefront', 'country_code' => 'US'])->id),
         ]);
         $this->homePage($this->website);
         $this->page = $this->subPage($this->website, 'quote', ['sections' => [$this->section('form', ['form_uid' => $this->form->uid])]]);
@@ -107,9 +109,10 @@ class WebsiteFormAttributionTest extends TestCase
         $this->submit($cookies)->assertRedirect();
         $this->assertCount(1, $this->touchRows());
 
-        $this->submit($cookies)->assertRedirect(); // exact duplicate within the window: null result
-        $this->assertSame(2, WebsiteFormSubmission::query()->count());
-        $this->assertCount(1, $this->touchRows());
+        // Forms V1 dropped content-hash dedupe: a post with no submission token is its own submission, and so is attributed on its own.
+        $this->submit($cookies)->assertRedirect();
+        $this->assertSame(3, WebsiteFormSubmission::query()->count());
+        $this->assertCount(2, $this->touchRows());
     }
 
     public function test_opt_out_signals_record_nothing(): void

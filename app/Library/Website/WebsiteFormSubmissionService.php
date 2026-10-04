@@ -7,7 +7,7 @@ use App\Events\Forms\FormSubmissionRecorded;
 use App\Library\Crm\CrmBoard;
 use App\Library\Crm\CrmOpportunityService;
 use App\Library\Crm\Exceptions\CrmRuleException;
-use App\Library\Forms\FormLocationResolver;
+use App\Library\Website\Forms\FormLocationResolver;
 use App\Models\CrmPipeline;
 use App\Models\WebsiteForm;
 use App\Models\WebsiteFormSubmission;

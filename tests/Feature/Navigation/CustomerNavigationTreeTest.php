@@ -1049,8 +1049,8 @@ class CustomerNavigationTreeTest extends TestCase
 
         $this->assertContains('settings', $this->activeMenuKeys($html), 'Settings is active on its screens.');
         $this->assertNotContains('keywords', $this->menuKeys($html), 'The screen itself is a hub module, not a sidebar leaf.');
-        // The only group is the own Business's SEO entry (Agency shell); no Settings module nests under Settings.
-        $this->assertSame(1, substr_count($this->sidebarHtml($html), 'has-sub'));
+        // The only groups are the own Business's SEO and Ads entries (Agency shell); no Settings module nests under Settings.
+        $this->assertSame(2, substr_count($this->sidebarHtml($html), 'has-sub'));
     }
 
     // =================================================================

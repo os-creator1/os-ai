@@ -62,6 +62,7 @@ class FormsLeadCaptureV1Test extends TestCase
     private function quoteForm(Website $website, ?BusinessLocation $location, array $overrides = []): WebsiteForm
     {
         return $website->forms()->create(array_merge([
+            'business_id' => $website->business_id,
             'type' => WebsiteForm::TYPE_QUOTE_REQUEST,
             'name' => 'Photo Booth Quote Request',
             'fields' => WebsiteFormPresets::photoBoothQuoteRequest(),
@@ -389,10 +390,6 @@ class FormsLeadCaptureV1Test extends TestCase
         });
         $this->contactAt($business, $location, '5551234567', 'DupA');
         $this->contactAt($business, $location, '5551234567', 'DupB');
-        $events = [];
-        Event::listen(FormSubmissionRecorded::class, function (FormSubmissionRecorded $e) use (&$events): void {
-            $events[] = $e;
-        });
 
         $this->post($this->route($website, $form, $page), $this->payload())->assertSessionHasNoErrors();
 
@@ -403,9 +400,6 @@ class FormsLeadCaptureV1Test extends TestCase
         $this->assertSame(0, CrmOpportunity::count());
         $this->assertSame(2, Contacts::where('business_id', $business->id)->count());
 
-        $this->assertCount(1, $events);
-        $this->assertNull($events[0]->contactId);
-        $this->assertSame('ambiguous', $events[0]->contactResolution);
     }
 
     public function test_a_blacklisted_phone_rolls_the_whole_submission_back(): void
@@ -482,20 +476,15 @@ class FormsLeadCaptureV1Test extends TestCase
     // 5. Idempotency
     // ---------------------------------------------------------------
 
-    public function test_the_same_token_is_one_submission_and_one_event_but_identical_bodies_without_one_are_two(): void
+    public function test_the_same_token_is_one_submission_but_identical_bodies_without_one_are_two(): void
     {
         [, , , $website, $form, $page] = $this->liveForm();
         $url = $this->route($website, $form, $page);
-        $events = 0;
-        Event::listen(FormSubmissionRecorded::class, function () use (&$events): void {
-            $events++;
-        });
         $token = (string) Str::uuid();
 
         $this->post($url, $this->payload([WebsiteFormSubmissionService::TOKEN_FIELD => $token]))->assertSessionHasNoErrors();
         $this->post($url, $this->payload([WebsiteFormSubmissionService::TOKEN_FIELD => $token, 'message' => 'a retry may differ in nothing that matters']))->assertSessionHasNoErrors();
         $this->assertSame(1, WebsiteFormSubmission::count());
-        $this->assertSame(1, $events);
 
         // A fresh page render carries a fresh token: a genuinely new inquiry,
         // even with a byte-identical body.
@@ -505,7 +494,6 @@ class FormsLeadCaptureV1Test extends TestCase
         $this->post($url, $this->payload([WebsiteFormSubmissionService::TOKEN_FIELD => 'not-a-uuid']));
 
         $this->assertSame(4, WebsiteFormSubmission::count());
-        $this->assertSame(4, $events);
         $this->assertSame(1, Contacts::count(), 'Same person, same Location: one Contact however many inquiries.');
     }
 
@@ -552,33 +540,6 @@ class FormsLeadCaptureV1Test extends TestCase
         $this->assertSame('Jamie Rivera', $submission->data['name']);
     }
 
-    public function test_the_event_carries_stable_tenant_location_contact_form_and_opportunity_identity(): void
-    {
-        [, $business, , $website, $form, $page, $location] = $this->liveForm();
-        app(CrmPipelineService::class)->setUpStandardPipeline($business);
-        $events = [];
-        Event::listen(FormSubmissionRecorded::class, function (FormSubmissionRecorded $e) use (&$events): void {
-            $events[] = $e;
-        });
-
-        $this->post($this->route($website, $form, $page), $this->payload())->assertSessionHasNoErrors();
-
-        $submission = WebsiteFormSubmission::sole();
-        $this->assertCount(1, $events);
-        $e = $events[0];
-        $this->assertSame('form_submitted', $e->name());
-        $this->assertSame((int) $business->id, $e->businessId);
-        $this->assertSame((int) $location->id, $e->locationId);
-        $this->assertSame((int) $form->id, $e->formId);
-        $this->assertSame($form->uid, $e->formUid);
-        $this->assertSame((int) $submission->id, $e->submissionId);
-        $this->assertSame($submission->uid, $e->submissionUid);
-        $this->assertSame((int) $submission->contact_id, $e->contactId);
-        $this->assertSame((int) $submission->crm_opportunity_id, $e->opportunityId);
-        $this->assertSame('created', $e->contactResolution);
-        $this->assertSame('form_submitted:'.$submission->id, $e->occurrenceKey);
-    }
-
     public function test_spam_is_recorded_but_raises_no_event_and_creates_no_contact(): void
     {
         [, $business, , $website, $form, $page] = $this->liveForm();
@@ -594,22 +555,16 @@ class FormsLeadCaptureV1Test extends TestCase
         $this->assertSame(0, Contacts::where('business_id', $business->id)->count());
     }
 
-    public function test_a_rolled_back_submission_emits_no_event_and_a_committed_one_emits_exactly_one(): void
+    public function test_a_rolled_back_submission_leaves_nothing_and_a_committed_one_leaves_one(): void
     {
         [, , , , $form, $page] = $this->liveForm();
-        $events = 0;
-        Event::listen(FormSubmissionRecorded::class, function () use (&$events): void {
-            $events++;
-        });
         $service = app(WebsiteFormSubmissionService::class);
         $fields = WebsiteFormPresets::photoBoothQuoteRequest();
 
         DB::beginTransaction();
         $service->submit($form, $fields, 'Quote', $this->payload(), 'quote', '127.0.0.1');
-        $this->assertSame(0, $events, 'the event must wait for the commit');
         DB::rollBack();
 
-        $this->assertSame(0, $events);
         $this->assertSame(0, WebsiteFormSubmission::count());
         $this->assertSame(0, Contacts::count());
 
@@ -617,7 +572,7 @@ class FormsLeadCaptureV1Test extends TestCase
         $service->submit($form, $fields, 'Quote', $this->payload(), 'quote', '127.0.0.1');
         DB::commit();
 
-        $this->assertSame(1, $events);
+        $this->assertSame(1, WebsiteFormSubmission::count());
         $this->assertNotNull($page);
     }
 

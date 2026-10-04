@@ -41,7 +41,7 @@ class BookingAttributionTest extends TestCase
     private function book(array $cookies = [], string $time = '10:00', array $headers = [])
     {
         return $this->withCookies($cookies)->withHeaders($headers)->post($this->url(), [
-            'date' => '2027-03-01', 'time' => $time, 'first_name' => 'Ada', 'last_name' => 'Lovelace', 'phone' => '+1 (415) 555-1234',
+            'date' => '2027-03-01', 'time' => $time, 'first_name' => 'Ada', 'last_name' => 'Lovelace', 'email' => 'ada@example.test', 'phone' => '+1 (415) 555-1234',
         ]);
     }
 

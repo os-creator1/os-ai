@@ -114,9 +114,9 @@ class AdsNavigationTest extends TestCase
         $this->authenticateAs($customer);
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
-        $topLevel = array_values(array_filter($keys, fn (string $k): bool => in_array($k, ['seo', 'ads', 'analytics'], true)));
+        $topLevel = array_values(array_filter($keys, fn (string $k): bool => in_array($k, ['seo', 'ads'], true)));
 
-        $this->assertSame(['seo', 'ads', 'analytics'], $topLevel);
+        $this->assertSame(['seo', 'ads'], $topLevel);
     }
 
     public function test_the_ads_parent_links_to_the_overview_and_the_active_state_follows_the_page(): void

@@ -169,7 +169,7 @@ class V1SignupHttpTest extends TestCase
         $this->sellableTier(WorkspacePlanTier::Growth);
 
         $email = 'verify' . uniqid() . '@example.test';
-        $this->post(route('register'), $this->form(['email' => $email]));
+        $this->signUp($this->form(['email' => $email]));
 
         $user = User::query()->where('email', $email)->sole();
 

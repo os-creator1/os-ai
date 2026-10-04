@@ -120,9 +120,9 @@ final class CrmBoard
      * @param  list<int>  $stageIds
      * @return array<int, array{count: int, value_minor: int}> keyed by stage id
      */
-    public function stageTotals(Business $business, CrmPipeline $pipeline, CrmBoardFilters $filters, array $stageIds): array
+    public function stageTotals(Business $business, CrmPipeline $pipeline, CrmBoardFilters $filters, array $stageIds, ?int $actorUserId = null): array
     {
-        $rows = $this->filtered($business, $pipeline, $filters)
+        $rows = $this->filtered($business, $pipeline, $filters, $actorUserId)
             ->whereIn('stage_id', $stageIds)
             ->groupBy('stage_id')
             ->selectRaw('stage_id, count(*) as deals, coalesce(sum(value_minor), 0) as value_minor')

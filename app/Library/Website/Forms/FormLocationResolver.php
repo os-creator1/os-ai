@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Library\Forms;
+namespace App\Library\Website\Forms;
 
 use App\Models\BusinessLocation;
 use App\Models\WebsiteForm;

@@ -16,7 +16,6 @@ use App\Models\Workspace;
 use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\UserRepository;
 use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
-use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;

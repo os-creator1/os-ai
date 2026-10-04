@@ -227,7 +227,7 @@ class CrmOpportunitiesController extends CustomerBaseController
     private function moveReceipt(Business $business, CrmPipeline $pipeline, CrmOpportunity $opportunity, CrmPipelineStage $to, ?CrmPipelineStage $from, bool $moved, CrmBoardFilters $filters): array
     {
         $stageIds = array_values(array_unique(array_filter([(int) $to->id, $from === null ? null : (int) $from->id])));
-        $totals = $this->board->stageTotals($business, $pipeline, $filters, $stageIds);
+        $totals = $this->board->stageTotals($business, $pipeline, $filters, $stageIds, (int) Auth::id());
         $stages = CrmPipelineStage::query()->whereIn('id', $stageIds)->get()->keyBy('id');
 
         $describe = fn (CrmPipelineStage $stage): array => [
