@@ -89,17 +89,20 @@ final class SeoReviewsPageReader
             foreach ($ledger->get($locationId, collect()) as $request) {
                 $contactId = $request->contact_id === null ? null : (int) $request->contact_id;
 
+                // Read the raw value so one row with a non-contract status can never take the page down.
+                $status = SeoReviewRequestStatus::tryFrom((string) $request->getRawOriginal('status'));
+
                 $rows[] = [
                     'uid' => (string) $request->uid,
                     'channel' => $request->channel->value,
                     'channel_label' => $request->channel->label(),
-                    'status' => $request->status->value,
-                    'status_label' => $request->status->label(),
+                    'status' => $status?->value ?? 'unknown',
+                    'status_label' => $status?->label() ?? 'Unknown',
                     'requested_at' => $request->requested_at,
                     'resolved_at' => $request->resolved_at,
                     'has_contact' => $contactId !== null,
                     'contact' => $contactId !== null ? ($summaries[$contactId] ?? null) : null,
-                    'can_resolve' => $location->isActive() && $request->status === SeoReviewRequestStatus::Requested,
+                    'can_resolve' => $location->isActive() && $status === SeoReviewRequestStatus::Requested,
                 ];
             }
 
