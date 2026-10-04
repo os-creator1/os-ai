@@ -37,7 +37,7 @@
                                 @csrf
                                 <div class="row">
 
-                                    @if($sendingServers->count() > 0)
+                                    @if(! $managedTransport && $sendingServers->count() > 0)
                                         <div class="col-12">
                                             <div class="mb-1">
                                                 <label for="sending_server"
@@ -58,22 +58,36 @@
 
                                     @endif
 
-                                    <div class="col-12">
-
-                                        <div class="mb-1">
-                                            <label for="sender_id"
-                                                   class="form-label required">{{__('locale.labels.sender_identity')}}</label>
-                                            <select class="form-select select2" id="sender_id" name="sender_id">
-                                                @foreach($phone_numbers as $number)
-                                                    <option value="{{$number->number}}" @selected(old('sender_id') == $number->number)> {{ $number->number }}</option>
-                                                @endforeach
-                                            </select>
-
-                                            @error('sender_id')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
+                                    @if($managedTransport)
+                                        {{-- The Business's own managed number, resolved server-side
+                                             (BusinessMessagingIdentityResolver) — shown so the customer
+                                             knows who they are sending from, never an editable/required
+                                             legacy sender selection, and never trusted back from this
+                                             form on submit. --}}
+                                        <div class="col-12">
+                                            <div class="mb-1">
+                                                <label class="form-label">{{ __('locale.labels.sender_identity') }}</label>
+                                                <input type="text" class="form-control" value="{{ $managedFromNumber }}" disabled readonly>
+                                            </div>
                                         </div>
-                                    </div>
+                                    @else
+                                        <div class="col-12">
+
+                                            <div class="mb-1">
+                                                <label for="sender_id"
+                                                       class="form-label required">{{__('locale.labels.sender_identity')}}</label>
+                                                <select class="form-select select2" id="sender_id" name="sender_id">
+                                                    @foreach($phone_numbers as $number)
+                                                        <option value="{{$number->number}}" @selected(old('sender_id') == $number->number)> {{ $number->number }}</option>
+                                                    @endforeach
+                                                </select>
+
+                                                @error('sender_id')
+                                                <p><small class="text-danger">{{ $message }}</small></p>
+                                                @enderror
+                                            </div>
+                                        </div>
+                                    @endif
 
                                     <div class="col-12">
                                         <div class="mb-1">
@@ -83,10 +97,20 @@
                                                 <div style="width: 8rem">
                                                     <select class="form-select select2" id="country_code"
                                                             name="country_code">
-                                                        @foreach($coverage as $code)
-                                                            <option value="{{ $code->country_id }}" @selected(old('country_code') == $code->country_id)>
-                                                                +{{ $code->country->country_code }} </option>
-                                                        @endforeach
+                                                        @if($managedTransport)
+                                                            {{-- A destination-formatting helper only — the
+                                                                 platform's own active Country catalog, never
+                                                                 a pricing/coverage table. --}}
+                                                            @foreach($countries as $country)
+                                                                <option value="{{ $country->id }}" @selected(old('country_code') == $country->id)>
+                                                                    +{{ $country->country_code }} </option>
+                                                            @endforeach
+                                                        @else
+                                                            @foreach($coverage as $code)
+                                                                <option value="{{ $code->country_id }}" @selected(old('country_code') == $code->country_id)>
+                                                                    +{{ $code->country->country_code }} </option>
+                                                            @endforeach
+                                                        @endif
                                                     </select>
                                                 </div>
 

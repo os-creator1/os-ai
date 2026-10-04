@@ -287,120 +287,111 @@
                 ]);
             }
 
-
-            // Fetch the active subscription once and use it throughout
-            $activeSubscriptionPlanId = $user->customer->activeSubscription()->plan_id;
-
-            // You can chain where's like this for better readability
-            $coverage = CustomerBasedPricingPlan::where([
-                ['user_id', $user->id],
-            ])->where('country_id', $country->id)->with('sendingServer')->first([
-                'options',
-                'country_id',
-                'sending_server',
-                'voice_sending_server',
-                'mms_sending_server',
-                'whatsapp_sending_server',
-                'viber_sending_server',
-                'otp_sending_server',
-            ]);
-
-            // If there's no coverage, query from PlansCoverageCountries
-            if (empty($coverage)) {
-                $coverage = PlansCoverageCountries::where('plan_id', $activeSubscriptionPlanId)
-                    ->with('sendingServer')
-                    ->where('country_id', $country->id)
-                    ->first([
-                        'options',
-                        'country_id',
-                        'sending_server',
-                        'voice_sending_server',
-                        'mms_sending_server',
-                        'whatsapp_sending_server',
-                        'viber_sending_server',
-                        'otp_sending_server',
-                    ]);
-            }
-
-            // Return error if coverage is still empty
-            if (empty($coverage)) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => "Permission to send an SMS has not been enabled for the region indicated by the 'To' number: " . $input['country_code'] . $input['recipient'],
-                ]);
-            }
-
-            // Define a map of $sms_type to sending server relationships
-            $smsTypeToServerMap = [
-                'unicode'  => 'plain',
-                'voice'    => 'voiceSendingServer',
-                'mms'      => 'mmsSendingServer',
-                'whatsapp' => 'whatsappSendingServer',
-                'viber'    => 'viberSendingServer',
-                'otp'      => 'otpSendingServer',
-            ];
-
-            // Set a default sending server in case the $sms_type is not found in the map
-            $defaultServer = 'sendingServer';
-            $db_sms_type   = $sms_type == 'unicode' ? 'plain' : $sms_type;
-
-            // Check if $input['sending_server'] is provided
-            if (isset($input['sending_server'])) {
-                $sending_server = SendingServer::where('status', true)->find($input['sending_server']);
-
-                // Correction 1 — a submitted sending_server existing and
-                // supporting the sms type globally is not enough: when an
-                // explicit Business is selected, the server must also be
-                // assigned to THAT Business via customer_based_sending_
-                // servers, or a malicious manually-submitted foreign
-                // server id would be authorized for the Business's send.
-                // Legacy (no explicit Business) callers keep their
-                // existing behavior unchanged.
-                $sendQuickSendBusinessId = $input['business_id'] ?? null;
-                if ($sending_server !== null && $sendQuickSendBusinessId !== null) {
-                    $isAssignedToBusiness = CustomerBasedSendingServer::where('business_id', $sendQuickSendBusinessId)
-                        ->where('sending_server', $input['sending_server'])
-                        ->where('status', 1)
-                        ->exists();
-
-                    if ( ! $isAssignedToBusiness) {
-                        $sending_server = null;
-                    }
-                }
-            } else {
-                // Use the map to get the sending server or fallback to the default
-                $serverKey      = $smsTypeToServerMap[$db_sms_type] ?? $defaultServer;
-                $sending_server = $coverage->{$serverKey};
-            }
-
-            // Customer Experience Slice 3 §4.5/§4.7 — a managed Business
-            // carries its own transport and has no legacy SendingServer.
-            //
-            // Every guard below this point asks a question about a legacy
-            // gateway: does one exist, does it support this SMS type, can it
-            // handle a file-less send. For a Business the PLATFORM sends for,
-            // all three are the wrong question, and the first of them was
-            // refusing managed sends outright with "No sending server
-            // available for your subscribed plan" — so managed messaging,
-            // which §4.7 calls the normal experience, could only work for a
-            // Business that also happened to keep a legacy gateway
-            // configured. That is the defect this resolves.
-            //
-            // Everything the managed path genuinely depends on has already
-            // run above: the caller's tenancy and entitlement resolution,
-            // the active subscription, the country, and the plan coverage.
-            // The blacklist check and spintax processing below still run for
-            // managed sends, and the delegation itself stays where it is —
-            // after those and after the RFC-005 block — so this widens
-            // nothing and skips no safety check.
-            //
-            // RFC-005 accounting is preserved by the existing code, not by
-            // an exception carved for this: qualifyConversationsMeterReservation()
-            // already declares $sendingServer nullable and already treats
-            // null as non-qualifying, and it only ever qualifies for the one
-            // configured pilot sending server — which a Business with no
-            // legacy server can never be.
+            // Customer Experience Slice 3 §4.5/§4.7 correction — classified
+            // HERE, before any legacy Subscription/coverage lookup runs, not
+            // only before the "sending server available" check further
+            // down. A normal V1 signup deliberately never populates the
+            // legacy Customer::activeSubscription() this block used to
+            // dereference unconditionally, nor CustomerBasedPricingPlan/
+            // PlansCoverageCountries (RFC-004: legacy SMS-billing machinery,
+            // never V1 Workspace-plan authority) — so a managed Business
+            // used to crash on a null activeSubscription(), or (once that
+            // was guarded) still hit "Permission to send an SMS has not
+            // been enabled" from the coverage-required check below, and
+            // could never reach the managed dispatch call past it. Every
+            // legacy/BYO Business (this stays false) runs the untouched
+            // block that follows exactly as it always has.
             $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged($input['business_id'] ?? null);
+
+            $sending_server = null;
+            $db_sms_type    = $sms_type == 'unicode' ? 'plain' : $sms_type;
+            $priceOption    = null;
+
+            if (! $managedTransport) {
+                // Fetch the active subscription once and use it throughout
+                $activeSubscriptionPlanId = $user->customer->activeSubscription()->plan_id;
+
+                // You can chain where's like this for better readability
+                $coverage = CustomerBasedPricingPlan::where([
+                    ['user_id', $user->id],
+                ])->where('country_id', $country->id)->with('sendingServer')->first([
+                    'options',
+                    'country_id',
+                    'sending_server',
+                    'voice_sending_server',
+                    'mms_sending_server',
+                    'whatsapp_sending_server',
+                    'viber_sending_server',
+                    'otp_sending_server',
+                ]);
+
+                // If there's no coverage, query from PlansCoverageCountries
+                if (empty($coverage)) {
+                    $coverage = PlansCoverageCountries::where('plan_id', $activeSubscriptionPlanId)
+                        ->with('sendingServer')
+                        ->where('country_id', $country->id)
+                        ->first([
+                            'options',
+                            'country_id',
+                            'sending_server',
+                            'voice_sending_server',
+                            'mms_sending_server',
+                            'whatsapp_sending_server',
+                            'viber_sending_server',
+                            'otp_sending_server',
+                        ]);
+                }
+
+                // Return error if coverage is still empty
+                if (empty($coverage)) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => "Permission to send an SMS has not been enabled for the region indicated by the 'To' number: " . $input['country_code'] . $input['recipient'],
+                    ]);
+                }
+
+                // Define a map of $sms_type to sending server relationships
+                $smsTypeToServerMap = [
+                    'unicode'  => 'plain',
+                    'voice'    => 'voiceSendingServer',
+                    'mms'      => 'mmsSendingServer',
+                    'whatsapp' => 'whatsappSendingServer',
+                    'viber'    => 'viberSendingServer',
+                    'otp'      => 'otpSendingServer',
+                ];
+
+                // Set a default sending server in case the $sms_type is not found in the map
+                $defaultServer = 'sendingServer';
+
+                // Check if $input['sending_server'] is provided
+                if (isset($input['sending_server'])) {
+                    $sending_server = SendingServer::where('status', true)->find($input['sending_server']);
+
+                    // Correction 1 — a submitted sending_server existing and
+                    // supporting the sms type globally is not enough: when an
+                    // explicit Business is selected, the server must also be
+                    // assigned to THAT Business via customer_based_sending_
+                    // servers, or a malicious manually-submitted foreign
+                    // server id would be authorized for the Business's send.
+                    // Legacy (no explicit Business) callers keep their
+                    // existing behavior unchanged.
+                    $sendQuickSendBusinessId = $input['business_id'] ?? null;
+                    if ($sending_server !== null && $sendQuickSendBusinessId !== null) {
+                        $isAssignedToBusiness = CustomerBasedSendingServer::where('business_id', $sendQuickSendBusinessId)
+                            ->where('sending_server', $input['sending_server'])
+                            ->where('status', 1)
+                            ->exists();
+
+                        if ( ! $isAssignedToBusiness) {
+                            $sending_server = null;
+                        }
+                    }
+                } else {
+                    // Use the map to get the sending server or fallback to the default
+                    $serverKey      = $smsTypeToServerMap[$db_sms_type] ?? $defaultServer;
+                    $sending_server = $coverage->{$serverKey};
+                }
+            }
 
             if ( ! $sending_server && ! $managedTransport) {
                 return response()->json([
@@ -449,64 +440,70 @@
                 $message = $spintax->process($message);
             }
 
-            // Decode the options
-            $priceOption = json_decode($coverage['options'], true);
-
-            // Gateway-wise billing prices per legacy gateway. A managed send
-            // has none, so it keeps the plan's own coverage price rather
-            // than dereferencing a null server.
-            if (config('app.gateway_wise_billing') && $sending_server) {
-                $getCoverage = SendingServerBasedPricingPlans::where('sending_server', $sending_server->id)->where('country_id', $country->id)->first();
-                if ( ! $getCoverage) {
-                    return response()->json([
-                        'status'  => 'error',
-                        'message' => "Permission to send an SMS has not been enabled for the region indicated by the 'To' number: " . $input['country_code'] . $input['recipient'],
-                    ]);
-                }
-
-                $priceOption = json_decode($getCoverage->options, true);
-            }
-
+            // SMS segment count — genuinely applies to both paths (the
+            // managed dispatch's own quantity as much as the legacy price
+            // calculation below), so it is computed once here, unconditionally.
             $sms_counter  = new SMSCounter();
             $message_data = $sms_counter->count($message, $sms_type == 'whatsapp' ? 'WHATSAPP' : null);
             $sms_count    = $message_data->messages;
 
-            $unit_price = 0;
-
-            switch ($sms_type) {
-                case 'plain':
-                case 'unicode':
-                    $unit_price = $priceOption['plain_sms'];
-                    break;
-
-                case 'voice':
-                    $unit_price = $priceOption['voice_sms'];
-                    if ($sms_count == 0) {
-                        $sms_count = 1;
-                    }
-                    break;
-
-                case 'mms':
-                    $unit_price = $priceOption['mms_sms'];
-                    if ($sms_count == 0) {
-                        $sms_count = 1;
-                    }
-                    break;
-
-                case 'whatsapp':
-                    $unit_price = $priceOption['whatsapp_sms'];
-                    break;
-
-                case 'viber':
-                    $unit_price = $priceOption['viber_sms'];
-                    break;
-
-                case 'otp':
-                    $unit_price = $priceOption['otp_sms'];
-                    break;
+            // Voice and MMS never report a meaningful 0-segment count; both
+            // the legacy price calculation and a managed MMS send's own
+            // measurement quantity need at least 1.
+            if (($sms_type === 'voice' || $sms_type === 'mms') && $sms_count == 0) {
+                $sms_count = 1;
             }
 
-            $price = $sms_count * $unit_price;
+            $price = 0;
+
+            if (! $managedTransport) {
+                // Decode the options
+                $priceOption = json_decode($coverage['options'], true);
+
+                // Gateway-wise billing prices per legacy gateway.
+                if (config('app.gateway_wise_billing') && $sending_server) {
+                    $getCoverage = SendingServerBasedPricingPlans::where('sending_server', $sending_server->id)->where('country_id', $country->id)->first();
+                    if ( ! $getCoverage) {
+                        return response()->json([
+                            'status'  => 'error',
+                            'message' => "Permission to send an SMS has not been enabled for the region indicated by the 'To' number: " . $input['country_code'] . $input['recipient'],
+                        ]);
+                    }
+
+                    $priceOption = json_decode($getCoverage->options, true);
+                }
+
+                $unit_price = 0;
+
+                switch ($sms_type) {
+                    case 'plain':
+                    case 'unicode':
+                        $unit_price = $priceOption['plain_sms'];
+                        break;
+
+                    case 'voice':
+                        $unit_price = $priceOption['voice_sms'];
+                        break;
+
+                    case 'mms':
+                        $unit_price = $priceOption['mms_sms'];
+                        break;
+
+                    case 'whatsapp':
+                        $unit_price = $priceOption['whatsapp_sms'];
+                        break;
+
+                    case 'viber':
+                        $unit_price = $priceOption['viber_sms'];
+                        break;
+
+                    case 'otp':
+                        $unit_price = $priceOption['otp_sms'];
+                        break;
+                }
+
+                $price = $sms_count * $unit_price;
+            }
 
             // RFC-005 Milestone 5 §5.1/§6/§9 — full qualifying-send guard
             // chain, evaluated BEFORE the legacy sms_unit pre-check below
@@ -561,8 +558,10 @@
 
             // Legacy sms_unit pre-check — replaced (not run alongside) for
             // a qualifying M5 send, which is funded by the RFC-005 wallet
-            // instead (§5.1/§H exclusivity).
-            if ($user->sms_unit != '-1' && $price > $user->sms_unit && ! ($m5 !== null && $m5['qualifies'])) {
+            // instead (§5.1/§H exclusivity), and never run for managed
+            // transport at all: managed billing is UsageWalletManager's own
+            // recordMeasurement(), never legacy sms_unit balance/price.
+            if (! $managedTransport && $user->sms_unit != '-1' && $price > $user->sms_unit && ! ($m5 !== null && $m5['qualifies'])) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.campaigns.not_enough_balance', [

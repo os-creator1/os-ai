@@ -257,6 +257,16 @@ final class ContactDirectory
             ->first(fn (ChatBox $box) => ChatBoxBusinessBackfillV1::normalizeCounterparty((string) $box->to) === $phone);
     }
 
+    /**
+     * A person's first and last name each live in their OWN
+     * contacts_custom_field row (there is no single "full name" column or
+     * value anywhere in this legacy schema), so a search must match each
+     * word of a multi-word query against SOME identity field independently
+     * — never the whole query against one field's value — or a full-name
+     * search (e.g. "John Smith") could never match a contact whose
+     * FIRST_NAME is "John" and LAST_NAME is "Smith" in two separate rows.
+     * A single-word search behaves exactly as before.
+     */
     private function query(Business $business, string $search, ?int $actorUserId = null): Builder
     {
         $query = Contacts::query()->where('business_id', $business->id);
@@ -270,21 +280,29 @@ final class ContactDirectory
         }
 
         $digits = (string) preg_replace('/\D+/', '', $search);
-        $like = '%' . addcslashes($search, '%_\\') . '%';
+        $tokens = preg_split('/\s+/', trim($search), -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
-        return $query->where(function (Builder $where) use ($digits, $like) {
+        return $query->where(function (Builder $where) use ($digits, $tokens) {
             if ($digits !== '') {
                 $where->orWhere('phone', 'like', '%' . $digits . '%');
             }
 
-            $where->orWhereExists(function ($values) use ($like) {
-                $values->selectRaw('1')
-                    ->from('contacts_custom_field as v')
-                    ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
-                    ->whereColumn('v.contact_id', 'contacts.id')
-                    ->whereIn('f.tag', self::IDENTITY_TAGS)
-                    ->where('v.value', 'like', $like);
-            });
+            if ($tokens !== []) {
+                $where->orWhere(function (Builder $identity) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $like = '%' . addcslashes($token, '%_\\') . '%';
+
+                        $identity->whereExists(function ($values) use ($like) {
+                            $values->selectRaw('1')
+                                ->from('contacts_custom_field as v')
+                                ->join('contact_group_fields as f', 'f.id', '=', 'v.field_id')
+                                ->whereColumn('v.contact_id', 'contacts.id')
+                                ->whereIn('f.tag', self::IDENTITY_TAGS)
+                                ->where('v.value', 'like', $like);
+                        });
+                    }
+                });
+            }
         });
     }
 

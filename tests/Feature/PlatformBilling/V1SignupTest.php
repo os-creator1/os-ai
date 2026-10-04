@@ -2,12 +2,14 @@
 
 namespace Tests\Feature\PlatformBilling;
 
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\CustomerAccountAccessState;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\PlatformBilling\PlatformSubscriptionStatus;
 use App\Library\Entitlement\CustomerAccountAccessResolver;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\PlatformBilling\V1SignupManager;
+use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\PlatformSubscription;
@@ -96,6 +98,87 @@ class V1SignupTest extends TestCase
         // ...and the account is usable.
         $this->assertSame(CustomerAccountAccessState::Usable,
             app(CustomerAccountAccessResolver::class)->resolve($workspace)->state);
+    }
+
+    /**
+     * Manual acceptance defect 1 (P0) — createForCustomerInWorkspace() always
+     * provisions a self-signup Business Draft, and before this fix nothing
+     * anywhere ever moved it to Active: activateClientBusiness() exists only
+     * for the unrelated Agency-invited-client path. Every V1 self-signup
+     * account was permanently stuck Draft even after paying.
+     */
+    public function test_completing_signup_activates_the_newly_provisioned_business(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth);
+        $customer = $this->createCustomer();
+
+        $session = $this->signup()->startSubscription($customer, $this->draft(), $catalog, 'https://a', 'https://b');
+
+        $workspace = Workspace::query()->where('owner_user_id', $customer->user_id)->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+        $this->assertSame(BusinessStatus::Draft, $business->status, 'Provisioning creates the Business Draft, before any payment is confirmed.');
+
+        $this->stripe->completeCheckout($session->sessionId);
+        $this->signup()->completeSignup($session->sessionId);
+
+        $business->refresh();
+        $this->assertSame(BusinessStatus::Active, $business->status);
+        $this->assertNotNull($business->activated_at);
+    }
+
+    /**
+     * ChatGPT review correction — workspace_plan_assignments is the V1
+     * entitlement/access authority (RFC-004 §14), so a provider-confirmed
+     * subscription is reason to WRITE that authority, never reason to expose
+     * an Active Business on the strength of provider confirmation alone.
+     * activateFromConfirmedSubscription() must attempt the assignment BEFORE
+     * activating the Business, so an unexpected assignment failure leaves
+     * the account exactly as inconsistent as it already was (Draft, no
+     * assignment) rather than Active with no canonical assignment behind it.
+     *
+     * WorkspacePlanAssignmentRepository is the actual persistence seam both
+     * V1SignupManager's own pre-check and EntitlementManager::assignFirstPlan()'s
+     * write share (PlatformSubscriptionManager and EntitlementManager are
+     * both `final` and cannot be Mockery-doubled while still satisfying their
+     * constructor type hints, so the repository contract underneath them is
+     * the correct place to inject the failure).
+     */
+    public function test_an_unexpected_assignment_failure_leaves_the_business_draft_and_propagates(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        $catalog = $this->sellableTier(WorkspacePlanTier::Growth);
+        $customer = $this->createCustomer();
+
+        $session = $this->signup()->startSubscription($customer, $this->draft(), $catalog, 'https://a', 'https://b');
+        $this->stripe->completeCheckout($session->sessionId);
+
+        $workspace = Workspace::query()->where('owner_user_id', $customer->user_id)->sole();
+        $business = Business::query()->where('workspace_id', $workspace->id)->sole();
+
+        $this->mock(WorkspacePlanAssignmentRepository::class, function ($mock): void {
+            $mock->shouldReceive('findByWorkspaceId')->andReturn(null);
+            $mock->shouldReceive('create')
+                ->once()
+                ->andThrow(new \RuntimeException('simulated unexpected assignment failure'));
+        });
+
+        $thrown = null;
+
+        try {
+            $this->signup()->completeSignup($session->sessionId);
+        } catch (\Throwable $e) {
+            $thrown = $e;
+        }
+
+        $this->assertInstanceOf(\RuntimeException::class, $thrown, 'An unexpected assignment failure must propagate, not be swallowed.');
+        $this->assertSame(0, WorkspacePlanAssignment::query()->count(), 'No fake plan assignment appears.');
+
+        $business->refresh();
+        $this->assertSame(BusinessStatus::Draft, $business->status, 'The Business must remain Draft when the canonical assignment did not persist.');
+        $this->assertNull($business->activated_at);
     }
 
     public function test_an_abandoned_checkout_leaves_no_paid_state(): void

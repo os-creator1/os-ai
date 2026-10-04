@@ -13,10 +13,12 @@ use App\Models\PlatformSubscription;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspacePlanAssignment;
+use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Feature\PlatformBilling\Concerns\CreatesPlatformSubscriptions;
 use Tests\TestCase;
@@ -151,6 +153,27 @@ class V1SignupHttpTest extends TestCase
             'growth' => [WorkspacePlanTier::Growth],
             'agency' => [WorkspacePlanTier::Agency],
         ];
+    }
+
+    /**
+     * Manual acceptance defect 3 (P1) — V1SignupController::store() created
+     * the User directly and never fired Registered, even though
+     * EventServiceProvider already maps it to SendEmailVerificationNotification.
+     * The resend endpoint (which calls sendEmailVerificationNotification()
+     * independently) worked fine, which is what made the missing initial
+     * email easy to miss.
+     */
+    public function test_registration_sends_the_email_verification_notification(): void
+    {
+        Notification::fake();
+        $this->sellableTier(WorkspacePlanTier::Growth);
+
+        $email = 'verify' . uniqid() . '@example.test';
+        $this->post(route('register'), $this->form(['email' => $email]));
+
+        $user = User::query()->where('email', $email)->sole();
+
+        Notification::assertSentTo($user, VerifyEmail::class);
     }
 
     public function test_registration_creates_no_legacy_subscription_authority(): void

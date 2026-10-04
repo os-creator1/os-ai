@@ -235,6 +235,100 @@ class BusinessManager
     }
 
     /**
+     * V1 self-signup's own activation step (Implementation Contract 21 §7).
+     * Unlike activateClientBusiness()'s Agency-invited-client case, the
+     * Business a self-signup Workspace provisions already carries the real
+     * identity the owner entered at signup — there is no placeholder to
+     * correct — so activation is only ever the Draft -> Active transition
+     * itself, made the moment the platform subscription that pays for it is
+     * provider-confirmed (V1SignupManager::activateFromConfirmedSubscription(),
+     * the one seam both the Checkout-return request and the billing webhook
+     * call). Idempotent and safe to call on every re-entry into that seam: a
+     * Business that is not currently Draft (already Active from an earlier
+     * call) is left untouched.
+     *
+     * WORKSPACE-BEFORE-BUSINESS, UNDER LOCK (ChatGPT review correction).
+     * $business is the caller's own read, taken before any lock here — a
+     * caller (WorkspaceController's historical repair among them) derives
+     * its authority to activate (the Workspace's plan assignment, its
+     * PlatformSubscription) from the Workspace it read $business FROM. If a
+     * concurrent WorkspaceManager::reassignBusiness() moves this exact
+     * Business to a different Workspace between that read and this method's
+     * lock, activating on the strength of the OLD Workspace's authority
+     * would cross Workspaces. So the Workspace $business claimed at read
+     * time is locked FIRST (findForUpdate(), the same order
+     * updateOwnBusinessProfile() and reassignBusiness() already use), the
+     * Business second, and a stale mismatch throws the identical typed
+     * BusinessWorkspaceMismatchException updateOwnBusinessProfile() reuses
+     * for the same scenario — never a bespoke string check.
+     *
+     * @return bool true only when THIS call performed the Draft -> Active
+     *              transition; false for a row that was already Active (or
+     *              never Draft). V1SignupManager's own caller ignores this:
+     *              a repeated webhook or Checkout-return revisit replaying
+     *              an already-activated Business is expected, not an error.
+     *
+     * @throws BusinessWorkspaceMismatchException $business no longer belongs
+     *         to the Workspace it was read from — a stale caller reference.
+     */
+    public function activateForConfirmedSignup(Business $business): bool
+    {
+        $expectedWorkspaceId = (int) $business->workspace_id;
+
+        // ChatGPT review correction — re-checked under the SAME Workspace
+        // lock this transaction takes below, never the caller's earlier
+        // unlocked read. AgencyClientRelationshipManager::establish() also
+        // locks the Client Workspace before its own relationship
+        // current-read/create (Workspace-before-relationship, the same
+        // order this method now uses), so that shared Workspace lock is the
+        // serialization boundary: if an Active relationship commits between
+        // a caller's pre-check and this method's lock, the LOCKING read
+        // (findActiveForClientWorkspaceForUpdate(), never the plain
+        // findActiveForClientWorkspace()) is guaranteed to see it. A Client
+        // Workspace's self-signup Draft Business belongs to the
+        // Client/Agency provisioning flow the moment that relationship
+        // exists — never this historical-repair seam — so activation
+        // refuses outright: no write, false, the same idempotent shape as
+        // an already-Active row.
+        //
+        // Retried up to 3 attempts on a genuine MySQL deadlock: terminate()
+        // takes relationship locks before Workspace locks — the exact
+        // inverse of establish()'s (and now this method's) order — so
+        // either side may legitimately be chosen as a deadlock victim.
+        // Retrying from the start is correct because every read this
+        // closure makes is taken again under fresh locks. No lock
+        // reordering on either side.
+        return DB::transaction(function () use ($business, $expectedWorkspaceId): bool {
+            $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+            $workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            $relationshipRepository = $this->agencyClientRelationshipRepository ?? app(AgencyClientWorkspaceRelationshipRepository::class);
+
+            if ($relationshipRepository->findActiveForClientWorkspaceForUpdate($expectedWorkspaceId) !== null) {
+                return false;
+            }
+
+            $locked = $this->businessRepository->findForUpdate($business->id);
+
+            if ($locked === null || (int) $locked->workspace_id !== $expectedWorkspaceId) {
+                throw new BusinessWorkspaceMismatchException(
+                    $business->id,
+                    $expectedWorkspaceId,
+                    $locked === null ? 0 : (int) $locked->workspace_id,
+                );
+            }
+
+            if ($locked->status !== BusinessStatus::Draft) {
+                return false;
+            }
+
+            $this->businessRepository->updateStatus($locked, BusinessStatus::Active);
+
+            return true;
+        }, 3);
+    }
+
+    /**
      * Update an already-existing business. Always re-checks ownership.
      */
     public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
