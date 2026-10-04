@@ -355,6 +355,38 @@ class WebsiteController extends CustomerBaseController
         ]);
     }
 
+    /**
+     * Website V1 acceptance — generated pages start hidden from search ("noindex
+     * until the owner has reviewed them"). This is the owner's one-step way to
+     * say "I have reviewed them: let search engines find these pages", instead of
+     * clearing the box on every page. It changes only the per-page setting, under
+     * the same Website lock every other page mutation takes; nothing goes live
+     * until the owner publishes.
+     */
+    public function allowIndexing(string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $this->authorize('website');
+        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+        $website = $this->resolveWebsite($business);
+
+        if ($demo = $this->demoGuard($workspaceUid, $businessUid)) {
+            return $demo;
+        }
+
+        try {
+            $changed = $this->generationCoordinator->runExclusive($website, fn () => $website->pages()->where('noindex', true)->update(['noindex' => false]));
+        } catch (GenerationInProgressException $e) {
+            return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+
+        return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => $changed === 0
+                ? 'Every page can already be found in search.'
+                : $changed . ($changed === 1 ? ' page' : ' pages') . ' can now be found in search. Publish to update your live website.',
+        ]);
+    }
+
     public function destroyPage(Request $request, string $workspaceUid, string $businessUid, string $pageUid): RedirectResponse
     {
         $this->authorize('website');

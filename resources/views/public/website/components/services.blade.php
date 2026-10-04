@@ -26,8 +26,16 @@
                     <span class="wd-badge">Featured</span>
                 @endif
                 <h3>{{ $item['name'] ?? '' }}</h3>
-                @if (! empty($item['description']))
-                    <p>{{ $item['description'] }}</p>
+                @php([$descriptionText, $featureList] = \App\Library\Catalog\CatalogFeatureList::split($item['description'] ?? null))
+                @if ($descriptionText !== null)
+                    <p>{{ $descriptionText }}</p>
+                @endif
+                @if ($featureList !== [])
+                    <ul class="website-service-features">
+                        @foreach ($featureList as $feature)
+                            <li>{{ $feature }}</li>
+                        @endforeach
+                    </ul>
                 @endif
                 @if (! empty($item['price_label']))
                     <span class="website-service-price">{{ $item['price_label'] }}</span>

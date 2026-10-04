@@ -61,6 +61,7 @@ final class WebsitePageComposer
             'design' => $design,
             'nav' => $this->navigation->build($pages, $currentUid),
             'siteCta' => $siteCta,
+            'pageUrls' => collect($pages)->filter(fn ($candidate) => ! empty($candidate['url']))->mapWithKeys(fn ($candidate) => [(! empty($candidate['is_home']) ? '' : (string) ($candidate['slug'] ?? '')) => $candidate['url']])->all(),
             'brandStyle' => BrandColors::inlineStyle($theme['brand_color'] ?? null),
             'logo' => $logo,
             'siteContact' => $this->contact($meta, $business, $isPreview),

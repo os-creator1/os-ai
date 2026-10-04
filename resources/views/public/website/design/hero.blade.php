@@ -16,8 +16,10 @@
         $image = $heroImageFallback;
     }
 
-    $primary = app(\App\Library\Website\Design\WebsiteCtaResolver::class)->sectionCta($data['primary_cta'] ?? null, $siteCta);
-    $secondary = ! empty($data['secondary_cta']['url']) ? $data['secondary_cta'] : null;
+    $ctaResolver = app(\App\Library\Website\Design\WebsiteCtaResolver::class);
+    $primary = $ctaResolver->sectionCta($data['primary_cta'] ?? null, $siteCta, $pageUrls ?? []);
+    $secondaryUrl = $ctaResolver->resolveLink(trim((string) ($data['secondary_cta']['url'] ?? '')), $pageUrls ?? []);
+    $secondary = $secondaryUrl !== '' ? array_merge($data['secondary_cta'], ['url' => $secondaryUrl]) : null;
     $isSplit = in_array($heroVariant, ['split', 'split-soft'], true) && $image !== null;
 @endphp
 <section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if ($isSplit) wd-hero-is-split @endif"

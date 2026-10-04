@@ -9,7 +9,7 @@
 --}}
 @php
     $announceParts = array_filter([
-        $siteContact['phone'] ? 'Call ' . $siteContact['phone'] : null,
+        $siteContact['phone'] ? 'Call ' . \App\Library\Website\Design\PhoneDisplay::format($siteContact['phone']) : null,
     ]);
     $homeUrl = collect($nav['primary'])->firstWhere('title', 'Home')['url'] ?? null;
 @endphp

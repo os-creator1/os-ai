@@ -75,15 +75,39 @@ final class WebsiteCtaResolver
      * @param  array{kind: string, label: string, url: string}|null  $siteCta
      * @return array{label: string, url: string}|null
      */
-    public function sectionCta(?array $cta, ?array $siteCta): ?array
+    public function sectionCta(?array $cta, ?array $siteCta, array $pageUrls = []): ?array
     {
-        $url = trim((string) ($cta['url'] ?? ''));
+        $url = $this->resolveLink(trim((string) ($cta['url'] ?? '')), $pageUrls);
 
         if ($url !== '' && $url !== '#' && preg_match('#^(https?://|tel:|mailto:|/)#i', $url) === 1) {
             return ['label' => (string) (($cta['label'] ?? '') !== '' ? $cta['label'] : ($siteCta['label'] ?? 'Get in touch')), 'url' => $url];
         }
 
         return $siteCta === null ? null : ['label' => $siteCta['label'], 'url' => $siteCta['url']];
+    }
+
+    /**
+     * A site-relative link written at generation time ("/services", "/serving-naperville")
+     * names one of THIS site's pages by slug. It is only correct if it is turned into that
+     * page's real address on whichever surface is rendering — Preview, the platform path or a
+     * custom domain — so a bare "/services" never points outside the site. A slug that is not a
+     * page of this site resolves to nothing (a dead link is never rendered). Any other URL
+     * (https, tel, mailto, #) is returned untouched.
+     *
+     * @param  array<string, string>  $pageUrls  slug ("" = home) => the page's address on this surface
+     */
+    public function resolveLink(string $url, array $pageUrls): string
+    {
+        // A protocol-relative URL ("//host/x") points off the site: never a page link, never rendered.
+        if (str_starts_with($url, '//')) {
+            return '';
+        }
+
+        if ($url === '' || ! str_starts_with($url, '/')) {
+            return $url;
+        }
+
+        return (string) ($pageUrls[trim($url, '/')] ?? '');
     }
 
     /** @return array{kind: string, label: string, url: string}|null */

@@ -1794,6 +1794,7 @@
             Route::get('/pages', 'Business\WebsiteController@pages')->name('pages.index');
             Route::get('/pages/create', 'Business\WebsiteController@createPage')->name('pages.create');
             Route::post('/pages', 'Business\WebsiteController@storePage')->name('pages.store');
+            Route::post('/pages/allow-indexing', 'Business\WebsiteController@allowIndexing')->name('pages.allowIndexing');
             Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
             Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
             Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');

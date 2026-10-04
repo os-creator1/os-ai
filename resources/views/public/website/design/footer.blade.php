@@ -16,7 +16,7 @@
             </a>
             <ul class="wd-footer-contact">
                 @if ($siteContact['phone'])
-                    <li><a href="tel:{{ preg_replace('/[^+0-9]/', '', $siteContact['phone']) }}">{{ $siteContact['phone'] }}</a></li>
+                    <li><a href="tel:{{ preg_replace('/[^+0-9]/', '', $siteContact['phone']) }}">{{ \App\Library\Website\Design\PhoneDisplay::format($siteContact['phone']) }}</a></li>
                 @endif
                 @if ($siteContact['email'])
                     <li><a href="mailto:{{ $siteContact['email'] }}">{{ $siteContact['email'] }}</a></li>

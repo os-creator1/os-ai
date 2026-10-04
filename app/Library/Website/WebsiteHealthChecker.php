@@ -53,6 +53,21 @@ final class WebsiteHealthChecker
         $hasDomain = $website->activePrimaryDomain() !== null;
         $add('domain', $hasDomain ? self::OK : self::WARN, 'Your own web address', $hasDomain ? 'Your website is on your own domain, so search engines can index it.' : 'Your website is on a preview address. Search engines only index a website on its own domain, so connect one to be found in search.', $hasDomain ? null : 'Connect a domain', $links['domains'] ?? null);
 
+        // 2b. Pages hidden from search. Generated pages start hidden (noindex) until the owner has
+        // read them; a connected domain does not change that, so say so plainly instead of implying
+        // the site is findable.
+        $hiddenCount = $pages->where('noindex', true)->count();
+        $add(
+            'indexing',
+            $hiddenCount === 0 ? self::OK : self::WARN,
+            'Pages visible to search engines',
+            $hiddenCount === 0
+                ? 'Every page can be found in search.'
+                : $hiddenCount . ' of ' . $pages->count() . ' pages are hidden from search engines, so they will not be found in search even on your own domain. Read your pages, then let search engines find them.',
+            $hiddenCount === 0 ? null : 'Review pages',
+            $links['pages'] ?? null,
+        );
+
         // 3 + 4. Titles and descriptions.
         $missingTitles = $pages->filter(fn ($page) => trim((string) $page->seo_title) === '')->pluck('title')->all();
         $duplicateTitles = $pages->filter(fn ($page) => trim((string) $page->seo_title) !== '')->groupBy(fn ($page) => mb_strtolower(trim($page->seo_title)))->filter(fn (Collection $group) => $group->count() > 1)->map(fn (Collection $group) => $group->first()->seo_title)->values()->all();
