@@ -161,15 +161,25 @@
        the engine. Scoped to #calendar-grid so nothing else on the page
        is affected.
     --------------------------------------------------------------- */
+    /* The wrap clips vertically (FullCalendar scrolls the hours itself) and
+       scrolls sideways only when the grid's own min-width (set by the section
+       script from the day count) is wider than the workspace — a narrow
+       screen scrolls instead of squeezing day columns unreadable. */
     #calendar-grid-wrap {
         border: 1px solid var(--color-border, #E5E1DA);
         border-radius: 0 0 .5rem .5rem;
         background: var(--color-surface, #fff);
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
     }
 
+    /* The grid lines. FullCalendar draws every hour/day line from
+       --fc-border-color, and the line colour used to be --color-border-subtle
+       (#F2F0ED on a white surface, ~1.1:1) — present but all-but-invisible.
+       --color-border keeps them thin and neutral yet always legible; the
+       half-hour rows stay dotted and fainter so the hours still read first. */
     #calendar-grid {
-        --fc-border-color: var(--color-border-subtle, #F2F0ED);
+        --fc-border-color: var(--color-border, #E5E1DA);
         --fc-page-bg-color: var(--color-surface, #fff);
         --fc-neutral-bg-color: var(--color-surface-secondary, #FBFAF7);
         --fc-list-event-hover-bg-color: var(--color-row-hover, var(--color-primary-soft-bg));
@@ -215,6 +225,14 @@
 
     #calendar-grid .fc-timegrid-slot-minor {
         border-top-style: dotted;
+        border-top-color: var(--color-border-subtle, #F2F0ED);
+    }
+
+    /* Day separators, stated explicitly rather than left to the theme
+       default so the day-column boundary can never silently disappear. */
+    #calendar-grid .fc-col-header-cell,
+    #calendar-grid .fc-timegrid-col {
+        border-left: 1px solid var(--fc-border-color);
     }
 
     #calendar-grid .fc-timegrid-slot-lane:hover {
@@ -235,8 +253,106 @@
         filter: brightness(0.97);
     }
 
+    /* FullCalendar's stylesheet paints every event's text white
+       (--fc-event-text-color) — unreadable on the pale status colours below.
+       Inherit the status rule's own text colour instead. */
     #calendar-grid .fc-event .fc-event-main {
         padding: 2px 4px;
+        color: inherit;
+    }
+
+    /* Event content (see eventContent in _scripts.blade.php): start–end time
+       first, then the title. The box height is the appointment's true
+       duration; only the content adapts to a short one. */
+    #calendar-grid .calendar-event-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+        line-height: 1.2;
+    }
+
+    #calendar-grid .calendar-event-time {
+        flex: none;
+        font-size: .6875rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    /* <= 30 min: tighter padding and line height, no wrapping. */
+    #calendar-grid .fc-event.calendar-event--compact {
+        padding: 0;
+    }
+
+    /* The event itself is the size container, so the rules below can adapt
+       to how wide THIS event is (an overlapped one is only half a column). */
+    #calendar-grid .fc-event.calendar-event--compact {
+        container-type: inline-size;
+    }
+
+    #calendar-grid .calendar-event--compact .fc-event-main {
+        padding: 1px 4px;
+    }
+
+    #calendar-grid .calendar-event--compact .calendar-event-body {
+        line-height: 1.15;
+    }
+
+    #calendar-grid .calendar-event--compact .calendar-event-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: .6875rem;
+    }
+
+    /* <= 25 min: a second line cannot fit, so time and title share one
+       line. The title is what gets the ellipsis, never the time. */
+    #calendar-grid .calendar-event--single .calendar-event-body {
+        flex-direction: row;
+        align-items: flex-start;
+        gap: .375rem;
+    }
+
+    #calendar-grid .calendar-event--single .calendar-event-title {
+        flex: 1 1 auto;
+    }
+
+    /* Side-by-side overlapping events can leave too little width for a
+       title next to the time: drop the title (it is on the tooltip) rather
+       than show a bare ellipsis or clip the time. */
+    @container (max-width: 7rem) {
+        #calendar-grid .calendar-event--single .calendar-event-title {
+            display: none;
+        }
+    }
+
+    @container (max-width: 3.5rem) {
+        #calendar-grid .calendar-event--compact .calendar-event-title {
+            display: none;
+        }
+    }
+
+    /* Very narrow (a half-column overlap on a small screen): give the time
+       every pixel it needs — it is the one thing that is never cut. */
+    /* Narrower still (half a column on a tablet): not even the full range
+       fits, so the end time goes first and the START time is never cut. The
+       tooltip always carries the whole range. */
+    @container (max-width: 4rem) {
+        #calendar-grid .calendar-event--compact .calendar-event-time-end {
+            display: none;
+        }
+    }
+
+    @container (max-width: 5rem) {
+        #calendar-grid .calendar-event--compact .fc-event-main {
+            padding: 1px 2px;
+        }
+
+        #calendar-grid .calendar-event--compact .calendar-event-time {
+            font-size: .625rem;
+            letter-spacing: -.01em;
+        }
     }
 
     /* Status colors — the existing classNames() output, restyled with
@@ -269,5 +385,62 @@
 
     #calendar-grid .fc-scrollgrid {
         border-color: var(--color-border-subtle, #F2F0ED);
+    }
+
+    /* ---------------------------------------------------------------
+       Section swap (Calendar view / Booking types / Staff availability).
+       Only #calendar-content is replaced; the old section stays put until
+       the new one is ready, and a slow request just dims it.
+    --------------------------------------------------------------- */
+    #calendar-content {
+        position: relative;
+        transition: opacity .12s ease;
+    }
+
+    #calendar-content.is-loading {
+        opacity: .55;
+        pointer-events: none;
+    }
+
+    #calendar-content.is-loading::after {
+        content: '';
+        position: absolute;
+        top: 3rem;
+        left: 50%;
+        width: 1.5rem;
+        height: 1.5rem;
+        margin-left: -.75rem;
+        border: 2px solid var(--color-border, #E5E1DA);
+        border-top-color: var(--color-primary, #B5524C);
+        border-radius: 50%;
+        animation: calendar-spin .7s linear infinite;
+    }
+
+    /* The grid was rendered for a different day count than this screen can
+       show; hold it invisible for the one extra request instead of flashing
+       the wrong range. */
+    #calendar-content.is-reconciling {
+        opacity: 0;
+    }
+
+    @keyframes calendar-spin {
+        to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        #calendar-content { transition: none; }
+        #calendar-content.is-loading::after { animation: none; }
+    }
+
+    .calendar-sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
     }
 </style>

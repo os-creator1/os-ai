@@ -1,12 +1,9 @@
-@extends('layouts/contentLayoutMaster')
+@extends(request()->query('fragment') === '1' ? 'customer.business.calendar._fragment' : 'customer.business.calendar._frame')
 
 @section('title', 'Staff availability')
+@section('calendar-active', 'availability')
 
-@section('page-style')
-    @include('customer.business.calendar._styles')
-@endsection
-
-@section('content')
+@section('calendar-section')
     @php
         // Implementation Contract 15 §5.2, §5.3, §6 — presentation only.
         //
@@ -22,8 +19,6 @@
         $nameById = $eligibleStaff->keyBy('id');
         $days = [0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday'];
     @endphp
-
-    @include('customer.business.calendar._module-nav', ['active' => 'availability'])
 
     <x-card title="Weekly availability" class="mb-2" data-section="availability-rules">
         <p class="text-caption">

@@ -61,3 +61,41 @@ the event class. This lane does **not** touch `WorkflowTriggerType`,
 
 All DB-writing runs used the disposable sibling `ultimatesms_testing_calendar_v1`
 (accepted by `Tests\Support\TestDatabaseSafety`), sequentially.
+
+## Calendar polish: grid, width and in-page tab switching
+
+A presentation-only pass over the existing Calendar screen. No route, controller
+authorization, booking rule, availability calculation, external sync, automation
+event or domain model changed.
+
+* **Why the grid looked empty.** The vendored FullCalendar 5.7.2 script does not
+  inject its own CSS, and its stylesheet
+  (`public/vendors/css/calendars/fullcalendar.min.css`) was never linked. Without
+  it the grid had no table layout, no borders and collapsed day columns. The
+  schedule now links that stylesheet (and loads it on demand when the schedule is
+  reached from another tab), and the line colour is `--color-border` instead of
+  the near-white `--color-border-subtle`. Hour lines are solid, half-hour lines
+  dotted and fainter, day separators explicit.
+* **Visible days.** The week view takes `?days=7|10|14` (anything else is 7; the
+  parameter is omitted from URLs when it is 7). The browser chooses the count from
+  the grid's own width, never the viewport's: each day column keeps at least
+  150 px, so 7 days up to a ~1550 px grid, 10 days from ~1550 px and 14 days from
+  ~2160 px; a grid too narrow for 110 px columns scrolls sideways instead of
+  squeezing. Whole-week spans (7, 14) stay Monday-aligned; a 10-day span starts on
+  its date, and its "Today" control and its no-date default are the start of the
+  current week. Previous/next move by the visible span.
+* **Tab switching.** Calendar view, Booking types and Staff availability still
+  have their own authorized routes and URLs. A plain click fetches the destination
+  with `?fragment=1`, which the same controller action answers with only
+  `#calendar-content` (layouts `_frame` / `_fragment`), and swaps it in; the
+  shell, title and tab strip are never replaced. The real URL is pushed with
+  `history.pushState`, Back/Forward re-fetch the section, and any failure (error,
+  redirect, no script) falls back to ordinary navigation. Each navigation aborts
+  the previous request and discards any response that is no longer the latest, so
+  the last click always wins. The schedule's own Today/previous/next/Day/Week
+  links use the same mechanism. FullCalendar is created/destroyed per swap; the
+  events ride along as inert `application/json`.
+* **Verification.** `CalendarSectionNavigationTest` (server contract), plus a real
+  browser pass at 1024, 1440, 1920 and 2560 px (live swap, rapid clicks with a
+  deliberately late response, Back/Forward, direct URLs, lazy FullCalendar load).
+  Test database: the disposable `ultimatesms_testing_calendar_polish`.
