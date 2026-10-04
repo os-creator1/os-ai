@@ -252,6 +252,11 @@
             $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
             $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
 
+            // Platform Automations: state-based triggers every 15 minutes, and the
+            // announcement lifecycle (publish due / expire lapsed) every minute.
+            $schedule->command('platform-automation:sweep')->everyFifteenMinutes()->withoutOverlapping();
+            $schedule->command('platform-announcements:sweep')->everyMinute()->withoutOverlapping();
+
             // SEO Keyword Rank Tracking V1 — paid provider pipeline. Registered
             // unconditionally; each job owns its own fail-closed master switch
             // (seo.rank_tracking.enabled, default OFF). The hourly tick only

@@ -796,6 +796,7 @@
             'Workspaces'          => 'Workspaces',
             'Customer'            => 'Customer',
             'Communications'      => 'Communications',
+            'Platform Automations' => 'Platform Automations',
             'Customers'           => 'Customers',
             'Subscriptions'       => 'Subscriptions',
             'Plan'                => 'Plan',

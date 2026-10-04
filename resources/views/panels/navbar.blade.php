@@ -485,3 +485,4 @@
 
             </nav>
             <!-- END: Header-->
+            @include('partials.platform-notices')

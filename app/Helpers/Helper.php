@@ -615,8 +615,27 @@
                         'requires_config' => 'opportunity.enabled',
                     ],
                     [
+                        'url'        => url(config('app.admin_path') . '/platform-automations'),
+                        'slug'       => config('app.admin_path') . '/platform-automations',
+                        'name'       => 'Platform Automations',
+                        'i18n'       => 'Platform Automations',
+                        'icon'       => 'zap',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
+                    ],
+                    [
+                        'url'        => url(config('app.admin_path') . '/platform-announcements'),
+                        'slug'       => config('app.admin_path') . '/platform-announcements',
+                        'name'       => 'Announcements',
+                        'i18n'       => 'Announcements',
+                        'icon'       => 'bell',
+                        'access'     => 'view workspace',
+                        'admin_only' => true,
+                    ],
+                    [
                         'url'     => '',
                         'name'    => 'Communications',
+                        'requires_config' => 'app.legacy_messaging_menu', // the legacy customer-announcement CRUD; Announcements above replaces it
                         'icon'    => 'users',
                         'i18n'    => 'Customer',
                         'access'  => 'view customer|view subscription|view announcement',

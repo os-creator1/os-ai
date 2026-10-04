@@ -52,6 +52,16 @@ use Illuminate\Queue\Events\JobProcessing;
 class EventServiceProvider extends ServiceProvider
 {
     /**
+     * Platform Automations: maps canonical domain events to Platform triggers.
+     * The subscriber swallows its own failures, so it can never break the flow it listens to.
+     *
+     * @var array
+     */
+    protected $subscribe = [
+        \App\Listeners\PlatformAutomation\PlatformTriggerSubscriber::class,
+    ];
+
+    /**
      * The event listener mappings for the application.
      *
      * @var array

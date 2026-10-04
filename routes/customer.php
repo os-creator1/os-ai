@@ -16,6 +16,14 @@
 
     Route::get('account-locked', 'AccountLockedController@show')->name('account-locked.show');
 
+    // Platform Automations / Announcements, customer side: mark one's own in-app notice
+    // read and dismiss one's own banner. Each acts only on the signed-in user's rows.
+    Route::get('platform-notices', 'PlatformNoticeController@feed')->middleware('throttle:60,1')->name('platform-notices.feed');
+    Route::post('platform-notices/{notice}/read', 'PlatformNoticeController@read')
+        ->whereUuid('notice')->middleware('throttle:60,1')->name('platform-notices.read');
+    Route::post('platform-announcements/{announcement}/dismiss', 'PlatformNoticeController@dismiss')
+        ->whereUuid('announcement')->middleware('throttle:60,1')->name('platform-announcements.dismiss');
+
     /*
     |--------------------------------------------------------------------------
     | Lane C, Task 1 — the ONE fixed, platform-wide Stripe OAuth callback for

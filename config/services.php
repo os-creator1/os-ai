@@ -251,4 +251,10 @@
             'cname_target'      => env('FORGE_CNAME_TARGET'),
             'a_record_ip'       => env('FORGE_A_RECORD_IP'),
         ],
+
+        // Platform Automations "Call a webhook" steps are signed with this secret
+        // (X-Platform-Signature: sha256=HMAC of the JSON body). Never stored in the database.
+        'platform_automation' => [
+            'webhook_secret' => env('PLATFORM_AUTOMATION_WEBHOOK_SECRET'),
+        ],
     ];

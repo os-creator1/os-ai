@@ -731,6 +731,50 @@
         | like workspaces.index/workspaces.show above.
         |
         */
+        /*
+        |--------------------------------------------------------------------------
+        | Platform Automations + Announcements (Platform Owner only)
+        |--------------------------------------------------------------------------
+        |
+        | The platform-scoped automation engine (its own tables and runner; see the
+        | 2026_11_03_090001 migration) and the Announcements system. Same
+        | no-"admin/"-segment shape as the routes above; this group's
+        | EnsureUserIsAdministrator is the boundary and every action re-checks the
+        | Platform Owner marker.
+        |
+        */
+        Route::get('platform-automations', 'PlatformAutomationController@list')->name('platform-automations.index');
+        Route::get('platform-automations/create', 'PlatformAutomationController@create')->name('platform-automations.create');
+        Route::post('platform-automations', 'PlatformAutomationController@store')->name('platform-automations.store');
+        Route::post('platform-automations/recipes/{recipe}', 'PlatformAutomationController@useRecipe')
+            ->where('recipe', '[a-z_]+')->name('platform-automations.recipes.use');
+        Route::get('platform-automations/runs/{run}', 'PlatformAutomationController@showRun')
+            ->whereUuid('run')->name('platform-automations.runs.show');
+        Route::post('platform-automations/runs/{run}/retry', 'PlatformAutomationController@retryRun')
+            ->whereUuid('run')->name('platform-automations.runs.retry');
+        Route::post('platform-automations/runs/{run}/steps/{index}/approve', 'PlatformAutomationController@approveStep')
+            ->whereUuid('run')->whereNumber('index')->name('platform-automations.runs.approve');
+        Route::post('platform-automations/runs/{run}/steps/{index}/reject', 'PlatformAutomationController@rejectStep')
+            ->whereUuid('run')->whereNumber('index')->name('platform-automations.runs.reject');
+        Route::get('platform-automations/{automation}/edit', 'PlatformAutomationController@edit')
+            ->whereUuid('automation')->name('platform-automations.edit');
+        Route::put('platform-automations/{automation}', 'PlatformAutomationController@update')
+            ->whereUuid('automation')->name('platform-automations.update');
+        foreach (['enable', 'disable', 'duplicate', 'archive'] as $verb) {
+            Route::post('platform-automations/{automation}/' . $verb, 'PlatformAutomationController@' . $verb)
+                ->whereUuid('automation')->name('platform-automations.' . $verb);
+        }
+
+        Route::get('platform-announcements', 'PlatformAnnouncementController@list')->name('platform-announcements.index');
+        Route::get('platform-announcements/create', 'PlatformAnnouncementController@create')->name('platform-announcements.create');
+        Route::post('platform-announcements', 'PlatformAnnouncementController@store')->name('platform-announcements.store');
+        Route::get('platform-announcements/{announcement}/edit', 'PlatformAnnouncementController@edit')
+            ->whereUuid('announcement')->name('platform-announcements.edit');
+        Route::put('platform-announcements/{announcement}', 'PlatformAnnouncementController@update')
+            ->whereUuid('announcement')->name('platform-announcements.update');
+        Route::post('platform-announcements/{announcement}/cancel', 'PlatformAnnouncementController@cancel')
+            ->whereUuid('announcement')->name('platform-announcements.cancel');
+
         Route::get('workspace-plan-catalog', 'WorkspacePlanCatalogController@index')->name('workspace-plan-catalog.index');
 
         /*
