@@ -75,6 +75,62 @@ final class WizardPresentationAnswers
     }
 
     /**
+     * The canonical packages the owner chose to show on the website, as
+     * catalog uids in the owner's order. Null means "no explicit choice":
+     * the questionnaire has no package-selection step (v1 and other niches)
+     * or it was never answered, and every active package is used as before.
+     *
+     * @return ?array<int, string>
+     */
+    public static function catalogSelection(?QuestionnaireResponse $response): ?array
+    {
+        if ($response === null) {
+            return null;
+        }
+
+        $step = collect($response->version->steps())->first(fn (array $s) => ($s['input_type'] ?? null) === 'catalog_selection');
+
+        if ($step === null) {
+            return null;
+        }
+
+        $answer = $response->answer($step['key']);
+
+        if (! is_array($answer)) {
+            return null;
+        }
+
+        return array_values(array_filter(array_map(fn ($e) => is_array($e) && is_string($e['uid'] ?? null) ? $e['uid'] : null, $answer)));
+    }
+
+    /**
+     * The owner's service areas, in the order they entered them (that order
+     * is their priority), when the questionnaire collects them as a list.
+     * Null for a questionnaire that does not (v1's free-text answer): no
+     * service-area pages are planned from it.
+     *
+     * @return ?array<int, string>
+     */
+    public static function serviceAreas(?QuestionnaireResponse $response): ?array
+    {
+        if ($response === null) {
+            return null;
+        }
+
+        $step = collect($response->version->steps())->first(
+            fn (array $s) => ($s['input_type'] ?? null) === 'string_list' && ($s['target_module'] ?? null) === 'business_location'
+        );
+
+        if ($step === null) {
+            return null;
+        }
+
+        $answer = $response->answer($step['key']);
+
+        return is_array($answer) && $answer !== [] ? ServiceAreaList::normalize($answer) : null;
+    }
+
+    /**
      * Independent-review correction round 4 (item 4) — resolves the
      * REAL step key for the given target_module from the response's own
      * pinned version, rather than assuming any niche's custom-section/

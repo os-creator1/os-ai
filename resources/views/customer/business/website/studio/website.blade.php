@@ -33,6 +33,27 @@
     </x-alert>
 @endif
 
+@if (! empty($catalogSync['out_of_sync']))
+    {{--
+        Packages & Products is the one pricing truth. A published revision is
+        immutable, so when the catalog has changed since the last publish the
+        live site is honestly flagged out of sync, with the existing safe sync
+        path (publishing again re-resolves every package from the catalog).
+    --}}
+    <x-alert variant="warning" class="mb-3" data-catalog-sync>
+        Your packages changed after you last published
+        @if (! empty($catalogSync['changed']))
+            (updated: {{ implode(', ', $catalogSync['changed']) }})@endif
+        @if (! empty($catalogSync['removed']))
+            (removed: {{ implode(', ', $catalogSync['removed']) }})@endif.
+        Your live website still shows the older package details.
+        <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
+            @csrf
+            <button type="submit" class="btn btn-sm btn-warning">Publish update</button>
+        </form>
+    </x-alert>
+@endif
+
 @if (! empty($mediaWarnings))
     <x-alert variant="warning" class="mb-3">
         <strong>Missing media checklist:</strong>
@@ -49,10 +70,12 @@
     <div class="d-flex flex-wrap gap-2">
         <x-button variant="secondary" href="{{ route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid]) }}">Preview</x-button>
 
-        <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
-            @csrf
-            <x-button variant="primary" type="submit">Publish</x-button>
-        </form>
+        @if ($pageCount > 0)
+            <form method="POST" action="{{ route('customer.workspaces.businesses.website.publish', [$workspaceUid, $businessUid]) }}" class="d-inline">
+                @csrf
+                <x-button variant="primary" type="submit">Publish</x-button>
+            </form>
+        @endif
 
         <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.domains.index', [$workspaceUid, $businessUid]) }}">Connect a domain</x-button>
         <x-button variant="ghost" href="{{ route('customer.workspaces.businesses.website.history', [$workspaceUid, $businessUid]) }}">History</x-button>
@@ -63,6 +86,6 @@
     <form method="POST" action="{{ route('customer.workspaces.businesses.website.generate', [$workspaceUid, $businessUid]) }}" class="mt-3">
         @csrf
         <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
-        <x-button variant="outline" type="submit">Regenerate with AI</x-button>
+        <x-button variant="outline" type="submit">Rebuild from setup answers</x-button>
     </form>
 </x-card>

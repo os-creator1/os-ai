@@ -44,8 +44,11 @@ class WebsiteWizardControllerTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]))
             ->assertOk()
-            ->assertSee('Build your website')
-            ->assertSee('Start building');
+            ->assertSee('Create your website')
+            ->assertSee('Answer a few questions and we&#039;ll build the first draft for you.', false)
+            ->assertSee('Create my website')
+            ->assertDontSee('Manage pages')
+            ->assertDontSee('Publish');
     }
 
     public function test_start_with_nothing_in_progress_goes_to_the_template_step(): void
@@ -1449,5 +1452,247 @@ class WebsiteWizardControllerTest extends TestCase
             ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
 
         $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
+    }
+
+    // ------------------------------------------------------------------
+    // Website creation flow — "a Website row is not a created website".
+    // WebsiteCreationStateResolver is the single authority; these tests
+    // pin every entry point to it.
+    // ------------------------------------------------------------------
+
+    private function websiteShowUrl(object $workspace, object $business): string
+    {
+        return route('customer.workspaces.businesses.website.show', [$workspace->uid, $business->uid]);
+    }
+
+    public function test_a_shell_website_with_zero_pages_and_no_answers_is_not_a_created_website(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->createWebsite($business);
+
+        // Precondition: the shell exists, with no pages and no session.
+        $this->assertSame(1, Website::where('business_id', $business->id)->count());
+
+        $this->get($this->websiteShowUrl($workspace, $business))
+            ->assertOk()
+            ->assertSee('Create my website')
+            ->assertDontSee('Manage pages')
+            ->assertDontSee('Connect a domain')
+            ->assertDontSee('Edit setup answers')
+            ->assertDontSee('Rebuild from setup answers')
+            ->assertDontSee('Publish');
+    }
+
+    public function test_start_with_a_leftover_shell_and_no_session_goes_to_the_template_step_not_studio(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->createWebsite($business);
+
+        $this->get(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']));
+
+        $this->get(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'template']))
+            ->assertOk();
+    }
+
+    public function test_choosing_a_template_adopts_a_leftover_shell_instead_of_creating_a_second_website(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $shell = $this->createWebsite($business);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]), ['template_key' => 'photo_booth_modern'])
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+
+        $this->assertSame(1, Website::where('business_id', $business->id)->count());
+        $this->assertSame($shell->id, Website::where('business_id', $business->id)->sole()->id);
+        $this->assertSame(1, QuestionnaireResponse::where('business_id', $business->id)->where('status', 'in_progress')->count());
+    }
+
+    public function test_repeated_start_and_template_submissions_never_duplicate_the_website_or_the_session(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $startUrl = route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]);
+        $templateUrl = route('customer.workspaces.businesses.website.setup.template', [$workspace->uid, $business->uid]);
+
+        $this->get($startUrl);
+        $this->get($startUrl);
+        $this->post($templateUrl, ['template_key' => 'photo_booth_modern']);
+        $this->post($templateUrl, ['template_key' => 'photo_booth_modern']);
+        $this->get($startUrl)
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+        $this->get($this->websiteShowUrl($workspace, $business))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.step', [$workspace->uid, $business->uid, 'business_name']));
+
+        $this->assertSame(1, Website::where('business_id', $business->id)->count());
+        $this->assertSame(1, QuestionnaireResponse::where('business_id', $business->id)->count());
+    }
+
+    public function test_a_session_sitting_at_the_final_question_lands_on_the_review_screen_not_studio(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $this->completeAllRequiredSteps($workspace, $business);
+
+        $reviewUrl = route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]);
+        $this->get($this->websiteShowUrl($workspace, $business))->assertRedirect($reviewUrl);
+        $this->get(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))->assertRedirect($reviewUrl);
+    }
+
+    public function test_the_review_screen_summarises_answers_with_labels_and_offers_generate_and_back(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->completeAllRequiredSteps($workspace, $business);
+
+        $this->get(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee('Review your answers')
+            ->assertSee('About your business')
+            ->assertSee('Services &amp; packages', false)
+            ->assertSee('Correction Round Photo Booth')
+            // select answers show the human label, never the stored key
+            ->assertSee('Request a quote')
+            ->assertSee('Playful &amp; fun', false)
+            ->assertDontSee('quote_request')
+            ->assertSee('Generate my website')
+            ->assertSee('Back and edit')
+            ->assertDontSee('Manage pages');
+    }
+
+    public function test_when_ai_is_unavailable_generation_fails_honestly_and_never_enters_studio_or_completes_the_response(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        // The testing environment has OPENAI_ACTIVE=false and no AI client
+        // is mocked: this exercises the real "AI is switched off" refusal.
+        config(['services.openai.active' => false]);
+
+        $response = $this->completeAllRequiredSteps($workspace, $business);
+
+        $this->get(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee("Website generation isn't available in this environment right now.", false);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertSessionHas('message', fn ($m) => str_contains($m, 'isn\'t available in this environment'));
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $this->assertSame(0, $website->pages()->count(), 'A failed generation must not leave a half-built site.');
+
+        $still = QuestionnaireResponse::where('business_id', $business->id)->sole();
+        $this->assertSame($response->id, $still->id);
+        $this->assertSame('in_progress', $still->status->value, 'A failed generation must never mark setup completed.');
+
+        // Website entry still lands on the review screen — never an empty Studio.
+        $this->get($this->websiteShowUrl($workspace, $business))
+            ->assertRedirect(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]));
+
+        // ...and it offers a retry plus the preserved answers.
+        $this->get(route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee('Try again')
+            ->assertSee('Correction Round Photo Booth');
+    }
+
+    public function test_a_failed_generation_shows_try_again_and_the_retry_succeeds(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClientThatFailsOnce();
+        $this->completeAllRequiredSteps($workspace, $business);
+
+        $reviewUrl = route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect($reviewUrl);
+        $this->assertSame(0, Website::where('business_id', $business->id)->sole()->pages()->count());
+        $this->assertSame('in_progress', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
+
+        $this->get($reviewUrl)->assertOk()->assertSee('Try again');
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+        $this->assertGreaterThan(0, Website::where('business_id', $business->id)->sole()->pages()->count());
+        $this->assertSame('completed', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
+    }
+
+    public function test_a_generated_website_lands_in_studio_with_the_rebuild_wording(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+        $this->completeAllRequiredSteps($workspace, $business);
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]));
+
+        $this->get($this->websiteShowUrl($workspace, $business))
+            ->assertOk()
+            ->assertSee('page(s) generated')
+            ->assertSee('Manage pages')
+            ->assertSee('Publish')
+            ->assertSee('Edit setup answers')
+            ->assertSee('Rebuild from setup answers')
+            ->assertDontSee('Regenerate with AI');
+
+        // Start on a generated site goes to Studio, never back into the wizard.
+        $this->get(route('customer.workspaces.businesses.website.setup.start', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.studio.show', [$workspace->uid, $business->uid]));
+    }
+
+    public function test_the_pages_and_preview_screens_redirect_to_creation_when_there_are_zero_pages(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->createWebsite($business);
+
+        $this->get(route('customer.workspaces.businesses.website.pages.index', [$workspace->uid, $business->uid]))
+            ->assertRedirect($this->websiteShowUrl($workspace, $business));
+        $this->get(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]))
+            ->assertRedirect($this->websiteShowUrl($workspace, $business));
+    }
+
+    public function test_a_website_with_zero_pages_cannot_be_published(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $website = $this->createWebsite($business);
+
+        $this->post(route('customer.workspaces.businesses.website.publish', [$workspace->uid, $business->uid]))
+            ->assertRedirect($this->websiteShowUrl($workspace, $business))
+            ->assertSessionHas('status', 'error');
+
+        $website->refresh();
+        $this->assertSame('draft', $website->status->value);
+        $this->assertNull($website->published_revision_id);
+    }
+
+    public function test_a_completed_setup_whose_pages_were_all_deleted_returns_to_generate_without_a_redirect_loop(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+        $this->bindPlanEchoingAiClient();
+        $this->completeAllRequiredSteps($workspace, $business);
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]));
+
+        $website = Website::where('business_id', $business->id)->sole();
+        $website->pages()->delete();
+
+        // Entry resolves to the review screen...
+        $reviewUrl = route('customer.workspaces.businesses.website.setup.review', [$workspace->uid, $business->uid]);
+        $this->get($this->websiteShowUrl($workspace, $business))->assertRedirect($reviewUrl);
+
+        // ...which renders (reopening the completed response) instead of bouncing back.
+        $this->get($reviewUrl)->assertOk()->assertSee('Generate my website');
+        $this->assertSame(1, QuestionnaireResponse::where('business_id', $business->id)->count());
+        $this->assertSame('in_progress', QuestionnaireResponse::where('business_id', $business->id)->sole()->status->value);
+
+        $this->post(route('customer.workspaces.businesses.website.setup.generate', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.website.preview', [$workspace->uid, $business->uid]));
+        $this->assertGreaterThan(0, $website->fresh()->pages()->count());
     }
 }

@@ -45,6 +45,7 @@ final class WebsiteSetupAnswerApplier
         private readonly BusinessLocationManager $locations,
         private readonly CatalogItemManager $catalogItems,
         private readonly BusinessBackdropManager $backdrops,
+        private readonly \App\Library\Business\BusinessImageStore $imageStore,
         private readonly QuestionnaireStepResolver $stepResolver,
     ) {
     }
@@ -93,7 +94,12 @@ final class WebsiteSetupAnswerApplier
 
             foreach ($allSteps as $step) {
                 $module = $step['target_module'];
-                $isReconcilable = in_array($module, ['business_service', 'catalog_item', 'backdrop'], true);
+                // A `catalog_selection` step only SELECTS canonical packages (it
+                // never creates or owns rows through this applier), so it takes no
+                // part in reconciliation: removing a package from the website
+                // never archives it in Packages & Products.
+                $isReconcilable = in_array($module, ['business_service', 'catalog_item', 'backdrop'], true)
+                    && ! ($module === 'catalog_item' && ($step['input_type'] ?? null) === 'catalog_selection');
 
                 if ($isReconcilable) {
                     // Every step of a reconcilable module participates in
@@ -126,7 +132,9 @@ final class WebsiteSetupAnswerApplier
                     'business_location' => $this->applyLocationFields($business, $value),
                     'knowledge_profile' => $this->applyKnowledgeProfileField($business, $step['target_field'], $value, $actorUserId),
                     'business_service' => $submittedServiceKeys = array_merge($submittedServiceKeys, $this->applyServices($business, $value)),
-                    'catalog_item' => $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value)),
+                    'catalog_item' => ($step['input_type'] ?? null) === 'catalog_selection'
+                        ? null
+                        : $submittedPackageKeys = array_merge($submittedPackageKeys, $this->applyPackages($business, $value)),
                     'backdrop' => $submittedBackdropKeys = array_merge($submittedBackdropKeys, $this->applyBackdrops($business, $value)),
                     'website_form' => $this->applyForm($business, $website, $value),
                     // 'gallery', 'answers', 'custom_section': presentation-
@@ -173,9 +181,14 @@ final class WebsiteSetupAnswerApplier
     private function applyLocationFields(Business $business, array|string $value): void
     {
         if (is_string($value)) {
+            // Legacy (v1) free-text answer: the one place a delimiter is parsed.
             $value = ['service_area_cities' => array_values(array_filter(array_map('trim', explode(',', $value))))];
         } elseif (array_is_list($value)) {
             $value = ['service_area_cities' => $value];
+        }
+
+        if (isset($value['service_area_cities']) && is_array($value['service_area_cities'])) {
+            $value['service_area_cities'] = \App\Library\Website\Setup\ServiceAreaList::normalize($value['service_area_cities']);
         }
 
         $this->locations->upsertPrimaryLocation($business, array_filter([
@@ -357,6 +370,12 @@ final class WebsiteSetupAnswerApplier
                 'source_questionnaire_item_key' => $sourceKey,
             ];
 
+            // Only a category-aware (v2) entry carries the key; a v1 entry
+            // leaves an existing backdrop's category untouched.
+            if (array_key_exists('category', $item)) {
+                $attributes['category'] = $item['category'];
+            }
+
             $existing = $sourceKey !== null ? $this->backdrops->findBySourceKey($business, $sourceKey) : null;
 
             try {
@@ -373,12 +392,25 @@ final class WebsiteSetupAnswerApplier
                 $backdrop = $this->backdrops->update($business, $winner, $attributes);
             }
 
-            if ($backdrop->images()->count() === 0) {
-                foreach (($item['images'] ?? []) as $image) {
-                    $this->backdrops->addImage($business, $backdrop, $image);
-                }
+            $images = $item['images'] ?? [];
+
+            if ($images === []) {
+                // No picture on this entry (never had one, or the owner
+                // removed it): the canonical backdrop keeps none either.
+                $freed = $this->backdrops->clearImages($business, $backdrop);
+            } else {
+                // The entry's one picture is authoritative; any earlier
+                // picture it replaced is freed.
+                $freed = $this->backdrops->replaceImage($business, $backdrop, $images[0]);
+            }
+
+            foreach ($freed as $freedPath) {
+                $this->imageStore->deleteIfUnreferenced($business, $freedPath);
             }
         }
+
+        // The owner's list order is the order the backdrops are shown in.
+        $this->backdrops->reorderBySourceKeys($business, $submittedKeys);
 
         return $submittedKeys;
     }
@@ -394,24 +426,52 @@ final class WebsiteSetupAnswerApplier
      */
     private function reconcileRemovedBackdrops(Business $business, array $submittedKeys): void
     {
-        BusinessBackdrop::where('business_id', $business->id)
+        $removed = BusinessBackdrop::where('business_id', $business->id)
             ->whereNotNull('source_questionnaire_item_key')
             ->whereNotIn('source_questionnaire_item_key', $submittedKeys === [] ? [''] : $submittedKeys)
             ->where('availability', true)
-            ->update(['availability' => false]);
+            ->get();
+
+        foreach ($removed as $backdrop) {
+            $backdrop->forceFill(['availability' => false])->save();
+
+            // A removed backdrop no longer shows a picture: free its image
+            // rows and any file nothing else references.
+            foreach ($this->backdrops->clearImages($business, $backdrop) as $freedPath) {
+                $this->imageStore->deleteIfUnreferenced($business, $freedPath);
+            }
+        }
     }
 
     /**
-     * @param  array{required_fields: array<int, string>}  $value
+     * The wizard's multi-select answer is a flat list of the form field
+     * keys the owner wants visitors to fill in: exactly those preset fields
+     * are used (in preset order, with the preset's own required flags). A
+     * list that selects nothing known falls back to the whole preset rather
+     * than publishing a form with no fields. The older
+     * `['required_fields' => [...]]` shape keeps its meaning — every preset
+     * field, the listed ones required.
+     *
+     * @param  array<int|string, mixed>  $value
      */
     private function applyForm(Business $business, Website $website, array $value): void
     {
-        $requiredFields = $value['required_fields'] ?? [];
+        $preset = WebsiteFormPresets::photoBoothQuoteRequest();
 
-        $fields = array_map(
-            fn (array $field) => array_merge($field, ['required' => in_array($field['key'], $requiredFields, true)]),
-            WebsiteFormPresets::photoBoothQuoteRequest(),
-        );
+        if (array_is_list($value)) {
+            $selected = array_map('strval', $value);
+            $fields = array_values(array_filter($preset, fn (array $field) => in_array($field['key'], $selected, true)));
+
+            if ($fields === []) {
+                $fields = $preset;
+            }
+        } else {
+            $requiredFields = (array) ($value['required_fields'] ?? []);
+            $fields = array_map(
+                fn (array $field) => array_merge($field, ['required' => in_array($field['key'], $requiredFields, true)]),
+                $preset,
+            );
+        }
 
         $form = WebsiteForm::where('website_id', $website->id)
             ->where('type', WebsiteForm::TYPE_QUOTE_REQUEST)
@@ -438,14 +498,6 @@ final class WebsiteSetupAnswerApplier
      */
     private function describeWithFeatures(?string $description, array $features): ?string
     {
-        $description = $description !== null ? trim($description) : '';
-
-        if ($features === []) {
-            return $description !== '' ? $description : null;
-        }
-
-        $featureList = implode("\n", array_map(fn ($f) => '- ' . $f, $features));
-
-        return trim($description . "\n\n" . $featureList);
+        return \App\Library\Catalog\CatalogFeatureList::join($description, $features);
     }
 }

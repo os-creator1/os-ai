@@ -31,6 +31,10 @@
             // other catalog seeder in this list.
             $this->call(WebsiteTemplateSeeder::class);
             $this->call(QuestionPackSeeder::class);
+            // Photo Booth website setup questionnaire: ensures v1, then
+            // publishes v2 as its successor (idempotent). Existing
+            // installations get v2 from a data migration instead.
+            $this->call(PhotoboothWebsiteSetupQuestionnaireV2Seeder::class);
             //  $this->call(BlacklistSeeder::class);
             //  $this->call(KeywordsSeeder::class);
             //  $this->call(PhoneNumberSeeder::class);

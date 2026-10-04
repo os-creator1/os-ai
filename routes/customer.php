@@ -1782,6 +1782,10 @@
                 Route::delete('/custom-section/image/{assetUid}', 'Business\WebsiteWizardController@removeCustomSectionImage')->name('custom-section.remove');
                 Route::post('/custom-section/improve', 'Business\WebsiteWizardController@improveCustomSection')->name('custom-section.improve');
 
+                Route::post('/backdrop-image/upload', 'Business\WebsiteWizardController@uploadBackdropImage')->name('backdrop-image.upload');
+                Route::post('/backdrop-image/remove', 'Business\WebsiteWizardController@removeBackdropImage')->name('backdrop-image.remove');
+                Route::post('/service-description', 'Business\WebsiteWizardController@suggestServiceDescription')->name('service-description');
+
                 Route::get('/{stepKey}', 'Business\WebsiteWizardController@show')->name('step');
                 Route::post('/{stepKey}/back', 'Business\WebsiteWizardController@goBack')->name('back');
                 Route::post('/{stepKey}/answers', 'Business\WebsiteWizardController@autosaveAnswer')->name('autosave');

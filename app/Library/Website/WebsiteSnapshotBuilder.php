@@ -41,6 +41,7 @@ final class WebsiteSnapshotBuilder
 
     public function __construct(
         private readonly WebsiteAddressPrivacyGate $privacyGate,
+        private readonly WebsiteCatalogReferences $catalogReferences,
     ) {}
 
     public function build(Website $website): array
@@ -50,8 +51,11 @@ final class WebsiteSnapshotBuilder
         $referencedAssetUids = [];
         $referencedFormUids = [];
 
-        $pageSnapshots = $pages->map(function ($page) use ($business, &$referencedAssetUids, &$referencedFormUids) {
-            $sections = collect($page->sections ?? [])->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
+        $pageSnapshots = $pages->map(function ($page) use ($website, $business, &$referencedAssetUids, &$referencedFormUids) {
+            // Package blocks are resolved from Packages & Products at
+            // publish time (name + price), then frozen into this immutable
+            // revision exactly like `contact_details` values are.
+            $sections = collect($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id))->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
                 $type = WebsiteSectionType::tryFrom($section['type'] ?? '');
                 $data = $section['data'] ?? [];
 

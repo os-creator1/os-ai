@@ -72,6 +72,33 @@ class QuestionnaireVersion extends Model
      */
     public function steps(): array
     {
+        return array_map(function (array $step) {
+            // A step's niche `categories` vocabulary is STORED as an ordered
+            // list of {value, label} (a JSON object's key order is not
+            // preserved by the database, a list's is) and handed to every
+            // consumer as the familiar value => label map, in that order.
+            if (isset($step['categories']) && is_array($step['categories']) && array_is_list($step['categories'])) {
+                $map = [];
+                foreach ($step['categories'] as $category) {
+                    if (is_array($category) && isset($category['value'], $category['label'])) {
+                        $map[(string) $category['value']] = (string) $category['label'];
+                    }
+                }
+                $step['categories'] = $map;
+            }
+
+            return $step;
+        }, $this->definition['steps'] ?? []);
+    }
+
+    /**
+     * The step tree exactly as stored (no read-time shaping) — what the
+     * definition validator and "is this the same tree?" checks compare.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function storedSteps(): array
+    {
         return $this->definition['steps'] ?? [];
     }
 }

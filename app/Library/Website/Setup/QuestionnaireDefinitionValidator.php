@@ -161,6 +161,26 @@ final class QuestionnaireDefinitionValidator
         'boolean' => ['answers', 'knowledge_profile'],
         'repeatable_group' => ['business_service', 'catalog_item', 'backdrop', 'custom_section', 'faq', 'knowledge_profile'],
         'photo_upload' => ['gallery'],
+        // A flat list of strings: service areas land on the primary
+        // location's service_area_cities; `answers` keeps a list in the
+        // response only.
+        'string_list' => ['business_location', 'answers'],
+        'catalog_selection' => ['catalog_item'],
+    ];
+
+    /** A screen groups consecutive steps onto one wizard screen (presentation only). */
+    private const MAX_STEPS_PER_SCREEN = 6;
+
+    private const MAX_CATEGORIES = 20;
+
+    /**
+     * The only steps that may carry a niche-defined `categories`
+     * vocabulary (value => label): backdrop entries and gallery photos
+     * choose their category from it instead of typing free text.
+     */
+    private const CATEGORY_TARGETS = [
+        'repeatable_group' => ['backdrop'],
+        'photo_upload' => ['gallery'],
     ];
 
     /**
@@ -249,7 +269,100 @@ final class QuestionnaireDefinitionValidator
             }
 
             $this->validateOptions($key, $step, $inputType);
+            $this->validateCategories($key, $step, $inputType, $targetModule);
             $this->validateConditionalVisibility($key, $step, $seenKeys);
+        }
+
+        $this->validateScreens($steps);
+    }
+
+    /**
+     * A step's optional `screen` groups it with the consecutive steps that
+     * share the same screen key onto ONE wizard screen. Steps stay atomic
+     * (own key, validation, answer and application path) — a screen is only
+     * presentation, so a screen's steps must be adjacent, bounded, and
+     * never conditional on a step of the same screen (the owner could not
+     * see the dependent field appear without leaving the screen).
+     *
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function validateScreens(array $steps): void
+    {
+        $closedScreens = [];
+        $currentScreen = null;
+        $currentSize = 0;
+        $currentKeys = [];
+
+        foreach ($steps as $step) {
+            $screen = $step['screen'] ?? null;
+            $key = (string) $step['key'];
+
+            if ($screen !== null && (! is_string($screen) || preg_match('/^[a-z0-9_]{1,64}$/', $screen) !== 1)) {
+                throw new DomainException("Step '{$key}' has an invalid screen key.");
+            }
+
+            if ($screen !== $currentScreen) {
+                if ($currentScreen !== null) {
+                    $closedScreens[$currentScreen] = true;
+                }
+
+                if ($screen !== null && isset($closedScreens[$screen])) {
+                    throw new DomainException("Screen '{$screen}' is split: its steps must be consecutive.");
+                }
+
+                $currentScreen = $screen;
+                $currentSize = 0;
+                $currentKeys = [];
+            }
+
+            if ($screen !== null) {
+                if (++$currentSize > self::MAX_STEPS_PER_SCREEN) {
+                    throw new DomainException("Screen '{$screen}' has more than " . self::MAX_STEPS_PER_SCREEN . ' steps.');
+                }
+
+                $dependsOn = $step['conditional_visibility']['depends_on'] ?? null;
+                if (is_string($dependsOn) && isset($currentKeys[$dependsOn])) {
+                    throw new DomainException("Step '{$key}' depends on a step of its own screen '{$screen}'.");
+                }
+
+                $currentKeys[$key] = true;
+            }
+        }
+    }
+
+    private function validateCategories(string $key, array $step, string $inputType, string $targetModule): void
+    {
+        $categories = $step['categories'] ?? null;
+
+        if ($categories === null) {
+            return;
+        }
+
+        if (! in_array($targetModule, self::CATEGORY_TARGETS[$inputType] ?? [], true)) {
+            throw new DomainException("Step '{$key}' declares categories, which only backdrop and gallery steps support.");
+        }
+
+        if (! is_array($categories) || $categories === [] || count($categories) > self::MAX_CATEGORIES) {
+            throw new DomainException("Step '{$key}' requires 1 to " . self::MAX_CATEGORIES . ' categories.');
+        }
+
+        if (! array_is_list($categories)) {
+            throw new DomainException("Step '{$key}' must declare categories as an ordered list of {value, label} entries.");
+        }
+
+        $seen = [];
+        foreach ($categories as $category) {
+            $value = is_array($category) ? ($category['value'] ?? null) : null;
+            $label = is_array($category) ? ($category['label'] ?? null) : null;
+
+            if (! is_string($value) || preg_match('/^[a-z0-9_]{1,40}$/', $value) !== 1 || isset($seen[$value])) {
+                throw new DomainException("Step '{$key}' has an invalid or repeated category value.");
+            }
+            $seen[$value] = true;
+
+            if (! is_string($label) || trim($label) === '' || mb_strlen($label) > self::MAX_OPTION_LABEL) {
+                throw new DomainException("Step '{$key}' has an invalid or too-long category label.");
+            }
         }
     }
 

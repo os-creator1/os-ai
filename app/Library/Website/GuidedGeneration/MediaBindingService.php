@@ -62,6 +62,86 @@ use App\Models\WebsiteAsset;
  */
 final class MediaBindingService
 {
+    public function __construct(private readonly \App\Library\Website\WebsiteCatalogReferences $catalogReferences)
+    {
+    }
+
+    /**
+     * Guarantees every service-area page real internal links, whatever the
+     * AI wrote: one call-to-action to the contact page and the services
+     * overview (when they exist) and one pointing at up to two of the
+     * owner's other area pages. Deterministic — built only from the
+     * planned slugs, never from AI output.
+     *
+     * @param  array<int, array<string, mixed>>  $pages
+     * @return array<int, array<string, mixed>>
+     */
+    private function linkAreaPages(array $pages): array
+    {
+        $slugOf = fn (string $type) => collect($pages)->firstWhere('page_type', $type)['slug'] ?? null;
+        $contactSlug = $slugOf('contact');
+        $servicesSlug = $slugOf('services_overview');
+        $areaPages = array_values(array_filter($pages, fn ($p) => is_array($p['entity'] ?? null) && isset($p['entity']['area'])));
+
+        if ($areaPages === []) {
+            return $pages;
+        }
+
+        $linksTo = function (array $page, string $slug): bool {
+            foreach ($page['sections'] ?? [] as $section) {
+                foreach ($section['data']['buttons'] ?? [] as $button) {
+                    if (ltrim((string) ($button['url'] ?? ''), '/') === $slug) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        };
+
+        foreach ($pages as $index => $page) {
+            $area = is_array($page['entity'] ?? null) ? ($page['entity']['area'] ?? null) : null;
+
+            if (! is_string($area)) {
+                continue;
+            }
+
+            $buttons = [];
+            if ($contactSlug && ! $linksTo($page, $contactSlug)) {
+                $buttons[] = ['label' => 'Get in touch', 'url' => '/' . $contactSlug];
+            }
+            if ($servicesSlug && ! $linksTo($page, $servicesSlug)) {
+                $buttons[] = ['label' => 'See our services', 'url' => '/' . $servicesSlug];
+            }
+            if ($buttons !== []) {
+                $pages[$index]['sections'][] = ['type' => 'cta', 'data' => [
+                    'heading' => \Illuminate\Support\Str::limit('Planning an event in ' . $area . '?', 120, ''),
+                    'body' => null,
+                    'buttons' => array_slice($buttons, 0, 2),
+                ]];
+            }
+
+            $nearby = [];
+            foreach ($areaPages as $other) {
+                if ($other['slug'] !== $page['slug'] && ! $linksTo($page, (string) $other['slug'])) {
+                    $nearby[] = ['label' => \Illuminate\Support\Str::limit('Also serving ' . $other['entity']['area'], 40, ''), 'url' => '/' . $other['slug']];
+                }
+                if (count($nearby) === 2) {
+                    break;
+                }
+            }
+            if ($nearby !== []) {
+                $pages[$index]['sections'][] = ['type' => 'cta', 'data' => [
+                    'heading' => 'We also serve nearby',
+                    'body' => null,
+                    'buttons' => $nearby,
+                ]];
+            }
+        }
+
+        return $pages;
+    }
+
     /**
      * @param  array<int, array{page_key: string, page_type: string, is_home: bool, slug: ?string, title: string, seo_title: ?string, meta_description: ?string, sections: array}>  $pages
      * @param  ?array{title: string, layout: string, body: ?string, images: array<int, string>}  $customSection  see WebsitePageStrategy::buildPlan()'s matching parameter
@@ -74,6 +154,11 @@ final class MediaBindingService
         $pages = $this->bindBackdrops($website, $pages);
         $pages = $this->bindCustomSection($pages, $customSection);
         $pages = $this->bindCustomerFaq($pages, $customerFaq);
+        // Package blocks reference their canonical Packages & Products row
+        // by uid (resolved live at preview/publish) — stamped here from the
+        // catalog, never trusted from AI output.
+        $pages = $this->linkAreaPages($pages);
+        $pages = $this->catalogReferences->stampPackagePages($pages, (int) $website->business_id);
         $pages = $this->mirrorPackageImages($website, $pages);
 
         // Independent-review correction round 2 — only GALLERY-purpose

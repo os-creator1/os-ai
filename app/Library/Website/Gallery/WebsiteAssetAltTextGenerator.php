@@ -19,10 +19,11 @@ use App\Models\WebsiteAsset;
  *  2. Otherwise a short, factual sentence is composed from the
  *     Business's name plus whatever category/context tag the photo
  *     carries (booth type, backdrop, event type) — never invented detail.
- *  3. A photo with no usable metadata at all (no title, no category, no
- *     business name) is left with empty alt text — an accurate empty
- *     string is safer than a fabricated generic caption for a genuinely
- *     decorative or context-free image.
+ *  3. A photo with no usable metadata at all still gets a plain, safe
+ *     default ("{Business} photo", else "Photo") — every Website image has
+ *     alt text the owner can edit (an auto value never counts as custom).
+ *     A genuinely decorative image may still be given an explicit empty
+ *     alt by the owner.
  *
  * A real vision-grounded suggestion (sending the actual image bytes to a
  * model, in one bounded batch, only for assets that remain undescribed
@@ -33,7 +34,7 @@ use App\Models\WebsiteAsset;
  */
 final class WebsiteAssetAltTextGenerator
 {
-    public function suggest(Business $business, WebsiteAsset $asset): ?string
+    public function suggest(Business $business, WebsiteAsset $asset): string
     {
         if (is_string($asset->title) && trim($asset->title) !== '') {
             return trim(mb_substr($asset->title, 0, 160));
@@ -42,14 +43,8 @@ final class WebsiteAssetAltTextGenerator
         $category = is_string($asset->category_tag) ? trim(str_replace(['_', '-'], ' ', $asset->category_tag)) : '';
         $businessName = trim((string) $business->name);
 
-        if ($category === '' && $businessName === '') {
-            return null;
-        }
-
-        $sentence = $category !== ''
-            ? trim($category . ($businessName !== '' ? ' — ' . $businessName : ''))
-            : $businessName;
-
-        return trim(mb_substr($sentence, 0, 160));
+        // Never null: an uploaded image always gets a sensible, editable
+        // default ("{category} — {Business}", else "{Business} photo").
+        return ImageAltText::suggest(null, $category, $businessName);
     }
 }

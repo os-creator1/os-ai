@@ -24,7 +24,7 @@ final class WebsiteFormPresets
             ['key' => 'email', 'label' => 'Email', 'type' => WebsiteFormFieldType::Email->value, 'required' => false],
             ['key' => 'event_date', 'label' => 'Event date', 'type' => WebsiteFormFieldType::Date->value, 'required' => false],
             ['key' => 'event_type', 'label' => 'Event type', 'type' => WebsiteFormFieldType::Text->value, 'required' => false],
-            ['key' => 'message', 'label' => 'Tell us about your event', 'type' => WebsiteFormFieldType::Textarea->value, 'required' => false],
+            ['key' => 'message', 'label' => 'Message / additional details', 'type' => WebsiteFormFieldType::Textarea->value, 'required' => false],
         ];
     }
 }

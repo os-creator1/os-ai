@@ -35,6 +35,17 @@ final class QuestionnaireAnswerValidator
 
     public const MAX_FEATURE_LENGTH = 200;
 
+    /** A reasonable ceiling for one-per-row lists such as service areas (matches UpsertBusinessLocationRequest's own bound). */
+    public const MAX_LIST_ITEMS = 50;
+
+    public const MAX_LIST_ITEM_LENGTH = 120;
+
+    public const MAX_SELECTED_PACKAGES = 30;
+
+    public const MAX_BACKDROP_ALT = 160;
+
+    public const MAX_CATEGORY_LENGTH = 40;
+
     /**
      * @throws InvalidAnswerException
      */
@@ -59,6 +70,8 @@ final class QuestionnaireAnswerValidator
             'multi_select' => $this->validateMultiSelect($step, $value),
             'boolean' => $this->validateBoolean($value),
             'repeatable_group' => $this->validateRepeatableGroup($step, $value),
+            'string_list' => $this->validateStringList($value),
+            'catalog_selection' => $this->validateCatalogSelection($value),
             default => null,
         };
 
@@ -78,6 +91,57 @@ final class QuestionnaireAnswerValidator
         }
 
         return false;
+    }
+
+    /**
+     * A one-per-row list of short strings (service areas). Already
+     * normalized by valueFromRequest() (trimmed, whitespace-collapsed,
+     * de-duplicated, blanks dropped); this only bounds shape and size.
+     */
+    private function validateStringList(mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidAnswerException('That answer is not a valid list.');
+        }
+
+        if (count($value) > self::MAX_LIST_ITEMS) {
+            throw new InvalidAnswerException('Too many entries — the limit is ' . self::MAX_LIST_ITEMS . '.');
+        }
+
+        foreach ($value as $entry) {
+            if (! is_string($entry) || trim($entry) === '' || mb_strlen($entry) > self::MAX_LIST_ITEM_LENGTH) {
+                throw new InvalidAnswerException('Every entry must be 1 to ' . self::MAX_LIST_ITEM_LENGTH . ' characters.');
+            }
+        }
+    }
+
+    /**
+     * The owner's chosen canonical packages, in display order: each entry
+     * is ONLY a Packages & Products uid. Names and prices are never stored
+     * here — the catalog is the one source of truth (ownership and
+     * lifecycle of every uid are verified against the Business when the
+     * selection is saved).
+     */
+    private function validateCatalogSelection(mixed $value): void
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidAnswerException('That answer is not valid.');
+        }
+
+        if (count($value) > self::MAX_SELECTED_PACKAGES) {
+            throw new InvalidAnswerException('Too many packages — the limit is ' . self::MAX_SELECTED_PACKAGES . '.');
+        }
+
+        $seen = [];
+        foreach ($value as $entry) {
+            $uid = is_array($entry) ? ($entry['uid'] ?? null) : null;
+
+            if (! is_string($uid) || $uid === '' || mb_strlen($uid) > 64 || isset($seen[$uid])) {
+                throw new InvalidAnswerException('A selected package is not valid.');
+            }
+
+            $seen[$uid] = true;
+        }
     }
 
     private function validateText(mixed $value, int $max): void
@@ -229,6 +293,10 @@ final class QuestionnaireAnswerValidator
                 $this->validateCatalogItemEntry($item);
             }
 
+            if ($targetModule === 'backdrop') {
+                $this->validateBackdropEntry($step, $item);
+            }
+
             if ($targetModule === 'custom_section') {
                 $this->validateCustomSectionEntry($item);
             }
@@ -298,6 +366,35 @@ final class QuestionnaireAnswerValidator
         $authorTitle = $item['author_title'] ?? null;
         if ($authorTitle !== null && (! is_string($authorTitle) || mb_strlen($authorTitle) > self::MAX_TESTIMONIAL_AUTHOR)) {
             throw new InvalidAnswerException('A testimonial author title is too long.');
+        }
+    }
+
+    /**
+     * A backdrop entry's optional category must be one of the niche
+     * definition's own `categories` (never free text when the step defines
+     * a vocabulary); alt text is bounded; the image is only a reference to
+     * a file this Business's own upload endpoint already stored.
+     */
+    private function validateBackdropEntry(array $step, array $item): void
+    {
+        $category = $item['category'] ?? null;
+        if ($category !== null) {
+            $allowed = array_map('strval', array_keys($step['categories'] ?? []));
+
+            if (! is_string($category) || mb_strlen($category) > self::MAX_CATEGORY_LENGTH
+                || ($allowed !== [] && ! in_array($category, $allowed, true))) {
+                throw new InvalidAnswerException('Choose one of the listed backdrop categories.');
+            }
+        }
+
+        $alt = $item['alt_text'] ?? null;
+        if ($alt !== null && (! is_string($alt) || mb_strlen($alt) > self::MAX_BACKDROP_ALT)) {
+            throw new InvalidAnswerException('Image alt text is too long (max ' . self::MAX_BACKDROP_ALT . ' characters).');
+        }
+
+        $imagePath = $item['image_path'] ?? null;
+        if ($imagePath !== null && (! is_string($imagePath) || mb_strlen($imagePath) > 255)) {
+            throw new InvalidAnswerException('A backdrop image reference is invalid.');
         }
     }
 

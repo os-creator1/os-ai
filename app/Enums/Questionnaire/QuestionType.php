@@ -27,6 +27,20 @@ enum QuestionType: string
     /** One or more image uploads. */
     case PhotoUpload = 'photo_upload';
 
+    /**
+     * A flat, ordered list of short strings, one per row (service areas,
+     * package features). Replaces comma-separated text: one entry per row,
+     * never parsed apart by a delimiter.
+     */
+    case StringList = 'string_list';
+
+    /**
+     * The owner's choice among the Business's CANONICAL Packages & Products
+     * (existing ones to include, edits, new ones created in the catalog).
+     * The answer stores only catalog uids — never a copy of a name or price.
+     */
+    case CatalogSelection = 'catalog_selection';
+
     // Independent-review correction round 2 — `price_or_quote` was
     // removed: it had no real Blade renderer, no
     // WebsiteWizardController::valueFromRequest() parser, no
