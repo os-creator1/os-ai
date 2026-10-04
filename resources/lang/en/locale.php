@@ -787,6 +787,12 @@
 
         'menu' => [
             'Dashboard'           => 'Dashboard',
+            'Home'                => 'Home',
+            'Messaging Dashboard' => 'Messaging Dashboard',
+            'Number Operations'   => 'Number Operations',
+            'Billing & Revenue'   => 'Billing & Revenue',
+            'Plan Catalog'        => 'Plan Catalog',
+            'Audit Logs'          => 'Audit Logs',
             'Workspaces'          => 'Workspaces',
             'Customer'            => 'Customer',
             'Customers'           => 'Customers',

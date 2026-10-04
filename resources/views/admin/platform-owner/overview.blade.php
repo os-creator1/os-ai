@@ -16,6 +16,19 @@
                 </p>
             </div>
 
+            <div class="col-12" data-testid="po-shortcuts">
+                <x-card title="Go to">
+                    <div class="d-flex flex-wrap gap-2">
+                        <x-button variant="secondary" size="sm" :href="route('admin.workspaces.index')">Find a Workspace</x-button>
+                        @can('view business')<x-button variant="secondary" size="sm" :href="route('admin.businesses.index')">Businesses</x-button>@endcan
+                        <x-button variant="secondary" size="sm" :href="route('admin.platform-billing.index')">Billing &amp; Revenue</x-button>
+                        @can('view workspace plans')<x-button variant="secondary" size="sm" :href="route('admin.workspace-plan-catalog.index')">Plan Catalog</x-button>@endcan
+                        <x-button variant="secondary" size="sm" :href="route('admin.platform-owner.audit')">Audit Logs</x-button>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">To recover a customer's access, open their Workspace: the account state, subscription and the restore-access control are on that page.</p>
+                </x-card>
+            </div>
+
             <div class="col-md-4">
                 <x-card title="Accounts">
                     <dl class="row mb-0">
@@ -127,6 +140,11 @@
                         </x-table>
                     @endif
                 </x-card>
+            </div>
+
+            <div class="col-12">
+                @include('admin.platform-owner.partials.audit', ['rows' => $recentActions, 'actors' => $actors, 'title' => 'Recent admin activity', 'showWorkspace' => true])
+                <p><a href="{{ route('admin.platform-owner.audit') }}">View the full audit log</a></p>
             </div>
         </div>
     </section>

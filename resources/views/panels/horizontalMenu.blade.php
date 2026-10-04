@@ -97,7 +97,9 @@
 
 
                     @php
-                        $sidebarMenu = $menuData[1]->admin;
+                        // Platform Owner shell V1: same pruned tree as the vertical
+                        // sidebar (headers are a vertical-menu concept; omitted here).
+                        $sidebarMenu = app(\App\Library\Navigation\AdminMenuBuilder::class)->build(auth()->user(), request()->path(), false);
                     @endphp
 
                     @foreach($sidebarMenu as $menu)
@@ -118,7 +120,7 @@
                         @canany($permission, auth()->user())
 
 
-                            <li class="nav-item @if(isset($menu->submenu)){{'dropdown'}}@endif {{ $custom_classes }} {{ isset($menu->slug) &&  str_contains(request()->path(),$menu->slug) ? 'active' : '' }}"
+                            <li class="nav-item @if(isset($menu->submenu)){{'dropdown'}}@endif {{ $custom_classes }} {{ !empty($menu->active) ? 'active' : '' }}"
                             @if(isset($menu->submenu)){{'data-menu=dropdown'}}@endif>
                                 <a href="{{isset($menu->url)? url($menu->url):'javascript:void(0)'}}" class="nav-link d-flex align-items-center @if(isset($menu->submenu)){{'dropdown-toggle'}}@endif" target="{{isset($menu->newTab) ? '_blank':'_self'}}"  @if(isset($menu->submenu)){{'data-bs-toggle=dropdown'}}@endif>
                                     <x-ds-icon name="{{ $menu->icon }}" />

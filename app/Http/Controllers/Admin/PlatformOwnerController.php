@@ -23,6 +23,8 @@ class PlatformOwnerController extends AdminBaseController
 {
     private const AUDIT_PER_PAGE = 50;
 
+    private const HOME_RECENT_ACTIONS = 5;
+
     public function __construct(
         private readonly PlatformOwnerOverviewReader $overview,
         private readonly WorkspaceSupportReader $support,
@@ -34,8 +36,14 @@ class PlatformOwnerController extends AdminBaseController
     {
         $this->authorize('view workspace');
 
+        // Home shows the five newest admin actions; the full trail is the
+        // Audit Logs page (same repository, same actor labels).
+        $recent = $this->transitions->paginateAdminActions(self::HOME_RECENT_ACTIONS)->items();
+
         return view('admin.platform-owner.overview', [
             'overview' => $this->overview->overview(),
+            'recentActions' => $recent,
+            'actors' => $this->support->actorLabels($recent),
             'breadcrumbs' => $this->breadcrumbs('Overview'),
         ]);
     }
