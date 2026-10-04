@@ -239,7 +239,7 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $expectedAgency = array_merge($expectedGrowth, ['agency_package_capabilities', 'prospect_outreach', 'white_label']);
         sort($expectedAgency);
 
-        $this->assertCount(12, $expectedCore);
+        $this->assertCount(13, $expectedCore);
         $this->assertCount(16, $expectedGrowth);
         $this->assertCount(19, $expectedAgency);
 
