@@ -365,7 +365,7 @@ final class BusinessHomePresenter
 
         return new DashboardSnapshot(
             kind: DashboardSnapshot::KIND_BUSINESS,
-            frameLabel: $context->isAgency() ? 'Client account home' : 'Business home',
+            frameLabel: $context->isAgency() && ! $context->hasAgencyShell() ? 'Client account home' : 'Business home',
             heading: $candidate->name,
             bands: $bands,
             failedBands: $failed,

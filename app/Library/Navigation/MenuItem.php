@@ -21,7 +21,27 @@ final class MenuItem
         public readonly string $icon,
         public readonly bool $active,
         public readonly array $children = [],
+        /** A section heading (no link): the Agency shell's "Your business" / "Agency" groups. */
+        public readonly bool $header = false,
+        /**
+         * A frame move rendered as a CSRF POST button, not a link: the frame
+         * choice is a server-authorized POST (SwitchAccountAction /
+         * SwitchBusinessAction), never a GET.
+         *
+         * @var array{url?: string, fields?: array<string, string>}
+         */
+        public readonly array $post = [],
     ) {
+    }
+
+    public static function header(string $key, string $label): self
+    {
+        return new self($key, $label, null, '', false, [], true);
+    }
+
+    public function isPost(): bool
+    {
+        return $this->post !== [];
     }
 
     public function isGroup(): bool
@@ -51,6 +71,8 @@ final class MenuItem
             'url' => $this->url,
             'icon' => $this->icon,
             'active' => $this->active,
+            'header' => $this->header,
+            'post' => $this->post,
             'children' => array_map(fn (MenuItem $child) => $child->toArray(), $this->children),
         ];
     }
