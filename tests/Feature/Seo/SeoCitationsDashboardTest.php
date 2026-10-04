@@ -233,9 +233,10 @@ class SeoCitationsDashboardTest extends TestCase
         // Bing is listed (linked); Facebook is not started and Google is not
         // linked (both attention). The actor holds the GBP permission, so
         // Google is a third tracked listing.
-        $this->assertSame('Listings tracked 3 Directories for this location', $this->stat($html, 'tracked'));
-        $this->assertSame('Complete / linked 1 Listed or connected', $this->stat($html, 'linked'));
-        $this->assertSame('Needs attention 2 Setup or details to review', $this->stat($html, 'attention'));
+        // 15 offered directories (10 core + 5 Photo Booth) + the Google row.
+        $this->assertSame('Listings tracked 16 Directories for this location', $this->stat($html, 'tracked'));
+        $this->assertSame('Completed 1 Listed with details recorded, or connected', $this->stat($html, 'linked'));
+        $this->assertSame('Needs attention 15 Setup, details or a review due', $this->stat($html, 'attention'));
     }
 
     // -----------------------------------------------------------------
@@ -259,7 +260,7 @@ class SeoCitationsDashboardTest extends TestCase
     {
         $this->bindFakeGoogleClient();
         [, $business, $workspace, $location] = $this->tenant();
-        $this->bindGoogleLocation($business, $location, $this->activeConnection($business));
+        $this->bindGoogleLocation($business, $location, $this->activeConnection($business), true, ['title' => $business->name]);
 
         $html = $this->page($workspace, $business, $location);
 
@@ -313,7 +314,8 @@ class SeoCitationsDashboardTest extends TestCase
         $this->assertStringContainsString('Open listing', $html);
         $this->assertStringNotContainsString('javascript:alert', $html);
         // Claim/update is the directory's own page, separate from the listing link.
-        $this->assertSame(2, substr_count($html, 'data-role="claim-link"'));
+        // 8 core + 5 Photo Booth directories carry a verified claim link.
+        $this->assertSame(13, substr_count($html, 'data-role="claim-link"'));
         $this->assertStringContainsString('Claim or update', $html);
     }
 
@@ -337,7 +339,7 @@ class SeoCitationsDashboardTest extends TestCase
         }
 
         $this->assertStringContainsString('Save details', $html);
-        $this->assertStringNotContainsString('<summary', $html, 'The tiny Edit toggle is gone.');
+        $this->assertStringNotContainsString('<summary class="text-caption">Edit', $html, 'The tiny Edit toggle is gone.');
     }
 
     public function test_a_rejected_save_reopens_that_directorys_drawer_with_its_error(): void

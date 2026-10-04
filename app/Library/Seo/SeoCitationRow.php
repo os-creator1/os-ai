@@ -4,6 +4,8 @@ namespace App\Library\Seo;
 
 use App\Enums\Seo\SeoCitationDisplayState;
 use App\Enums\Seo\SeoCitationStatus;
+use App\Enums\Seo\SeoDirectoryImportance;
+use App\Enums\Seo\SeoDirectoryTrackingMode;
 use App\Enums\Seo\SeoNapFieldResult;
 use App\Models\SeoCitation;
 use App\Models\SeoCitationDirectory;
@@ -36,7 +38,54 @@ final class SeoCitationRow
         public readonly ?string $listedAddress,
         public readonly array $nap,
         public readonly bool $writable,
+        public readonly ?SeoDirectoryImportance $importance = null,
+        public readonly ?string $nicheLabel = null,
+        public readonly ?string $nicheGuidance = null,
+        public readonly ?string $listedWebsite = null,
+        public readonly SeoNapFieldResult $websiteResult = SeoNapFieldResult::NotComparable,
+        public readonly bool $reviewDue = false,
     ) {
+    }
+
+    /** Effective importance: niche override, else the directory's own default. */
+    public function importance(): SeoDirectoryImportance
+    {
+        return $this->importance ?? $this->directory->importance ?? SeoDirectoryImportance::Recommended;
+    }
+
+    public function isCustom(): bool
+    {
+        return $this->directory->isCustom();
+    }
+
+    public function trackingMode(): SeoDirectoryTrackingMode
+    {
+        return $this->directory->tracking_mode ?? SeoDirectoryTrackingMode::Assisted;
+    }
+
+    /**
+     * Setup progress, defined precisely: a listing is COMPLETE only when the
+     * user marked it Listed AND has recorded something about it (a listing
+     * link, a value, or a check date). A directory merely existing in the
+     * catalog — or being marked Listed with nothing recorded — is not complete.
+     */
+    public function isComplete(): bool
+    {
+        return $this->status === SeoCitationStatus::Listed && $this->hasRecordedDetails();
+    }
+
+    /** Not-applicable rows are out of every denominator and out of "needs attention". */
+    public function countsTowardProgress(): bool
+    {
+        return $this->status !== SeoCitationStatus::NotApplicable;
+    }
+
+    /** Nothing recorded to compare yet (and not marked not-applicable). */
+    public function isNotChecked(): bool
+    {
+        $tally = $this->napTally();
+
+        return $this->countsTowardProgress() && $tally['matched'] + $tally['mismatched'] === 0;
     }
 
     /**
@@ -62,6 +111,15 @@ final class SeoCitationRow
                 SeoNapFieldResult::Mismatch => $tally['differing'][] = $field,
                 default => $tally['unchecked']++,
             };
+        }
+
+        // Website joins the tally only where BOTH values exist.
+        if ($this->websiteResult === SeoNapFieldResult::Consistent) {
+            $tally['comparable']++;
+            $tally['matched']++;
+        } elseif ($this->websiteResult === SeoNapFieldResult::Mismatch) {
+            $tally['comparable']++;
+            $tally['differing'][] = 'website';
         }
 
         $tally['mismatched'] = count($tally['differing']);
@@ -91,12 +149,57 @@ final class SeoCitationRow
         };
     }
 
+    /**
+     * SETUP status — the owner's own progress, separate from whether the
+     * recorded details match (napBadge()). Two badges, two meanings.
+     *
+     * @return array{label: string, variant: string, icon: string}
+     */
+    public function setupBadge(): array
+    {
+        return match ($this->status) {
+            SeoCitationStatus::NotApplicable => ['label' => 'Not applicable', 'variant' => 'neutral', 'icon' => 'minus'],
+            SeoCitationStatus::NeedsCorrection => ['label' => 'Needs attention', 'variant' => 'warning', 'icon' => 'triangle-alert'],
+            SeoCitationStatus::InProgress => ['label' => 'In progress', 'variant' => 'accent', 'icon' => 'clock'],
+            SeoCitationStatus::Listed => $this->hasRecordedDetails()
+                ? ['label' => 'Listed', 'variant' => 'success', 'icon' => 'check']
+                : ['label' => 'Listed · add details', 'variant' => 'accent', 'icon' => 'circle-dashed'],
+            default => ['label' => 'Needs setup', 'variant' => 'accent', 'icon' => 'circle-dashed'],
+        };
+    }
+
+    /**
+     * NAP comparison — "3 / 3 match", "Phone differs" or "Not checked". Counts
+     * only fields where both a business value and a recorded value exist, so a
+     * missing value is never a mismatch.
+     *
+     * @return array{label: string, variant: string, icon: string}
+     */
+    public function napBadge(): array
+    {
+        $tally = $this->napTally();
+        $compared = $tally['matched'] + $tally['mismatched'];
+
+        if ($compared === 0) {
+            return ['label' => 'Not checked', 'variant' => 'neutral', 'icon' => 'circle-dashed'];
+        }
+
+        if ($tally['mismatched'] > 0) {
+            $names = array_map('ucfirst', $tally['differing']);
+
+            return ['label' => implode(' & ', $names) . ' differ' . (count($names) === 1 ? 's' : ''), 'variant' => 'warning', 'icon' => 'triangle-alert'];
+        }
+
+        return ['label' => $tally['matched'] . ' / ' . $compared . ' match', 'variant' => 'success', 'icon' => 'circle-check'];
+    }
+
     /** True once the user has recorded anything at all for this listing. */
     public function hasRecordedDetails(): bool
     {
         return $this->listedName !== null
             || $this->listedPhone !== null
             || $this->listedAddress !== null
+            || $this->listedWebsite !== null
             || $this->safeListingUrl !== null
             || $this->citation?->last_verified_at !== null;
     }

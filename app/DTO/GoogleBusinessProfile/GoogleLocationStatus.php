@@ -14,6 +14,12 @@ use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
  * are null whenever the mirror is absent or expired (GBP contract §13): an
  * expired mirror is ABSENT to every consumer, never stale-but-shown.
  *
+ * `mirrorName` / `mirrorPhone` / `mirrorWebsite` are the NAP-style facts the
+ * mirror holds (never a street address). Like every mirror-derived field they
+ * are null unless the mirror is fresh, so a consumer that compares them
+ * (Citations) does so at read time and persists nothing — Google content may
+ * not be stored beyond the mirror's own retention.
+ *
  * `health` is the derived platform vocabulary stored in its own column; it
  * is operational binding metadata that survives the mirror purge (GBP
  * contract §13.7), so it is present whenever the Location is bound.
@@ -30,6 +36,9 @@ final class GoogleLocationStatus
         public readonly bool $mirrorIsFresh,
         public readonly ?string $newReviewUri,
         public readonly ?int $napMismatchCount,
+        public readonly ?string $mirrorName = null,
+        public readonly ?string $mirrorPhone = null,
+        public readonly ?string $mirrorWebsite = null,
     ) {
     }
 }

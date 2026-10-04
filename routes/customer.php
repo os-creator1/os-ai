@@ -1207,6 +1207,12 @@
             // by a guessable id, and both are resolved through the Business.
             Route::get('/citations', 'Business\SeoCitationController@citations')->name('citations.index');
             Route::put('/citations/{locationUid}/{directoryKey}', 'Business\SeoCitationController@saveCitation')->name('citations.update');
+            // Citations V1 — Not applicable / restore, and a Business's own
+            // custom directories (manage_seo; Location ACL in the manager).
+            Route::post('/citations/{locationUid}/custom', 'Business\SeoCitationController@storeCustom')->middleware('throttle:30,1')->name('citations.custom.store');
+            Route::put('/citations/{locationUid}/custom/{directoryKey}', 'Business\SeoCitationController@updateCustom')->middleware('throttle:30,1')->name('citations.custom.update');
+            Route::post('/citations/{locationUid}/custom/{directoryKey}/archive', 'Business\SeoCitationController@archiveCustom')->middleware('throttle:30,1')->name('citations.custom.archive');
+            Route::post('/citations/{locationUid}/{directoryKey}/applicability', 'Business\SeoCitationController@setApplicability')->middleware('throttle:60,1')->name('citations.applicability');
 
             // Sub-slice D — SEO keywords (NOT the legacy inbound-SMS
             // customer.keywords.* namespace). Reads need view_seo, writes

@@ -100,6 +100,7 @@ class SeoCitationController extends CustomerBaseController
             'listed_name' => ['nullable', 'string', 'max:191'],
             'listed_phone' => ['nullable', 'string', 'max:50'],
             'listed_address' => ['nullable', 'string', 'max:255'],
+            'listed_website' => ['nullable', 'string', 'max:2048'],
             'last_verified_at' => ['nullable', 'date_format:Y-m-d'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
@@ -117,6 +118,110 @@ class SeoCitationController extends CustomerBaseController
         }
 
         return back()->with(['status' => 'success', 'message' => 'Citation saved.']);
+    }
+
+    public function setApplicability(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $directoryKey): RedirectResponse
+    {
+        [, $business] = $this->resolveCitationTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        $input = $request->validate(['applicable' => ['required', 'boolean']]);
+
+        try {
+            $this->citations->setApplicability((int) Auth::id(), $business, $locationUid, $directoryKey, (bool) $input['applicable']);
+        } catch (SeoCitationNotFoundException) {
+            abort(404);
+        } catch (SeoCitationRefusedException $e) {
+            return back()->withErrors([$e->field => $e->getMessage()], 'citation_' . $locationUid . '_' . $directoryKey);
+        }
+
+        return back()->with(['status' => 'success', 'message' => $input['applicable'] ? 'Directory restored.' : 'Marked as not applicable.']);
+    }
+
+    public function storeCustom(Request $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse
+    {
+        [, $business] = $this->resolveCitationTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        $input = $request->validate(array_merge($this->citationRules(), [
+            'name' => ['required', 'string', 'max:120'],
+            'claim_url' => ['nullable', 'string', 'max:2048'],
+            'location_scope' => ['nullable', Rule::in(['all', 'this'])],
+        ]));
+
+        try {
+            $this->citations->createCustomDirectory((int) Auth::id(), $business, $locationUid, $input);
+        } catch (SeoCitationNotFoundException) {
+            abort(404);
+        } catch (SeoCitationRefusedException $e) {
+            return back()
+                ->withInput($request->except('listed_address'))
+                ->withErrors([$e->field => $e->getMessage()], 'citation_' . $locationUid . '_new_custom');
+        }
+
+        return back()->with(['status' => 'success', 'message' => 'Custom directory added.']);
+    }
+
+    public function updateCustom(Request $request, string $workspaceUid, string $businessUid, string $locationUid, string $directoryKey): RedirectResponse
+    {
+        [, $business] = $this->resolveCitationTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        $input = $request->validate([
+            'name' => ['required', 'string', 'max:120'],
+            'claim_url' => ['nullable', 'string', 'max:2048'],
+        ]);
+
+        try {
+            $this->citations->updateCustomDirectory((int) Auth::id(), $business, $locationUid, $directoryKey, $input);
+        } catch (SeoCitationNotFoundException) {
+            abort(404);
+        } catch (SeoCitationRefusedException $e) {
+            return back()->withErrors([$e->field => $e->getMessage()], 'citation_' . $locationUid . '_' . $directoryKey);
+        }
+
+        return back()->with(['status' => 'success', 'message' => 'Custom directory updated.']);
+    }
+
+    public function archiveCustom(string $workspaceUid, string $businessUid, string $locationUid, string $directoryKey): RedirectResponse
+    {
+        [, $business] = $this->resolveCitationTenancy($workspaceUid, $businessUid);
+
+        $this->authorize('manage_seo');
+
+        try {
+            $this->citations->archiveCustomDirectory((int) Auth::id(), $business, $locationUid, $directoryKey);
+        } catch (SeoCitationNotFoundException) {
+            abort(404);
+        } catch (SeoCitationRefusedException $e) {
+            return back()->withErrors([$e->field => $e->getMessage()], 'citation_' . $locationUid . '_' . $directoryKey);
+        }
+
+        return back()->with(['status' => 'success', 'message' => 'Custom directory archived. Its history is kept.']);
+    }
+
+    /**
+     * Shape rules shared by the citation form and the custom-directory form.
+     * Everything that is a rule (https-only, the private-address refusal,
+     * Archived Location) is re-decided by the manager.
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    private function citationRules(): array
+    {
+        return [
+            'status' => ['required', Rule::in(array_map(fn (SeoCitationStatus $status) => $status->value, SeoCitationStatus::cases()))],
+            'listing_url' => ['nullable', 'string', 'max:2048'],
+            'listed_name' => ['nullable', 'string', 'max:191'],
+            'listed_phone' => ['nullable', 'string', 'max:50'],
+            'listed_address' => ['nullable', 'string', 'max:255'],
+            'listed_website' => ['nullable', 'string', 'max:2048'],
+            'last_verified_at' => ['nullable', 'date_format:Y-m-d'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ];
     }
 
     /**

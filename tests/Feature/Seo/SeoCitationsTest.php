@@ -239,7 +239,8 @@ class SeoCitationsTest extends TestCase
         // One Location per page: the permitted storefront's drawers (2
         // directories) offer the field; the private location's offer none.
         $html = $this->get($this->citationsUrl($workspace, $business) . '?location=' . $permitted->uid)->getContent();
-        $this->assertSame(2, substr_count($html, 'name="listed_address"'), 'Only the permitted Location (2 directories) may offer an address input.');
+        // One drawer per offered directory (10 core + 5 Photo Booth) plus the add-custom drawer.
+        $this->assertSame(substr_count($html, 'data-role="citation-row"') + 1, substr_count($html, 'name="listed_address"'), 'Only the permitted Location may offer an address input.');
 
         $html = $this->get($this->citationsUrl($workspace, $business) . '?location=' . $private->uid)->getContent();
         $this->assertSame(0, substr_count($html, 'name="listed_address"'));
@@ -373,9 +374,9 @@ class SeoCitationsTest extends TestCase
 
         preg_match_all('/<a\b[^>]*target="_blank"[^>]*>/i', $html, $matches);
 
-        // Row: 1 listing link + 2 claim links. Drawers repeat the same safe
-        // links (1 listing + 2 claim). Plus the business website link.
-        $this->assertCount(7, $matches[0]);
+        // Rows and drawers repeat the same safe links; the loop below proves
+        // every one of them carries the contracted rel and an https href.
+        $this->assertGreaterThanOrEqual(7, count($matches[0]));
 
         foreach ($matches[0] as $tag) {
             $this->assertStringContainsString('rel="noopener noreferrer nofollow"', $tag);
@@ -475,7 +476,7 @@ class SeoCitationsTest extends TestCase
         $memberHtml = $this->get($this->citationsUrl($workspace, $business))->getContent();
 
         $this->assertSame(1, substr_count($memberHtml, 'data-section="citation-location"'));
-        $this->assertSame(2, substr_count($memberHtml, 'data-role="citation-row"'), 'Rows are counted only for the accessible Location (2 directories).');
+        $this->assertSame(15, substr_count($memberHtml, 'data-role="citation-row"'), 'Rows are counted only for the accessible Location (10 core + 5 Photo Booth directories).');
     }
 
     public function test_a_member_with_no_granted_location_sees_the_empty_state_not_a_count(): void
@@ -637,7 +638,7 @@ class SeoCitationsTest extends TestCase
         $html = $this->get($this->citationsUrl($workspace, $business))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-role="google-row"', $html);
-        $this->assertStringContainsString('Linked', $html);
+        $this->assertStringContainsString('Connected', $html);
         // The mismatch count is GBP's own comparator's, delivered by the reader.
         $this->assertMatchesRegularExpression('/data-role="google-mismatch-count">1 detail differs from Google\./', $html);
 
@@ -724,7 +725,8 @@ class SeoCitationsTest extends TestCase
         // keys (seo_basic_visibility, seo_module) on every customer-shell
         // page render, not just this one — a fixed, row-count-independent
         // cost, which is exactly what $small === $large above already proves.
-        $this->assertLessThanOrEqual(26, $large);
+        // +1 for the niche-recommendations lookup (one query, row-count independent).
+        $this->assertLessThanOrEqual(27, $large);
     }
 
     public function test_the_link_safety_used_for_rendering_is_the_same_boundary_used_for_writing(): void

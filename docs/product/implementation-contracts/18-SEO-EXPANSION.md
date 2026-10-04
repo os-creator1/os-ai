@@ -537,10 +537,9 @@ comparison; it is never persisted and never written back. Details and edits live
 in a drawer that posts to the one existing write route. The page says **"Manually
 tracked"** and never "synced", "live", "real-time" or "monitored"; only the Google
 row (connected / not linked / connection lost) reflects a real integration, via the
-GBP read model. Listing website is **not** a stored column, so the drawer shows the
-business website as profile context only. Adding a directory later is a new seeded
-`seo_citation_directories` row — the row/drawer templates are generic (only an icon
-map in `citations.blade.php` is per-directory).
+GBP read model. **Superseded in part by Contract 23 (Citations V1 complete):** the
+directory catalog, niche recommendations, Business custom directories, the listing
+website column and the Platform Owner screens are specified there.
 
 **The platform never fetches `listing_url`** (GBP §31: no server-side fetching
 of user-supplied URLs). It is rendered as an `https`-validated link with

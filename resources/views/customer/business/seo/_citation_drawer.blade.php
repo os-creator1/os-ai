@@ -1,17 +1,19 @@
 {{--
-    The detail / edit drawer for ONE directory listing (Bootstrap offcanvas).
+    The detail / edit drawer for ONE directory listing (Bootstrap offcanvas) —
+    the main per-directory workflow.
 
-    Inputs: $row, $section, $canManage, $statuses, $icons, $workspaceUid,
+    Inputs: $row, $section, $canManage, $statuses, $workspaceUid,
             $businessUid, $business, $errors.
 
-    Only controls that really exist are shown: the manual-record form (the
-    existing PUT route), "Open listing" (only from a stored, safe https URL)
-    and "Claim or update" (the directory's own verified claim page). The form
-    posts to the one write path, SeoCitationManager::save(); nothing here
-    fetches anything from the directory.
+    Only controls that really exist are shown: the manual-record form (the one
+    write route), Not applicable / Restore, "Open listing" (only from a stored,
+    safe https URL), "Claim or update" (the directory's own verified page — the
+    platform's, never editable here) and, for the Business's OWN custom
+    directories only, rename / change link / archive. Nothing here fetches
+    anything from the directory.
 
-    The business-profile column is read-only context — it is the canonical
-    data the directory SHOULD match and is never copied into Citations.
+    The business-profile column is read-only context — the canonical data the
+    directory SHOULD match, never copied into Citations.
 --}}
 @php
     use App\Enums\Seo\SeoNapFieldResult;
@@ -19,41 +21,71 @@
 
     $directory = $row->directory;
     $location = $section->location;
-    $state = $row->displayState();
+    $setup = $row->setupBadge();
+    $nap = $row->napBadge();
+    $importance = $row->importance();
+    $mode = $row->trackingMode();
     $claimUrl = SeoLinkSafety::safeHttpsUrl($directory->claim_url);
     $errorBag = $errors->getBag('citation_' . $location->uid . '_' . $directory->key);
     $hasErrors = $errorBag->any();
     $drawerId = 'citation-drawer-' . $directory->key;
     $canEdit = $canManage && $row->writable;
+    $notApplicable = ! $row->countsTowardProgress();
     $verified = $row->citation?->last_verified_at;
     $canonical = $section->canonical;
-    $websiteUrl = $business->website_url;
+    $websiteUrl = $section->canonicalWebsite;
 
     // Re-show the user's rejected input for THIS directory only.
     $val = fn (string $key, $stored) => $hasErrors ? old($key, $stored) : $stored;
 
     $compare = [
-        ['Name', 'name', $canonical['name'], $row->listedName],
-        ['Phone', 'phone', $canonical['phone'], $row->listedPhone],
+        ['Name', 'name', $canonical['name'], $row->listedName, $row->nap['name']],
+        ['Phone', 'phone', $canonical['phone'], $row->listedPhone, $row->nap['phone']],
     ];
     if ($section->addressPermitted) {
-        $compare[] = ['Address', 'address', $canonical['address'], $row->listedAddress];
+        $compare[] = ['Address', 'address', $canonical['address'], $row->listedAddress, $row->nap['address']];
     }
+    $compare[] = ['Website', 'website', $websiteUrl, $row->listedWebsite, $row->websiteResult];
 @endphp
 <div class="offcanvas offcanvas-end cz-drawer" tabindex="-1" id="{{ $drawerId }}" aria-labelledby="{{ $drawerId }}-label" data-role="citation-drawer" data-directory="{{ $directory->key }}" @if($hasErrors) data-open-on-load="1" @endif>
     <div class="offcanvas-header border-bottom">
         <div class="d-flex align-items-center gap-1 min-w-0">
-            <span class="cz-dir-icon"><x-ds-icon :name="$icons[$directory->key] ?? 'map'" size="18" /></span>
+            <span class="cz-dir-icon"><x-ds-icon :name="$directory->icon ?: 'map'" size="18" /></span>
             <div class="min-w-0">
                 <h5 class="offcanvas-title mb-0" id="{{ $drawerId }}-label">{{ $directory->name }}</h5>
-                <x-badge :variant="$state->variant()" class="cz-badge mt-25"><x-ds-icon :name="$state->icon()" size="12" />{{ $state->label() }}</x-badge>
+                <div class="d-flex flex-wrap gap-50 mt-25">
+                    @if($row->isCustom())<x-badge variant="neutral">Custom</x-badge>@else<x-badge :variant="$importance->variant()">{{ $importance->label() }}</x-badge>@endif
+                    <x-badge :variant="$setup['variant']" class="cz-badge"><x-ds-icon :name="$setup['icon']" size="12" />{{ $setup['label'] }}</x-badge>
+                    @unless($notApplicable)<x-badge :variant="$nap['variant']" class="cz-badge"><x-ds-icon :name="$nap['icon']" size="12" />{{ $nap['label'] }}</x-badge>@endunless
+                </div>
             </div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
     </div>
 
     <div class="offcanvas-body">
-        <p class="cz-helper mt-0">{{ $row->helperText() }} This is a record you keep by hand — Business OS does not read from {{ $directory->name }}.</p>
+        <section data-role="drawer-about">
+            <h6>About this directory</h6>
+            <p class="mb-50">
+                @if($row->isCustom())
+                    A directory you added yourself. Business OS cannot check it; you record what it shows.
+                @else
+                    {{ $directory->setup_guidance ?: 'Make sure the name, address and phone shown here match your business profile.' }}
+                @endif
+            </p>
+            @if($row->nicheGuidance !== null)
+                <p class="mb-50" data-role="niche-guidance"><strong>{{ $row->nicheLabel }}:</strong> {{ $row->nicheGuidance }}</p>
+            @endif
+            <p class="text-caption mb-0" data-role="mode-note">
+                <strong>{{ $mode->label() }}.</strong>
+                @if($mode->isAutomatic())
+                    Business OS reads this listing through an official connection.
+                @else
+                    Business OS does not read from {{ $directory->name }}: you claim the listing there and record what it shows. {{ $importance->label() }} is guidance, not a guarantee of results.
+                @endif
+            </p>
+            <p class="cz-helper mb-0">{{ $row->helperText() }}</p>
+        </section>
 
         @unless($row->writable && $section->writable)
             <p class="text-caption mb-0" data-role="drawer-readonly">
@@ -68,11 +100,10 @@
                     <tr><th></th><th>Business profile</th><th>Listing (recorded)</th></tr>
                 </thead>
                 <tbody>
-                    @foreach($compare as [$label, $field, $canonicalValue, $listedValue])
-                        @php $result = $row->nap[$field]; @endphp
+                    @foreach($compare as [$label, $field, $canonicalValue, $listedValue, $result])
                         <tr data-field="{{ $field }}" data-result="{{ $result->value }}">
                             <th scope="row">{{ $label }}</th>
-                            <td>{{ $canonicalValue ?? 'Not set' }}</td>
+                            <td>{{ $canonicalValue ?: 'Not set' }}</td>
                             <td>
                                 @if($listedValue !== null)
                                     {{ $listedValue }}
@@ -82,16 +113,11 @@
                                         <x-badge variant="warning" class="ms-50">Differs</x-badge>
                                     @endif
                                 @else
-                                    <span class="cz-muted">{{ $result === SeoNapFieldResult::NotComparable ? 'Not compared' : 'Not checked' }}</span>
+                                    <span class="cz-muted">{{ $result === SeoNapFieldResult::NotComparable && $field !== 'website' ? 'Not compared' : 'Not checked' }}</span>
                                 @endif
                             </td>
                         </tr>
                     @endforeach
-                    <tr>
-                        <th scope="row">Website</th>
-                        <td>{{ $websiteUrl ?: 'Not set' }}</td>
-                        <td><span class="cz-muted">Not tracked per listing</span></td>
-                    </tr>
                     <tr>
                         <th scope="row">Listing link</th>
                         <td></td>
@@ -106,7 +132,7 @@
                     <tr>
                         <th scope="row">Last checked</th>
                         <td></td>
-                        <td>@if($verified !== null){{ $verified->format('M j, Y') }} <span class="cz-muted">(by you)</span>@else<span class="cz-muted">Not checked</span>@endif</td>
+                        <td>@if($verified !== null){{ $verified->format('M j, Y') }} <span class="cz-muted">(by you)</span>@if($row->reviewDue) <x-badge variant="warning" class="ms-50">Review recommended</x-badge>@endif @else<span class="cz-muted">Not checked</span>@endif</td>
                     </tr>
                 </tbody>
             </table>
@@ -128,7 +154,7 @@
                     <a class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-50" href="{{ $claimUrl }}" target="_blank" rel="{{ SeoLinkSafety::EXTERNAL_REL }}" data-role="drawer-claim-link"><x-ds-icon name="external-link" size="14" />Claim or update on {{ $directory->name }}</a>
                 @endif
                 @if($row->safeListingUrl === null && $claimUrl === null)
-                    <span class="text-caption">No directory links available.</span>
+                    <span class="text-caption">No official claim link is recorded for this directory. Search for your business on {{ $directory->name }} and record its link below.</span>
                 @endif
             </div>
         </section>
@@ -171,6 +197,10 @@
                         </div>
                     @endif
                     <div class="mb-1">
+                        <label class="form-label" for="{{ $drawerId }}-website">Website shown <span class="cz-muted">(if the directory shows one)</span></label>
+                        <input id="{{ $drawerId }}-website" type="text" name="listed_website" class="form-control" maxlength="2048" value="{{ $val('listed_website', $row->listedWebsite) }}">
+                    </div>
+                    <div class="mb-1">
                         <label class="form-label" for="{{ $drawerId }}-checked">Date you last checked</label>
                         <input id="{{ $drawerId }}-checked" type="date" name="last_verified_at" class="form-control" value="{{ $val('last_verified_at', $verified?->format('Y-m-d')) }}">
                     </div>
@@ -184,6 +214,46 @@
                     </div>
                 </form>
             </section>
+
+            <section data-role="drawer-applicability">
+                <h6>{{ $notApplicable ? 'Restore this directory' : 'Not for you?' }}</h6>
+                <form method="POST" action="{{ route('customer.workspaces.businesses.seo.citations.applicability', [$workspaceUid, $businessUid, $location->uid, $directory->key]) }}">
+                    @csrf
+                    <input type="hidden" name="applicable" value="{{ $notApplicable ? 1 : 0 }}">
+                    <p class="text-caption">
+                        @if($notApplicable)
+                            It is out of your progress and "Needs attention" list. Restoring keeps everything you recorded.
+                        @else
+                            Mark it not applicable (for example, it does not serve your area or category). It leaves your progress and "Needs attention" list; what you recorded is kept and you can restore it any time.
+                        @endif
+                    </p>
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" data-role="applicability-button">{{ $notApplicable ? 'Restore' : 'Mark not applicable' }}</button>
+                </form>
+            </section>
+
+            @if($row->isCustom())
+                <section data-role="drawer-custom-edit">
+                    <h6>Your custom directory</h6>
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.citations.custom.update', [$workspaceUid, $businessUid, $location->uid, $directory->key]) }}" class="mb-1">
+                        @csrf
+                        @method('PUT')
+                        <div class="mb-1">
+                            <label class="form-label" for="{{ $drawerId }}-dname">Directory name</label>
+                            <input id="{{ $drawerId }}-dname" type="text" name="name" class="form-control" maxlength="120" value="{{ $directory->name }}" required>
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label" for="{{ $drawerId }}-dclaim">Claim / manage link (https, optional)</label>
+                            <input id="{{ $drawerId }}-dclaim" type="text" name="claim_url" class="form-control" maxlength="2048" value="{{ $claimUrl }}" placeholder="https://">
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Save directory</button>
+                    </form>
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.seo.citations.custom.archive', [$workspaceUid, $businessUid, $location->uid, $directory->key]) }}">
+                        @csrf
+                        <button type="submit" class="btn btn-sm btn-flat-secondary" data-role="archive-custom">Archive this directory</button>
+                        <span class="text-caption">Your history is kept.</span>
+                    </form>
+                </section>
+            @endif
         @endif
     </div>
 </div>

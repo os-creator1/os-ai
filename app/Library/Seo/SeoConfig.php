@@ -13,6 +13,16 @@ namespace App\Library\Seo;
  */
 final class SeoConfig
 {
+    public function citationsReviewAfterDays(): int
+    {
+        return $this->bounded('seo.citations.review_after_days', 90, 7, 365);
+    }
+
+    public function citationsMaxCustomDirectoriesPerBusiness(): int
+    {
+        return $this->bounded('seo.citations.max_custom_directories', 25, 1, 25);
+    }
+
     public function keywordsMaxActivePerBusiness(): int
     {
         return $this->bounded('seo.keywords.max_active_per_business', 50, 1, 50);
