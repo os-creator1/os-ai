@@ -3,6 +3,8 @@
 namespace App\Library\PlatformAutomation;
 
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\PlatformAutomation\Announcements\PlatformAnnouncementManager;
@@ -59,6 +61,7 @@ class PlatformActionExecutor
             'reactivate_business' => $this->businessStatus($ctx, BusinessStatus::Active, $p, $actorUserId),
             'restore_workspace_access' => $this->restoreAccess($ctx, $p, $actorUserId),
             'change_plan' => $this->changePlan($ctx, $p, $actorUserId),
+            'set_feature_override' => $this->featureOverride($ctx, $p, $actorUserId),
             default => throw new \InvalidArgumentException('Unknown action.'),
         };
     }
@@ -208,6 +211,29 @@ class PlatformActionExecutor
         $this->entitlements->changePlan($workspace, WorkspacePlanTier::from((string) $p['tier']), (int) $actorUserId, (string) $p['reason']);
 
         return ['result' => ['workspace' => $workspace->uid, 'tier' => $p['tier']], 'operation_ref' => 'workspace:' . $workspace->id];
+    }
+
+    /**
+     * Allow/deny a feature for the run's Workspace through the canonical override authority, which
+     * re-checks the approver's Platform authority, requires the reason, refuses an Allow of an
+     * unavailable feature, audits the transition, and is a no-op when the state is already set
+     * (so a retried step cannot double-write). The plan is never touched.
+     */
+    private function featureOverride(PlatformRunContext $ctx, array $p, ?int $actorUserId): array
+    {
+        $workspace = $ctx->workspace() ?? throw new PlatformStepSkipped('No Workspace on this run.');
+        $this->requireActor($actorUserId);
+
+        $feature = PlatformFeature::tryFrom((string) $p['feature'])
+            ?? throw new \InvalidArgumentException('Unknown feature.');
+        $state = WorkspaceEntitlementOverrideState::from((string) $p['state']);
+
+        $this->entitlements->createOrChangeOverride($workspace, $feature, $state, (int) $actorUserId, (string) $p['reason']);
+
+        return [
+            'result' => ['workspace' => $workspace->uid, 'feature' => $feature->value, 'state' => $state->value],
+            'operation_ref' => 'override:' . $workspace->id . ':' . $feature->value . ':' . $state->value,
+        ];
     }
 
     private function requireActor(?int $actorUserId): void

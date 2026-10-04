@@ -41,6 +41,11 @@ class SendLowBalanceNotification extends Base implements ShouldQueueAfterCommit
             throw new \RuntimeException("Business usage wallet for business {$this->businessId} not found.");
         }
 
+        // The wallet is at its low-balance threshold: that fact is raised once here, the
+        // single sink of every low-balance dispatch, whether or not a billing contact
+        // exists to be emailed (Platform Automations listens to it).
+        \App\Events\Usage\BusinessWalletLowBalance::dispatch($this->businessId);
+
         $contact = $billingContactRepository->findByBusinessId($this->businessId);
 
         if ($contact === null) {

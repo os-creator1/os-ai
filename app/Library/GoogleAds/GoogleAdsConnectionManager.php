@@ -311,6 +311,9 @@ final class GoogleAdsConnectionManager
         ]);
 
         $this->unselectAccount((int) $connection->business_id);
+
+        // The single seam where a Google Ads connection becomes unusable: raise "reconnect required" once.
+        \App\Events\Provider\ProviderReconnectionRequired::dispatch((int) $connection->business_id, 'google_ads', 'revoked');
     }
 
     /**

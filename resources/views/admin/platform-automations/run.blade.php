@@ -65,7 +65,7 @@
                                 <td colspan="6">
                                     <div class="alert alert-warning mb-0" data-role="pa-approval">
                                         <strong>Needs your approval.</strong>
-                                        This step changes an account's state or billing. It runs only if you approve, and then as you
+                                        This step changes an account's state, billing or entitlements. It runs only if you approve, and then as you
                                         (the change is recorded in the audit trail under your name).
                                         <div class="mt-1 d-flex gap-1">
                                             <form method="POST" action="{{ route('admin.platform-automations.runs.approve', [$run, $step->step_index]) }}"

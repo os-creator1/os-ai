@@ -31,7 +31,7 @@ class PlatformScheduledTriggers
     {
         $created = [];
 
-        foreach (['user.email_verification_pending', 'business.onboarding_incomplete', 'subscription.trial_ending', 'subscription.trial_ended', 'ops.repeated_job_failures'] as $trigger) {
+        foreach (['user.email_verification_pending', 'business.onboarding_incomplete', 'subscription.trial_ending', 'subscription.trial_ended', 'invitation.expired', 'ops.repeated_job_failures'] as $trigger) {
             $created[$trigger] = 0;
 
             PlatformAutomation::query()
@@ -128,6 +128,17 @@ class PlatformScheduledTriggers
                     ->orderBy('id')->limit(self::CANDIDATE_CAP)->get(['id', 'workspace_id', 'trial_ends_at']);
                 foreach ($subs as $sub) {
                     $fire(PlatformTarget::workspace((int) $sub->workspace_id, (int) $sub->id), "sub:{$sub->id}:trial_ended:" . substr((string) $sub->trial_ends_at, 0, 10));
+                }
+                break;
+
+            case 'invitation.expired':
+                // Durable state: pending past its expiry, or already marked expired. Recent only.
+                $invitations = DB::table('client_workspace_invitations')
+                    ->where(fn ($q) => $q->where('status', 'expired')->orWhere(fn ($w) => $w->where('status', 'pending')->where('expires_at', '<=', now())))
+                    ->where('expires_at', '>', now()->subDays(self::LOOKBACK_DAYS))
+                    ->orderBy('id')->limit(self::CANDIDATE_CAP)->get(['id', 'agency_workspace_id']);
+                foreach ($invitations as $invitation) {
+                    $fire(PlatformTarget::workspace((int) $invitation->agency_workspace_id), "invitation:{$invitation->id}:expired");
                 }
                 break;
 

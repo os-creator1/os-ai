@@ -254,7 +254,16 @@
                     throw new GeneralException(__('locale.exceptions.super_admin_protect'));
                 }
 
+                $affected = $this->query()->whereIn('uid', $ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
                 if ($this->query()->whereIn('uid', $ids)->update(['status' => true])) {
+                    // The single canonical seam for "user reactivated": one event per account, after commit.
+                    DB::afterCommit(function () use ($affected) {
+                        foreach ($affected as $userId) {
+                            \App\Events\Account\UserAccountStatusChanged::dispatch($userId, true);
+                        }
+                    });
+
                     return true;
                 }
 
@@ -278,7 +287,16 @@
                     throw new GeneralException(__('locale.exceptions.super_admin_protect'));
                 }
 
+                $affected = $this->query()->whereIn('uid', $ids)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
                 if ($this->query()->whereIn('uid', $ids)->update(['status' => false])) {
+                    // The single canonical seam for "user suspended": one event per account, after commit.
+                    DB::afterCommit(function () use ($affected) {
+                        foreach ($affected as $userId) {
+                            \App\Events\Account\UserAccountStatusChanged::dispatch($userId, false);
+                        }
+                    });
+
                     return true;
                 }
 

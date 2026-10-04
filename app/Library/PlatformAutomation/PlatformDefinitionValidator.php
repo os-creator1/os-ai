@@ -23,6 +23,7 @@ final class PlatformDefinitionValidator
         'reactivate_business' => ['business'],
         'restore_workspace_access' => ['workspace', 'business', 'subscription'],
         'change_plan' => ['workspace', 'business', 'subscription'],
+        'set_feature_override' => ['workspace', 'business', 'subscription'],
         'resend_email_verification' => ['user'],
         'send_password_reset_link' => ['user'],
         'send_announcement' => ['user', 'workspace', 'business', 'subscription', 'provider'],
@@ -53,6 +54,8 @@ final class PlatformDefinitionValidator
         }
 
         $targetType = (string) $trigger['target'];
+        // A member run targets the user but also carries its Workspace.
+        $targetTypes = array_values(array_unique(array_merge([$targetType], (array) ($trigger['also'] ?? []))));
         $params = $this->cleanParams($trigger['params'], (array) ($definition['params'] ?? []), 'Trigger', $errors);
 
         $conditions = [];
@@ -102,12 +105,12 @@ final class PlatformDefinitionValidator
 
             $stepParams = $this->cleanParams($meta['params'], (array) ($step['params'] ?? []), "Step {$n}", $errors);
 
-            if (isset(self::ACTION_NEEDS[$action]) && ! in_array($targetType, self::ACTION_NEEDS[$action], true)) {
+            if (isset(self::ACTION_NEEDS[$action]) && array_intersect($targetTypes, self::ACTION_NEEDS[$action]) === []) {
                 $errors[] = "Step {$n}: \"{$meta['label']}\" cannot act on a {$targetType} trigger.";
             }
 
             if (isset($stepParams['recipient'])
-                && ! in_array($targetType, self::RECIPIENT_NEEDS[$stepParams['recipient']] ?? [], true)) {
+                && array_intersect($targetTypes, self::RECIPIENT_NEEDS[$stepParams['recipient']] ?? []) === []) {
                 $errors[] = "Step {$n}: this trigger has no {$stepParams['recipient']} to send to.";
             }
 
@@ -115,6 +118,15 @@ final class PlatformDefinitionValidator
                 $minutes = $this->waitMinutes($stepParams);
                 if ($minutes < 1 || $minutes > self::MAX_WAIT_MINUTES) {
                     $errors[] = "Step {$n}: wait between a minute and 90 days.";
+                }
+            }
+
+            if ($action === 'set_feature_override' && isset($stepParams['feature'], $stepParams['state'])) {
+                // Same refusals the canonical authority makes, surfaced at save time instead of at approval time.
+                if (! \App\Library\Entitlement\PlatformFeatureRegistry::isKnown($stepParams['feature'])) {
+                    $errors[] = "Step {$n}: unknown feature.";
+                } elseif ($stepParams['state'] === 'allow' && ! \App\Library\Entitlement\PlatformFeatureRegistry::isAvailable($stepParams['feature'])) {
+                    $errors[] = "Step {$n}: {$stepParams['feature']} is not available yet, so it cannot be allowed.";
                 }
             }
 
