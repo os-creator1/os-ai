@@ -433,6 +433,8 @@ class WebsiteController extends CustomerBaseController
                 'uid' => $candidate->uid,
                 'title' => $candidate->title,
                 'is_home' => $candidate->is_home,
+                'slug' => $candidate->slug,
+                'has_form' => collect($candidate->sections ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
                 'url' => route('customer.workspaces.businesses.website.preview', [$workspaceUid, $businessUid, $candidate->uid]),
             ])->all(),
         ]);
@@ -617,11 +619,22 @@ class WebsiteController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
         $website = $this->resolveWebsite($business);
 
+        $previews = app(\App\Library\Website\Design\WebsiteTemplatePreviewRenderer::class);
+        $templates = WebsiteTemplate::where('is_active', true)->get()
+            ->sortBy(fn (WebsiteTemplate $candidate) => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($candidate->key)?->number ?? 99)
+            ->values();
+
         return view('customer.business.website.rebuild', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'website' => $website,
-            'templates' => WebsiteTemplate::where('is_active', true)->orderBy('key')->get(),
+            'templates' => $templates,
+            'templateCards' => $templates->map(fn (WebsiteTemplate $template) => [
+                'key' => $template->key,
+                'design' => \App\Library\Website\Design\WebsiteDesigns::forTemplateKey($template->key),
+                'current' => $website->template_key === $template->key,
+                'html' => $previews->render($business, $website, $template),
+            ])->all(),
             'currentPageCount' => $website->pages()->count(),
             'isPublished' => $website->published_revision_id !== null,
         ]);
@@ -650,6 +663,25 @@ class WebsiteController extends CustomerBaseController
 
         if ($template === null) {
             throw ValidationException::withMessages(['template_key' => ['Choose one of the available templates.']]);
+        }
+
+        // Website V1 final — "change the look only": every page, word, photo
+        // and price is kept; only the template's layout changes. No AI call,
+        // nothing is regenerated, and the published site is untouched until
+        // the owner publishes.
+        if ($request->input('mode') === 'look_only') {
+            try {
+                $this->generationCoordinator->runExclusive($website, function (Website $locked) use ($template) {
+                    $this->starterDrafts->changeTemplateKeepingPages($locked, $template);
+                });
+            } catch (GenerationInProgressException $e) {
+                return redirect()->back()->with(['status' => 'error', 'message' => $e->getMessage()]);
+            }
+
+            return redirect()->route('customer.workspaces.businesses.website.show', [$workspaceUid, $businessUid])->with([
+                'status' => 'success',
+                'message' => 'Your website now uses the ' . $template->display_name . ' template. Preview it, then publish to update your live website.',
+            ]);
         }
 
         // Acceptance-correction Blocker 1/4 — the customer-facing
@@ -741,7 +773,9 @@ class WebsiteController extends CustomerBaseController
 
             return redirect()->route('customer.workspaces.businesses.website.pages.index', [$workspaceUid, $businessUid])->with([
                 'status' => 'error',
-                'message' => $attempt->failure_reason ?: 'AI generation is currently unavailable. Please try again later or add pages manually.',
+                'message' => $attempt->failure_reason
+                    ? \App\Library\Website\GuidedGeneration\GenerationFailureMessage::forCustomer($attempt->failure_reason)
+                    : 'AI generation is currently unavailable. Please try again later or add pages manually.',
             ]);
         } finally {
             $this->generationCoordinator->release($website, $leaseToken);

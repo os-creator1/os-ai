@@ -1,10 +1,14 @@
 {{--
     Website Component Library — hero (contract §7.2). Plain escaped text
-    only. When a background image is set, a fixed dark scrim is layered
-    behind it (never a separate overlay element) so the heading and
-    subheading stay legible regardless of the image's own content, and
-    the website-hero-has-image class switches their color to white.
+    only. A template-driven site (WebsiteDesign) renders the template's own
+    hero (design/hero.blade.php); a legacy non-template site keeps the
+    original hero below: when a background image is set, a fixed dark scrim is
+    layered behind it so the heading and subheading stay legible regardless
+    of the image's own content.
 --}}
+@if ($design ?? null)
+    @include('public.website.design.hero')
+@else
 @php($hasBackgroundImage = ! empty($data['background_image']) && isset($assetsByUid[$data['background_image']]))
 <section class="website-section website-hero @if($hasBackgroundImage) website-hero-has-image @endif"
     @if ($hasBackgroundImage)
@@ -26,3 +30,4 @@
         </div>
     </div>
 </section>
+@endif

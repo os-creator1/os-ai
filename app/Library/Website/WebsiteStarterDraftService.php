@@ -10,6 +10,7 @@ use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Catalog\CatalogItemLifecycleState;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Library\Catalog\CatalogMoney;
+use App\Library\Website\Design\WebsiteLookService;
 use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
 use App\Models\CatalogItem;
@@ -219,7 +220,32 @@ final class WebsiteStarterDraftService
             }
 
             $locked->update([
-                'theme' => $template->theme,
+                'theme' => array_merge($template->theme, WebsiteLookService::ownerTokens($locked->theme)),
+                'template_key' => $template->key,
+            ]);
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * Website V1 final — switches a GENERATED website to another template
+     * WITHOUT rebuilding it. The four templates share one page manifest and one
+     * section contract and differ only in layout (header, hero, section
+     * order, typography, cards, footer), so every page, word, photo and
+     * price carries over unchanged; only how they are laid out changes. The
+     * owner's brand colour / logo / hero image are kept (ownerTokens()).
+     *
+     * Draft only: the published revision keeps its frozen theme, so the live
+     * site looks exactly as it does now until the owner publishes again.
+     */
+    public function changeTemplateKeepingPages(Website $website, WebsiteTemplate $template): Website
+    {
+        return DB::transaction(function () use ($website, $template) {
+            $locked = Website::whereKey($website->id)->lockForUpdate()->firstOrFail();
+
+            $locked->update([
+                'theme' => array_merge($template->theme, WebsiteLookService::ownerTokens($locked->theme)),
                 'template_key' => $template->key,
             ]);
 
@@ -251,7 +277,7 @@ final class WebsiteStarterDraftService
 
             $website->pages()->delete();
             $website->update([
-                'theme' => $template->theme,
+                'theme' => array_merge($template->theme, WebsiteLookService::ownerTokens($website->theme)),
                 'template_key' => $template->key,
             ]);
 

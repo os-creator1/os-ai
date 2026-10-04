@@ -99,6 +99,15 @@ final class WebsiteSnapshotBuilder
             ];
         })->values()->all();
 
+        // The owner's logo and hero image are site chrome, not sections: they are
+        // referenced from the theme, so they are carried into the revision explicitly.
+        foreach (['logo_asset_uid', 'hero_asset_uid'] as $themeKey) {
+            $chromeUid = $website->theme[$themeKey] ?? null;
+            if (is_string($chromeUid) && $chromeUid !== '') {
+                $referencedAssetUids[$chromeUid] = true;
+            }
+        }
+
         $assets = WebsiteAsset::where('website_id', $website->id)
             ->whereIn('uid', array_keys($referencedAssetUids))
             ->get()
@@ -128,6 +137,7 @@ final class WebsiteSnapshotBuilder
             'website' => [
                 'name' => $website->name,
                 'theme' => $website->theme ?? [],
+                'contact' => $this->chromeContact($business, $this->visibleContactFacts($pageSnapshots)),
                 'localBusiness' => $this->localBusinessFacts($business, $this->visibleContactFacts($pageSnapshots)),
             ],
             'pages' => $pageSnapshots,
@@ -170,9 +180,35 @@ final class WebsiteSnapshotBuilder
         return $visible;
     }
 
+    /**
+     * The phone/email the template's header strip and footer may show —
+     * frozen at publish time, and only the facts the owner chose to display
+     * somewhere on the site (the same rule LocalBusiness JSON-LD follows).
+     *
+     * @param  array{phone: bool, email: bool, address: bool}  $visible
+     * @return array{phone: ?string, email: ?string}
+     */
+    private function chromeContact(?Business $business, array $visible): array
+    {
+        // Key order matters: MySQL JSON stores object keys length-then-alphabetically, and a
+        // revision's snapshot is compared byte-for-byte after a round trip.
+        return [
+            'email' => $visible['email'] ? ($business?->email ?: null) : null,
+            'phone' => $visible['phone'] ? ($business?->phone ?: null) : null,
+        ];
+    }
+
     private function assetUidsIn(?WebsiteSectionType $type, array $data): array
     {
         $uids = [];
+
+        if ($type === WebsiteSectionType::CustomSection) {
+            foreach (($data['images'] ?? []) as $imageUid) {
+                if (is_string($imageUid) && $imageUid !== '') {
+                    $uids[] = $imageUid;
+                }
+            }
+        }
 
         if ($type === WebsiteSectionType::Hero && ! empty($data['background_image'])) {
             $uids[] = $data['background_image'];

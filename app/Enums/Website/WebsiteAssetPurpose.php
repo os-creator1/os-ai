@@ -20,6 +20,12 @@ enum WebsiteAssetPurpose: string
     /** The wizard's optional custom-section media — never mixed into the general gallery/hero pool. */
     case CustomSection = 'custom_section';
 
+    /** The owner's logo (Website V1 final) — site chrome referenced from the theme, never a gallery photo. */
+    case Logo = 'logo';
+
+    /** The owner's hero image (Website V1 final) — referenced from the theme, never a gallery photo. */
+    case Hero = 'hero';
+
     /** A package's cover image, mirrored purely for section-validator purposes — never a customer-uploaded asset, never counted against upload limits. */
     case PackageMirror = 'package_mirror';
 }

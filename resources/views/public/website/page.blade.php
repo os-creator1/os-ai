@@ -12,6 +12,14 @@
     $isPreview (bool), $navigationPages (snapshot pages for public,
     current draft pages for preview).
 
+    Website V1 final — a template-backed site is rendered by its
+    WebsiteDesign (App\Library\Website\Design): the template owns the
+    header, section order, band rhythm, hero, services/packages
+    presentation, footer and typography. The extra variables below come from
+    App\Http\View\Composers\WebsitePageComposer: $design (null = a legacy
+    non-template site, which keeps the original generic chrome), $nav,
+    $siteCta, $brandStyle, $logo, $siteContact, $isHomePage.
+
     Every text field renders through Blade's default escaped {{ }}
     output only (contract §8/§30) — never {!! !!}, never Blade::render()
     on user/AI content, on any field in any component partial included
@@ -48,7 +56,15 @@
     @if (! empty($canonicalUrl ?? null))
         <link rel="canonical" href="{{ $canonicalUrl }}">
     @endif
-    <link rel="stylesheet" href="{{ asset('css/website-public.css') }}">
+    @if (! empty($inlineCss ?? null))
+        {{-- Template preview cards are embedded (srcdoc) and must style themselves: our own two static stylesheets, inlined. --}}
+        <style>{!! $inlineCss !!}</style>
+    @else
+        <link rel="stylesheet" href="{{ asset('css/website-public.css') }}">
+        @if ($design ?? null)
+            <link rel="stylesheet" href="{{ asset('css/website-design.css') }}?v={{ is_file(public_path('css/website-design.css')) ? filemtime(public_path('css/website-design.css')) : 1 }}">
+        @endif
+    @endif
     {{--
         LocalBusiness structured data (Website Generation + Hosting gap
         recorded in Implementation Contract 18 §3.2/§3.6) — built only
@@ -85,44 +101,137 @@
         </style>
     @endif
 </head>
-<body class="website-body website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }}">
+{{-- A template-driven site is styled by its design only; the legacy variant classes (header/button/font) would leak the old generic styles into it. --}}
+<body class="website-body @if ($design ?? null) wd wd-{{ $design->key }} @else website-header-{{ $theme['header_variant'] ?? 'default' }} website-button-{{ $theme['button_style'] ?? 'solid' }} website-font-{{ $theme['font'] ?? 'system' }} @endif"
+    @if (($design ?? null) && ! empty($brandStyle)) style="{{ $brandStyle }}" @endif>
     @if ($isPreview)
-        <div class="website-preview-banner">Preview — draft content, not yet published</div>
+        <div class="website-preview-banner">{{ $previewBannerText ?? 'Preview — draft content, not yet published' }}</div>
     @endif
 
-    <header class="website-header">
-        <div class="website-container">
-            @php($homeNavigation = collect($navigationPages ?? [])->firstWhere('is_home', true))
-            @if ($homeNavigation)
-                <a class="website-brand" href="{{ $homeNavigation['url'] }}">{{ $websiteMeta['name'] }}</a>
-            @else
-                <span class="website-brand">{{ $websiteMeta['name'] }}</span>
-            @endif
-            @if (count($navigationPages ?? []) > 1)
-                <nav class="website-navigation" aria-label="Site pages">
-                    @foreach ($navigationPages as $navigationPage)
-                        <a href="{{ $navigationPage['url'] }}" @if (($page->uid ?? null) === $navigationPage['uid']) aria-current="page" @endif>{{ $navigationPage['title'] }}</a>
-                    @endforeach
-                </nav>
-            @endif
-        </div>
-    </header>
+    @if ($design ?? null)
+        @include('public.website.design.header')
 
-    <main class="website-main">
-        <div class="website-container">
-            @foreach ($sections as $section)
-                @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
+        <?php
+            // Template-owned order of a Home page's sections, then the
+            // band tone (light / dark / accent / tint) the template gives each type.
+            $orderedSections = $isHomePage ? $design->orderHomeSections($sections) : $sections;
+
+            // A hero with no image of its own borrows the owner's hero image
+            // (Brand & look), else the first real photo already on this page.
+            $heroImageFallback = null;
+            $heroUid = $theme['hero_asset_uid'] ?? null;
+            if ($heroUid && isset($assetsByUid[$heroUid])) {
+                $heroImageFallback = $assetsByUid[$heroUid];
+            } else {
+                foreach ($sections as $candidate) {
+                    $uid = match ($candidate['type'] ?? '') {
+                        'image_text' => $candidate['data']['image'] ?? null,
+                        'gallery', 'services' => collect($candidate['data']['items'] ?? [])->pluck('image')->filter()->first(),
+                        default => null,
+                    };
+                    if ($uid && isset($assetsByUid[$uid])) {
+                        $heroImageFallback = $assetsByUid[$uid];
+                        break;
+                    }
+                }
+            }
+        ?>
+
+        <main class="wd-main" id="wd-main">
+            @foreach ($orderedSections as $section)
+                @php($type = $section['type'] ?? '')
+                @php($componentView = 'public.website.components.' . $type)
+                @php($toneKey = ($type === 'services' && collect($section['data']['items'] ?? [])->contains(fn ($item) => ! empty($item['catalog_item_uid']))) ? 'packages' : $type)
                 @if (\Illuminate\Support\Facades\View::exists($componentView))
-                    @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
+                    <div class="wd-band wd-tone-{{ $design->toneFor($toneKey) }} wd-band-{{ $toneKey }}" data-section="{{ $toneKey }}">
+                        @if ($type === 'hero')
+                            @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null, 'heroImageFallback' => $heroImageFallback])
+                        @else
+                            <div class="website-container wd-container">
+                                @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
+                            </div>
+                        @endif
+                    </div>
                 @endif
             @endforeach
-        </div>
-    </main>
+        </main>
 
-    <footer class="website-footer website-footer-{{ $theme['footer_variant'] ?? 'default' }}">
-        <div class="website-container">
-            <p>&copy; {{ date('Y') }} {{ $websiteMeta['name'] }}</p>
-        </div>
-    </footer>
+        @include('public.website.design.footer')
+
+        <script>
+            (function () {
+                var header = document.querySelector('[data-wd-header]');
+                if (!header) { return; }
+                var toggle = header.querySelector('[data-wd-menu-toggle]');
+                var nav = header.querySelector('[data-wd-nav]');
+                function setMenu(open) {
+                    header.setAttribute('data-menu-open', open ? 'true' : 'false');
+                    if (toggle) { toggle.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+                    document.body.classList.toggle('wd-menu-lock', open);
+                }
+                if (toggle) {
+                    toggle.addEventListener('click', function () { setMenu(toggle.getAttribute('aria-expanded') !== 'true'); });
+                }
+                header.querySelectorAll('[data-wd-dd-toggle]').forEach(function (button) {
+                    button.addEventListener('click', function () {
+                        var item = button.closest('.wd-nav-item');
+                        var open = item.getAttribute('data-open') !== 'true';
+                        header.querySelectorAll('.wd-nav-item[data-open="true"]').forEach(function (other) {
+                            if (other !== item) {
+                                other.setAttribute('data-open', 'false');
+                                other.querySelectorAll('[data-wd-dd-toggle]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+                            }
+                        });
+                        item.setAttribute('data-open', open ? 'true' : 'false');
+                        item.querySelectorAll('[data-wd-dd-toggle]').forEach(function (b) { b.setAttribute('aria-expanded', open ? 'true' : 'false'); });
+                    });
+                });
+                document.addEventListener('keydown', function (event) {
+                    if (event.key !== 'Escape') { return; }
+                    setMenu(false);
+                    header.querySelectorAll('.wd-nav-item[data-open="true"]').forEach(function (item) {
+                        item.setAttribute('data-open', 'false');
+                        item.querySelectorAll('[data-wd-dd-toggle]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
+                    });
+                });
+                window.addEventListener('resize', function () { if (window.innerWidth > 960) { setMenu(false); } });
+            })();
+        </script>
+    @else
+        <header class="website-header">
+            <div class="website-container">
+                @php($homeNavigation = collect($navigationPages ?? [])->firstWhere('is_home', true))
+                @if ($homeNavigation)
+                    <a class="website-brand" href="{{ $homeNavigation['url'] }}">{{ $websiteMeta['name'] }}</a>
+                @else
+                    <span class="website-brand">{{ $websiteMeta['name'] }}</span>
+                @endif
+                @if (count($navigationPages ?? []) > 1)
+                    <nav class="website-navigation" aria-label="Site pages">
+                        @foreach ($navigationPages as $navigationPage)
+                            <a href="{{ $navigationPage['url'] }}" @if (($page->uid ?? null) === $navigationPage['uid']) aria-current="page" @endif>{{ $navigationPage['title'] }}</a>
+                        @endforeach
+                    </nav>
+                @endif
+            </div>
+        </header>
+
+        <main class="website-main">
+            <div class="website-container">
+                @foreach ($sections as $section)
+                    @php($componentView = 'public.website.components.' . ($section['type'] ?? ''))
+                    @if (\Illuminate\Support\Facades\View::exists($componentView))
+                        @include($componentView, ['data' => $section['data'] ?? [], 'website' => $website, 'assetsByUid' => $assetsByUid ?? [], 'formsByUid' => $formsByUid ?? [], 'isPreview' => $isPreview ?? false, 'pageUid' => $page->uid ?? null])
+                    @endif
+                @endforeach
+            </div>
+        </main>
+
+        <footer class="website-footer website-footer-{{ $theme['footer_variant'] ?? 'default' }}">
+            <div class="website-container">
+                <p>&copy; {{ date('Y') }} {{ $websiteMeta['name'] }}</p>
+            </div>
+        </footer>
+    @endif
 </body>
 </html>

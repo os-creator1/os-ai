@@ -7,7 +7,7 @@
 @if ($websiteForm)
     <section class="website-section website-form">
         @if (! empty($data['heading']))
-            <h2>{{ $data['heading'] }}</h2>
+            <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
         @endif
 
         @if ($isPreview ?? false)

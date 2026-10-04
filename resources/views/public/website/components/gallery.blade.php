@@ -1,7 +1,7 @@
 {{-- Website Component Library — gallery (contract §7.2). Plain escaped text only. --}}
 <section class="website-section website-gallery">
     @if (! empty($data['heading']))
-        <h2>{{ $data['heading'] }}</h2>
+        <h2 class="wd-section-title">{{ $data['heading'] }}</h2>
     @endif
     <div class="website-gallery-grid">
         @foreach (($data['items'] ?? []) as $item)

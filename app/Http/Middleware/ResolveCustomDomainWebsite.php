@@ -221,6 +221,8 @@ class ResolveCustomDomainWebsite
                 'uid' => $candidate['uid'],
                 'title' => $candidate['title'],
                 'is_home' => $candidate['is_home'],
+                'slug' => $candidate['slug'] ?? null,
+                'has_form' => collect($candidate['sections'] ?? [])->contains(fn ($section) => ($section['type'] ?? null) === 'form'),
                 'url' => $urlFor($candidate),
             ])->all(),
         ]);

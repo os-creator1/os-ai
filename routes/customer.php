@@ -1761,6 +1761,11 @@
             // was registered first, regardless of route name). Route
             // NAMES stay "setup.*" since that is the concept, only the
             // URL segment differs.
+            // Website V1 final — the real-renderer template preview (the Review
+            // screen's cards and the rebuild flow) and the one look-update POST.
+            Route::get('/template-preview/{templateKey}', 'Business\WebsiteLookController@templatePreview')->name('template-preview');
+            Route::post('/look', 'Business\WebsiteLookController@update')->name('look.update');
+
             Route::prefix('build')->name('setup.')->group(function () {
                 Route::get('/', 'Business\WebsiteWizardController@start')->name('start');
                 Route::get('/review', 'Business\WebsiteWizardController@reviewGenerate')->name('review');
