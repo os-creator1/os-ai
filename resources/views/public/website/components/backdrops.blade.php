@@ -13,7 +13,7 @@
             @php($images = $item['images'] ?? [])
             <figure class="website-backdrop-card @if ($design ?? null) wd-card @endif">
                 @if (! empty($images[0]['url']))
-                    <img src="{{ $images[0]['url'] }}" alt="{{ $images[0]['alt_text'] ?? ($item['name'] ?? '') }}" loading="lazy">
+                    {{ \App\Library\Website\Media\ResponsiveImage::tag($images[0], '(min-width: 960px) 360px, 100vw', ['alt' => $images[0]['alt_text'] ?? ($item['name'] ?? '')]) }}
                 @endif
                 <figcaption>
                     <h3>{{ $item['name'] ?? '' }}</h3>

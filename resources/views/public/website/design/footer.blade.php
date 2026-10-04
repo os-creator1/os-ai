@@ -9,7 +9,7 @@
         <div class="wd-footer-brand">
             <a class="wd-logo wd-logo-footer" href="{{ $footerLinks['explore'][0]['url'] ?? '#' }}">
                 @if ($logo)
-                    <img src="{{ $logo['url'] }}" alt="{{ $logo['alt'] }}" loading="lazy">
+                    {{ \App\Library\Website\Media\ResponsiveImage::tag($logo, '210px', ['class' => 'wd-logo-img']) }}
                 @else
                     <span class="wd-wordmark">{{ $websiteMeta['name'] }}</span>
                 @endif

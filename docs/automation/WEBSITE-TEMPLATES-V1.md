@@ -124,3 +124,39 @@ linked as an advanced view.
 `GenerationFailureMessageTest`; `Feature\Website\WebsiteTemplateRenderingTest`,
 `WebsitePlanExplanationTest`, `WebsiteLookAndReviewTest`, `WebsiteCtaResolutionTest`,
 `WebsiteCtaBookingTest`, `WebsiteHealthTest`, `WebsiteQualityGateTest`.
+
+## 10. Responsive images (closure pass)
+
+One authority for every Website image: `App\Library\Website\Media\*`.
+
+* **Derivatives.** On upload (`WebsiteAssetUploadService`, and `BusinessImageStore`
+  for backdrop / package pictures) `ImageVariants` writes **WebP** copies next to
+  the original, in a `v/` sub-directory, named `<hash>-<w>x<h>.webp`, at widths
+  **480 / 768 / 1280 / 1920** (a logo: **240 / 480** — it is shown ≤ ~210px).
+  Never upscaled: a variant is narrower than the source, plus one at the source's
+  own width when the source is ≤ 1920 (a re-encode); sources wider than 1920 are
+  capped at 1920. Aspect ratio and transparency are preserved, a JPEG's EXIF
+  orientation is applied, a variant that is not smaller than the original is
+  discarded, and animated/unsupported sources keep their original. The original
+  is always retained untouched.
+* **No schema change.** The file name carries the geometry, so a variant set is
+  discovered from disk (`ImageVariants::existing()`), is shared by every row that
+  points at the same original (a package picture mirrored into a Website asset),
+  and an older image simply has none.
+* **Rendering.** `ResponsiveImage::tag()` is the only `<img>` the public site emits
+  (all four templates and legacy sites): `src` (the ~1280 derivative, never the
+  original), `srcset`, `sizes`, explicit `width`/`height`, `decoding="async"`.
+  The hero is eager with `fetchpriority="high"` (full-bleed Template 1 is now a
+  covering `<img>`, not a CSS background, so it can be responsive); the header logo
+  is eager without priority; everything else is `loading="lazy"`.
+* **Snapshot / compatibility.** `WebsiteMediaPayload` builds the payload for the
+  preview, the template previews and the published snapshot. A published revision
+  freezes the exact derivative URLs. A revision published before this change has
+  no `variants`/dimensions and renders its original exactly as before and is never
+  rewritten; publishing again gives older assets their derivatives (additive).
+  `WebsiteMediaPayload::enrichSections()` does the same for backdrop sections.
+* **Safety (unchanged).** Business ownership, magic-byte image validation (never
+  the extension), 8MB / 4000px ceilings, SVG refused, foreign asset references
+  refused at publish; deleting an asset or unreferenced picture removes its
+  derivatives with it.
+* **Tests.** `WebsiteResponsiveImageTest` (disposable public root).

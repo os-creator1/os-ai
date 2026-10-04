@@ -10,7 +10,7 @@
         $lookAssets = $website->assets()->whereIn('uid', array_filter([$lookTheme['logo_asset_uid'] ?? null, $lookTheme['hero_asset_uid'] ?? null]))->get()->keyBy('uid');
         $brandColor = $lookTheme['brand_color'] ?? null;
         $logo = isset($lookTheme['logo_asset_uid'], $lookAssets[$lookTheme['logo_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['logo_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['logo_asset_uid']]->alt_text] : null;
-        $hero = isset($lookTheme['hero_asset_uid'], $lookAssets[$lookTheme['hero_asset_uid']]) ? ['url' => $lookAssets[$lookTheme['hero_asset_uid']]->url(), 'alt' => $lookAssets[$lookTheme['hero_asset_uid']]->alt_text] : null;
+        $hero = isset($lookTheme['hero_asset_uid'], $lookAssets[$lookTheme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($lookAssets[$lookTheme['hero_asset_uid']]), 'alt' => $lookAssets[$lookTheme['hero_asset_uid']]->alt_text] : null;
     @endphp
     <x-card class="mb-3" data-testid="studio-look">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">

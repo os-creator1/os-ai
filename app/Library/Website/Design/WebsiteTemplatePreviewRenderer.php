@@ -32,7 +32,7 @@ final class WebsiteTemplatePreviewRenderer
         $website->setRelation('business', $business);
 
         $assetsByUid = $website->exists
-            ? $website->assets()->get()->keyBy('uid')->map(fn ($asset) => ['uid' => $asset->uid, 'url' => $asset->url(), 'alt_text' => $asset->alt_text])->all()
+            ? $website->assets()->get()->keyBy('uid')->map(fn ($asset) => app(\App\Library\Website\Media\WebsiteMediaPayload::class)->forAsset($asset))->all()
             : [];
 
         return view('public.website.page', [

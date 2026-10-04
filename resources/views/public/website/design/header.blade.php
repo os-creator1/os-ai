@@ -36,7 +36,7 @@
             <span class="wd-logo">
         @endif
             @if ($logo)
-                <img src="{{ $logo['url'] }}" alt="{{ $logo['alt'] }}">
+                {{ \App\Library\Website\Media\ResponsiveImage::tag($logo, '210px', ['eager' => true, 'class' => 'wd-logo-img']) }}
             @else
                 <span class="wd-wordmark">{{ $websiteMeta['name'] }}</span>
             @endif

@@ -394,11 +394,8 @@ class WebsiteController extends CustomerBaseController
 
         abort_unless($page !== null, 404);
 
-        $assetsByUid = $website->assets()->get()->keyBy('uid')->map(fn ($asset) => [
-            'uid' => $asset->uid,
-            'url' => $asset->url(),
-            'alt_text' => $asset->alt_text,
-        ])->all();
+        $media = app(\App\Library\Website\Media\WebsiteMediaPayload::class);
+        $assetsByUid = $website->assets()->get()->keyBy('uid')->map(fn ($asset) => $media->forAsset($asset))->all();
 
         $formsByUid = $website->forms()->get()->keyBy('uid')->map(fn ($form) => [
             'uid' => $form->uid,
@@ -425,7 +422,7 @@ class WebsiteController extends CustomerBaseController
                     'noindex' => $page->noindex,
                 ],
             ],
-            'sections' => $this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id),
+            'sections' => $media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)),
             'assetsByUid' => $assetsByUid,
             'formsByUid' => $formsByUid,
             'isPreview' => true,

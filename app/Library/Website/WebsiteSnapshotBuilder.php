@@ -42,6 +42,7 @@ final class WebsiteSnapshotBuilder
     public function __construct(
         private readonly WebsiteAddressPrivacyGate $privacyGate,
         private readonly WebsiteCatalogReferences $catalogReferences,
+        private readonly \App\Library\Website\Media\WebsiteMediaPayload $media,
     ) {}
 
     public function build(Website $website): array
@@ -55,7 +56,7 @@ final class WebsiteSnapshotBuilder
             // Package blocks are resolved from Packages & Products at
             // publish time (name + price), then frozen into this immutable
             // revision exactly like `contact_details` values are.
-            $sections = collect($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id))->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
+            $sections = collect($this->media->enrichSections($this->catalogReferences->resolveSections($page->sections ?? [], (int) $website->business_id)))->map(function ($section) use ($business, &$referencedAssetUids, &$referencedFormUids) {
                 $type = WebsiteSectionType::tryFrom($section['type'] ?? '');
                 $data = $section['data'] ?? [];
 
@@ -111,11 +112,9 @@ final class WebsiteSnapshotBuilder
         $assets = WebsiteAsset::where('website_id', $website->id)
             ->whereIn('uid', array_keys($referencedAssetUids))
             ->get()
-            ->map(fn ($asset) => [
-                'uid' => $asset->uid,
-                'url' => $asset->url(),
-                'alt_text' => $asset->alt_text,
-            ])->values()->all();
+            // Frozen with the revision: the exact derivative URLs this version serves. An asset that
+            // predates responsive images gets its derivatives made now (additive, original untouched).
+            ->map(fn ($asset) => $this->media->forAsset($asset, ensure: true))->values()->all();
 
         // Embedded, not live-read: a `form` section's rendered fields and a
         // submission's validation rules both come from this frozen copy, so

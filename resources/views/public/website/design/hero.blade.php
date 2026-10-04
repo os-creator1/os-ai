@@ -21,8 +21,11 @@
     $isSplit = in_array($heroVariant, ['split', 'split-soft'], true) && $image !== null;
 @endphp
 <section class="wd-hero wd-hero-{{ $heroVariant }} @if ($image) wd-hero-photo @else wd-hero-typographic @endif @if (! $isHomePage) wd-hero-inner-page @endif @if ($isSplit) wd-hero-is-split @endif"
-    @if ($image && $heroVariant === 'fullbleed') style="background-image: url('{{ $image['url'] }}');" @endif
     data-testid="site-hero">
+    @if ($image && $heroVariant === 'fullbleed')
+        {{-- A decorative full-bleed photo: eager, high priority, sized by the viewport. --}}
+        {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '100vw', ['eager' => true, 'priority' => true, 'class' => 'wd-hero-bg', 'alt' => '']) }}
+    @endif
     <div class="website-container wd-hero-grid">
         <div class="wd-hero-copy">
             <h1 class="wd-hero-title">{{ $design->accentHeading($data['heading'] ?? '') }}</h1>
@@ -42,11 +45,11 @@
         </div>
         @if ($isSplit)
             <div class="wd-hero-media">
-                <img src="{{ $image['url'] }}" alt="{{ $image['alt_text'] ?? '' }}" fetchpriority="high">
+                {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '(min-width: 900px) 480px, 100vw', ['eager' => true, 'priority' => true]) }}
             </div>
         @elseif ($image && $heroVariant === 'centered')
             <div class="wd-hero-media wd-hero-media-wide">
-                <img src="{{ $image['url'] }}" alt="{{ $image['alt_text'] ?? '' }}" fetchpriority="high">
+                {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '(min-width: 1180px) 1116px, 100vw', ['eager' => true, 'priority' => true]) }}
             </div>
         @endif
     </div>

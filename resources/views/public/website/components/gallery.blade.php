@@ -7,7 +7,7 @@
         @foreach (($data['items'] ?? []) as $item)
             @if (! empty($item['image']) && isset($assetsByUid[$item['image']]))
                 <div class="website-gallery-item">
-                    <img src="{{ $assetsByUid[$item['image']]['url'] }}" alt="{{ $assetsByUid[$item['image']]['alt_text'] ?? '' }}" loading="lazy">
+                    {{ \App\Library\Website\Media\ResponsiveImage::tag($assetsByUid[$item['image']], '(min-width: 960px) 33vw, 50vw') }}
                 </div>
             @endif
         @endforeach

@@ -20,7 +20,7 @@
             @php($itemImage = ! empty($item['image']) && isset($assetsByUid[$item['image']]) ? $assetsByUid[$item['image']] : null)
             <div class="website-service-card @if ($wd) wd-card @endif @if (! empty($item['featured'])) wd-card-featured @endif" @if ($isPackages) data-package-uid="{{ $item['catalog_item_uid'] ?? '' }}" @endif>
                 @if ($itemImage)
-                    <img src="{{ $itemImage['url'] }}" alt="{{ $itemImage['alt_text'] ?? '' }}" loading="lazy">
+                    {{ \App\Library\Website\Media\ResponsiveImage::tag($itemImage, '(min-width: 960px) 360px, 100vw') }}
                 @endif
                 @if ($wd && ! empty($item['featured']))
                     <span class="wd-badge">Featured</span>

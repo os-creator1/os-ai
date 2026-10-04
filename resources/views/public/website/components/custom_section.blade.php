@@ -21,7 +21,7 @@
     @if ($images->isNotEmpty())
         <div class="website-custom-media">
             @foreach ($images as $image)
-                <img src="{{ $image['url'] }}" alt="{{ $image['alt_text'] ?? '' }}" loading="lazy">
+                {{ \App\Library\Website\Media\ResponsiveImage::tag($image, '(min-width: 860px) 560px, 100vw') }}
             @endforeach
         </div>
     @endif

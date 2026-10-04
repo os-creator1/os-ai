@@ -231,7 +231,7 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-header { position: relative; z-index: 50; background: var(--wd-header-bg); color: var(--wd-header-ink); border-bottom: 1px solid var(--wd-header-line); }
 .wd-header-inner { margin: 0 auto; padding: 0.7rem 1.25rem; display: flex; align-items: center; gap: 1.25rem; max-width: 1280px; }
 .wd-logo { display: inline-flex; align-items: center; text-decoration: none; color: inherit; flex: 0 0 auto; }
-.wd-logo img { max-height: 54px; width: auto; max-width: 210px; object-fit: contain; }
+.wd-logo img { max-height: 54px; width: auto; height: auto; max-width: 210px; object-fit: contain; }
 .wd-wordmark { font-family: var(--wd-font-head); font-weight: 800; font-size: 1.2rem; letter-spacing: 0.02em; line-height: 1.1; text-transform: var(--wd-head-transform); }
 .wd-nav { margin-left: auto; }
 .wd-nav-list { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 0.15rem; }
@@ -326,8 +326,9 @@ body.wd h1, body.wd h2, body.wd h3, body.wd h4 { font-family: var(--wd-font-head
 .wd-hero-fullbleed { min-height: min(78vh, 700px); display: flex; align-items: center; text-align: center; background-size: cover; background-position: center; }
 .wd-hero-fullbleed.wd-hero-inner-page { min-height: 0; }
 .wd-hero-fullbleed .wd-hero-grid { width: 100%; }
-.wd-hero-fullbleed.wd-hero-photo::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(6, 22, 51, 0.55) 0%, rgba(6, 22, 51, 0.72) 100%); }
-.wd-hero-fullbleed .wd-hero-grid { position: relative; z-index: 1; }
+.wd-hero-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; z-index: 0; }
+.wd-hero-fullbleed.wd-hero-photo::before { z-index: 1; content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(6, 22, 51, 0.55) 0%, rgba(6, 22, 51, 0.72) 100%); }
+.wd-hero-fullbleed .wd-hero-grid { position: relative; z-index: 2; }
 .wd-hero-fullbleed.wd-hero-typographic { background: radial-gradient(900px 420px at 85% -10%, rgba(250, 200, 21, 0.22), transparent 62%), radial-gradient(700px 380px at -5% 110%, rgba(40, 90, 190, 0.45), transparent 60%), linear-gradient(165deg, #061633 0%, #0b2552 100%); }
 .wd-modern .wd-hero-title { font-size: clamp(2.2rem, 6vw, 4.6rem); font-weight: 900; }
 

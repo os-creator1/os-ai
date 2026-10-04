@@ -538,7 +538,7 @@ class WebsiteWizardController extends CustomerBaseController
             ])->all(),
             'brandColor' => $theme['brand_color'] ?? null,
             'logo' => isset($theme['logo_asset_uid'], $assets[$theme['logo_asset_uid']]) ? ['url' => $assets[$theme['logo_asset_uid']]->url(), 'alt' => $assets[$theme['logo_asset_uid']]->alt_text] : null,
-            'hero' => isset($theme['hero_asset_uid'], $assets[$theme['hero_asset_uid']]) ? ['url' => $assets[$theme['hero_asset_uid']]->url(), 'alt' => $assets[$theme['hero_asset_uid']]->alt_text] : null,
+            'hero' => isset($theme['hero_asset_uid'], $assets[$theme['hero_asset_uid']]) ? ['url' => \App\Library\Website\Media\WebsiteMediaPayload::thumbUrl($assets[$theme['hero_asset_uid']]), 'alt' => $assets[$theme['hero_asset_uid']]->alt_text] : null,
             'plan' => $current !== null ? $this->planSummary->forResponse($business, $website, $current, $response) : null,
         ];
     }
@@ -1343,6 +1343,8 @@ class WebsiteWizardController extends CustomerBaseController
             if (is_file($fullPath)) {
                 @unlink($fullPath);
             }
+
+            app(\App\Library\Website\Media\ImageVariants::class)->delete($path);
         }
     }
 

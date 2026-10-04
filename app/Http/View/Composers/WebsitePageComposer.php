@@ -54,7 +54,7 @@ final class WebsitePageComposer
         $logoUid = $theme['logo_asset_uid'] ?? null;
         $assets = $data['assetsByUid'] ?? [];
         $logo = $logoUid !== null && isset($assets[$logoUid])
-            ? ['url' => $assets[$logoUid]['url'], 'alt' => ($assets[$logoUid]['alt_text'] ?? null) ?: ((string) ($meta['name'] ?? '') . ' logo')]
+            ? array_merge($assets[$logoUid], ['alt_text' => ($assets[$logoUid]['alt_text'] ?? null) ?: ((string) ($meta['name'] ?? '') . ' logo')])
             : null;
 
         $view->with([
