@@ -34,6 +34,11 @@ final class MergeFieldRegistry
 
     public const GROUP_APPOINTMENT = 'appointment';
 
+    /** Agency Outreach only: the Agency's own identity/booking facts and the prospect being messaged. */
+    public const GROUP_AGENCY = 'agency';
+
+    public const GROUP_PROSPECT = 'prospect';
+
     /** Picker group order and titles. `custom` is the Custom fields sub-group of `contact`. */
     private const GROUP_TITLES = [
         self::GROUP_CONTACT => 'Contact',
@@ -42,6 +47,8 @@ final class MergeFieldRegistry
         self::GROUP_LOCATION => 'Location',
         self::GROUP_OPPORTUNITY => 'Opportunity',
         self::GROUP_APPOINTMENT => 'Appointment',
+        self::GROUP_AGENCY => 'Agency',
+        self::GROUP_PROSPECT => 'Prospect',
     ];
 
     /** @var array<string, array<string, string>> token group => key => label */
@@ -74,6 +81,16 @@ final class MergeFieldRegistry
             'start_time' => 'Appointment time',
             'timezone' => 'Appointment timezone',
         ],
+        'agency' => [
+            'name' => 'Agency name',
+            'website' => 'Agency website',
+            'calendar_link' => 'Agency calendar link',
+        ],
+        'prospect' => [
+            'first_name' => 'Prospect first name',
+            'full_name' => 'Prospect name',
+            'company' => 'Prospect company',
+        ],
     ];
 
     public function __construct(private readonly CustomFieldDefinitionManager $definitions)
@@ -89,7 +106,7 @@ final class MergeFieldRegistry
     /** @return list<string> */
     public static function tokenGroups(): array
     {
-        return ['contact', 'business', 'location', 'opportunity', 'appointment'];
+        return ['contact', 'business', 'location', 'opportunity', 'appointment', 'agency', 'prospect'];
     }
 
     public static function isBuiltIn(string $group, string $key): bool

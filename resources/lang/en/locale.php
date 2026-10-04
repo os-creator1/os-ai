@@ -952,6 +952,7 @@
             'SaaS Plans'              => 'SaaS Plans',
             'Agency Revenue'          => 'Agency Revenue',
             'White Label'             => 'White Label',
+            'Outreach'                => 'Outreach',
             'Accounts'                => 'Accounts',
             'Agency account details'  => 'Agency account details',
             'Get found'               => 'Get found',

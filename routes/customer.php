@@ -2179,6 +2179,17 @@
             Route::post('/campaigns/{campaign}/config', 'Workspace\AgencyProspectingController@updateCampaignConfig')->name('campaigns.config');
             Route::post('/campaigns/{campaign}/start', 'Workspace\AgencyProspectingController@startCampaign')->name('campaigns.start');
 
+            // Agency Outreach V1 — Conversations, Script & Settings, managed campaigns.
+            // View-As never reaches these: every customer.workspaces.* route is Denied there.
+            Route::get('/conversations', 'Workspace\AgencyOutreachController@conversations')->name('conversations.index');
+            Route::post('/conversations/{member}/pause-ai', 'Workspace\AgencyOutreachController@pauseAi')->name('conversations.pause');
+            Route::post('/conversations/{member}/resume-ai', 'Workspace\AgencyOutreachController@resumeAi')->name('conversations.resume');
+            Route::get('/script', 'Workspace\AgencyOutreachController@script')->name('script.show');
+            Route::post('/script', 'Workspace\AgencyOutreachController@updateScript')->name('script.update');
+            Route::post('/script/preview', 'Workspace\AgencyOutreachController@previewScript')->name('script.preview');
+            Route::post('/campaigns-managed', 'Workspace\AgencyOutreachController@storeManagedCampaign')->name('campaigns.managed.store');
+            Route::post('/sending/resume', 'Workspace\AgencyOutreachController@resumeSending')->name('sending.resume');
+
             /*
             |----------------------------------------------------------------
             | Runtime pass — Prospecting Channels (Workspace-owned Twilio/

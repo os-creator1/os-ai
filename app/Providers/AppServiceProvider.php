@@ -517,6 +517,7 @@
                 $app->tagged(\App\Library\Timeline\ContactActivityTimeline::SOURCES_TAG),
             ));
 
+            $this->app->tag([\App\Library\AgencyOutreach\OutreachConversationContextSection::class], \App\Library\Conversations\ConversationContextReader::SECTIONS_TAG);
             $this->app->bind(\App\Library\Conversations\ConversationContextReader::class, fn ($app) => new \App\Library\Conversations\ConversationContextReader(
                 $app->make(\App\Library\Contacts\ContactDirectory::class),
                 $app->tagged(\App\Library\Conversations\ConversationContextReader::SECTIONS_TAG),

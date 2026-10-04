@@ -53,7 +53,7 @@ class CustomerShellNavigationTest extends TestCase
         foreach (['Website', 'Get found'] as $label) {
             $this->assertStringContainsString($label, $this->shellText($growthHome));
         }
-        $this->assertStringContainsString('Prospecting', $this->shellText($agencyHome));
+        $this->assertStringContainsString('Outreach', $this->shellText($agencyHome));
     }
 
     public function test_every_navigation_entry_carries_a_human_label_and_a_hidden_icon(): void

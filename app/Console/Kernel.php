@@ -65,6 +65,7 @@
             DiafaanDLR::class,
             CleanUpJobMonitors::class,
             WarmDashboardCache::class,
+            \App\Console\Commands\Outreach\DispatchDueOutreachFollowUps::class,
         ];
 
         /**
@@ -137,6 +138,11 @@
             // cadence, and the command is bounded and idempotent by the
             // enrollment claim, so an overlapping tick enrolls nobody twice.
             $schedule->command('automation:workflows-date-sweep')->everyFiveMinutes();
+
+            // Agency Outreach V1 (contract §11) — re-dispatches follow-ups that are due and were
+            // neither sent nor cancelled, so a lost delayed job still gets its one nudge. Idempotent
+            // by the ledger key claimed under the member lock.
+            $schedule->command('outreach:dispatch-due-followups')->everyFiveMinutes();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 

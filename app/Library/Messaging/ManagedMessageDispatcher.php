@@ -47,6 +47,7 @@ class ManagedMessageDispatcher
     public function __construct(
         private readonly BusinessMessagingIdentityResolver $resolver,
         private readonly UsageWalletManager $walletManager,
+        private readonly ManagedTransportBilling $billing,
     ) {
     }
 
@@ -175,7 +176,19 @@ class ManagedMessageDispatcher
 
         $messageType = $mediaUrls === [] ? 'sms' : 'mms';
 
-        $operationId = $this->recordAttempt($business, (int) $identity->id, $operationKey, $messageType);
+        // Canonical per-segment billing (ManagedTransportBilling). A refusal
+        // is thrown HERE, before the operation row and before any provider
+        // contact, exactly like every other pre-flight refusal above. A no-op
+        // while the messaging_transport meter is unmetered/unpriced.
+        $reservationId = $this->billing->reserve($business, $operationKey, $quantity);
+
+        try {
+            $operationId = $this->recordAttempt($business, (int) $identity->id, $operationKey, $messageType);
+        } catch (\Throwable $e) {
+            $this->billing->release($reservationId);
+
+            throw $e;
+        }
 
         // The RFC-005-owned measurement, before the provider call and
         // idempotent on the same key. Quantity only — never a price.
@@ -193,21 +206,37 @@ class ManagedMessageDispatcher
         } catch (MessagingProviderNotConfiguredException) {
             // §4.4 — the kill switch is off, or credentials are absent. A
             // clearly reported failure, never a false "sent".
+            $this->billing->release($reservationId);
             $this->finalize($operationId, MessagingOperationStatus::Rejected, null, ProviderErrorCategory::Configuration);
 
             return OutboundMessageResult::rejected(ProviderErrorCategory::Configuration);
         }
 
-        $result = $adapter->send(new OutboundMessageRequest(
-            businessMessagingIdentityId: (int) $identity->id,
-            businessMessagingNumberId: (int) $number->id,
-            messagingProfileId: (string) $identity->messaging_profile_id,
-            fromNumber: (string) $number->phone_number,
-            toNumber: $normalizedTo,
-            body: $body,
-            mediaUrls: $mediaUrls,
-            operationKey: $operationKey,
-        ));
+        try {
+            $result = $adapter->send(new OutboundMessageRequest(
+                businessMessagingIdentityId: (int) $identity->id,
+                businessMessagingNumberId: (int) $number->id,
+                messagingProfileId: (string) $identity->messaging_profile_id,
+                fromNumber: (string) $number->phone_number,
+                toNumber: $normalizedTo,
+                body: $body,
+                mediaUrls: $mediaUrls,
+                operationKey: $operationKey,
+            ));
+        } catch (\Throwable $e) {
+            // The provider outcome is unknown: do not keep the customer's
+            // money held. A later delivery callback / replay settles truth.
+            $this->billing->release($reservationId);
+
+            throw $e;
+        }
+
+        // Charged only on the provider's own confirmed acceptance.
+        if ($result->accepted) {
+            $this->billing->commit($reservationId, $quantity);
+        } else {
+            $this->billing->release($reservationId);
+        }
 
         // Only the provider's own confirmed acceptance counts as success.
         $this->finalize(

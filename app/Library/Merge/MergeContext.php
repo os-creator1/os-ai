@@ -2,6 +2,8 @@
 
 namespace App\Library\Merge;
 
+use App\Models\AgencyProspect;
+use App\Models\AgencyProspectingSetting;
 use App\Models\Appointment;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -29,6 +31,8 @@ final readonly class MergeContext
         public ?BusinessLocation $location = null,
         public ?CrmOpportunity $opportunity = null,
         public ?Appointment $appointment = null,
+        public ?AgencyProspect $prospect = null,
+        public ?AgencyProspectingSetting $outreach = null,
     ) {
     }
 

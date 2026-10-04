@@ -1254,6 +1254,18 @@
                     'status'  => 'error',
                     'message' => ConversationSendFailureReason::MessagingNotReady->customerMessage(),
                 ]);
+            } catch (\App\Library\Messaging\Exceptions\MessagingInsufficientFundsException) {
+                // Canonical per-segment billing (ManagedTransportBilling): the
+                // wallet refused BEFORE any provider contact — a conclusive,
+                // safely retryable refusal once the wallet is funded.
+                if ($managed) {
+                    $this->recordManagedSendFailure($box, $input, $sendUid, ConversationSendFailureReason::InsufficientBalance);
+                }
+
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => ConversationSendFailureReason::InsufficientBalance->customerMessage(),
+                ]);
             } catch (\App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException) {
                 // §4.4 — the platform kill switch is off, or managed
                 // messaging is otherwise unconfigured. Thrown BEFORE the

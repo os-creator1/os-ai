@@ -33,6 +33,7 @@ use App\Listeners\Automation\Workflow\EnrollFromContactTagEvent;
 use App\Listeners\Automation\Workflow\EnrollFromCrmOpportunityEvent;
 use App\Listeners\Automation\Workflow\EnrollFromFormSubmission;
 use App\Listeners\Automation\Workflow\EnrollFromInboundMessage;
+use App\Listeners\Outreach\HandleOutreachInboundMessage;
 use App\Listeners\Coo\InvalidateCooInsights;
 use App\Listeners\Seo\QueueSeoAuditOnWebsitePublished;
 use App\Listeners\NicheBlueprint\InstallBlueprintOnBusinessCreated;
@@ -146,6 +147,9 @@ class EventServiceProvider extends ServiceProvider
         // Queued: the webhook's provider is not kept waiting on enrollment.
         InboundMessageReceived::class => [
             EnrollFromInboundMessage::class,
+            // Agency Outreach V1 (contract §9) — prospect replies. Queued; matches the Agency's own
+            // Business + the sender's number and ignores everything else.
+            HandleOutreachInboundMessage::class,
         ],
         // Automations V2 — CRM sales opportunity facts (App\Events\Crm, never the
         // Advisor's App\Events\Opportunity). The CRM emits after commit; this

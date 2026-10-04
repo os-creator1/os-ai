@@ -179,7 +179,22 @@ class MergeFieldResolver
             }
         }
 
+        // Agency Outreach facts. Prospects and the Outreach script are
+        // Workspace-owned, so they must belong to the context Business's own
+        // Workspace; one that does not is ABSENT (fail closed).
+        $workspaceId = (int) $business->workspace_id;
+
+        $prospect = $context->prospect !== null && $workspaceId > 0 && (int) $context->prospect->workspace_id === $workspaceId
+            ? $context->prospect
+            : null;
+
+        $outreach = $context->outreach !== null && $workspaceId > 0 && (int) $context->outreach->workspace_id === $workspaceId
+            ? $context->outreach
+            : null;
+
         return [
+            'prospect' => $prospect,
+            'outreach' => $outreach,
             'business' => $business,
             'contact' => $contact,
             'location' => $location,
@@ -211,6 +226,8 @@ class MergeFieldResolver
             'location' => $this->locationValue($scope['location'], $key),
             'opportunity' => $this->opportunityValue($scope, $key),
             'appointment' => $this->appointmentValue($scope, $key),
+            'agency' => $this->agencyValue($scope, $key),
+            'prospect' => $this->prospectValue($scope['prospect'], $key),
             default => false,
         };
     }
@@ -309,6 +326,49 @@ class MergeFieldResolver
         $canonical = CustomFieldValueCodec::fromRow($definition->fieldType(), $row);
 
         return $canonical === null ? null : CustomFieldValueCodec::display($definition, $canonical, $business);
+    }
+
+    /** @param array<string, mixed> $scope */
+    private function agencyValue(array $scope, string $key): ?string
+    {
+        $outreach = $scope['outreach'];
+
+        $value = match ($key) {
+            'name' => $outreach?->agency_name ?: $scope['business']->name,
+            'website' => $this->httpUrl($outreach?->website_url),
+            'calendar_link' => $this->httpUrl($outreach?->booking_url),
+            default => null,
+        };
+
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
+    }
+
+    /** Only an http(s) URL is ever merged into a message to a stranger. */
+    private function httpUrl(?string $url): ?string
+    {
+        $url = trim((string) $url);
+
+        return $url !== '' && preg_match('#^https?://[^\s]+$#i', $url) === 1 ? $url : null;
+    }
+
+    private function prospectValue(mixed $prospect, string $key): ?string
+    {
+        if ($prospect === null) {
+            return null;
+        }
+
+        $full = trim((string) $prospect->contact_name);
+
+        $value = match ($key) {
+            'first_name' => $full === '' ? '' : (preg_split('/\s+/', $full)[0] ?? ''),
+            'full_name' => $full,
+            'company' => trim((string) $prospect->company_name),
+            default => '',
+        };
+
+        return $value === '' ? null : $value;
     }
 
     private function businessValue(Business $business, string $key): ?string

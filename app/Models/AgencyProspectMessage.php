@@ -17,6 +17,14 @@ class AgencyProspectMessage extends Model
     public const STATUS_SENT = 'sent';
     public const STATUS_FAILED = 'failed';
     public const STATUS_RECEIVED = 'received';
+    /** Outreach: a send held back (e.g. insufficient balance); re-sent under the same key once the cause clears. */
+    public const STATUS_PAUSED = 'paused';
+
+    public const SOURCE_DETERMINISTIC = 'deterministic';
+    public const SOURCE_AI = 'ai';
+    public const SOURCE_MANUAL = 'manual';
+    public const SOURCE_FOLLOWUP = 'followup';
+    public const SOURCE_OPENER = 'opener';
 
     public const PURPOSE_INITIAL = 'initial';
     public const PURPOSE_AI_REPLY = 'ai_reply';
@@ -35,6 +43,12 @@ class AgencyProspectMessage extends Model
         'intent',
         'sent_at',
         'received_at',
+        'source',
+        'stage_from',
+        'stage_to',
+        'script_version',
+        'actor_user_id',
+        'failure_reason',
     ];
 
     protected $casts = [
