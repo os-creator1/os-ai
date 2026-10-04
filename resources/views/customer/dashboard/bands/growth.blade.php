@@ -32,7 +32,7 @@
                                 @if(! empty($item['summary']))
                                     <p class="mb-25 text-muted" data-role="growth-item-summary">{{ $item['summary'] }}</p>
                                 @endif
-                                <p class="mb-0 text-caption" data-role="growth-item-context">{{ $item['headline'] }}@if($growth["multi_location"] && $item["location_name"]) · {{ $item["location_name"] }}@endif</p>
+                                <p class="mb-0 text-caption" data-role="growth-item-context">{{ $item['headline'] }}</p>
                             </div>
                             @if($item['action_url'] !== null)
                                 <x-button size="sm" :href="$item['action_url']" data-role="growth-item-action">{{ $item['action_label'] }}</x-button>

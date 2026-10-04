@@ -65,16 +65,20 @@ class SettingsHubNavigationTest extends TestCase
             $sidebar = $this->sidebarHtml($html);
             $keys = $this->menuKeys($html);
 
-            // V1 Master Product Blueprint §7 order; Results is not a top-level entry.
-            $expected = ['home', 'opportunities', 'contacts', 'conversations', 'automations', 'website', 'packages_products', 'settings'];
+            // The final V1 sidebar: Home (= the Growth Center), Opportunities, Contacts, Conversations,
+            // Calendar, Automations, Website, SEO, Forms, Packages & Products, Payments & Contracts,
+            // Settings. Results and Growth are not top-level entries (SEO's two children are keys, not
+            // an expanding group, as before).
+            $expected = ['home', 'opportunities', 'contacts', 'conversations', 'calendar', 'automations', 'website', 'seo', 'seo-overview', 'seo-keywords', 'forms', 'packages_products', 'payments_contracts', 'settings'];
             if ($tier === WorkspacePlanTier::Growth) {
-                array_splice($expected, 6, 0, ['gbp']);
+                array_splice($expected, 10, 0, ['gbp', 'seo-audit', 'seo-citations', 'seo-reviews']);
             }
             $this->assertSame($expected, $keys, "[{$tier->value}] the contracted flat sidebar, in order — no Advisor.");
             $this->assertStringNotContainsString('Advisor', $this->shellText($html), 'Business Home carries the next best move; there is no separate Advisor module.');
 
-            $this->assertStringNotContainsString('has-sub', $sidebar, 'Nothing expands in the sidebar.');
-            $this->assertStringNotContainsString('menu-content', $sidebar);
+            // The one expandable entry is the SEO group (its children are SEO's own pages).
+            $this->assertLessThanOrEqual(1, substr_count($sidebar, 'has-sub'), 'Nothing but the SEO group expands.');
+            $this->assertLessThanOrEqual(1, substr_count($sidebar, 'menu-content'));
             $this->assertStringNotContainsString('Messages', $this->shellText($html));
 
             $links = $this->menuLinks($html);
@@ -272,7 +276,7 @@ class SettingsHubNavigationTest extends TestCase
 
         $home = $this->home()->assertOk()->getContent();
         $this->assertContains(route('customer.workspaces.settings.show', $workspace->uid), $this->menuLinks($home));
-        $this->assertStringNotContainsString('has-sub', $this->sidebarHtml($home));
+        $this->assertLessThanOrEqual(1, substr_count($this->sidebarHtml($home), 'has-sub'), 'Nothing but the SEO group expands.');
 
         $html = $this->get(route('customer.workspaces.settings.show', $workspace->uid))->assertOk()->getContent();
         $modules = $this->settingsHubModules($html);

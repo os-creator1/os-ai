@@ -401,7 +401,8 @@ class BusinessHomeNextBestMoveTest extends TestCase
         $sql = $this->sqlDuring(fn () => $this->dashboardFor($customer->user));
 
         $awaitingReads = array_filter($sql, fn (string $s) => str_contains($s, 'chat_box_messages') && str_contains($s, 'last_message_id'));
-        $opportunityReads = array_filter($sql, fn (string $s) => str_contains($s, 'from `opportunities`'));
+        // The Growth band (Home = Growth Center) reads its own bounded top list; this test is about the move's queue read.
+        $opportunityReads = array_filter($sql, fn (string $s) => str_contains($s, 'from `opportunities`') && str_contains(strtolower($s), 'limit ' . BusinessHomePresenter::RECOMMENDATION_QUEUE_CAP));
 
         $this->assertCount(1, $awaitingReads, 'Awaiting reply is read ONCE, shared by the Conversations band and the move.');
         $this->assertCount(1, $opportunityReads, 'One bounded read of the work queue: ' . implode(' | ', $opportunityReads));

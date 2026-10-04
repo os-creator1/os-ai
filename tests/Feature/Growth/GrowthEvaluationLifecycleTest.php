@@ -255,7 +255,8 @@ class GrowthEvaluationLifecycleTest extends TestCase
 
         event(new DocumentPaymentFailed(1, 1, $this->business->id));
 
-        Queue::assertNothingPushed();
+        // Other modules (Automations) legitimately queue their own listeners for this event; Growth must queue nothing.
+        Queue::assertNotPushed(AppJobsGrowthRunGrowthEvaluation::class);
     }
 
     // ── Priority ─────────────────────────────────────────────────────────

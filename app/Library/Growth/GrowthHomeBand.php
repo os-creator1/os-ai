@@ -37,10 +37,10 @@ final class GrowthHomeBand
     public function build(Business $business, int $actorUserId, string $workspaceUid, string $businessUid): array
     {
         $viewer = GrowthViewer::resolve($this->locationGuard, $actorUserId, $business);
-        $names = GrowthOpportunityPresenter::locationNames($business->id);
-
+        // Home is the overview: it carries no Location labels (the detail page does),
+        // which keeps its read budget flat.
         $items = $this->reader->top($business, $viewer, self::LIMIT)
-            ->map(fn (Opportunity $o) => $this->presenter->present($o, $names, $workspaceUid, $businessUid))
+            ->map(fn (Opportunity $o) => $this->presenter->present($o, [], $workspaceUid, $businessUid))
             ->all();
 
         $latest = $viewer->maySeeScore() ? $this->scores->latest($business) : null;
@@ -49,8 +49,10 @@ final class GrowthHomeBand
 
         return [
             'items' => $items,
-            'multi_location' => count($names) > 1,
-            'open_count' => $this->reader->summary($business, $viewer)['open'],
+            // top() and this count read the SAME open set, so a short list IS the total: one read saved.
+            'open_count' => count($items) < self::LIMIT
+                ? count($items)
+                : $this->reader->applyState($this->reader->base($business, $viewer), GrowthOpportunityReader::STATE_OPEN)->count(),
             'positives' => $latest !== null ? $this->scores->positives($latest, self::LIMIT) : [],
             'score' => $latest?->overall_score !== null ? (int) $latest->overall_score : null,
             'delta' => $movement['delta'] ?? null,

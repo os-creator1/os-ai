@@ -72,7 +72,9 @@ class DashboardQueryBudgetTest extends TestCase
      * the next-best-move band and the headlines band's own insight() read, so
      * this sub-slice's entire cost is the one new SELECT.
      */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 13;
+    // 13 -> 17 with Home = Growth Center: the Growth band reads the Location ACL ids, the top
+    // recommendations, the latest score and (only when the list is full) one open count.
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 17;
 
     /**
      * Observed: three B5 methods per Business performance period, plus
