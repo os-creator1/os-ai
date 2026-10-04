@@ -222,7 +222,9 @@ class PlatformRunExecutor
     {
         $run->forceFill(['state' => $state->value, 'scheduled_at' => $until])->save();
 
-        if ($state === PlatformRunState::Waiting && $until !== null) {
+        // A 'sync' queue would run the delayed job immediately and recurse; there the sweep
+        // (resumeDue) is what picks the run up when it is due.
+        if ($state === PlatformRunState::Waiting && $until !== null && config('queue.default') !== 'sync') {
             ExecutePlatformAutomationRun::dispatch($run->id)->delay($until);
         }
     }

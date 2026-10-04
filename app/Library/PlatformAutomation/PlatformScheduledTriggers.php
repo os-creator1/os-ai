@@ -3,7 +3,10 @@
 namespace App\Library\PlatformAutomation;
 
 use App\Enums\PlatformAutomation\PlatformAutomationStatus;
+use App\Enums\PlatformAutomation\PlatformRunState;
+use App\Jobs\PlatformAutomation\ExecutePlatformAutomationRun;
 use App\Models\PlatformAutomation;
+use App\Models\PlatformAutomationRun;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -40,7 +43,27 @@ class PlatformScheduledTriggers
                 });
         }
 
+        $created['resumed_runs'] = $this->resumeDue();
+
         return $created;
+    }
+
+    /**
+     * Safety net: a waiting run whose delayed job was lost (queue flushed, worker down, sync
+     * driver) is re-queued once it is due. Advancing is idempotent and per-run locked.
+     */
+    private function resumeDue(): int
+    {
+        $ids = PlatformAutomationRun::query()
+            ->where('state', PlatformRunState::Waiting->value)
+            ->where('scheduled_at', '<=', now())
+            ->orderBy('id')->limit(self::CANDIDATE_CAP)->pluck('id');
+
+        foreach ($ids as $id) {
+            ExecutePlatformAutomationRun::dispatch((int) $id);
+        }
+
+        return $ids->count();
     }
 
     private function sweepOne(PlatformAutomation $automation): int

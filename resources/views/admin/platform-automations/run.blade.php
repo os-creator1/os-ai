@@ -43,7 +43,7 @@
             <div class="card-header"><h5 class="card-title mb-0">Steps</h5></div>
             <div class="table-responsive">
                 <table class="table" data-role="pa-steps">
-                    <thead class="table-primary"><tr><th>#</th><th>Action</th><th>Safety</th><th>State</th><th>Attempts</th><th>Result / reference</th><th></th></tr></thead>
+                    <thead class="table-primary"><tr><th>#</th><th>Action</th><th>Safety</th><th>State</th><th>Attempts</th><th>Result / reference</th></tr></thead>
                     <tbody>
                     @foreach ($run->steps as $step)
                         <tr data-step="{{ $step->step_index }}">
@@ -59,19 +59,23 @@
                                 @if ($step->result){{ json_encode($step->result) }}@endif
                                 @if ($step->decided_by_user_id)<div class="text-muted">decided by user #{{ $step->decided_by_user_id }} · {{ $step->decided_at?->format('M j, g:i A') }}</div>@endif
                             </td>
-                            <td class="text-nowrap">
-                                @if ($step->state->value === 'awaiting_approval')
-                                    <div class="alert alert-warning p-1 mb-0 small" data-role="pa-approval">
-                                        This step changes an account's state or billing. It runs only if you approve — and then as you.
+                        </tr>
+                        @if ($step->state->value === 'awaiting_approval')
+                            <tr>
+                                <td colspan="6">
+                                    <div class="alert alert-warning mb-0" data-role="pa-approval">
+                                        <strong>Needs your approval.</strong>
+                                        This step changes an account's state or billing. It runs only if you approve, and then as you
+                                        (the change is recorded in the audit trail under your name).
                                         <div class="mt-1 d-flex gap-1">
                                             <form method="POST" action="{{ route('admin.platform-automations.runs.approve', [$run, $step->step_index]) }}"
                                                   onsubmit="return confirm('Approve and run this step now?');">@csrf<button class="btn btn-sm btn-warning" data-role="pa-approve">Approve and run</button></form>
                                             <form method="POST" action="{{ route('admin.platform-automations.runs.reject', [$run, $step->step_index]) }}">@csrf<button class="btn btn-sm btn-outline-danger" data-role="pa-reject">Reject</button></form>
                                         </div>
                                     </div>
-                                @endif
-                            </td>
-                        </tr>
+                                </td>
+                            </tr>
+                        @endif
                     @endforeach
                     </tbody>
                 </table>

@@ -661,8 +661,8 @@
                             [
                                 'url'    => url(config('app.admin_path') . '/announcements'),
                                 'slug'   => config('app.admin_path') . '/announcements',
-                                'name'   => 'Announcements',
-                                'i18n'   => 'Announcements',
+                                'name'   => 'Customer Announcements',
+                                'i18n'   => 'Customer Announcements',
                                 'access' => 'view announcement',
                                 'icon'   => 'tv',
                             ],

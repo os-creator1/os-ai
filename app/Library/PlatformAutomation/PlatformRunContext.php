@@ -109,7 +109,7 @@ final class PlatformRunContext
             'business.name' => (string) ($this->business()?->name ?? ''),
             'plan.name' => (string) ($plan ?? ''),
             'trial.ends_at' => $trialEnds === null ? '' : $trialEnds->format('F j, Y'),
-            'trial.days_left' => $trialEnds === null ? '' : (string) max(0, (int) now()->diffInDays($trialEnds, false)),
+            'trial.days_left' => $trialEnds === null ? '' : (string) max(0, (int) ceil(now()->diffInHours($trialEnds, false) / 24)),
             'platform.name' => (string) config('app.name'),
         ];
     }
