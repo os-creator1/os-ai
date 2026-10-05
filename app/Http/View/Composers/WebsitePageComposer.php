@@ -6,6 +6,7 @@ use App\Library\Website\Design\BrandColors;
 use App\Library\Website\Design\WebsiteCtaResolver;
 use App\Library\Website\Design\WebsiteDesigns;
 use App\Library\Website\Design\WebsiteNavigationBuilder;
+use App\Library\Website\Seo\WebsiteBreadcrumbStructuredData;
 use App\Library\Website\Seo\WebsiteHeadMeta;
 use Illuminate\Contracts\View\View;
 
@@ -68,6 +69,7 @@ final class WebsitePageComposer
             'logo' => $logo,
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
+            'breadcrumbs' => $currentNav !== null ? WebsiteBreadcrumbStructuredData::trail($currentNav, $pages) : [],
             'head' => $this->headMeta->build(
                 json_decode(json_encode($page), true) ?: [],
                 $meta,

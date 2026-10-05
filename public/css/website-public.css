@@ -668,3 +668,10 @@ body.website-button-outline .website-hero-has-image .website-btn-primary:hover {
 /* A package's included features, as a list (never a run-on paragraph). */
 .website-service-features { margin: 0.5rem 0 0.75rem; padding-left: 1.2rem; }
 .website-service-features li { margin: 0.2rem 0; }
+
+/* Visible breadcrumb (matches the BreadcrumbList structured data). */
+.website-breadcrumbs { max-width: var(--website-content-width, 960px); margin: 0 auto; padding: 0.6rem 1rem 0; font-size: 0.85rem; }
+.website-breadcrumbs ol { display: flex; flex-wrap: wrap; gap: 0.35rem; list-style: none; margin: 0; padding: 0; }
+.website-breadcrumbs li + li::before { content: "/"; margin-right: 0.35rem; opacity: 0.55; }
+.website-breadcrumbs a { color: inherit; opacity: 0.8; text-decoration: underline; }
+.website-breadcrumbs [aria-current="page"] { opacity: 0.9; font-weight: 600; }

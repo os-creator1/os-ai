@@ -4,10 +4,13 @@ namespace App\Http\Controllers\Public;
 
 use App\Http\Controllers\Controller;
 use App\Library\Website\Seo\WebsiteAddressPrivacyGate;
+use App\Library\Website\Seo\WebsiteCrawlFiles;
+use App\Library\Website\Seo\WebsiteRedirectMap;
 use App\Library\Website\WebsitePublicEntitlementGate;
 use App\Models\Website;
 use App\Models\WebsiteRevision;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 
@@ -33,7 +36,7 @@ class WebsiteController extends Controller
     ) {
     }
 
-    public function home(Website $website): View|Response
+    public function home(Website $website): View|Response|RedirectResponse
     {
         $snapshot = $this->resolveSnapshotOrAbort($website);
 
@@ -44,36 +47,55 @@ class WebsiteController extends Controller
         return $this->renderPage($website, $snapshot, $page);
     }
 
-    public function page(Website $website, string $slug): View|Response
+    public function page(Website $website, string $slug): View|Response|RedirectResponse
     {
         $snapshot = $this->resolveSnapshotOrAbort($website);
 
-        $page = collect($snapshot['pages'])->firstWhere('slug', $slug);
+        // Strict comparison: a loose one would make "010" answer the page whose slug is "10".
+        $page = collect($snapshot['pages'])->first(fn ($candidate) => (string) ($candidate['slug'] ?? '') === $slug && empty($candidate['is_home']));
 
-        abort_unless($page !== null, 404);
+        if ($page === null) {
+            // The page's address changed since the live revision was made.
+            $target = WebsiteRedirectMap::target($snapshot, $slug);
+
+            abort_unless($target !== null, 404);
+
+            return redirect()->to($this->addressOf($website, $target === '' ? null : $target), 301);
+        }
 
         return $this->renderPage($website, $snapshot, $page);
     }
 
-    public function sitemap(Website $website): Response
+    /**
+     * SEO V1 final — the platform path is never indexable, so it has no
+     * sitemap of its own (a sitemap must list only indexable canonical
+     * URLs). With an Active primary domain the real sitemap lives there.
+     */
+    public function sitemap(Website $website): RedirectResponse
     {
-        $snapshot = $this->resolveSnapshotOrAbort($website);
+        $this->resolveSnapshotOrAbort($website);
 
-        $urls = collect($snapshot['pages'])->map(function ($page) use ($website) {
-            $loc = $page['is_home']
-                ? route('public.website.home', $website->public_id)
-                : route('public.website.page', [$website->public_id, $page['slug']]);
+        $domain = $website->activePrimaryDomain();
 
-            return '<url><loc>' . e($loc) . '</loc></url>';
-        })->implode('');
+        abort_unless($domain !== null, 404);
 
-        $xml = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . $urls . '</urlset>';
+        return redirect()->away('https://'.$domain->domain.'/sitemap.xml', 301);
+    }
 
-        // Contract §21 — extensionless by design: the root .htaccess
-        // rewrites any *.xml request straight to a public/ static-file
-        // lookup before Laravel's router ever runs. The Content-Type
-        // header is what tells a crawler this is XML, not the URL path.
-        return response($xml, 200, ['Content-Type' => 'application/xml']);
+    /** The platform host's own robots.txt (the static public/robots.txt was removed so the platform and custom domains share one generator). */
+    public function robots(): Response
+    {
+        return response(WebsiteCrawlFiles::platformRobots(), 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
+    }
+
+    /**
+     * The one address of a page on the platform path ($slug null = home).
+     */
+    private function addressOf(Website $website, ?string $slug): string
+    {
+        return $slug === null
+            ? route('public.website.home', $website->public_id)
+            : route('public.website.page', [$website->public_id, $slug]);
     }
 
     private function resolveSnapshotOrAbort(Website $website): array
@@ -91,7 +113,7 @@ class WebsiteController extends Controller
         return $snapshot;
     }
 
-    private function renderPage(Website $website, array $snapshot, array $page): Response
+    private function renderPage(Website $website, array $snapshot, array $page): Response|RedirectResponse
     {
         $assetsByUid = collect($snapshot['assets'] ?? [])->keyBy('uid')->all();
         $formsByUid = collect($snapshot['forms'] ?? [])->keyBy('uid')->all();
@@ -105,9 +127,15 @@ class WebsiteController extends Controller
         // §3.2 G-3's gap). With no active domain, there is no better
         // canonical than this URL itself, so the tag is simply omitted.
         $domain = $website->activePrimaryDomain();
-        $canonicalUrl = $domain !== null
-            ? 'https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug'])
-            : null;
+        $canonicalUrl = null;
+
+        if ($domain !== null) {
+            // The same content is served on the Business's own domain. A
+            // noindex here combined with a canonical pointing at another
+            // host is a mixed signal crawlers may resolve the wrong way, so
+            // the platform path simply moves permanently to the real address.
+            return redirect()->away('https://'.$domain->domain.($page['is_home'] ? '/' : '/'.$page['slug']), 301);
+        }
 
         // Contract §7.5 — same live, per-request address-privacy check
         // App\Http\Middleware\ResolveCustomDomainWebsite applies for a

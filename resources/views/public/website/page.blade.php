@@ -116,6 +116,7 @@
 
     @if ($design ?? null)
         @include('public.website.design.header')
+        @include('public.website.breadcrumbs')
 
         <?php
             // Template-owned order of a Home page's sections, then the
@@ -235,6 +236,7 @@
                 @endif
             </div>
         </header>
+        @include('public.website.breadcrumbs')
 
         <main class="website-main">
             <div class="website-container">

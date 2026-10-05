@@ -104,7 +104,8 @@ final class WebsiteHeadMeta
             return null;
         }
 
-        $clean = trim(preg_replace('/\s+/u', ' ', strip_tags($value)) ?? '');
+        // Whitespace only: the owner's text is never rewritten (Blade escapes it on output).
+        $clean = trim(preg_replace('/\s+/u', ' ', $value) ?? '');
 
         return $clean === '' ? null : $clean;
     }
@@ -131,7 +132,7 @@ final class WebsiteHeadMeta
                 continue;
             }
 
-            $url = $this->bestUrl($asset);
+            $url = self::bestUrl($asset);
 
             if ($url !== null) {
                 return ['url' => $url, 'alt' => Str::limit(trim((string) ($asset['alt_text'] ?? '')), 120, '')];
@@ -141,8 +142,12 @@ final class WebsiteHeadMeta
         return null;
     }
 
-    /** @param  array<string, mixed>  $asset */
-    private function bestUrl(array $asset): ?string
+    /**
+     * The best absolute URL to share for an asset payload: the widest derivative up to 1280px, else the original.
+     *
+     * @param  array<string, mixed>  $asset
+     */
+    public static function bestUrl(array $asset): ?string
     {
         $best = null;
 

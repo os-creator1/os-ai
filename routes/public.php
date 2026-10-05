@@ -375,6 +375,10 @@
      * environment, per its own pre-existing, unmodified behavior —
      * mirroring routes/admin.php's identical {business} precedent).
      */
+    // robots.txt for the platform host. Custom domains answer their own robots.txt
+    // from App\Http\Middleware\ResolveCustomDomainWebsite before routing runs.
+    Route::get('robots.txt', 'Public\WebsiteController@robots')->name('public.robots');
+
     Route::prefix('sites')->group(function () {
         Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->middleware('attribution.capture')->name('public.website.home')
             ->missing(fn () => abort(404));
