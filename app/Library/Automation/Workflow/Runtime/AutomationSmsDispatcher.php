@@ -4,6 +4,7 @@ namespace App\Library\Automation\Workflow\Runtime;
 
 use App\Library\Automation\Workflow\Contracts\NodeExecutionOutcome;
 use App\Library\Messaging\BusinessMessagingIdentityResolver;
+use App\Library\Messaging\BusinessSmsSendingPath;
 use App\Library\Messaging\DTO\LocationSendContext;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\AutomationEnrollment;
@@ -78,6 +79,7 @@ class AutomationSmsDispatcher
         private readonly CampaignRepository $campaigns,
         private readonly BusinessMessagingIdentityResolver $identities,
         private readonly AutomationSendContext $sendContext,
+        private readonly BusinessSmsSendingPath $paths,
     ) {
     }
 
@@ -203,85 +205,9 @@ class AutomationSmsDispatcher
      */
     private function resolveSendingPath(Business $business, LocationSendContext $context): array|string
     {
-        $originator = $this->resolveOriginator($business);
-
-        if ($originator === null) {
-            return 'no_business_sending_path';
-        }
-
-        // 1. Managed sending identity, when one is active. quickSend() detects this
-        //    itself and delegates; it must NOT be handed a legacy server. The number
-        //    is proven for the Location here, before anything is sent.
-        $identity = $this->identities->resolveForBusiness($business);
-
-        if ($identity !== null) {
-            try {
-                $number = $this->identities->resolvePrimaryNumber($identity);
-            } catch (MessagingIdentityConflictException) {
-                // Not a Location question: the dispatcher fails exactly as it always
-                // has for a Business whose number is not usable.
-                return ['originator' => $originator, 'sending_server' => null];
-            }
-
-            return $this->identities->numberServes($number, $business, $context)
-                ? ['originator' => $originator, 'sending_server' => null]
-                : 'location_sender_unavailable';
-        }
-
-        // 2. Otherwise the Business's own active assigned BYO channel, whose
-        //    underlying sending server must itself still be active (B4 §7.A).
-        $assignment = CustomerBasedSendingServer::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', 1)
-            ->with('sendingServer')
-            ->orderBy('id')
-            ->get()
-            ->first(fn ($row): bool => $row->sendingServer !== null && (bool) $row->sendingServer->status);
-
-        if ($assignment === null) {
-            // 3. Neither path exists: fail closed.
-            return 'no_business_sending_path';
-        }
-
-        // A BYO sender has no Location assignment: it cannot be shown to belong to one
-        // Location of several, so a Location-limited workflow of such a Business
-        // refuses. Everything else is as it always was.
-        if ($context->scopeBound && count($this->identities->activeLocationIds($business)) > 1) {
-            return 'location_sender_unavailable';
-        }
-
-        return ['originator' => $originator, 'sending_server' => (int) $assignment->sending_server];
-    }
-
-    /**
-     * The Business's own canonical originator: an active SenderID first, then an
-     * assigned phone number that can carry SMS.
-     *
-     * Deterministic by id so the same Business always sends from the same
-     * identity, rather than from whatever the database happened to return first.
-     * Choosing BETWEEN several is a product decision that belongs to CX Slice 6,
-     * not here — this is only enough to send at all.
-     */
-    private function resolveOriginator(Business $business): ?string
-    {
-        $senderId = Senderid::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', Senderid::STATUS_ACTIVE)
-            ->orderBy('id')
-            ->value('sender_id');
-
-        if (is_string($senderId) && trim($senderId) !== '') {
-            return $senderId;
-        }
-
-        $number = PhoneNumbers::query()
-            ->where('business_id', (int) $business->id)
-            ->where('status', 'assigned')
-            ->orderBy('id')
-            ->get(['number', 'capabilities'])
-            ->first(fn ($row): bool => str_contains((string) $row->capabilities, 'sms'));
-
-        return $number === null ? null : (string) $number->number;
+        // The Location-aware rule now lives in the shared BusinessSmsSendingPath
+        // (Calendar booking notifications use the very same one).
+        return $this->paths->resolveForLocation($business, $context);
     }
 
     /**

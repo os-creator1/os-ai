@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Library\Calendar\BookingTypeManager;
 use App\Library\Calendar\CalendarLocationResolver;
+use App\Library\Calendar\Notifications\BookingNotificationReadiness;
 use App\Models\BookingType;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -15,6 +16,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 
 /**
  * Implementation Contract 15 §5.1, §6, §12.B — authenticated Booking Type
@@ -45,6 +47,7 @@ class BookingTypesController extends Controller
     public function __construct(
         private readonly BookingTypeManager $bookingTypes,
         private readonly CalendarLocationResolver $locations,
+        private readonly BookingNotificationReadiness $notificationReadiness,
     ) {
     }
 
@@ -101,6 +104,7 @@ class BookingTypesController extends Controller
             'bookingType' => $bookingType,
             'configuredStaff' => $this->bookingTypes->configuredStaffWithEligibility($bookingType),
             'readiness' => $this->bookingTypes->publicBookingReadiness($bookingType),
+            'notificationReadiness' => $this->notificationReadiness->forBookingType($bookingType),
             'eligibleStaff' => $this->locations->eligibleStaff($workspace, $business, $location),
         ]);
     }
@@ -196,7 +200,7 @@ class BookingTypesController extends Controller
     /** @return array<string, mixed> */
     private function validated(Request $request): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'description' => ['nullable', 'string'],
             'duration_minutes' => ['required', 'integer', 'min:1', 'max:1440'],
@@ -208,7 +212,21 @@ class BookingTypesController extends Controller
             'slot_interval_minutes' => ['sometimes', 'integer', 'in:'.implode(',', BookingType::SLOT_INTERVALS)],
             'color' => ['nullable', 'string', 'max:16'],
             'is_active' => ['sometimes', 'boolean'],
+            'notify_email' => ['sometimes', 'boolean'],
+            'notify_sms' => ['sometimes', 'boolean'],
+            'reminders_submitted' => ['sometimes', 'boolean'],
+            'reminder_offsets' => ['sometimes', 'array', 'max:'.BookingType::MAX_REMINDERS],
+            'reminder_offsets.*' => ['integer', Rule::in(array_keys(BookingType::REMINDER_OFFSET_OPTIONS))],
         ]);
+
+        // A form that submitted the reminders section with every row removed sends
+        // no `reminder_offsets` at all; that is "no reminders", not "unchanged".
+        if ($request->boolean('reminders_submitted')) {
+            $data['reminder_offsets'] = $data['reminder_offsets'] ?? [];
+        }
+        unset($data['reminders_submitted']);
+
+        return $data;
     }
 
     private function backToEdit(string $workspaceUid, string $businessUid, string $locationUid, string $bookingTypeUid): RedirectResponse

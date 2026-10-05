@@ -144,6 +144,12 @@
             // neither sent nor cancelled, so a lost delayed job still gets its one nudge. Idempotent
             // by the ledger key claimed under the member lock.
             $schedule->command('outreach:dispatch-due-followups')->everyFiveMinutes();
+
+            // Booking Notifications V1 — queues due booking confirmations and reminders.
+            // Every minute: a reminder's resolution is the minute. Bounded by --limit and
+            // idempotent by the appointment_notifications ledger, so an overlapping or
+            // repeated tick sends nothing twice.
+            $schedule->command('calendar:dispatch-due-reminders')->everyMinute();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 
