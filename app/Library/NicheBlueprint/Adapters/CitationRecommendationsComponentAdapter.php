@@ -17,7 +17,10 @@ use InvalidArgumentException;
  * (`GrowthCitationFactReader` reads `seo_niche_citation_recommendations` by the
  * Business's industry), so this component installs nothing per Business.
  * Instead, publishing a version SYNCS this component into that table through
- * the canonical `SeoCitationCatalogManager::recommend`; a directory the
+ * the canonical `SeoCitationCatalogManager::syncRecommendation`: a missing row
+ * is created, and an existing one is left as the Platform Owner set it (a
+ * disabled recommendation stays disabled; importance / guidance change only
+ * while they still match what the previous version declared). A directory the
  * previous version recommended and this one no longer lists is removed.
  * The sync key is the Blueprint's `broad_industry` (the same niche key the
  * reader uses), so a Blueprint without one cannot publish this component.
@@ -48,14 +51,26 @@ final class CitationRecommendationsComponentAdapter extends ConfigOnlyBlueprintC
 
         $current = $this->parse($payload);
         $currentKeys = array_column($current, 'directory_key');
+        $previous = $previousPayload === null ? [] : $this->parse($previousPayload);
+        $previousByKey = array_column($previous, null, 'directory_key');
 
         foreach ($current as $rec) {
             $directory = $this->directory($rec['directory_key']);
-            $this->catalog->recommend($actorUserId, $nicheKey, (string) $directory->uid, $rec['importance'], $rec['guidance']);
+            $before = $previousByKey[$rec['directory_key']] ?? null;
+
+            // Creates a missing recommendation; never reverts an owner's edit or re-enables one they disabled.
+            $this->catalog->syncRecommendation(
+                $actorUserId,
+                $nicheKey,
+                (string) $directory->uid,
+                $rec['importance'],
+                $rec['guidance'],
+                $before === null ? null : ['importance' => $before['importance'], 'guidance' => $before['guidance']],
+            );
         }
 
         if ($previousPayload !== null) {
-            foreach ($this->parse($previousPayload) as $old) {
+            foreach ($previous as $old) {
                 if (in_array($old['directory_key'], $currentKeys, true)) {
                     continue;
                 }

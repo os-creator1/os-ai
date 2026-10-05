@@ -36,8 +36,9 @@ use Illuminate\Validation\Rule;
  * Location or record mismatch is `abort(404)`; no implicit route-model
  * binding.
  *
- * FAIL-CLOSED WHILE `Planned`. SeoModule is Planned until Sub-slice H, so
- * every route here answers 404 today.
+ * ENTITLEMENT. SeoModule is Available (Sub-slice H flipped it), so a Business
+ * whose plan includes it reaches these routes and any other Business gets the
+ * same 404; the decision is made by EntitlementManager, never here.
  *
  * INPUTS ARE CLOSED. The only request fields read are review_url, channel,
  * contact_uid and crm_opportunity_uid. There is no rating, sentiment,

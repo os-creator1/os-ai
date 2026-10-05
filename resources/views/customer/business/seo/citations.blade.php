@@ -129,7 +129,7 @@
                 <div class="cz-stat {{ $summary['attention'] > 0 ? 'cz-stat--warn' : '' }}" data-stat="attention">
                     <p class="cz-stat-label"><x-ds-icon name="triangle-alert" size="14" />Needs attention</p>
                     <p class="cz-stat-value">{{ $summary['attention'] }}</p>
-                    <p class="cz-stat-sub">Setup, details or a review due</p>
+                    <p class="cz-stat-sub">A listing that differs, was marked for correction, or is due a review</p>
                 </div>
                 <div class="cz-stat" data-stat="nap-consistency">
                     <p class="cz-stat-label"><x-ds-icon name="shield-check" size="14" />NAP matches</p>
@@ -145,6 +145,7 @@
             <div class="cz-progress mb-2" data-role="citation-progress">
                 <span data-progress="essential"><strong>Essential</strong> {{ $summary['essentialDone'] }} / {{ $summary['essentialTotal'] }} completed</span>
                 <span data-progress="recommended"><strong>Recommended</strong> {{ $summary['recommendedDone'] }} / {{ $summary['recommendedTotal'] }} completed</span>
+                <span data-progress="needs-setup"><strong>Needs setup</strong> {{ $summary['needsSetup'] }}</span>
                 <span data-progress="not-checked"><strong>Not checked</strong> {{ $summary['notChecked'] }}</span>
             </div>
 
@@ -161,7 +162,13 @@
                 </div>
                 <dl class="cz-profile" data-role="canonical-nap">
                     <div><dt><x-ds-icon name="building-2" size="12" />Name</dt><dd data-canonical="name">{{ $canonical['name'] ?? 'Not set' }}</dd></div>
-                    <div><dt><x-ds-icon name="phone" size="12" />Phone</dt><dd data-canonical="phone">{{ $canonical['phone'] ?? 'Not set' }}</dd></div>
+                    <div>
+                        <dt><x-ds-icon name="phone" size="12" />{{ $section->phoneComparable ? 'Phone' : 'Business phone' }}</dt>
+                        <dd data-canonical="phone">{{ $canonical['phone'] ?? 'Not set' }}</dd>
+                        @unless($section->phoneComparable)
+                            <dd class="cz-muted" data-role="phone-not-compared">One number for the whole business, so it is not compared with this location's listings.</dd>
+                        @endunless
+                    </div>
                     <div>
                         <dt><x-ds-icon name="map-pin" size="12" />Address</dt>
                         @if($section->addressPermitted)
@@ -209,7 +216,7 @@
             <div class="d-flex justify-content-between align-items-end flex-wrap gap-1 mb-1">
                 <div>
                     <p class="text-section-heading mb-0">Directory listings</p>
-                    <p class="text-caption mb-0">The directories Business OS tracks for you{{ $nicheName ? ', including ' . $nicheName . ' picks' : '' }}. Record what each one shows to compare it.</p>
+                    <p class="text-caption mb-0">Directories worth checking for your business{{ $nicheName ? ', including ' . $nicheName . ' picks' : '' }}. You track them by hand: record what each one shows to compare it.</p>
                 </div>
                 @if($canAdd)
                     <button type="button" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-50" data-bs-toggle="offcanvas" data-bs-target="#citation-drawer-new-custom" data-role="add-custom">
@@ -220,7 +227,7 @@
 
             <div class="cz-toolbar mb-1" data-role="citation-filters">
                 <div class="cz-filters" role="group" aria-label="Filter listings">
-                    @foreach(['all' => 'All', 'essential' => 'Essential', 'recommended' => 'Recommended', 'attention' => 'Needs attention', 'notchecked' => 'Not checked', 'accurate' => 'Accurate', 'custom' => 'Custom'] as $filterKey => $filterLabel)
+                    @foreach(['all' => 'All', 'essential' => 'Essential', 'recommended' => 'Recommended', 'setup' => 'Needs setup', 'attention' => 'Needs attention', 'notchecked' => 'Not checked', 'accurate' => 'Accurate', 'custom' => 'Custom'] as $filterKey => $filterLabel)
                         <button type="button" class="cz-filter @if($filterKey === 'all') is-active @endif" data-filter="{{ $filterKey }}">{{ $filterLabel }}</button>
                     @endforeach
                 </div>
@@ -245,19 +252,23 @@
                                 $google = $section->google;
                                 [$gLabel, $gVariant, $gIcon, $gCopy] = match ($googleState) {
                                     SeoCitationLocationSection::GOOGLE_CONNECTED => ['Connected', 'success', 'circle-check', $section->googleCheckedAutomatically() ? 'Checked automatically from your Google connection.' : 'Linked to your Google listing.'],
-                                    SeoCitationLocationSection::GOOGLE_CONNECTION_LOST => ['Needs attention', 'warning', 'triangle-alert', 'The Google connection was lost.'],
-                                    default => ['Not linked', 'accent', 'circle-dashed', 'Not linked to a Google listing yet.'],
+                                    SeoCitationLocationSection::GOOGLE_CONNECTION_LOST => ['Needs attention', 'warning', 'triangle-alert', 'The Google connection is not active.'],
+                                    default => ['Not linked', 'neutral', 'circle-dashed', 'Not linked to a Google listing yet. Nothing to do if this business has no Google listing.'],
                                 };
-                                $gDiffers = $googleNap !== null && in_array(SeoNapFieldResult::Mismatch, $googleNap, true);
-                                $gAttention = $googleState !== SeoCitationLocationSection::GOOGLE_CONNECTED || $gDiffers;
-                                $gAccurate = $googleNap !== null && ! $gDiffers && in_array(SeoNapFieldResult::Consistent, $googleNap, true);
+                                // The row's flags come from the SAME section methods the summary counts use.
+                                $gDifferingFields = $section->googleDifferingFields();
+                                $gDiffering = array_merge(array_map('ucfirst', $gDifferingFields), $section->googleOtherDifferences());
+                                $gAttention = $section->googleNeedsAttention();
+                                $gAccurate = $googleNap !== null && $gDifferingFields === [] && in_array(SeoNapFieldResult::Consistent, $googleNap, true);
+                                $gDataState = $gAccurate ? 'accurate' : ($gAttention ? 'needs_attention' : ($googleState === SeoCitationLocationSection::GOOGLE_NOT_LINKED ? 'not_started' : 'listed'));
+                                $gAsOf = $google?->healthAsOf;
                             @endphp
-                            <div class="cz-row cz-row--wide" data-role="google-row" data-google-state="{{ $googleState }}" data-importance="essential" data-custom="0" data-notchecked="{{ $googleNap === null ? '1' : '0' }}" data-attention="{{ $gAttention ? '1' : '0' }}" data-state="{{ $gAccurate ? 'accurate' : ($gAttention ? 'needs_attention' : 'listed') }}" data-name="google business profile">
+                            <div class="cz-row cz-row--wide" data-role="google-row" data-google-state="{{ $googleState }}" data-importance="essential" data-custom="0" data-notchecked="{{ $googleNap === null ? '1' : '0' }}" data-attention="{{ $gAttention ? '1' : '0' }}" data-setup-needed="0" data-state="{{ $gDataState }}" data-name="google business profile">
                                 <div class="cz-c-dir cz-dir">
                                     <span class="cz-dir-icon"><x-ds-icon name="map-pin" size="18" /></span>
                                     <span>
                                         <span class="cz-dir-name" style="cursor:default">Google Business Profile</span>
-                                        <span class="cz-dir-kind"><x-badge variant="accent">Essential</x-badge> <span class="cz-mode" data-role="tracking-mode">{{ $section->googleCheckedAutomatically() ? 'Checked automatically' : 'Connected' }}</span></span>
+                                        <span class="cz-dir-kind"><x-badge variant="accent">Essential</x-badge> <span class="cz-mode" data-role="tracking-mode">{{ $section->googleCheckedAutomatically() ? 'Checked automatically' : ($googleState === SeoCitationLocationSection::GOOGLE_CONNECTED ? 'Connected' : 'Not connected') }}</span></span>
                                     </span>
                                 </div>
                                 <div class="cz-c-status">
@@ -269,7 +280,10 @@
                                         <span class="cz-muted">Connect to link this location to Google Business Profile.</span>
                                     @else
                                         @if($google->health !== null)
-                                            <span class="d-block" data-role="google-health">{{ $google->health->label() }}</span>
+                                            <span class="d-block" data-role="google-health">{{ $google->health->label() }}@if($gAsOf !== null) <span class="text-caption" data-role="google-health-as-of">as of {{ $gAsOf->format('M j, Y') }}</span>@endif</span>
+                                        @endif
+                                        @if($google->healthIsStale)
+                                            <span class="text-caption d-block text-warning" data-role="google-stale">Google data may be out of date. Reconnect or refresh it on the Google Business Profile page.</span>
                                         @endif
                                         @if($googleNap !== null)
                                             <span class="d-flex flex-wrap gap-1 mt-25" data-role="google-nap">
@@ -282,8 +296,14 @@
                                                 @endforeach
                                             </span>
                                         @endif
-                                        @if($google->napMismatchCount !== null)
-                                            <span class="text-caption d-block" data-role="google-mismatch-count">{{ $google->napMismatchCount }} {{ $google->napMismatchCount === 1 ? 'detail differs' : 'details differ' }} from Google.</span>
+                                        @if($googleNap !== null)
+                                            <span class="text-caption d-block" data-role="google-mismatch-count">{{ count($gDiffering) }} {{ count($gDiffering) === 1 ? 'detail differs' : 'details differ' }} from Google.</span>
+                                            @if($gDiffering !== [])
+                                                <span class="text-caption d-block" data-role="google-differing-fields">Differs: {{ implode(', ', $gDiffering) }}.</span>
+                                            @endif
+                                            @if($gAsOf !== null)
+                                                <span class="text-caption d-block" data-role="google-details-as-of">Google details as of {{ $gAsOf->format('M j, Y') }}.</span>
+                                            @endif
                                         @endif
                                         <span class="text-caption d-block">Read-only. Managed in Google Business Profile. Street address is not compared.</span>
                                     @endif

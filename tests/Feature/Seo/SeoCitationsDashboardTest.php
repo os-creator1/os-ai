@@ -230,20 +230,23 @@ class SeoCitationsDashboardTest extends TestCase
 
         $html = $this->page($workspace, $business, $location);
 
-        // Bing is listed (linked); Facebook is not started and Google is not
-        // linked (both attention). The actor holds the GBP permission, so
-        // Google is a third tracked listing.
+        // Bing is listed and accurate; every other directory is untouched and
+        // Google is not linked. The actor holds the GBP permission, so Google is
+        // a tracked listing too.
         // 15 offered directories (10 core + 5 Photo Booth) + the Google row.
         $this->assertSame('Listings tracked 16 Directories for this location', $this->stat($html, 'tracked'));
         $this->assertSame('Completed 1 Listed with details recorded, or connected', $this->stat($html, 'linked'));
-        $this->assertSame('Needs attention 15 Setup, details or a review due', $this->stat($html, 'attention'));
+        // Untouched directories are NOT problems: "Needs attention" counts real
+        // problems only, and "Needs setup" counts the unfinished work.
+        $this->assertSame('Needs attention 0 A listing that differs, was marked for correction, or is due a review', $this->stat($html, 'attention'));
+        $this->assertMatchesRegularExpression('/data-progress="needs-setup"><strong>Needs setup<\/strong> 14</', $html);
     }
 
     // -----------------------------------------------------------------
     // Google Business Profile
     // -----------------------------------------------------------------
 
-    public function test_google_not_linked_shows_connect_actions_and_is_listed_in_needs_attention(): void
+    public function test_google_not_linked_shows_connect_actions_but_is_neutral_and_never_an_attention_item(): void
     {
         $this->bindFakeGoogleClient();
         [, $business, $workspace, $location] = $this->tenant();
@@ -252,8 +255,12 @@ class SeoCitationsDashboardTest extends TestCase
 
         $this->assertStringContainsString('data-google-state="not_linked"', $html);
         $this->assertStringContainsString('Connect Google Business Profile', $html);
-        $this->assertStringContainsString('data-action="google"', $html);
         $this->assertStringContainsString(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]), $html);
+        // A Business may have no Google listing and cannot mark the row not applicable, so it
+        // is a neutral "Not linked": never a "What to do next" item and never counted as attention.
+        $this->assertStringNotContainsString('data-action="google"', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-row"[^>]*data-attention="0"/', $html);
+        $this->assertMatchesRegularExpression('/data-role="google-state">.*?Not linked/s', $html);
     }
 
     public function test_google_connected_shows_connected_and_no_google_action_item(): void

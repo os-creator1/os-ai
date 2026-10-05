@@ -66,6 +66,13 @@ use Illuminate\Support\Str;
  * BusinessLocation::isActive() (§10.5). Another Business's custom directory is
  * never loaded, so it is as absent as a guessed key.
  *
+ * WHAT A WRITE MAY TOUCH. A platform directory is writable only where the page
+ * OFFERS it (SeoCitationApplicability::isOffered), so a forged request cannot
+ * write what the UI shows read-only. A custom directory that applies to ALL
+ * Locations is added, renamed and archived only by an actor who can access every
+ * Location; the custom-directory ceiling counts only what the actor can see; and
+ * adding one is a single transaction under the Business row lock.
+ *
  * PRIVATE-ADDRESS INVARIANT (§8.5). `listed_address` must be null unless
  * GoogleBusinessProfileReadMask::addressPermittedForLocation() is true for
  * the Location. A submission carrying a non-empty listed_address for a
@@ -104,7 +111,7 @@ final class SeoCitationManager
      */
     public function page(Workspace $workspace, Business $business, User $actor): array
     {
-        $accessible = $this->scope->accessibleLocations((int) $actor->id, $business);
+        ['accessible' => $accessible, 'all' => $allLocations] = $this->scope->reach((int) $actor->id, $business);
 
         if ($accessible->isEmpty()) {
             return [];
@@ -141,10 +148,25 @@ final class SeoCitationManager
             ? null
             : collect($google)->keyBy(fn ($status) => $status->locationId);
 
+        // The phone is a Business-wide fact and a Business-wide custom
+        // directory applies to every Location, so both depend on how many
+        // Locations the Business has and whether this actor reaches them all.
+        $accessibleIds = $accessible->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $reachesEveryLocation = $allLocations->every(fn ($location) => in_array((int) $location->id, $accessibleIds, true));
+
         $sections = [];
 
         foreach ($accessible as $location) {
-            $sections[] = $this->section($business, $location, $directories, $recommendations, $citations, $googleByLocation?->get((int) $location->id));
+            $sections[] = $this->section(
+                $business,
+                $location,
+                $directories,
+                $recommendations,
+                $citations,
+                $googleByLocation?->get((int) $location->id),
+                SeoNapComparator::phoneAppliesAt($location, $allLocations->count()),
+                $reachesEveryLocation,
+            );
         }
 
         return $sections;
@@ -240,38 +262,69 @@ final class SeoCitationManager
 
         $name = $this->requiredBounded($input['name'] ?? null, self::MAX_DIRECTORY_NAME, 'name', 'Enter the directory name.');
         $claimUrl = $this->safeUrlOrNull($input['claim_url'] ?? null, 'claim_url');
-
-        $existing = SeoCitationDirectory::query()->where('business_id', $business->id)->where('is_active', true)->count();
-
-        if ($existing >= $this->config->citationsMaxCustomDirectoriesPerBusiness()) {
-            throw new SeoCitationRefusedException('name', 'You have reached the limit of custom directories. Archive one to add another.');
-        }
-
         $values = $this->validated($location, $input);
+        $sharedAcrossLocations = ($input['location_scope'] ?? 'all') !== 'this';
 
-        $directory = new SeoCitationDirectory();
-        $directory->forceFill([
-            'key' => 'custom_' . Str::lower(Str::random(16)),
-            'name' => $name,
-            'claim_url' => $claimUrl,
-            'website_url' => null,
-            'category' => 'custom',
-            'icon' => 'link',
-            'importance' => SeoDirectoryImportance::Optional->value,
-            'tracking_mode' => SeoDirectoryTrackingMode::Manual->value,
-            'setup_guidance' => null,
-            'is_platform_core' => false,
-            'is_active' => true,
-            'sort_order' => 1000,
-            'business_id' => $business->id,
-            'business_location_id' => ($input['location_scope'] ?? 'all') === 'this' ? $location->id : null,
-        ])->save();
+        // A directory that applies to every Location is visible to Locations an
+        // actor restricted to some Locations cannot reach; such an actor adds
+        // a directory for their own Location only.
+        if ($sharedAcrossLocations && ! $this->scope->accessesEveryLocation($actorUserId, $business)) {
+            throw new SeoCitationRefusedException('location_scope', 'Only someone with access to every location can add a directory for all locations. Choose this location only.');
+        }
 
         $values['business_id'] = $business->id;
         $values['verification_source'] = SeoCitation::SOURCE_USER_ASSERTED;
         $values['updated_by_user_id'] = $actorUserId;
 
-        return $this->persist($location, $directory, $values);
+        // One transaction: the directory and its first citation are saved
+        // together or not at all, and the Business row is locked so two adds
+        // cannot both pass the ceiling check.
+        return $business->getConnection()->transaction(function () use ($actorUserId, $business, $location, $name, $claimUrl, $values, $sharedAcrossLocations): SeoCitation {
+            $business->newQuery()->whereKey($business->getKey())->lockForUpdate()->first();
+
+            if ($this->visibleCustomDirectoryCount($actorUserId, $business) >= $this->config->citationsMaxCustomDirectoriesPerBusiness()) {
+                throw new SeoCitationRefusedException('name', 'You have reached the limit of custom directories. Archive one to add another.');
+            }
+
+            $directory = new SeoCitationDirectory();
+            $directory->forceFill([
+                'key' => 'custom_' . Str::lower(Str::random(16)),
+                'name' => $name,
+                'claim_url' => $claimUrl,
+                'website_url' => null,
+                'category' => 'custom',
+                'icon' => 'link',
+                'importance' => SeoDirectoryImportance::Optional->value,
+                'tracking_mode' => SeoDirectoryTrackingMode::Manual->value,
+                'setup_guidance' => null,
+                'is_platform_core' => false,
+                'is_active' => true,
+                'sort_order' => 1000,
+                'business_id' => $business->id,
+                'business_location_id' => $sharedAcrossLocations ? null : $location->id,
+            ])->save();
+
+            return $this->persist($location, $directory, $values);
+        });
+    }
+
+    /**
+     * How many active custom directories this ACTOR can see — the Business-wide
+     * ones plus those scoped to a Location they can reach. The ceiling is
+     * measured against what the actor can see, so reaching it can never reveal
+     * a directory scoped to a Location they cannot access.
+     */
+    private function visibleCustomDirectoryCount(int $actorUserId, Business $business): int
+    {
+        $reachableIds = $this->scope->accessibleLocations($actorUserId, $business)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        return SeoCitationDirectory::query()
+            ->where('business_id', $business->id)
+            ->where('is_active', true)
+            ->where(function ($query) use ($reachableIds): void {
+                $query->whereNull('business_location_id')->orWhereIn('business_location_id', $reachableIds);
+            })
+            ->count();
     }
 
     /**
@@ -288,7 +341,7 @@ final class SeoCitationManager
     {
         $location = $this->accessibleLocationByUid($actorUserId, $business, $locationUid);
         $this->assertOperational($location);
-        $directory = $this->ownCustomDirectory($business, $location, $directoryKey);
+        $directory = $this->ownCustomDirectory($actorUserId, $business, $location, $directoryKey);
 
         $directory->forceFill([
             'name' => $this->requiredBounded($input['name'] ?? null, self::MAX_DIRECTORY_NAME, 'name', 'Enter the directory name.'),
@@ -303,13 +356,14 @@ final class SeoCitationManager
      * readable; it just stops being offered.
      *
      * @throws SeoCitationNotFoundException
+     * @throws SeoCitationRefusedException
      */
     public function archiveCustomDirectory(int $actorUserId, Business $business, string $locationUid, string $directoryKey): void
     {
         $location = $this->accessibleLocationByUid($actorUserId, $business, $locationUid);
         $this->assertOperational($location);
 
-        $this->ownCustomDirectory($business, $location, $directoryKey)->forceFill(['is_active' => false])->save();
+        $this->ownCustomDirectory($actorUserId, $business, $location, $directoryKey)->forceFill(['is_active' => false])->save();
     }
 
     /**
@@ -331,9 +385,13 @@ final class SeoCitationManager
 
     /**
      * An ACTIVE directory this Business may write to at this Location: a
-     * platform directory, or its own custom one (scoped to this Location if it
-     * was). Anything else — another Business's custom directory, a custom one
-     * scoped to a different Location — is "not found".
+     * platform directory that is OFFERED here (core or niche-recommended, and
+     * applicable to the Location's country — the very rule that decides which
+     * rows the page lets the owner edit), or its own custom one (scoped to this
+     * Location if it was). Anything else — another Business's custom directory,
+     * a custom one scoped to a different Location, a platform directory the
+     * page shows read-only or not at all — is "not found", so a forged POST
+     * cannot write what the UI would not offer.
      *
      * @throws SeoCitationNotFoundException
      */
@@ -349,11 +407,31 @@ final class SeoCitationManager
 
         if ($directory === null
             || ($directory->business_location_id !== null && (int) $directory->business_location_id !== (int) $location->id)
-            || ! $this->appliesToCountry($directory, $location)) {
+            || ! $this->appliesToCountry($directory, $location)
+            || ! SeoCitationApplicability::isOffered($directory, $this->enabledRecommendation($business, $directory), $location)) {
             throw new SeoCitationNotFoundException('Directory not found.');
         }
 
         return $directory;
+    }
+
+    /**
+     * The Business niche's ENABLED recommendation for one platform directory,
+     * or null (also for a custom directory, which no niche recommends).
+     */
+    private function enabledRecommendation(Business $business, SeoCitationDirectory $directory): ?SeoNicheCitationRecommendation
+    {
+        $nicheKey = $business->industry?->value;
+
+        if ($nicheKey === null || $directory->isCustom()) {
+            return null;
+        }
+
+        return SeoNicheCitationRecommendation::query()
+            ->where('niche_key', $nicheKey)
+            ->where('is_enabled', true)
+            ->where('seo_citation_directory_id', $directory->id)
+            ->first();
     }
 
     /**
@@ -369,9 +447,18 @@ final class SeoCitationManager
     }
 
     /**
+     * This Business's OWN custom directory, for a change (rename, link,
+     * archive). A directory scoped to one Location may be changed by anyone who
+     * can reach that Location. A directory that applies to ALL Locations is
+     * shared by Locations the actor may not be able to reach, so it may be
+     * changed only by an actor who can reach every one of them — otherwise a
+     * user restricted to Location A could rename or archive what Location B
+     * shows.
+     *
      * @throws SeoCitationNotFoundException
+     * @throws SeoCitationRefusedException
      */
-    private function ownCustomDirectory(Business $business, BusinessLocation $location, string $directoryKey): SeoCitationDirectory
+    private function ownCustomDirectory(int $actorUserId, Business $business, BusinessLocation $location, string $directoryKey): SeoCitationDirectory
     {
         $directory = SeoCitationDirectory::query()
             ->where('key', $directoryKey)
@@ -381,6 +468,10 @@ final class SeoCitationManager
         if ($directory === null
             || ($directory->business_location_id !== null && (int) $directory->business_location_id !== (int) $location->id)) {
             throw new SeoCitationNotFoundException('Directory not found.');
+        }
+
+        if ($directory->business_location_id === null && ! $this->scope->accessesEveryLocation($actorUserId, $business)) {
+            throw new SeoCitationRefusedException('directory', 'This directory is shared by all your locations, so only someone with access to every location can change it.');
         }
 
         return $directory;
@@ -474,7 +565,7 @@ final class SeoCitationManager
      * @param  \Illuminate\Support\Collection<int, SeoNicheCitationRecommendation>  $recommendations  keyed by directory id
      * @param  \Illuminate\Support\Collection<string, SeoCitation>  $citations
      */
-    private function section(Business $business, BusinessLocation $location, $directories, $recommendations, $citations, $google): SeoCitationLocationSection
+    private function section(Business $business, BusinessLocation $location, $directories, $recommendations, $citations, $google, bool $phoneComparable, bool $reachesEveryLocation): SeoCitationLocationSection
     {
         $addressPermitted = $this->addressPredicate->addressPermittedForLocation($location);
         $canonical = $this->comparator->canonicalFor($business, $location);
@@ -520,7 +611,7 @@ final class SeoCitationManager
                     'name' => $citation?->listed_name,
                     'phone' => $citation?->listed_phone,
                     'address' => $listedAddress,
-                ]),
+                ], $business->country_code, $location->country_code, $phoneComparable),
                 writable: $writable && $offered,
                 importance: $recommendation?->importance,
                 nicheLabel: $recommendation !== null ? $nicheLabel : null,
@@ -528,6 +619,7 @@ final class SeoCitationManager
                 listedWebsite: $citation?->listed_website,
                 websiteResult: $this->comparator->compareWebsite($canonicalWebsite, $citation?->listed_website),
                 offered: $offered,
+                phoneCompared: $phoneComparable,
                 reviewDue: $citation !== null
                     && $citation->status === SeoCitationStatus::Listed
                     && $citation->last_verified_at !== null
@@ -535,16 +627,9 @@ final class SeoCitationManager
             );
         }
 
-        usort($rows, function (SeoCitationRow $a, SeoCitationRow $b) use ($recommendations): int {
-            $order = static fn (SeoCitationRow $row): array => [
-                $row->importance()->rank(),
-                $recommendations->get($row->directory->id)?->sort_order ?? $row->directory->sort_order,
-                $row->directory->sort_order,
-                $row->directory->id,
-            ];
-
-            return $order($a) <=> $order($b);
-        });
+        // The page order — the same one the Growth Center reads (SeoCitationApplicability::orderKey).
+        usort($rows, fn (SeoCitationRow $a, SeoCitationRow $b): int => SeoCitationApplicability::orderKey($a->directory, $recommendations->get($a->directory->id))
+            <=> SeoCitationApplicability::orderKey($b->directory, $recommendations->get($b->directory->id)));
 
         return new SeoCitationLocationSection(
             $location,
@@ -555,28 +640,34 @@ final class SeoCitationManager
             $google,
             $canonicalWebsite,
             $nicheLabel,
-            $this->googleNap($canonical, $canonicalWebsite, $google),
+            $this->googleNap($canonical, $canonicalWebsite, $google, $business, $location, $phoneComparable),
+            $phoneComparable,
+            $reachesEveryLocation,
         );
     }
 
     /**
      * The Google row's per-field comparison, from the GBP read model only and
-     * only while the mirror is fresh (the reader nulls these otherwise).
-     * Computed here for display and DISCARDED: nothing Google-derived is ever
-     * stored. The street address is never part of it.
+     * only while the connection is ACTIVE and the mirror is fresh (the reader
+     * nulls the mirror fields otherwise). Computed here for display and
+     * DISCARDED: nothing Google-derived is ever stored. The street address is
+     * never part of it.
      *
      * @param  array{name: ?string, phone: ?string, address: ?string}  $canonical
-     * @return array{name: SeoNapFieldResult, phone: SeoNapFieldResult, website: SeoNapFieldResult}|null null when no fresh mirror
+     * @return array{name: SeoNapFieldResult, phone: SeoNapFieldResult, website: SeoNapFieldResult}|null null when not connected or no fresh mirror
      */
-    private function googleNap(array $canonical, ?string $canonicalWebsite, $google): ?array
+    private function googleNap(array $canonical, ?string $canonicalWebsite, $google, Business $business, BusinessLocation $location, bool $phoneComparable): ?array
     {
-        if ($google === null || ! $google->bound || ! $google->mirrorIsFresh) {
+        if ($google === null || ! $google->bound || $google->connectionState !== 'active' || ! $google->mirrorIsFresh) {
             return null;
         }
 
         $result = $this->comparator->compare(
             ['name' => $canonical['name'], 'phone' => $canonical['phone'], 'address' => null],
             ['name' => $google->mirrorName, 'phone' => $google->mirrorPhone, 'address' => null],
+            $business->country_code,
+            $location->country_code,
+            $phoneComparable,
         );
 
         return [

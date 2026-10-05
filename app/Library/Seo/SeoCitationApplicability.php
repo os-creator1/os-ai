@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Library\Seo;
 
+use App\Enums\Seo\SeoDirectoryImportance;
 use App\Models\BusinessLocation;
 use App\Models\SeoCitationDirectory;
 use App\Models\SeoNicheCitationRecommendation;
@@ -31,6 +32,33 @@ final class SeoCitationApplicability
         }
 
         return strtoupper(trim((string) $directory->country_scope)) === strtoupper(trim((string) $location->country_code));
+    }
+
+    /**
+     * A directory's EFFECTIVE importance: the niche's override, else the directory's own
+     * default, else Recommended — the rule the page row (SeoCitationRow::importance()) applies.
+     */
+    public static function importanceFor(SeoCitationDirectory $directory, ?SeoNicheCitationRecommendation $recommendation): SeoDirectoryImportance
+    {
+        return $recommendation?->importance ?? $directory->importance ?? SeoDirectoryImportance::Recommended;
+    }
+
+    /**
+     * The ONE ordering of offered directories: effective importance, then the niche's own order
+     * (else the directory's), then the catalog order. The Citations page sorts by it and the
+     * Growth Center picks its priority directories in it, so the directories Growth asks about
+     * are the ones the page lists first.
+     *
+     * @return array{0: int, 1: int, 2: int, 3: int}
+     */
+    public static function orderKey(SeoCitationDirectory $directory, ?SeoNicheCitationRecommendation $recommendation): array
+    {
+        return [
+            self::importanceFor($directory, $recommendation)->rank(),
+            (int) ($recommendation?->sort_order ?? $directory->sort_order),
+            (int) $directory->sort_order,
+            (int) $directory->id,
+        ];
     }
 
     /**

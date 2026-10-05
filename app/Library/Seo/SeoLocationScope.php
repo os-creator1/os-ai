@@ -55,6 +55,39 @@ final class SeoLocationScope
     }
 
     /**
+     * The actor's accessible Locations AND every Location of the Business, from
+     * ONE read of the Business's Locations — for a page that needs both (to know
+     * whether the actor reaches them all) without a second query.
+     *
+     * @return array{accessible: Collection<int, \App\Models\BusinessLocation>, all: Collection<int, \App\Models\BusinessLocation>}
+     */
+    public function reach(int $userId, Business $business): array
+    {
+        $accessibleIds = array_flip($this->guard->accessibleLocationIdsForBusiness($userId, $business));
+        $all = $this->locations->forBusiness($business);
+
+        return [
+            'accessible' => $all->filter(fn ($location) => isset($accessibleIds[(int) $location->id]))->values(),
+            'all' => $all,
+        ];
+    }
+
+    /**
+     * True only when the actor may access EVERY Location of the Business (any
+     * lifecycle state). Something that applies to all of a Business's Locations
+     * — a Business-wide custom citation directory — may be changed only by an
+     * actor with that reach: a user restricted to some Locations must not
+     * change what the Locations they cannot reach see.
+     */
+    public function accessesEveryLocation(int $userId, Business $business): bool
+    {
+        $accessible = $this->guard->accessibleLocationIdsForBusiness($userId, $business);
+        $all = $this->locations->forBusiness($business)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        return $all !== [] && array_diff($all, $accessible) === [];
+    }
+
+    /**
      * The accessible Locations that are still operational. Location-bound
      * SEO WRITES (later sub-slices) require this; Archived Locations keep
      * their history visible read-only (Contract 18 §10.5).

@@ -98,9 +98,14 @@ class SeoNapComparatorTest extends TestCase
                 ['name' => 'Acme Plumbing Ltd', 'phone' => '+15550101234', 'address' => null],
                 ['name' => 'mismatch', 'phone' => 'consistent', 'address' => 'unchecked'],
             ],
-            'phone differs (national vs international is a mismatch: no region inference)' => [
+            'phone national vs international with no known country is unable to verify, not a mismatch' => [
                 $c,
                 ['name' => 'Acme Plumbing', 'phone' => '5550101234', 'address' => null],
+                ['name' => 'consistent', 'phone' => 'not_comparable', 'address' => 'unchecked'],
+            ],
+            'phone with different digits is a mismatch' => [
+                $c,
+                ['name' => 'Acme Plumbing', 'phone' => '+15550101299', 'address' => null],
                 ['name' => 'consistent', 'phone' => 'mismatch', 'address' => 'unchecked'],
             ],
             'address differs' => [
@@ -207,6 +212,117 @@ class SeoNapComparatorTest extends TestCase
         // whatever the listing shows.
         $result = app(SeoNapComparator::class)->compare($canonical, ['name' => null, 'phone' => null, 'address' => '99 Secret Lane']);
         $this->assertSame(SeoNapFieldResult::NotComparable, $result['address']);
+    }
+
+    // -----------------------------------------------------------------
+    // B1 — address and phone are free text: the same address or number
+    // written differently is NOT a mismatch, and when the comparison is not
+    // confident the answer is "unable to verify", never a false Mismatch.
+    // -----------------------------------------------------------------
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: string}>  canonical address, listed address, expected result (country US)
+     */
+    public static function addressFixtures(): array
+    {
+        $c = '123 Main St, Chicago, IL, 60601, US';
+
+        return [
+            'the audit example: no comma before the postal code, no country' => [$c, '123 Main St, Chicago, IL 60601', 'consistent'],
+            'case, punctuation and the written-out street suffix' => [$c, '123 MAIN STREET, CHICAGO, IL 60601', 'consistent'],
+            'the state written out and the country as USA' => [$c, '123 Main Street, Chicago, Illinois 60601, USA', 'consistent'],
+            'postal code before the city (order is not a difference)' => [$c, '60601 Chicago IL 123 Main Street', 'consistent'],
+            'ZIP+4' => [$c, '123 Main St, Chicago, IL 60601-1234', 'consistent'],
+            'a partial address that agrees with everything it states' => [$c, '123 Main Street', 'consistent'],
+            'a suite the profile does not carry is unable to verify' => [$c, '123 Main St, Suite 200, Chicago, IL 60601', 'not_comparable'],
+            'only the city and state say nothing about the street' => [$c, 'Chicago, IL', 'not_comparable'],
+            'the same house number on a different street is unable to verify' => [$c, '123 Elm St, Chicago, IL', 'not_comparable'],
+            'a different house number is a mismatch' => [$c, '124 Main St, Chicago, IL 60601', 'mismatch'],
+            'a different postal code is a mismatch' => [$c, '123 Main St, Chicago, IL 60602', 'mismatch'],
+            'Canadian postal code spacing' => ['1 Main St, Toronto, ON, M5V 2T6, CA', '1 Main Street, Toronto, Ontario M5V2T6, Canada', 'consistent'],
+        ];
+    }
+
+    #[DataProvider('addressFixtures')]
+    public function test_addresses_are_compared_without_false_mismatches(string $canonical, string $listed, string $expected): void
+    {
+        $country = str_ends_with($canonical, ', CA') ? 'CA' : 'US';
+
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => null, 'phone' => null, 'address' => $canonical],
+            ['name' => null, 'phone' => null, 'address' => $listed],
+            $country,
+            $country,
+        );
+
+        $this->assertSame($expected, $result['address']->value);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: ?string, 3: string}>  canonical phone, listed phone, business country, expected
+     */
+    public static function phoneFixtures2(): array
+    {
+        return [
+            'the audit example: national beside international, US' => ['(312) 555-1212', '+1 312 555 1212', 'US', 'consistent'],
+            'a leading 1 without the plus' => ['+1 312 555 1212', '1-312-555-1212', 'US', 'consistent'],
+            'Canada shares the calling code' => ['+1 416 555 0100', '(416) 555-0100', 'CA', 'consistent'],
+            'an extension is not part of the number' => ['+1 312 555 1212', '312-555-1212 ext. 5', 'US', 'consistent'],
+            'a UK trunk zero' => ['+44 20 7946 0958', '020 7946 0958', 'GB', 'consistent'],
+            'different digits are a mismatch' => ['+1 312 555 1212', '312-555-1213', 'US', 'mismatch'],
+            'another country is a mismatch' => ['+1 312 555 1212', '+44 20 7946 0958', 'US', 'mismatch'],
+            'a number listed without its area code is unable to verify' => ['+1 312 555 1212', '555-1212', 'US', 'not_comparable'],
+            'no country: the + form beside the bare form is unable to verify' => ['+15550101234', '5550101234', null, 'not_comparable'],
+            'no country: identical digits still match' => ['+15550101234', '+1 (555) 010-1234', null, 'consistent'],
+        ];
+    }
+
+    #[DataProvider('phoneFixtures2')]
+    public function test_phones_are_compared_with_the_business_country_as_context(string $canonical, string $listed, ?string $country, string $expected): void
+    {
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => null, 'phone' => $canonical, 'address' => null],
+            ['name' => null, 'phone' => $listed, 'address' => null],
+            $country,
+            $country,
+        );
+
+        $this->assertSame($expected, $result['phone']->value);
+    }
+
+    public function test_an_unrecorded_field_is_never_a_mismatch_even_with_context(): void
+    {
+        $result = app(SeoNapComparator::class)->compare(
+            ['name' => 'Acme', 'phone' => '+13125551212', 'address' => '123 Main St, Chicago, IL, 60601, US'],
+            ['name' => null, 'phone' => null, 'address' => null],
+            'US',
+            'US',
+        );
+
+        $this->assertSame(['unchecked', 'unchecked', 'unchecked'], array_map(fn (SeoNapFieldResult $r) => $r->value, array_values($result)));
+    }
+
+    public function test_the_phone_is_only_claimed_for_the_main_location_of_a_multi_location_business(): void
+    {
+        $primary = new \App\Models\BusinessLocation(['is_primary' => true]);
+        $primary->is_primary = true;
+        $secondary = new \App\Models\BusinessLocation();
+        $secondary->is_primary = false;
+
+        $this->assertTrue(SeoNapComparator::phoneAppliesAt($primary, 3), 'the main Location');
+        $this->assertFalse(SeoNapComparator::phoneAppliesAt($secondary, 3), 'a secondary Location may list its own number');
+        $this->assertTrue(SeoNapComparator::phoneAppliesAt($secondary, 1), 'the only Location is the Business');
+
+        $skipped = app(SeoNapComparator::class)->compare(
+            ['name' => 'Acme', 'phone' => '+13125551212', 'address' => null],
+            ['name' => 'Acme', 'phone' => '+14155550000', 'address' => null],
+            'US',
+            'US',
+            comparePhone: false,
+        );
+
+        $this->assertSame(SeoNapFieldResult::NotComparable, $skipped['phone'], 'not compared, so never a false Mismatch');
+        $this->assertSame(SeoNapFieldResult::Consistent, $skipped['name']);
     }
 
     public function test_the_comparator_holds_no_state_and_touches_no_io(): void

@@ -139,25 +139,30 @@ final class SeoReviewRequestManager
     }
 
     /**
-     * The ledger for a set of ALREADY-AUTHORIZED Location ids, newest first.
-     * A Location not in the list is never read or counted.
+     * The ledger for a set of ALREADY-AUTHORIZED Location ids, newest first,
+     * at most `$limitPerLocation` rows for EACH Location (one query), so a busy
+     * Location never starves the others. A Location not in the list is never
+     * read or counted.
      *
      * @param  array<int, int>  $accessibleLocationIds
      * @return Collection<int, SeoReviewRequest>
      */
-    public function forAccessibleLocations(Business $business, array $accessibleLocationIds, int $limit = 200): Collection
+    public function forAccessibleLocations(Business $business, array $accessibleLocationIds, int $limitPerLocation = 200): Collection
     {
         if ($accessibleLocationIds === []) {
             return new Collection();
         }
 
-        return SeoReviewRequest::query()
-            ->where('business_id', $business->id)
-            ->whereIn('business_location_id', $accessibleLocationIds)
-            ->orderByDesc('requested_at')
-            ->orderByDesc('id')
-            ->limit($limit)
-            ->get();
+        return SeoPerLocationLimit::rows(
+            $accessibleLocationIds,
+            $limitPerLocation,
+            fn (int $locationId) => SeoReviewRequest::query()
+                ->where('business_id', $business->id)
+                ->where('business_location_id', $locationId)
+                ->orderByDesc('requested_at')
+                ->orderByDesc('id'),
+        )->sort(fn (SeoReviewRequest $a, SeoReviewRequest $b) => [$b->requested_at?->getTimestamp(), $b->id] <=> [$a->requested_at?->getTimestamp(), $a->id])
+            ->values();
     }
 
     /**

@@ -4,7 +4,6 @@ namespace App\Library\Seo;
 
 use App\DTO\GoogleBusinessProfile\GoogleLocationStatus;
 use App\Enums\Seo\SeoCitationDisplayState;
-use App\Enums\Seo\SeoCitationStatus;
 use App\Enums\Seo\SeoDirectoryImportance;
 use App\Enums\Seo\SeoNapFieldResult;
 use App\Models\BusinessLocation;
@@ -21,18 +20,38 @@ use App\Models\BusinessLocation;
  * renders. It is never stored as a citation. `googleNap` is the per-field
  * comparison of what the fresh Google mirror shows against the business
  * profile (name, phone, website — never the street address); it is null
- * whenever the mirror is absent or expired, computed for display and never
- * stored.
+ * whenever the connection is not active or the mirror is absent or expired,
+ * computed for display and never stored.
+ *
+ * GOOGLE STATE. `connected` requires an ACTIVE Google connection (the same
+ * rule the Website review-source status applies). A Location that is bound but
+ * whose connection is revoked, still pending or disconnected is
+ * `connection_lost` — it needs reconnecting and is never shown as connected,
+ * counted as complete or described as checked automatically. A Location with
+ * no binding is `not_linked`: neutral, not a problem (a Business may have no
+ * Google listing and cannot mark the Google row not-applicable), so it is
+ * never a "Needs attention" item.
  *
  * `canonical` carries the canonical NAP for display. Its `address` is null
  * whenever `addressPermitted` is false. `canonicalWebsite` is the Business
- * website, compared only against a recorded listing website.
+ * website, compared only against a recorded listing website. `phoneComparable`
+ * is false for a secondary Location of a multi-Location Business: the phone is
+ * a Business-wide fact, so it is not claimed to be what that Location lists.
+ * `canEditSharedDirectories` is true only for an actor who may access EVERY
+ * Location of the Business — the only actor who may add, rename or archive a
+ * custom directory that applies to all of them.
  *
  * COMPLETION IS DEFINED, NOT IMPLIED. A row is "complete" when its owner
  * marked it Listed and recorded something about it (SeoCitationRow::
  * isComplete()); the Google row is complete when it is connected. A directory
  * that merely exists in the catalog is never complete. Not-applicable rows
  * leave every denominator.
+ *
+ * NEEDS SETUP IS NOT NEEDS ATTENTION. "Needs setup" counts rows the owner has
+ * not started or finished; "Needs attention" counts only real problems (a
+ * recorded difference, a listing marked as needing correction, a review due, a
+ * lost Google connection, a Google difference). Both are derived from the same
+ * rows the list shows (SeoCitationRow::needsSetup() / needsAttention()).
  */
 final class SeoCitationLocationSection
 {
@@ -45,6 +64,9 @@ final class SeoCitationLocationSection
     public const GROUP_RECOMMENDED = 'recommended';
     public const GROUP_OPTIONAL = 'optional';
     public const GROUP_CUSTOM = 'custom';
+
+    /** The GBP comparison fields the Google row's own chips already show. */
+    private const GOOGLE_CHIP_LABELS = ['Business name', 'Phone', 'Website'];
 
     /**
      * @param  array{name: ?string, phone: ?string, address: ?string}  $canonical
@@ -61,12 +83,14 @@ final class SeoCitationLocationSection
         public readonly ?string $canonicalWebsite = null,
         public readonly ?string $nicheLabel = null,
         public readonly ?array $googleNap = null,
+        public readonly bool $phoneComparable = true,
+        public readonly bool $canEditSharedDirectories = true,
     ) {
     }
 
     /**
      * The Google row's state, from the GBP read model only: null when the
-     * actor may not see GBP (no row at all).
+     * actor may not see GBP at all (no row at all).
      */
     public function googleState(): ?string
     {
@@ -78,13 +102,68 @@ final class SeoCitationLocationSection
             return self::GOOGLE_NOT_LINKED;
         }
 
-        return $this->google->connectionState === 'revoked' ? self::GOOGLE_CONNECTION_LOST : self::GOOGLE_CONNECTED;
+        // Only an ACTIVE connection is connected; revoked, pending and
+        // disconnected (or a binding with no connection at all) must be
+        // reconnected.
+        return $this->google->connectionState === 'active' ? self::GOOGLE_CONNECTED : self::GOOGLE_CONNECTION_LOST;
     }
 
     /** True only when Business OS actually read Google's facts for this row. */
     public function googleCheckedAutomatically(): bool
     {
         return $this->googleNap !== null && $this->googleState() === self::GOOGLE_CONNECTED;
+    }
+
+    /**
+     * The shown Google details (name, phone, website) that differ from the
+     * business profile — exactly the fields the Google row's chips show.
+     *
+     * @return array<int, string>
+     */
+    public function googleDifferingFields(): array
+    {
+        if ($this->googleNap === null) {
+            return [];
+        }
+
+        return array_keys(array_filter($this->googleNap, fn ($result) => $result === SeoNapFieldResult::Mismatch));
+    }
+
+    /**
+     * Other details the Google Business Profile comparison reports as
+     * different (city, country, service model, coordinates): named so a count
+     * is never shown without saying WHICH details, and kept out of "Needs
+     * attention" because they are not NAP. Empty unless the mirror is fresh.
+     *
+     * @return array<int, string>
+     */
+    public function googleOtherDifferences(): array
+    {
+        if ($this->google === null || $this->googleNap === null) {
+            return [];
+        }
+
+        return array_values(array_diff($this->google->napMismatchFields, self::GOOGLE_CHIP_LABELS));
+    }
+
+    /**
+     * May this actor rename or archive the row's custom directory? One scoped to
+     * this Location, yes; one shared by every Location, only with access to every
+     * Location (SeoCitationManager enforces the same rule on the write).
+     */
+    public function canEditDirectory(SeoCitationRow $row): bool
+    {
+        return $row->isCustom() && ($row->directory->business_location_id !== null || $this->canEditSharedDirectories);
+    }
+
+    /** A real Google problem: a lost connection, or a shown detail that differs. Not-linked is not a problem. */
+    public function googleNeedsAttention(): bool
+    {
+        return match ($this->googleState()) {
+            self::GOOGLE_CONNECTION_LOST => true,
+            self::GOOGLE_CONNECTED => $this->googleDifferingFields() !== [],
+            default => false,
+        };
     }
 
     /**
@@ -124,6 +203,9 @@ final class SeoCitationLocationSection
      * "visibility". Directories marked "not applicable" are out of every
      * count and denominator (reported separately).
      *
+     * `attention` is real problems only; `needsSetup` is unfinished setup — the
+     * two never overlap and an untouched directory is only ever the second.
+     *
      * `napMatched / napCompared` counts only fields where BOTH a canonical
      * value and a recorded listing value exist; unchecked fields are not in
      * the denominator, so missing data is never counted as a mismatch. The
@@ -133,12 +215,12 @@ final class SeoCitationLocationSection
      * Essential and Recommended rows — Google counts as Essential, done when
      * connected.
      *
-     * @return array{tracked: int, completed: int, attention: int, notChecked: int, notApplicable: int, napMatched: int, napCompared: int, essentialDone: int, essentialTotal: int, recommendedDone: int, recommendedTotal: int}
+     * @return array{tracked: int, completed: int, attention: int, needsSetup: int, notChecked: int, notApplicable: int, napMatched: int, napCompared: int, essentialDone: int, essentialTotal: int, recommendedDone: int, recommendedTotal: int}
      */
     public function summary(): array
     {
         $s = [
-            'tracked' => 0, 'completed' => 0, 'attention' => 0, 'notChecked' => 0, 'notApplicable' => 0,
+            'tracked' => 0, 'completed' => 0, 'attention' => 0, 'needsSetup' => 0, 'notChecked' => 0, 'notApplicable' => 0,
             'napMatched' => 0, 'napCompared' => 0,
             'essentialDone' => 0, 'essentialTotal' => 0, 'recommendedDone' => 0, 'recommendedTotal' => 0,
         ];
@@ -162,8 +244,12 @@ final class SeoCitationLocationSection
                 $s['completed']++;
             }
 
-            if ($row->displayState()->isActionable() || $row->reviewDue) {
+            if ($row->needsAttention()) {
                 $s['attention']++;
+            }
+
+            if ($row->needsSetup()) {
+                $s['needsSetup']++;
             }
 
             if ($row->isNotChecked()) {
@@ -192,7 +278,9 @@ final class SeoCitationLocationSection
             if ($google === self::GOOGLE_CONNECTED) {
                 $s['completed']++;
                 $s['essentialDone']++;
-            } else {
+            }
+
+            if ($this->googleNeedsAttention()) {
                 $s['attention']++;
             }
 
@@ -216,12 +304,14 @@ final class SeoCitationLocationSection
 
     /**
      * "What should I do next?" — the real actions, most important first:
-     *   1 an Essential listing is missing        (Claim / Record details / Connect)
-     *   2 an Essential listing is inaccurate     (Review)
+     *   1 an Essential listing is missing        (Claim / Record details)
+     *   2 an Essential listing is inaccurate     (Review / Reconnect)
      *   3 a Recommended listing is missing
      *   4 a manual listing is due for a review   (Review)
      *   5 any other Optional / Custom issue
-     * Not-applicable rows never appear. Empty when there is nothing to do.
+     * Not-applicable rows never appear. Empty when there is nothing to do. A
+     * Google row that is simply not linked is NOT here: a Business may have no
+     * Google listing, and the row and the page header carry the Connect action.
      *
      * Also the reader seam a future Growth/Opportunity producer can consume:
      * pure, no I/O, derived only from this section.
@@ -233,11 +323,9 @@ final class SeoCitationLocationSection
         $items = [];
         $google = $this->googleState();
 
-        if ($google === self::GOOGLE_NOT_LINKED) {
-            $items[] = ['priority' => 1, 'kind' => 'missing', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Connect', 'message' => 'Not linked to a Google listing yet.'];
-        } elseif ($google === self::GOOGLE_CONNECTION_LOST) {
-            $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Reconnect', 'message' => 'The Google connection was lost.'];
-        } elseif ($this->googleNap !== null && in_array(SeoNapFieldResult::Mismatch, $this->googleNap, true)) {
+        if ($google === self::GOOGLE_CONNECTION_LOST) {
+            $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Reconnect', 'message' => 'The Google connection is not active.'];
+        } elseif ($this->googleNeedsAttention()) {
             $items[] = ['priority' => 2, 'kind' => 'inaccurate', 'row' => null, 'name' => 'Google Business Profile', 'action' => 'Review', 'message' => 'Google shows details that differ from your business profile.'];
         }
 

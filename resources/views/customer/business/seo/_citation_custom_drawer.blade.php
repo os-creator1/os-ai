@@ -41,7 +41,7 @@
                 <label class="form-label" for="custom-status">Status</label>
                 <select id="custom-status" name="status" class="form-select">
                     @foreach($statuses as $status)
-                        <option value="{{ $status->value }}" @selected($old('status', 'listed') === $status->value)>{{ $status->label() }}</option>
+                        <option value="{{ $status->value }}" @selected($old('status', 'not_started') === $status->value)>{{ $status->label() }}</option>
                     @endforeach
                 </select>
             </div>
@@ -76,8 +76,11 @@
             <div class="mb-1">
                 <label class="form-label" for="custom-scope">Applies to</label>
                 <select id="custom-scope" name="location_scope" class="form-select">
-                    <option value="all" @selected($old('location_scope', 'all') === 'all')>All my locations</option>
-                    <option value="this" @selected($old('location_scope') === 'this')>Only {{ $location->name }}</option>
+                    {{-- A directory shared by every location may be added (and later changed) only by someone with access to every location. --}}
+                    @if($section->canEditSharedDirectories)
+                        <option value="all" @selected($old('location_scope', 'all') === 'all')>All my locations</option>
+                    @endif
+                    <option value="this" @selected($old('location_scope', $section->canEditSharedDirectories ? 'all' : 'this') === 'this')>Only {{ $location->name }}</option>
                 </select>
             </div>
             <div class="d-flex gap-1">

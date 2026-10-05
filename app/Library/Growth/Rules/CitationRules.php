@@ -41,7 +41,7 @@ final class CitationRules extends AbstractGrowthRule
                 title: 'Important directories have not been checked',
                 summary: 'You have not recorded whether your business is listed correctly in these directories.',
                 factKey: 'directories_not_checked',
-                evidenceSummary: 'Priority directories with no citation recorded for this location.',
+                evidenceSummary: 'Priority directories with no citation recorded, or still being set up, for this location.',
                 actionKey: 'growth_check_directories',
                 actionLabel: 'Check directories',
                 target: 'seo.citations',
@@ -64,13 +64,14 @@ final class CitationRules extends AbstractGrowthRule
                 factKey: 'citations_need_attention',
                 evidenceSummary: 'Recorded directory listings that differ from the business name, phone or address, or are marked as needing correction.',
                 actionKey: 'growth_fix_citations',
-                actionLabel: 'Fix listings',
+                // Business OS cannot edit a directory listing; the owner reviews it on the Citations page.
+                actionLabel: 'Review listings',
                 target: 'seo.citations',
                 safetyClass: GrowthActionSafetyClass::ReadOnly,
                 weight: 2,
                 minSample: 1,
                 why: 'Customers who find the wrong phone number or address may never reach you.',
-                expected: 'Correcting a listing makes the details customers see consistent.',
+                expected: 'Once you correct the listing on the directory, the details customers see are consistent.',
                 goalKeys: [BusinessGoal::LocalSeo->value, BusinessGoal::Reputation->value],
             );
     }

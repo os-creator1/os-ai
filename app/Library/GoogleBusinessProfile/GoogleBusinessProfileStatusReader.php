@@ -41,6 +41,11 @@ use Illuminate\Support\Facades\Gate;
  *  - EXPIRED MIRROR = ABSENT. The mirror-derived fields (review link,
  *    mismatch count) are null unless BusinessGoogleLocation::mirrorIsFresh().
  *    An expired or purged mirror is never rendered as current (GBP §13).
+ *  - HEALTH CARRIES ITS AGE. `health` outlives the mirror, so every status also
+ *    says when it was last synced (`healthAsOf`) and whether that is outside
+ *    the freshness window (`healthIsStale`); a consumer must not print a
+ *    health word without the age. Computed at read time from stored
+ *    timestamps — no provider request.
  *  - CONSTANT QUERY COUNT. Independent of the number of Locations.
  *
  * It lives in the GBP namespace because GBP owns Google state. It is purely
@@ -106,6 +111,8 @@ final class GoogleBusinessProfileStatusReader
             $binding = $bindingsByLocation->get((int) $location->id);
             $fresh = $binding !== null && $binding->mirrorIsFresh();
             $mirror = $fresh ? $binding->freshMirror() : [];
+            $mismatchFields = $fresh ? $this->mismatchFields($business, $location, $binding) : [];
+            $healthAsOf = $binding?->last_synced_at ?? $binding?->mirror_fetched_at;
 
             $statuses[] = new GoogleLocationStatus(
                 locationId: (int) $location->id,
@@ -116,26 +123,70 @@ final class GoogleBusinessProfileStatusReader
                 health: $binding?->verification_state,
                 mirrorIsFresh: $fresh,
                 newReviewUri: $fresh && is_string($mirror['new_review_uri'] ?? null) ? $mirror['new_review_uri'] : null,
-                napMismatchCount: $fresh ? $this->mismatchCount($business, $location, $binding) : null,
+                napMismatchCount: $fresh ? count($mismatchFields) : null,
                 mirrorName: $fresh && is_string($mirror['title'] ?? null) ? $mirror['title'] : null,
                 mirrorPhone: $fresh && is_string($mirror['phone_primary'] ?? null) ? $mirror['phone_primary'] : null,
                 mirrorWebsite: $fresh && is_string($mirror['website_uri'] ?? null) ? $mirror['website_uri'] : null,
+                healthAsOf: $healthAsOf,
+                healthIsStale: $binding !== null && (! $fresh || $healthAsOf === null || $healthAsOf->lt(now()->subDays(GoogleBusinessProfileRetention::MAX_MIRROR_RETENTION_DAYS))),
+                napMismatchFields: $mismatchFields,
             );
         }
 
         return $statuses;
     }
 
-    private function mismatchCount(Business $business, $location, $binding): int
+    /**
+     * Business-scoped, ACTOR-LESS read of the fresh Google "new review" link
+     * per bound Location id, for a system consumer that has no signed-in user
+     * (the Growth Center). Gated by the Business's entitlement to the GBP
+     * module exactly like forBusiness(); there is no actor, so no Location ACL
+     * is applied — the caller reports only on Locations it already owns. Fresh
+     * mirror only (expired = absent), no provider call, nothing stored.
+     *
+     * @return array<int, string> keyed by business_locations.id
+     */
+    public function freshReviewLinks(Workspace $workspace, Business $business): array
     {
-        $count = 0;
+        try {
+            $decision = $this->entitlements->decide($workspace, $business, PlatformFeature::GoogleBusinessProfileModule->value, 0);
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            return [];
+        }
 
-        foreach ($this->comparator->compare($business, $location, $binding) as $row) {
-            if ($row->status === GoogleComparisonStatus::Mismatch) {
-                $count++;
+        if (! $decision->allowed) {
+            return [];
+        }
+
+        $links = [];
+
+        foreach ($this->bindings->allForBusinessKeyedByLocationId($business) as $locationId => $binding) {
+            $uri = $binding->mirrorIsFresh() ? ($binding->freshMirror()['new_review_uri'] ?? null) : null;
+
+            if (is_string($uri) && $uri !== '') {
+                $links[(int) $locationId] = $uri;
             }
         }
 
-        return $count;
+        return $links;
+    }
+
+    /**
+     * The comparison rows that currently differ, by name — the rows the count
+     * is made of, so the count is never shown without saying which.
+     *
+     * @return array<int, string>
+     */
+    private function mismatchFields(Business $business, $location, $binding): array
+    {
+        $fields = [];
+
+        foreach ($this->comparator->compare($business, $location, $binding) as $row) {
+            if ($row->status === GoogleComparisonStatus::Mismatch) {
+                $fields[] = $row->field;
+            }
+        }
+
+        return $fields;
     }
 }

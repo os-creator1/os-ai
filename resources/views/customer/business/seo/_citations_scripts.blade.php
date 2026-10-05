@@ -22,6 +22,7 @@
                     case 'essential': return row.getAttribute('data-importance') === 'essential' && row.getAttribute('data-custom') !== '1';
                     case 'recommended': return row.getAttribute('data-importance') === 'recommended' && row.getAttribute('data-custom') !== '1';
                     case 'attention': return row.getAttribute('data-attention') === '1';
+                    case 'setup': return row.getAttribute('data-setup-needed') === '1';
                     case 'notchecked': return row.getAttribute('data-notchecked') === '1';
                     case 'accurate': return row.getAttribute('data-state') === 'accurate';
                     case 'custom': return row.getAttribute('data-custom') === '1';

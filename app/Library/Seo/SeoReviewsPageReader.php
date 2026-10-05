@@ -28,15 +28,20 @@ use Illuminate\Support\Facades\Gate;
  *    a Location never grants Contact details.
  *  - GOOGLE ONLY THROUGH THE READ MODEL. The fallback link is
  *    GoogleBusinessProfileStatusReader's newReviewUri, which is null once the
- *    mirror has expired; nothing is copied into SEO tables.
+ *    mirror has expired; nothing is copied into SEO tables. Which link a
+ *    Location has is decided by SeoReviewLinkResolver, the same rule the
+ *    Growth Center reads.
+ *  - PER-LOCATION CAPS. The ledger and the Contact choices are capped for EACH
+ *    Location (SeoPerLocationLimit), so a busy Location cannot starve the
+ *    others; the counts shown in the header are taken over the whole ledger.
  *  - NO PROVIDER CALL, NO WRITE, NO SEND.
  */
 final class SeoReviewsPageReader
 {
-    /** The most ledger rows loaded across all Locations, newest first. */
+    /** The most ledger rows loaded for EACH Location, newest first. */
     public const LEDGER_LIMIT = 200;
 
-    /** The most Contact choices offered across all Locations. */
+    /** The most Contact choices offered for EACH Location. */
     public const CONTACT_CHOICE_LIMIT = 200;
 
     public function __construct(
@@ -64,12 +69,15 @@ final class SeoReviewsPageReader
 
         $manual = $this->links->forAccessibleLocations($business, $ids);
         $ledger = $this->requests->forAccessibleLocations($business, $ids, self::LEDGER_LIMIT)->groupBy('business_location_id');
+        // The header counts come from the whole ledger (not the capped list), so they can
+        // never disagree with each other; the list says when it is showing only the latest.
         $counts = SeoReviewRequest::query()
             ->where('business_id', $business->id)
             ->whereIn('business_location_id', $ids)
-            ->selectRaw('business_location_id, COUNT(*) as total')
+            ->selectRaw('business_location_id, COUNT(*) as total, SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as awaiting', [SeoReviewRequestStatus::Requested->value])
             ->groupBy('business_location_id')
-            ->pluck('total', 'business_location_id');
+            ->get()
+            ->keyBy(fn ($row) => (int) $row->business_location_id);
 
         $google = $this->googleStatus->forBusiness($workspace, $business, $actor);
         $googleByLocation = $google === null ? collect() : collect($google)->keyBy(fn ($status) => $status->locationId);
@@ -81,8 +89,7 @@ final class SeoReviewsPageReader
 
         foreach ($accessible as $location) {
             $locationId = (int) $location->id;
-            $manualUrl = SeoLinkSafety::safeHttpsUrl($manual->get($locationId)?->review_url);
-            $googleUrl = SeoLinkSafety::safeHttpsUrl($googleByLocation->get($locationId)?->newReviewUri);
+            $link = SeoReviewLinkResolver::resolve($manual->get($locationId)?->review_url, $googleByLocation->get($locationId)?->newReviewUri);
 
             $rows = [];
 
@@ -109,12 +116,13 @@ final class SeoReviewsPageReader
             $sections[] = new SeoReviewLocationSection(
                 location: $location,
                 writable: $location->isActive(),
-                manualLink: $manualUrl,
-                effectiveLink: $manualUrl ?? $googleUrl,
-                linkSource: $manualUrl !== null ? 'manual' : ($googleUrl !== null ? 'google' : null),
-                requestCount: (int) ($counts[$locationId] ?? 0),
+                manualLink: $link['manual'],
+                effectiveLink: $link['effective'],
+                linkSource: $link['source'],
+                requestCount: (int) ($counts->get($locationId)?->total ?? 0),
                 requests: $rows,
                 contacts: $location->isActive() ? ($choices[$locationId] ?? []) : [],
+                awaitingCount: (int) ($counts->get($locationId)?->awaiting ?? 0),
             );
         }
 
@@ -141,12 +149,16 @@ final class SeoReviewsPageReader
      */
     private function contactDetails(Business $business, $ledger, array $accessibleLocationIds, array $activeLocationIds): array
     {
-        $choiceContacts = $activeLocationIds === [] ? collect() : Contacts::query()
-            ->where('business_id', $business->id)
-            ->whereIn('location_id', $activeLocationIds)
-            ->orderByDesc('id')
-            ->limit(self::CONTACT_CHOICE_LIMIT)
-            ->get(['id', 'uid', 'location_id']);
+        // At most CONTACT_CHOICE_LIMIT choices for EACH Location, in one query.
+        $choiceContacts = $activeLocationIds === [] ? collect() : SeoPerLocationLimit::rows(
+            $activeLocationIds,
+            self::CONTACT_CHOICE_LIMIT,
+            fn (int $locationId) => Contacts::query()
+                ->select(['id', 'uid', 'location_id'])
+                ->where('business_id', $business->id)
+                ->where('location_id', $locationId)
+                ->orderByDesc('id'),
+        );
 
         $ledgerIds = $ledger->flatten(1)->pluck('contact_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
 
