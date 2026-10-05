@@ -423,6 +423,8 @@ class V1SignupOnboardingHandoffTest extends TestCase
 
     public function test_logging_out_and_back_in_before_finishing_resumes_the_same_onboarding(): void
     {
+        // config/no-captcha.php defaults login captcha ON when no app_config row says otherwise.
+        config(["no-captcha.login" => false]);
         [$user, , $business, $form] = $this->paidSignup();
 
         $this->post(route('customer.onboarding.goals.store'), ['primary_goals' => ['lead_generation']]);

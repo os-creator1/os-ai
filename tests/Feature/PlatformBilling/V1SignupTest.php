@@ -107,7 +107,7 @@ class V1SignupTest extends TestCase
      * for the unrelated Agency-invited-client path. Every V1 self-signup
      * account was permanently stuck Draft even after paying.
      */
-    public function test_completing_signup_activates_the_newly_provisioned_business(): void
+    public function test_completing_signup_hands_the_draft_business_to_onboarding_without_activating_it(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
         $this->platformAdminId();
@@ -124,8 +124,9 @@ class V1SignupTest extends TestCase
         $this->signup()->completeSignup($session->sessionId);
 
         $business->refresh();
-        $this->assertSame(BusinessStatus::Active, $business->status);
-        $this->assertNotNull($business->activated_at);
+        $this->assertSame(BusinessStatus::Draft, $business->status, "Payment confirmation does not activate; completed onboarding does (RFC-001 7.1).");
+        $this->assertSame($business->id, \App\Models\CustomerOnboarding::query()->where('customer_id', $customer->user_id)->sole()->business_id);
+        $this->assertNull($business->activated_at);
     }
 
     /**
