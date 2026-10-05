@@ -12,6 +12,7 @@ use App\Library\Growth\Readers\GrowthCitationFactReader;
 use App\Library\Growth\Readers\GrowthConversationFactReader;
 use App\Library\Growth\Readers\GrowthCrmFactReader;
 use App\Library\Growth\Readers\GrowthDocumentFactReader;
+use App\Library\Growth\Readers\GrowthRankFactReader;
 use App\Library\Growth\Readers\GrowthReputationFactReader;
 use App\Library\Growth\Readers\GrowthSeoFactReader;
 use App\Library\Growth\Readers\GrowthUnavailableFactReader;
@@ -48,16 +49,17 @@ class GrowthFactSnapshotBuilder
         GrowthBookingFactReader $booking,
         GrowthWebsiteFactReader $website,
         GrowthSeoFactReader $seo,
+        GrowthRankFactReader $rank,
         GrowthReputationFactReader $reviews,
         GrowthCitationFactReader $citations,
         GrowthDocumentFactReader $documents,
         GrowthAutomationFactReader $automations,
     ) {
         $this->readers = [
-            $crm, $conversations, $booking, $website, $seo, $reviews, $citations, $documents, $automations,
-            // Modules not on main: reported Unavailable, never zero.
+            // `rank` reads the rank module's STORED observations only (entitled Businesses).
+            $crm, $conversations, $booking, $website, $seo, $rank, $reviews, $citations, $documents, $automations,
+            // Modules not on main (or with no reader yet): reported Unavailable, never zero.
             new GrowthUnavailableFactReader('ads'),
-            new GrowthUnavailableFactReader('rank'),
             new GrowthUnavailableFactReader('search_console'),
         ];
     }

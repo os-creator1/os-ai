@@ -138,15 +138,41 @@ class SeoPublishedContentReaderTest extends TestCase
             'HERO-HEADING', 'HERO-SUB', 'TEXT-HEADING', 'TEXT-BODY', 'IMG-HEADING', 'IMG-BODY',
             'SVC-HEADING', 'SVC-NAME', 'SVC-DESC', 'TST-HEADING', 'TST-QUOTE', 'FAQ-HEADING', 'FAQ-Q', 'FAQ-A',
             'CTA-HEADING', 'CTA-BODY',
+            // Visible button labels are page text a searcher and a search engine both read.
+            'CTA-LABEL', 'BTN-LABEL',
         ] as $included) {
             $this->assertStringContainsString($included, $surfaces['body'], "{$included} is human-visible prose and must be searchable.");
         }
 
         foreach ([
-            'ASSET-UID-1', 'ASSET-UID-2', 'ASSET-UID-3', 'CTA-LABEL', 'BTN-LABEL', 'https://', 'PRICE-LABEL',
+            'ASSET-UID-1', 'ASSET-UID-2', 'ASSET-UID-3', 'https://', 'PRICE-LABEL',
             'AUTHOR-NAME', 'AUTHOR-TITLE', '555-CONTACT', 'CONTACT-ADDR', 'UNKNOWN-HEADING', 'UNKNOWN-BODY',
         ] as $excluded) {
-            $this->assertStringNotContainsString($excluded, $surfaces['body'], "{$excluded} is a URL, uid, label, contact value or unknown section and must never be searchable.");
+            $this->assertStringNotContainsString($excluded, $surfaces['body'], "{$excluded} is a URL, uid, price, name, contact value or unknown section and must never be searchable.");
+        }
+    }
+
+    public function test_the_sections_the_old_allowlist_forgot_contribute_their_visible_text(): void
+    {
+        [, $business] = $this->entitledTenant(WorkspacePlanTier::Core);
+        $this->publishWebsite($business, [
+            $this->snapshotPage('a', 'Home', [], [
+                ['type' => 'custom_section', 'data' => ['heading' => 'STORY-HEADING', 'body' => 'STORY-BODY', 'images' => ['ASSET-UID-9'], 'layout' => 'stacked']],
+                ['type' => 'form', 'data' => ['heading' => 'FORM-HEADING', 'form_uid' => 'FORM-UID-1']],
+                ['type' => 'gallery', 'data' => ['heading' => 'GALLERY-HEADING', 'items' => [['image' => 'ASSET-UID-8']]]],
+                ['type' => 'backdrops', 'data' => ['heading' => 'BACKDROP-HEADING', 'items' => [['name' => 'BACKDROP-NAME', 'description' => 'BACKDROP-DESC', 'images' => [['url' => 'https://img.example/b.jpg']]]]]],
+                ['type' => 'hero', 'data' => ['heading' => 'H', 'primary_cta' => ['label' => 'PRIMARY-LABEL', 'url' => 'https://a.example/'], 'secondary_cta' => ['label' => 'SECONDARY-LABEL', 'url' => 'https://b.example/']]],
+            ], true),
+        ]);
+
+        $body = $this->reader()->forBusiness($business)->pages[0]->textSurfaces()['body'];
+
+        foreach (['STORY-HEADING', 'STORY-BODY', 'FORM-HEADING', 'GALLERY-HEADING', 'BACKDROP-HEADING', 'BACKDROP-NAME', 'BACKDROP-DESC', 'PRIMARY-LABEL', 'SECONDARY-LABEL'] as $included) {
+            $this->assertStringContainsString($included, $body);
+        }
+
+        foreach (['ASSET-UID-9', 'ASSET-UID-8', 'FORM-UID-1', 'https://'] as $excluded) {
+            $this->assertStringNotContainsString($excluded, $body);
         }
     }
 

@@ -562,7 +562,7 @@ class SeoRankHttpTest extends TestCase
 
         $this->post($this->u('rank-targets.restart', $workspace, $business, $target->uid))
             ->assertRedirect()
-            ->assertSessionHas('message', 'Rank tracking resumed.');
+            ->assertSessionHas('message', 'Rank tracking resumed. The first check is on its way.');
 
         $this->assertTrue($target->fresh()->isTracking());
         $this->assertSame(1, SeoRankTarget::query()->count(), 'Restart resumes the same target.');
@@ -966,9 +966,16 @@ class SeoRankHttpTest extends TestCase
         $html = $this->index($workspace, $business);
 
         $this->assertStringContainsString($keyword->phrase, $html);
-        $this->assertSame('—', $this->cell($html, $keyword, 'Organic'));
-        $this->assertSame('—', $this->cell($html, $keyword, 'Local'));
-        $this->assertSame('—', $this->cell($html, $keyword, 'Change'));
+        // Rank tracking does not apply: no "Tracked 0 / —" cards and no rank columns of dashes,
+        // just one honest line. The keyword and its Website coverage are still there.
+        foreach (['summary-tracked', 'summary-average', 'summary-top10', 'summary-improved', 'summary-local-top3'] as $summaryRole) {
+            $this->assertSame([], $this->role($html, $summaryRole), "{$summaryRole} must not render without the entitlement.");
+        }
+        $this->assertNotEmpty($this->role($html, 'rank-not-included'));
+        foreach (['Organic', 'Local', 'Change', 'Search location', 'Last checked'] as $rankColumn) {
+            $this->assertSame([], $this->texts($html, "//tr[@data-uid='{$keyword->uid}']/td[@data-label='{$rankColumn}']"), "{$rankColumn} must not render without the entitlement.");
+        }
+        $this->assertNotEmpty($this->cell($html, $keyword, 'Website'));
         $this->assertSame([], $this->role($html, 'track-rank-toggle'));
         $this->assertSame([], $this->role($html, 'rank-start'));
         $this->assertSame([], $this->role($html, 'rank-stop'));

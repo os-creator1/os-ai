@@ -2,6 +2,7 @@
 
 namespace App\Library\Seo\Rank\Provider;
 
+use App\Library\Seo\SeoPhraseNormalizer;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -247,10 +248,14 @@ final class DataForSeoRankProvider implements SeoRankProvider
         return $locations;
     }
 
-    /** The vendor bills operator queries at 5x; a paid request never carries one. */
+    /**
+     * The vendor bills operator queries at 5x; a paid request never carries one.
+     * The detector itself is vendor-neutral (SeoPhraseNormalizer) so a keyword
+     * is refused where it is saved or tracked, not only here at submit time.
+     */
     public static function hasSearchOperator(string $keyword): bool
     {
-        return preg_match('/["*|]|(^|\s)-\S|\b[a-z]+:|\s(OR|AND)\s/u', $keyword) === 1;
+        return SeoPhraseNormalizer::hasSearchOperator($keyword);
     }
 
     private function client(int $timeout = 20): PendingRequest

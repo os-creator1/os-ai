@@ -31,8 +31,11 @@
             <p class="text-caption mb-0" data-role="detail-location">{{ $locationLabel }} · Google · {{ $target->device }}</p>
         </div>
         <div class="d-flex gap-1 flex-wrap">
+            {{-- Starting, resuming, stopping and "Check now" are closed while viewing as a client (paid checks on their allowance). --}}
             @can('manage_seo')
-                @if($target->isTracking())
+                @if($viewingAsClient ?? false)
+                    {{-- read-only while viewing as the client --}}
+                @elseif($target->isTracking())
                     <form method="POST" action="{{ route('customer.workspaces.businesses.seo.rank-targets.check', [$workspaceUid, $businessUid, $target->uid]) }}">
                         @csrf
                         <button class="btn btn-primary" type="submit" data-role="check-now">Check now</button>
@@ -61,6 +64,13 @@
         <x-alert variant="warning" class="mb-2" data-role="rank-paused-notice">Rank checks paused until your usage period resets. Your latest results stay visible.</x-alert>
     @endif
 
+    {{-- A check can only find us when there is something to match: say so instead of "waiting" forever. --}}
+    @if($localBlocked ?? false)
+        <x-alert variant="warning" class="mb-2" data-role="rank-needs-identity-notice">{{ \App\Library\Seo\Rank\SeoRankDashboardReader::NO_IDENTITY_REASON }}.</x-alert>
+    @elseif($organicBlocked ?? false)
+        <x-alert variant="warning" class="mb-2" data-role="rank-needs-domain-notice">{{ \App\Library\Seo\Rank\SeoRankDashboardReader::NO_DOMAIN_REASON }}. Local results can still be checked.</x-alert>
+    @endif
+
     <div class="row g-1 mb-2" data-section="rank-facts">
         <div class="col-6 col-lg-3"><x-card :padded="true" class="h-100"><p class="text-caption mb-25">Current organic position</p>
             <div class="h4 mb-0" data-role="current-organic">{{ $fmt($organic['current']) ?? $dash }}</div></x-card></div>
@@ -77,7 +87,11 @@
         <div class="col-6 col-lg-3"><x-card :padded="true" class="h-100"><p class="text-caption mb-25">First tracked</p>
             <div class="h5 mb-0" data-role="first-tracked">{{ $firstTracked ? $firstTracked->format('M j, Y') : $dash }}</div></x-card></div>
         <div class="col-6 col-lg-3"><x-card :padded="true" class="h-100"><p class="text-caption mb-25">Last checked</p>
-            <div class="h5 mb-0" data-role="last-checked">{{ $target->last_checked_at ? $target->last_checked_at->format('M j, Y g:i A') . ' UTC' : $dash }}</div></x-card></div>
+            <div class="h5 mb-0" data-role="last-checked">{{ $target->last_checked_at ? $target->last_checked_at->format('M j, Y g:i A') . ' UTC' : $dash }}</div>
+            @if(($staleDays ?? null) !== null)
+                <p class="text-caption mb-0 mt-25" data-role="rank-stale">{{ $staleDays }} {{ $staleDays === 1 ? 'day' : 'days' }} ago — may be out of date</p>
+            @endif
+        </x-card></div>
     </div>
 
     <div class="row g-1 mb-2" data-section="rank-history">
@@ -104,7 +118,7 @@
                     @if($coverage->status === SeoKeywordCoverageStatus::Covered)
                         <p class="text-caption mb-0" data-role="keyword-coverage-detail">
                             Found in {{ $coverage->titlePages }} {{ $coverage->titlePages === 1 ? 'page title' : 'page titles' }},
-                            {{ $coverage->descriptionPages }} {{ $coverage->descriptionPages === 1 ? 'meta description' : 'meta descriptions' }} and
+                            {{ $coverage->descriptionPages }} {{ $coverage->descriptionPages === 1 ? 'search result description' : 'search result descriptions' }} and
                             {{ $coverage->bodyPages }} {{ $coverage->bodyPages === 1 ? 'page body' : 'page bodies' }}.
                         </p>
                     @endif

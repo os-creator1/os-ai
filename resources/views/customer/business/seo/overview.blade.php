@@ -3,9 +3,12 @@
 
     READ-ONLY. There is no form, no write control and no provider call on
     this page. It shows plain facts drawn from platform-owned data: there is
-    no SEO score, grade, percentage, chart or AI-generated analysis, and no
-    tab or section for anything that is not built yet (no Keywords, Search
-    Console, Citations, Reviews or audit — not even disabled).
+    no SEO score, grade, percentage, chart or AI-generated analysis.
+
+    Google Search Console is NOT built. Its card says so in words and shows no
+    number at all: no clicks, impressions or position, and never a zero that
+    could be read as "no traffic". It is replaced by real figures only when a
+    real Search Console reader exists.
 
     Every value is rendered with escaped Blade output only. Raw, unescaped
     output is forbidden in this view. The only customer-supplied strings are
@@ -70,17 +73,24 @@
         @else
             <ul class="list-unstyled mb-0">
                 <li data-role="content-pages">{{ $overview->content['pages'] }} {{ $overview->content['pages'] === 1 ? 'page' : 'pages' }} published</li>
-                <li data-role="content-meta">{{ $overview->content['with_meta_description'] }} of {{ $overview->content['pages'] }} with a meta description</li>
-                <li data-role="content-title">{{ $overview->content['with_seo_title'] }} of {{ $overview->content['pages'] }} with a search title</li>
-                <li data-role="content-noindex">{{ $overview->content['marked_noindex'] }} marked to be hidden from search engines</li>
+                <li data-role="content-meta">{{ $overview->content['with_meta_description'] }} of {{ $overview->content['pages'] }} with a search result description</li>
+                <li data-role="content-title">{{ $overview->content['with_seo_title'] }} of {{ $overview->content['pages'] }} with a page title</li>
+                <li data-role="content-noindex">{{ $overview->content['marked_noindex'] }} hidden from search</li>
             </ul>
         @endif
     </x-card>
 
-    <x-card :padded="true" class="mb-2" data-section="indexability">
-        <p class="text-section-heading mb-1">Search engine indexing</p>
-        <p class="mb-1" data-role="indexability-label" data-state="{{ $overview->indexability->value }}">{{ $overview->indexability->label() }}</p>
-        <p class="text-caption mb-0">{{ $overview->indexability->detail() }}</p>
+    {{-- Can search engines find the site? Good / Needs attention / Action, with exact page counts. --}}
+    @include('customer.business.seo._indexability', ['indexability' => $overview->indexability, 'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid])
+
+    {{-- Search Console is not built: say so, show no number (never a fake zero). --}}
+    <x-card :padded="true" class="mb-2" data-section="search-console">
+        <p class="text-section-heading mb-1">Google Search Console</p>
+        <p class="mb-1" data-role="search-console-state" data-state="not_available">
+            <x-badge variant="neutral">Not connected</x-badge>
+            <span class="ms-50">Not available yet</span>
+        </p>
+        <p class="text-caption mb-0">Clicks, impressions and the searches that bring people to your site will appear here once Search Console is available. Until then we show no figures rather than guess.</p>
     </x-card>
 
     @if($overview->google !== null)

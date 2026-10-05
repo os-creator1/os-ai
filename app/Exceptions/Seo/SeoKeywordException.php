@@ -18,6 +18,7 @@ final class SeoKeywordException extends RuntimeException
     public const LIMIT_REACHED = 'limit_reached';
     public const LOCATION_NOT_ACTIVE = 'location_not_active';
     public const NOT_ACTIVE = 'not_active';
+    public const SEARCH_OPERATOR = 'search_operator';
 
     private function __construct(public readonly string $reason, string $message)
     {
@@ -33,6 +34,12 @@ final class SeoKeywordException extends RuntimeException
     public static function invalidPhrase(): self
     {
         return new self(self::INVALID_PHRASE, 'The keyword is empty, too long or contains unsupported characters.');
+    }
+
+    /** The phrase carries a search operator (quotes, site:, -word, OR) instead of plain words. */
+    public static function searchOperator(): self
+    {
+        return new self(self::SEARCH_OPERATOR, 'The keyword contains a search operator.');
     }
 
     public static function duplicate(): self
@@ -59,6 +66,7 @@ final class SeoKeywordException extends RuntimeException
     {
         return match ($this->reason) {
             self::INVALID_PHRASE => 'Enter a keyword of up to 120 characters, without line breaks or special control characters.',
+            self::SEARCH_OPERATOR => 'Use plain words only. A keyword cannot contain quotes, "site:" style prefixes, a leading minus ("-word"), the words OR or AND, or the characters * and |.',
             self::DUPLICATE => 'You already have this keyword for that location. It may be archived; if so, reactivate it instead.',
             self::LIMIT_REACHED => 'You have reached the limit of active keywords. Archive one to add another.',
             self::LOCATION_NOT_ACTIVE => 'That location is archived, so its keywords cannot be changed.',

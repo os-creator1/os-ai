@@ -15,6 +15,7 @@ final class SeoRankException extends RuntimeException
     public const INVALID_LOCATION = 'invalid_location';
     public const KEYWORD_NOT_ACTIVE = 'keyword_not_active';
     public const LIMIT_REACHED = 'limit_reached';
+    public const SEARCH_OPERATOR = 'search_operator';
 
     private function __construct(public readonly string $reason, string $message, public readonly int $used = 0, public readonly int $limit = 0)
     {
@@ -41,6 +42,12 @@ final class SeoRankException extends RuntimeException
         return new self(self::KEYWORD_NOT_ACTIVE, 'Archived keywords cannot be rank tracked.');
     }
 
+    /** A paid check is never sent for a phrase carrying a search operator. */
+    public static function searchOperator(): self
+    {
+        return new self(self::SEARCH_OPERATOR, 'The keyword contains a search operator and cannot be rank tracked.');
+    }
+
     public static function limitReached(int $used, int $limit): self
     {
         return new self(self::LIMIT_REACHED, "The Business already tracks {$used} of {$limit} rank targets.", $used, $limit);
@@ -52,6 +59,7 @@ final class SeoRankException extends RuntimeException
             self::NOT_ENTITLED => 'Rank tracking is not included in your current plan.',
             self::INVALID_LOCATION => 'Choose a search location from the list.',
             self::KEYWORD_NOT_ACTIVE => 'This keyword is archived. Reactivate it before tracking its rank.',
+            self::SEARCH_OPERATOR => 'This keyword contains quotes, "site:", "-word", OR or AND, so its rank cannot be checked. Edit the keyword to use plain words, then track it.',
             self::LIMIT_REACHED => "{$this->used} of {$this->limit} rank-tracked keywords are in use. Stop tracking one to free a slot.",
             default => 'That keyword could not be found.',
         };

@@ -336,3 +336,43 @@ research/search volume/CPC, unlimited manual refresh, postback/pingback callback
 CID/Place-ID identity, billing-period (rather than calendar-month) caps, customer
 charging for rank tracking, automatic stop of targets when a keyword is archived
 (archived keywords are simply never scheduled and free their slot).
+
+---
+
+## Addendum — SEO V1 final (UX truthfulness and safety)
+
+Status: implemented on `agent/seo-v1-final-a`. §5 (tiers), §6 (budget authority) and every
+spend rule are unchanged; these notes pin what the owner is shown and who may spend.
+
+* **The first-check sentence is the real state** (`SeoRankFirstCheckNotice`, used on
+  start, resume and the add-keyword form). Provider switched off / not configured: "Rank
+  checks are not available right now, so no check will run yet" (tracking is set up and
+  keeps its slot). Usage period paused: the first check waits. No domain and no phone:
+  "No check will run yet. Connect your website domain or add a business phone number so we
+  can find your business in results." A phone but no domain: the local check is on its way
+  and organic needs the domain. Otherwise "The first check is on its way."
+* **A missing Active primary domain is explained**, not "Waiting for first check" forever
+  (organic matching needs `Website::activePrimaryDomain()`): the organic cell and the
+  detail page say "Connect your website domain so we can find your site in results".
+* **Staleness.** A result whose last completed check is older than
+  `seo.rank_tracking.stale_after_days` (default 7, range 2-90, `SeoConfig::rankStaleAfterDays`)
+  shows "N days ago — may be out of date". Display and Growth judgement only; scheduling
+  and spend are untouched.
+* **No dead links or noise.** A Business without the rank entitlement gets no clickable row
+  or link to the (404) detail page, and no "Tracked 0 / —" cards or rank columns: one
+  explanatory line, or a read-only notice when it keeps stored results.
+* **Search operators** are refused at keyword create/update and at track/restart for a
+  legacy keyword (`SeoPhraseNormalizer::hasSearchOperator`, the same detector the provider
+  uses), taking no slot.
+* **Tier mapping fails closed.** `SeoConfig::rankTierFor` is the one mapping: trial is
+  strictest; Core is Core; Growth and Agency use the Growth limits; any other tier gets the
+  trial limits. No plan names appear in controllers or views.
+* **View As.** Spend-class rank actions are prohibited while viewing as a client, by
+  pattern, exactly like `ads.*`: every non-GET route under
+  `...seo.keywords.rank.*` and `...seo.rank-targets.*` (track, stop, restart, check); the
+  add-keyword form's "track rank" box is closed in `SeoKeywordsController`; the rank
+  controls are not rendered. Reads and ordinary keyword edits stay available.
+* **Growth** reads a real `rank` fact from stored observations (`GrowthRankFactReader`:
+  organic only, fresh only) for two rules, `seo.meaningful_rank_drop:v1` and
+  `seo.rank_just_outside_top_10:v1`; it never calls the provider. Search Console stays
+  Unavailable.
