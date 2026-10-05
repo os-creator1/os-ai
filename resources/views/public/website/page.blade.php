@@ -26,12 +26,14 @@
     below.
 --}}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ $head['lang'] }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ $page->seo->seo_title ?: $page->title }} — {{ $websiteMeta['name'] }}</title>
-    <meta name="description" content="{{ $page->seo->meta_description }}">
+    <title>{{ $head['title'] }}</title>
+    @if ($head['description'] !== null)
+        <meta name="description" content="{{ $head['description'] }}">
+    @endif
     {{--
         Contract §21/§40 — every Slice A page is noindex regardless of
         the per-page field, UNLESS $allowIndexing was explicitly passed
@@ -43,8 +45,12 @@
     --}}
     @php($indexable = ($allowIndexing ?? false) && ! ($page->seo->noindex ?? false))
     <meta name="robots" content="{{ $indexable ? 'index, follow' : 'noindex, follow' }}">
-    <meta property="og:title" content="{{ $page->seo->seo_title ?: $page->title }}">
-    <meta property="og:description" content="{{ $page->seo->meta_description }}">
+    @foreach ($head['og'] as $ogProperty => $ogContent)
+        <meta property="{{ $ogProperty }}" content="{{ $ogContent }}">
+    @endforeach
+    @foreach ($head['twitter'] as $twitterName => $twitterContent)
+        <meta name="{{ $twitterName }}" content="{{ $twitterContent }}">
+    @endforeach
     {{--
         Set only once the Website has an active custom domain — see
         Public\WebsiteController::renderPage() and

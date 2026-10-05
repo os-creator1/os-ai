@@ -6,6 +6,7 @@ use App\Library\Website\Design\BrandColors;
 use App\Library\Website\Design\WebsiteCtaResolver;
 use App\Library\Website\Design\WebsiteDesigns;
 use App\Library\Website\Design\WebsiteNavigationBuilder;
+use App\Library\Website\Seo\WebsiteHeadMeta;
 use Illuminate\Contracts\View\View;
 
 /**
@@ -30,6 +31,7 @@ final class WebsitePageComposer
     public function __construct(
         private readonly WebsiteNavigationBuilder $navigation,
         private readonly WebsiteCtaResolver $cta,
+        private readonly WebsiteHeadMeta $headMeta,
     ) {}
 
     public function compose(View $view): void
@@ -66,6 +68,12 @@ final class WebsitePageComposer
             'logo' => $logo,
             'siteContact' => $this->contact($meta, $business, $isPreview),
             'isHomePage' => $isHome,
+            'head' => $this->headMeta->build(
+                json_decode(json_encode($page), true) ?: [],
+                $meta,
+                $data['canonicalUrl'] ?? null,
+                $assets,
+            ),
         ]);
     }
 

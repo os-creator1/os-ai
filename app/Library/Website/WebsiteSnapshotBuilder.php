@@ -142,6 +142,14 @@ final class WebsiteSnapshotBuilder
             'pages' => $pageSnapshots,
             'assets' => $assets,
             'forms' => $forms,
+            // Old address -> new address for pages renamed since the live revision
+            // (see WebsiteRedirectMap): the public renderers 301 these instead of 404ing.
+            'redirects' => (new \App\Library\Website\Seo\WebsiteRedirectMap())->compute(
+                $website->published_revision_id !== null
+                    ? \App\Models\WebsiteRevision::find($website->published_revision_id)?->snapshot
+                    : null,
+                $pageSnapshots,
+            ),
         ];
     }
 

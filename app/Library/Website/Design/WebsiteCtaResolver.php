@@ -163,7 +163,10 @@ final class WebsiteCtaResolver
             $eligible = $type->staff()->pluck('users.id')->contains(fn ($id) => $this->locations->isEligible((int) $id, $location));
 
             if ($eligible) {
-                return route('public.booking.show', $type->public_booking_uuid);
+                // The booking page exists only on the platform host. route()
+                // would build it on the CURRENT host, which on a custom domain
+                // is a dead 404 (that host serves only the Website's own pages).
+                return rtrim((string) config('app.url'), '/').route('public.booking.show', $type->public_booking_uuid, false);
             }
         }
 

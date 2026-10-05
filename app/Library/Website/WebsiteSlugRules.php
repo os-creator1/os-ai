@@ -33,6 +33,20 @@ final class WebsiteSlugRules
         'assets',
         'home',
         '_website',
+        // Real files/directories under public/: the web server answers these
+        // before PHP ever runs, so a page with one of these slugs would be
+        // unreachable yet listed in the sitemap.
+        'css',
+        'css-rtl',
+        'fonts',
+        'images',
+        'installer',
+        'js',
+        'main',
+        'vendors',
+        'voice',
+        'storage',
+        'favicon',
     ];
 
     public static function isValid(string $slug): bool

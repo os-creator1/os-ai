@@ -242,7 +242,27 @@ final class WebsiteDraftPageService
         $current = $website->pages()->where('is_home', true)->lockForUpdate()->first();
 
         if ($current !== null) {
-            $current->update(['is_home' => false]);
+            // A demoted homepage keeps a real, unique slug: a non-home page
+            // with a NULL slug is unreachable on a custom domain, renders
+            // as a second "/" in the sitemap and breaks every platform-path
+            // URL (route() cannot build a link with no slug).
+            $current->update(['is_home' => false, 'slug' => $this->slugForDemotedHome($website, $current)]);
         }
+    }
+
+    private function slugForDemotedHome(Website $website, WebsitePage $page): string
+    {
+        $base = \Illuminate\Support\Str::slug((string) $page->title);
+        $base = $base !== '' ? \Illuminate\Support\Str::limit($base, 70, '') : 'former-home';
+        $base = trim($base, '-') ?: 'former-home';
+
+        $candidate = $base;
+        $suffix = 2;
+
+        while (! WebsiteSlugRules::isValid($candidate) || $website->pages()->where('slug', $candidate)->where('id', '!=', $page->id)->exists()) {
+            $candidate = $base.'-'.$suffix++;
+        }
+
+        return $candidate;
     }
 }
