@@ -65,8 +65,9 @@ class GrowthEvaluationLifecycleTest extends TestCase
 
         $status = $this->snapshots()->first()->metrics['domain_status'];
 
-        $this->assertSame('unavailable', $status['ads']);
-        $this->assertSame('unavailable', $status['rank']);
+        $this->assertSame('unavailable', $status['search_console']);
+        $this->assertContains($status['ads'], ['available', 'not_entitled'], 'ads has a real reader; without the module it is not entitled, never faked');
+        $this->assertContains($status['rank'], ['available', 'not_entitled']);
         $this->assertSame('available', $status['crm']);
     }
 
@@ -321,7 +322,8 @@ class GrowthEvaluationLifecycleTest extends TestCase
 
         $this->unansweredDeal();
         $this->conversation([['incoming', 30]]);
-        $measure();                // warm in-process caches
+        $measure();                // warm in-process caches (first run fills them)
+        $measure();                // ...and any cache the first run itself populated
         $small = $measure();
 
         for ($i = 0; $i < 30; $i++) {

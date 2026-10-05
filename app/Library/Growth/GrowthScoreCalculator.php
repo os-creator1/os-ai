@@ -101,7 +101,10 @@ final class GrowthScoreCalculator
 
         foreach ($byCategory as $category => $row) {
             $scoredRules = count(array_filter($row['rules'], fn (array $r) => $r['health'] !== null));
-            $score = ($scoredRules >= $minRules && $row['weight'] > 0)
+            // A category may demand more evidence than one rule before it is scored (Ads: connecting an
+            // account must never swing the score on a single data point).
+            $needed = max($minRules, (int) config('growth.score.category_min_rules.' . $category, 0));
+            $score = ($scoredRules >= $needed && $row['weight'] > 0)
                 ? (int) round(100 * $row['earned'] / $row['weight'])
                 : null;
 

@@ -213,7 +213,7 @@ class GrowthCenterController extends CustomerBaseController
     private function unavailableModules($latest): array
     {
         $labels = [
-            'ads' => 'Google Ads', 'rank' => 'Rank tracking', 'search_console' => 'Search Console',
+            'ads' => 'Ads', 'rank' => 'Rank tracking', 'search_console' => 'Search Console',
             'seo' => 'SEO', 'reviews' => 'Reviews', 'citations' => 'Citations', 'documents' => 'Payments & proposals',
             'booking' => 'Calendar', 'crm' => 'CRM', 'conversations' => 'Conversations', 'website' => 'Website', 'automations' => 'Automations',
         ];
